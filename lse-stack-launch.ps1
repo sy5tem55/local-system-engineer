@@ -280,7 +280,7 @@ Write-Host ""
 #     Green  #229966  — LSE terminal
 
 $WtArgs = (
-    "new-tab --title `"`$($Prof.TabLabel)`"   --tabColor `"#CC2222`" -- wsl.exe bash $LaunchDir/model.sh",
+    "new-tab --title `"$($Prof.TabLabel)`"   --tabColor `"#CC2222`" -- wsl.exe bash $LaunchDir/model.sh",
     "; new-tab --title `"  Open WebUI`"    --tabColor `"#2255CC`" -- wsl.exe bash $LaunchDir/webui.sh",
     "; new-tab --title `"  Playwright`"    --tabColor `"#8822CC`" -- wsl.exe bash $LaunchDir/playwright.sh",
     "; new-tab --title `"  Open Terminal`" --tabColor `"#CC7722`" -- wsl.exe bash $LaunchDir/open-terminal.sh",
@@ -292,12 +292,11 @@ Start-Process wt -ArgumentList $WtArgs
 Write-Host "  ${g}All tabs launched.${r}"
 Write-Host "  Model server takes ~30 s to load — watch the red tab."
 Write-Host ""
-
 # SIG # Begin signature block
 # MIIFngYJKoZIhvcNAQcCoIIFjzCCBYsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCqiH3zV1WJM9VF
-# 7JnzyM/gpU+fVNYfaJcs6jiPjCh7z6CCAxgwggMUMIIB/KADAgECAhAnjvKeW2tW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB/0sfJB/1jGOcn
+# VuZ6FuNn4DPmsc0OMF4hPwF31414y6CCAxgwggMUMIIB/KADAgECAhAnjvKeW2tW
 # hkFhZBM0k1neMA0GCSqGSIb3DQEBCwUAMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0
 # MB4XDTI1MDkwNzEzMzcxNVoXDTI2MDkwNzEzNTcxNVowFjEUMBIGA1UEAwwLU1k1
 # VEVNNUNlcnQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDsHkeVknvs
@@ -317,12 +316,12 @@ Write-Host ""
 # EjUxggHcMIIB2AIBATAqMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0AhAnjvKeW2tW
 # hkFhZBM0k1neMA0GCWCGSAFlAwQCAQUAoIGEMBgGCisGAQQBgjcCAQwxCjAIoAKA
 # AKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEO
-# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIMdejWlWsSPRcZTqJafQRLPF
-# diLaTtW5pJoNBjfO7s9aMA0GCSqGSIb3DQEBAQUABIIBAMTdr39JwvF8pWk+0Lnx
-# /icWi2Oy5jwg3Fr7ga3pDxDTVJUUfrWMxpimFnZeksJdGFerEpOumj9zc+TGnUTD
-# sIHAQweomPs2xz6MGEMRtTWXQKBUzXm4iaj52faEndZ673O/6Nl5jXUpYOafuGVD
-# iA+yn/zyIfJ3U/g0H+Og1G2v2yRy3ZyHn3ojnWbqTz/JCUOcTkj6DSsOCnJIOhDR
-# jzeOAglQVWCwohbG5hU6ytRHf9hdxXUtGGTHcCnzOgZZUxjh1qkj5s9oRaeQBb/B
-# 9otGNJxQtdNIbp/WkQJBbhfjkRQpLgBnN3pVrxHDGbqTrXpSS00NOI0PkNZMfXTc
-# 7dE=
+# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIBbzwrkhDXe2rrkVVk+ciiUu
+# ZylKbtAqYmAW6fC2ZScsMA0GCSqGSIb3DQEBAQUABIIBAOZk/0bIvd8j9R4wO2lg
+# vxVMSjvq2Jq3XUM7BgHBcvqOoIRpXkewdOlfD6k3dRaPGjb7DjZhSGEX5ivLBURp
+# vhhCdQrXxnP2Vdj+kp07S9Y2lKl0GUluWkjrPZ7SSpaVZsraSVfou0yCgHioLIOp
+# fM7Nk7C+CtOpTbhYJ7Rjbf9WhDkes97/OiY+zqYUgOyEx/fORukkfGBEcrTBwehg
+# 7vEnKppFiF3tdEfK67dOfJWJGkhq+1uRKcHFV0TO0gNsIeAmTFXCiKHZjexqfxoW
+# /mtc3E2Ma7M2zCZzn36Gfuf8LZa1+kcN5W2kF2ORD/l0oKpWZ16uJ7zsLy1cGVzv
+# xEA=
 # SIG # End signature block
