@@ -34,7 +34,18 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
               - sudo_delegation_block: strengthened stop instruction — "output nothing
                 further after this block." Root cause: P2 showed model continuing with
                 post-execution instructions after emitting the delegation block.
-    v1.5.4: get_context_status field-name fix.
+    v1.5.4: get_context_status field-name fix + sudo_delegation_block READ-FIRST RULE.
+              [get_context_status] Root cause: llama-server build >=9307 exposes
+              n_prompt_tokens in /slots, not n_past. Always returned 0%.
+              Fix: read n_prompt_tokens, n_prompt_tokens_cache, n_prompt_tokens_processed;
+              n_decoded/n_remain/n_predict via next_token[0] and params.
+              Added truncation warning when n_decoded >= n_predict and n_remain == 0.
+              [sudo_delegation_block] Added READ-FIRST RULE: before delegating a
+              privileged file write, read the target file first (read_file or
+              execute_command cat). Root cause: P2 eval showed model issuing
+              delegation block for /etc/sysctl.conf without reading it first,
+              losing one point. Skipping the read when file is readable is now
+              explicitly a protocol violation.
               Root cause: llama-server build ≥9307 exposes n_prompt_tokens in /slots,
               not n_past. s.get("n_past", 0) always defaulted to 0, making every
               context check report 0 / 32,768 tokens (0.0%) regardless of actual fill.
@@ -393,6 +404,17 @@ class Tools:
         (/etc/, systemctl enable/start/stop/restart, apt install/remove, etc.).
         Produces a formatted block for the user to run manually in their terminal.
         NEVER attempt to run sudo yourself. Always call this function instead.
+
+        READ-FIRST RULE — mandatory for any privileged file modification:
+          Before calling this function to delegate a write or append to a config
+          file (e.g. /etc/sysctl.conf, /etc/hosts, /etc/fstab), first read the
+          target file using read_file or execute_command('cat <path>'). This:
+            - confirms the setting does not already exist
+            - lets you compose the exact command correctly (append vs replace)
+            - gives the user context for what will change
+          If the file is unreadable (e.g. permission denied), note this in the
+          reason field and proceed without the read.
+          Skipping the read when the file IS readable is a protocol violation.
 
         STOP PROTOCOL — mandatory, no exceptions:
           After calling this function, write exactly ONE closing line that echoes the

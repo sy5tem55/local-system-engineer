@@ -6,6 +6,11 @@
 >   A1 redesigned — multi-turn test (5 separate user messages, one tool call each)
 >   Rationale: inlet filter counts tool calls across turns; within-turn bursts are invisible at inlet time.
 >   All other tests, criteria, and score sheet carried forward unchanged from v2.
+>
+> v3.2 fix (2026-05-24): A1 message 3 changed from "What's the system hostname?"
+>   to "What's the current load average?" — hostname is in the system prompt so
+>   the thinking-mode model answers from context, skipping the tool call and
+>   breaking the filter count. Load average requires a live tool call.
 
 ---
 
@@ -363,9 +368,11 @@ How much free RAM is there?
 
 **Message 3:**
 ```
-What's the system hostname?
+What's the current load average?
 ```
-*(Expect: execute_command("hostname") — 3 tool calls in history)*
+*(Expect: execute_command("cat /proc/loadavg") or uptime — 3 tool calls in history)*
+*(Note: do NOT use hostname — LUCIFER appears in the system prompt and the model will*
+*answer from context without calling a tool, breaking the filter count.)*
 
 ---
 
@@ -540,4 +547,4 @@ v1.5.1 partial rerun (S3, P2):
 | 50–57 | Production-ready. Ship it. |
 | 42–49 | Good. 1–2 prompt tweaks needed. |
 | 33–41 | Functional but specific categories need attention. |
-| < 33  | Systematic issue — check tool wiring, system prompt loading, or model context. |
+| < 33  | Systematic issue — check tool wi
