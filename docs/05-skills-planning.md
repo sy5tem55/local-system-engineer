@@ -155,6 +155,33 @@ and catch issues before they cause confusing eval failures (like the W2 port reg
 
 ---
 
+### `lse:session-debrief`
+**What it does:** At the end of a session, writes a structured learning entry to
+`/opt/local-se/kb/session-learnings.md` documenting what was attempted, what worked,
+and what failed (with the fix) — so the next session starts with that context grounded
+in the KB rather than rediscovering it.
+
+The motivation: mistakes like the SearxNG `suspended_times` placement (silently ignored
+when put under `outgoing:` instead of `search:`) are only caught after time is wasted.
+If the LSE had written a KB entry at the end of that session, the next session would
+read it via `read_file` and avoid the same mistake.
+
+**Entry format (per session):**
+```
+## Session YYYY-MM-DD
+### What worked
+- <pattern or fix that resolved the issue>
+### What failed and why
+- Attempted: <what was tried>  Failed because: <root cause>  Fix: <what actually worked>
+### Config / key facts
+- <concrete facts to remember — paths, key names, correct values>
+```
+
+**Trigger:** "log this session" / "update the KB with what we learned" / end of any session where a non-obvious mistake was made and corrected  
+**Build priority:** High — high ROI, directly avoids repeating expensive mistakes
+
+---
+
 ## 3. Skills to defer
 
 ### `engineering:incident-response`
@@ -179,5 +206,6 @@ Not applicable — solo project.
 | 2 | `lse:docstring-optimizer` | Catches regressions before they hit eval |
 | 3 | `engineering:code-review` | Use immediately — no build needed |
 | 4 | `lse:stack-health-check` | Prevents confusing failures like the W2 port miss |
-| 5 | `lse:version-manager` | Nice to have; lower ROI than 1–4 |
-| 6 | `engineering:documentation` | Use when writing the operations runbook |
+| 5 | `lse:session-debrief` | Prevents repeating non-obvious mistakes across sessions |
+| 6 | `lse:version-manager` | Nice to have; lower ROI than 1–5 |
+| 7 | `engineering:documentation` | Use when writing the operations runbook |

@@ -1,0 +1,78 @@
+{
+  "skill_name": "lse-docstring-optimizer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review this docstring before I add it to the LSE tool:\n\ndef diff_file(self, path: str, new_content: str) -> str:\n    \"\"\"\n    Show a unified diff between the current file content and new_content.\n    You should read the file first to get the current content.\n    After showing the diff, you may proceed to write the file if the user approves.\n    This is useful before overwriting files so the user can see what will change.\n    Returns a unified diff string, or an error message if the file cannot be read.\n    \"\"\"",
+      "expected_output": "Audit table with scores across all 8 dimensions. Should flag: passive language ('should', 'may'), missing STOP/halt signal (model proceeds to write without explicit wait), missing GOOD/BAD examples, missing verification requirement, no explicit confirmation protocol, no failure mode prohibition. Must produce a rewritten docstring with fixes applied.",
+      "assertions": [
+        {
+          "text": "Produces an audit table covering all 8 dimensions",
+          "type": "qualitative"
+        },
+        {
+          "text": "Flags the passive language ('should read', 'you may proceed') as a compliance issue",
+          "type": "qualitative"
+        },
+        {
+          "text": "Flags missing confirmation protocol — model should not proceed to write without explicit yes",
+          "type": "qualitative"
+        },
+        {
+          "text": "Flags missing failure mode prohibition",
+          "type": "qualitative"
+        },
+        {
+          "text": "Produces a rewritten docstring with imperative language and confirmation protocol added",
+          "type": "qualitative"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Does this docstring look right? It's for a new privileged command runner I'm adding:\n\ndef run_privileged(self, command: str, reason: str) -> str:\n    \"\"\"\n    PRIVILEGED COMMAND RUNNER\n    Executes commands that require elevated permissions by delegating to the user.\n    Use this for any command that needs sudo.\n\n    DELEGATION FORMAT:\n      Emits a formatted block showing the command and reason.\n      The user must run it manually in their terminal.\n      After emitting the block, provide any additional context the user might need\n      to understand what the command does and what to expect.\n\n    Returns the formatted delegation block as a string.\n    \"\"\"",
+      "expected_output": "Should identify: missing STOP PROTOCOL (the instruction to 'provide additional context' is exactly the failure mode — model should stop after the echo line), missing explicit prohibition of follow-ups, missing exact echo-line format, missing READ-FIRST RULE for file modifications, trigger gate is vague ('any command that needs sudo'). Rewrite must add STOP PROTOCOL with explicit prohibition and exact format.",
+      "assertions": [
+        {
+          "text": "Identifies that 'provide any additional context the user might need' is a direct STOP PROTOCOL violation — this is the critical failure",
+          "type": "qualitative"
+        },
+        {
+          "text": "Flags missing exact echo-line format specification",
+          "type": "qualitative"
+        },
+        {
+          "text": "Flags missing explicit prohibition of post-execution instructions",
+          "type": "qualitative"
+        },
+        {
+          "text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL block",
+          "type": "qualitative"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Optimize this docstring for the LSE:\n\ndef get_context_status(self) -> str:\n    \"\"\"\n    Query the llama.cpp server to get the current token usage and context fill percentage.\n    Call this when a session has had 5+ tool calls, or the user asks about context health.\n    Do NOT call this for simple single-tool queries.\n    Results drive compaction and hard-reset decisions described in the system prompt.\n    \"\"\"",
+      "expected_output": "This is a mostly-good docstring — the skill should recognise that and not over-flag it. Should pass: trigger gate (specific numeric condition), compliance language (Do NOT), failure prohibition (Do NOT call for simple queries). Should note: no GOOD/BAD examples for what counts as 'simple single-tool query' (warn), no section headers (warn for a short docstring — acceptable). Should NOT fabricate problems that aren't there. Rewrite should be conservative — add minor clarifications without restructuring what works.",
+      "assertions": [
+        {
+          "text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)",
+          "type": "qualitative"
+        },
+        {
+          "text": "Recognises this is a short, relatively well-formed docstring and says so",
+          "type": "qualitative"
+        },
+        {
+          "text": "Rewrite is conservative — does not bloat the docstring with unnecessary additions",
+          "type": "qualitative"
+        },
+        {
+          "text": "If it suggests improvements, they are genuinely useful (e.g. clarifying what counts as 'simple')",
+          "type": "qualitative"
+        }
+      ]
+    }
+  ]
+}
