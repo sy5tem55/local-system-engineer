@@ -1,0 +1,78 @@
+{
+  "skill_name": "lse-session-debrief",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Log this session. We spent an hour figuring out that SearxNG's suspended_times block was silently ignored because we'd placed it under outgoing: instead of search:. Once we moved it to search: and restarted the container it started working. Also discovered the keys are Python exception class names, not strings.",
+      "expected_output": "Reads the existing KB file first, drafts a structured entry with the correct format (date header, What worked, What failed and why with Attempted/Failed because/Fix, Key facts), asks for confirmation before writing, does not write without confirmation. Entry is specific — names the wrong section, names the fix, includes the restart command and the Python exception class name fact.",
+      "assertions": [
+        {
+          "text": "Reads /opt/local-se/kb/session-learnings.md before drafting (Step 1 of write sequence)",
+          "type": "qualitative"
+        },
+        {
+          "text": "Drafted entry uses the exact format: date header, What worked, What failed and why with Attempted/Failed because/Fix sub-fields, Key facts",
+          "type": "qualitative"
+        },
+        {
+          "text": "Entry names the specific root cause: suspended_times silently ignored when placed under outgoing: instead of search:",
+          "type": "qualitative"
+        },
+        {
+          "text": "Entry includes key facts about Python exception class names (not string literals)",
+          "type": "qualitative"
+        },
+        {
+          "text": "Asks for confirmation before writing to disk — does not write immediately",
+          "type": "qualitative"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Update the KB with what we learned today. We updated some docs and ran the eval suite — everything passed first try.",
+      "expected_output": "Recognises there is nothing non-obvious to capture — straight-line work that succeeded is explicitly excluded. Should say so clearly rather than writing a vague or empty entry. Should NOT read the file and write a placeholder.",
+      "assertions": [
+        {
+          "text": "Does NOT write a vague or empty entry to the KB",
+          "type": "qualitative"
+        },
+        {
+          "text": "Explicitly states there is nothing non-obvious to capture from this session",
+          "type": "qualitative"
+        },
+        {
+          "text": "Explains why — straight-line successful work is not worth capturing per the skill's criteria",
+          "type": "qualitative"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Debrief. Two things happened today: (1) we tried to back up a file in /home/sy5/searxng-docker/ using cp and got Permission denied — fixed it by using sudo cp. (2) we discovered /tmp is cleared between Cowork sessions, so temporary files written there don't survive — need to use the Windows project folder instead.",
+      "expected_output": "Captures both failure/fix pairs as separate blocks under What failed and why. Does not merge them into one vague entry. Each block has Attempted, Failed because, and Fix. Key facts section captures the /tmp clearing behaviour and the sudo cp requirement as separate lines.",
+      "assertions": [
+        {
+          "text": "Reads the existing KB file before drafting",
+          "type": "qualitative"
+        },
+        {
+          "text": "Captures both incidents as separate failure/fix blocks — not merged into one vague entry",
+          "type": "qualitative"
+        },
+        {
+          "text": "Each block has all three sub-fields: Attempted, Failed because, Fix",
+          "type": "qualitative"
+        },
+        {
+          "text": "Key facts section includes the /tmp clearing behaviour fact and the sudo requirement for searxng-docker directory",
+          "type": "qualitative"
+        },
+        {
+          "text": "Asks for confirmation before writing",
+          "type": "qualitative"
+        }
+      ]
+    }
+  ]
+}
