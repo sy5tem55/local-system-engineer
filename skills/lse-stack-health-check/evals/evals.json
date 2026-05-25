@@ -1,0 +1,70 @@
+{
+  "skill_name": "lse-stack-health-check",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Check the stack.",
+      "expected_output": "Issues one combined execute_command call (not five separate ones), produces a status table with all five rows (llama-server, Open WebUI, SearxNG, Playwright, VRAM), uses correct ports (8080 llama, 3000 webui, 8088 searxng, 3001 playwright), and ends with a one-line summary.",
+      "assertions": [
+        {
+          "text": "Issues a single execute_command call combining all checks — not five separate calls",
+          "type": "qualitative"
+        },
+        {
+          "text": "Status table includes all five rows: llama-server, Open WebUI, SearxNG, Playwright, VRAM",
+          "type": "qualitative"
+        },
+        {
+          "text": "Uses correct ports: 8080 for llama-server, 3000 for Open WebUI, 8088 for SearxNG, 3001 for Playwright",
+          "type": "qualitative"
+        },
+        {
+          "text": "Ends with a one-line summary sentence about overall stack status",
+          "type": "qualitative"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Health check shows: llama:200, webui:200, searxng:000, playwright:000. VRAM: NVIDIA GeForce RTX 4090, 20442 MiB, 3301 MiB, 58. What's the status?",
+      "expected_output": "Correctly identifies SearxNG as a critical service that is down (❌), Playwright as non-critical (⚠️), provides the exact SearxNG recovery command (docker compose up -d searxng from /home/sy5/searxng-docker), summary says 1 critical service down.",
+      "assertions": [
+        {
+          "text": "Marks SearxNG as ❌ DOWN (critical) and Playwright as ⚠️ or non-critical warning",
+          "type": "qualitative"
+        },
+        {
+          "text": "Provides exact SearxNG recovery command: cd /home/sy5/searxng-docker && docker compose up -d searxng",
+          "type": "qualitative"
+        },
+        {
+          "text": "Summary line says 1 critical service down (not 2 — Playwright is non-critical)",
+          "type": "qualitative"
+        },
+        {
+          "text": "VRAM row shows 20442 MiB used and correctly interprets it as normal (32k ctx profile)",
+          "type": "qualitative"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Is everything running? Also the model seems slow to respond.",
+      "expected_output": "Runs the combined health check first, then separately interprets the VRAM and llama-server health result to explain potential slowness — high VRAM pressure, near-full context, or CPU KV spill. Does not skip the health check just because the user asked a question alongside it.",
+      "assertions": [
+        {
+          "text": "Runs the combined health check (does not skip it because of the follow-up question)",
+          "type": "qualitative"
+        },
+        {
+          "text": "After reporting stack status, addresses the slowness question using VRAM and context data from the check",
+          "type": "qualitative"
+        },
+        {
+          "text": "Mentions at least one concrete cause for slowness: high context fill, CPU KV spill (64k profile), or near-full VRAM",
+          "type": "qualitative"
+        }
+      ]
+    }
+  ]
+}
