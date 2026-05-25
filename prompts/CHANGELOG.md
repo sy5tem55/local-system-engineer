@@ -1,5 +1,18 @@
 # Prompt Version Changelog
 
+## v0.5.2 — 2026-05-25
+**Changes from v0.5.1:**
+- Removed SUDO DELEGATION FORMAT section entirely — it specified a different format from what
+  the `sudo_delegation_block` tool actually produces, causing the model to reformat tool output
+  and enter a re-call loop. Root cause: format mismatch between prompt section and tool return value.
+- Added "DO NOT call again." to the `sudo_delegation_block` one-liner in OUTPUT RULES — makes
+  the stop-after-delegation requirement explicit without a separate format section.
+- Added KB path (`/opt/local-se/kb/`) to KNOWLEDGE BASE section — model now knows where to
+  direct read-only knowledge lookups.
+- Updated version references: tool v1.5.5 · filter v1.1.0 · context-monitor v1.0.0
+
+---
+
 ## v0.5.1 — 2026-05-24
 **Changes from v0.5:**
 - Added LIVE SERVICE RULE to PERMISSION BOUNDARY: hard stop before updating, rebuilding,

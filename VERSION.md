@@ -25,7 +25,8 @@ tool + prompt combination and a report was written.
 |---|---|---|---|---|
 | eval-v1 | v1.4.0 | v0.1-baseline | — | eval/eval-report-v1.md |
 | eval-v2 | v1.5.1 | v0.4.1 | 45/57 | eval/eval-report-v2.md |
-| eval-v3 | — | — | — | eval/eval-report-v3.md (in progress) |
+| eval-v3 | v1.5.4 | v0.5.1 | 57/57 | eval/eval-report-v3.md |
+| eval-v4 | v1.5.5 | v0.5.2 | 49/57 | eval/eval-report-v4.md |
 
 ---
 
@@ -34,10 +35,10 @@ tool + prompt combination and a report was written.
 Tool and prompt versions that have shipped but have no eval run against them.
 These should be tested before being considered production-ready.
 
-**Tool:** v1.5.2, v1.5.3, v1.5.4, v1.5.5
-**Prompt:** v0.5.0, v0.5.1, v0.5.2
+**Tool:** v1.5.2, v1.5.3, v1.5.4 *(all superseded — evaluate v1.5.5 only)*
+**Prompt:** v0.5.0 *(superseded)*
 
-> Next planned eval: tool v1.5.5 + prompt v0.5.2
+> Next planned eval: tool v1.5.5 + prompt v0.5.2 — Run 5 with standard reasoning budget (--reasoning-budget 3072) to establish clean baseline without no-think confound
 
 ---
 
