@@ -1,0 +1,103 @@
+DOCSTRING REVIEW: run_privileged
+
+OVERALL ASSESSMENT
+
+The docstring has reasonable structure and makes the delegation intent clear, but it contains one critical behavioral flaw and several gaps that would cause a model relying on it to behave incorrectly or unsafely.
+
+---
+
+CRITICAL ISSUE: The "additional context" instruction is a STOP PROTOCOL violation
+
+The most serious problem is this line:
+
+  "After emitting the block, provide any additional context the user might need to understand what the command does and what to expect."
+
+This instruction directly contradicts what should be the function's STOP PROTOCOL. The purpose of delegating a privileged command to the user is that the model hands off responsibility and stops acting. Instructing the model to continue narrating — explaining what the command does, what to expect, potential side effects — means the model keeps going after the delegation block.
+
+This is dangerous for several reasons:
+
+1. It undermines the delegation pattern. If the model is supposed to emit a block and then stop, any instruction to continue talking after the block is a protocol violation. The model should emit the block and yield control to the user.
+
+2. It can introduce misleading guidance. If the model speculates about what the command will do or what output to expect, and those predictions are wrong, the user may misinterpret failures or act on incorrect assumptions.
+
+3. It creates ambiguity about who is responsible for what. The moment the model starts explaining the command in detail after delegating it, it's effectively re-entering the execution flow it was supposed to exit.
+
+The correct behavior after emitting the delegation block is to stop. The docstring should include an explicit STOP PROTOCOL note making this clear.
+
+---
+
+SECONDARY ISSUE: The formatted block has no defined format
+
+The docstring says the function "emits a formatted block showing the command and reason" but never specifies what that block looks like. A model cannot comply with this in a stable, consistent way without knowing:
+
+- What delimiters or markers the block uses
+- How the command and reason are labeled (e.g., "Command: sudo ..." / "Reason: ...")
+- Whether there is surrounding language (e.g., "Please run the following command in your terminal:")
+- Whether the block is wrapped in a code fence or presented as plain text
+
+Without an exact echo-line format or template, the format of the delegation block will vary across invocations, which breaks any expectation of consistency — especially if something downstream parses or displays these blocks.
+
+The docstring should include an explicit format specification, such as:
+
+  Format:
+    [PRIVILEGED COMMAND]
+    Command: <command>
+    Reason: <reason>
+    [/PRIVILEGED COMMAND]
+
+Or equivalent. The exact format matters less than that it is defined.
+
+---
+
+OTHER ISSUES
+
+1. "Use this for any command that needs sudo" is too broad. It doesn't say whether there are commands that should be refused even if they require sudo. A model following this literally will delegate any sudo invocation without additional judgment.
+
+2. The docstring never states explicitly that this function does not execute the command. Saying "delegating to the user" implies this, but an explicit statement ("This function does not run the command") removes ambiguity.
+
+3. There is no guidance on post-delegation behavior beyond the "additional context" instruction (which should be removed). What should the model do after yielding? Ask if the user ran it? Wait for a response? Remain silent? This should be stated.
+
+---
+
+WHAT THE DOCSTRING DOES WELL
+
+- The delegation framing is correct: the user runs the command, not the model.
+- Requiring a reason parameter is good design and the docstring acknowledges it.
+- The statement "the user must run it manually in their terminal" is explicit and appropriately places responsibility on the human.
+- The title/header is attention-drawing and clear.
+
+---
+
+REWRITTEN DOCSTRING
+
+    """
+    PRIVILEGED COMMAND RUNNER
+
+    Emits a formatted delegation block for commands requiring elevated permissions.
+    This function does NOT execute the command. It produces a display block for
+    the user to run manually in their terminal.
+
+    DELEGATION FORMAT:
+      [PRIVILEGED COMMAND]
+      Command: <command>
+      Reason: <reason>
+      [/PRIVILEGED COMMAND]
+
+    STOP PROTOCOL:
+      After emitting the delegation block, stop. Do not provide explanations,
+      commentary, expected output, or instructions about what the command does.
+      Do not continue narrating after the block. Yield control to the user.
+
+    USAGE:
+      Use only when a command explicitly requires elevated permissions (sudo)
+      AND the user has requested it. Do not use for commands that should be
+      refused regardless of permissions.
+
+    Returns the formatted delegation block as a string.
+    """
+
+---
+
+SUMMARY
+
+The critical fix is removing the "additional context" instruction and replacing it with an explicit STOP PROTOCOL. The secondary fix is defining the exact format of the delegation block. Without both of these, a model using this docstring will produce inconsistent output and will continue talking after it should have stopped.

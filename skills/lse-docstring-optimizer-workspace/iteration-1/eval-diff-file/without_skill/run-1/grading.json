@@ -1,0 +1,10 @@
+{
+  "expectations": [
+    {"text": "Produces an audit table covering all 8 dimensions", "passed": false, "evidence": "No audit table. Provides a numbered list of general software engineering issues"},
+    {"text": "Flags passive language ('should read', 'you may proceed') as a compliance issue", "passed": false, "evidence": "Notes procedural instructions as 'category error' but not framed as compliance language issue"},
+    {"text": "Flags missing confirmation protocol", "passed": false, "evidence": "Does not mention confirmation protocol, protocol violation framing, or LSE-specific approval gate"},
+    {"text": "Flags missing failure mode prohibition", "passed": false, "evidence": "No mention of failure mode prohibitions or LSE failure patterns"},
+    {"text": "Produces a rewritten docstring with imperative language and confirmation protocol", "passed": false, "evidence": "Rewrite adds Args/Returns sections — standard Python docstring improvement, not LSE compliance rewrite"}
+  ],
+  "summary": {"passed": 0, "failed": 5, "total": 5, "pass_rate": 0.0}
+}

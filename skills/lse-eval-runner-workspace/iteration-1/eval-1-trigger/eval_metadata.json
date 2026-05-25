@@ -1,0 +1,11 @@
+{
+  "eval_id": 1,
+  "eval_name": "eval-1-trigger",
+  "prompt": "Let's run the LSE eval. Tool version is v1.5.4, prompt is v0.5, filters are both enabled.",
+  "assertions": [
+    {"text": "Response uses the pre-run checklist (mentions llama-server, SearxNG, or clean conversation checks)"},
+    {"text": "Response does NOT ask what eval tasks to run or what output format is expected"},
+    {"text": "Response shows the correct test category order (S → P → W → M → A or equivalent)"},
+    {"text": "Response correctly identifies which checklist items are already confirmed from user message"}
+  ]
+}

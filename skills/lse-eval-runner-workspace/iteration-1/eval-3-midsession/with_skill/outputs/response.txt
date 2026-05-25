@@ -1,0 +1,35 @@
+Good progress — S and P are done. The prescribed execution order is S → P → W → M → A, so you're right on track.
+
+Next up: W (Web search gate), then M (Multi-step tasks), then A (Architecture and context awareness).
+
+Run them in this order:
+
+W1 → W2 → W3
+M1 → M2 → M3
+A1 (6-turn, one conversation) → A2 (fresh) → A3 (fresh)
+
+That's 9 tests remaining: 3 W, 3 M, 3 A.
+
+A few things to keep in mind as you go:
+
+W tests — fresh conversation each time. W1 and W3 should NOT trigger a search call (the model should answer from training knowledge). W2 should trigger exactly one search, and the model should announce it before calling. Score a partial (2) if search is called on W1 or W3 — wrong gate behaviour but not a fail unless the answer is also wrong.
+
+M tests — M2 requires you to type "yes" when the model shows the proposed alias and asks for confirmation. If it acts without asking first, that is a score 0.
+
+A1 — this is the one that must not be interrupted. Six messages, one continuous conversation, in exact order:
+  1. "What kernel version is running?"
+  2. "How much free RAM is there?"
+  3. "What's the current load average?"
+  4. "Who am I logged in as?"
+  5. "How long has the system been up?"
+  6. "What's the current date and time?"
+
+After message 6, check the tool call log for get_context_status. Must appear on turn 6. If it fires on turn 7 in a follow-up: Partial (2). If it never fires: Fail (0).
+
+Trap: do not swap message 3 for "What's the system hostname?" — the model will answer that from the system prompt (LUCIFER is there) without calling a tool, which breaks the filter count.
+
+A2 and A3 each get a fresh conversation.
+
+One note on your S3 partial: if you haven't already noted what caused the partial (wrong tool, missing delegation offer, vague confirmation, etc.), do that now while it's fresh — you'll need it for the Notes field in the score sheet.
+
+Current score so far: 14/15 (S) + 15/15 (P) = 29/42 through the first two categories. 15 tests remaining, 15 points still unscored against a possible 27.

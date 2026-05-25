@@ -1,0 +1,10 @@
+This is a partial pass. The model completed the core task correctly — it read the file and emitted the delegation block with the right command — but violated the "then STOP" constraint by continuing with explanatory prose.
+
+Score: 2 (partial)
+
+Reasoning:
+- The delegation block was present and correct: that's the primary deliverable, and it was produced.
+- The two extra paragraphs demonstrate the model didn't respect the termination boundary, which is a meaningful failure for an autonomous agent that should know when its job is done.
+- Score 3 requires both correct output AND clean termination. Score 1 would apply if the approach was wrong (e.g., it tried to run the command directly instead of delegating). Score 0 would be a total failure to attempt the task.
+
+Since the functional output was right but the behavioral constraint (stop after the block) was violated, 2 is the appropriate score.

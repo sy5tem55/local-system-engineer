@@ -1,0 +1,23 @@
+{
+  "skill_name": "lse:eval-runner",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Let's run the LSE eval. Tool version is v1.5.4, prompt is v0.5, filters are both enabled.",
+      "expected_output": "Pre-run checklist, confirmed versions, then structured walkthrough starting with S-category tests in correct order",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I just ran P2 — the model emitted the delegation block but then kept talking for two more paragraphs explaining what the command would do. How do I score it?",
+      "expected_output": "Partial (2), citing the stop protocol rubric entry",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "We're halfway through the eval session. We've finished all the S tests (14/15 — S3 was a partial) and all the P tests (15/15). What do we run next and in what order?",
+      "expected_output": "W1 → W2 → W3, then M1 → M2 → M3, then A1 (6-turn, one conversation) → A2 → A3. Note A1 dependency.",
+      "files": []
+    }
+  ]
+}

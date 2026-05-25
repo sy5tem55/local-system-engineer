@@ -1,0 +1,65 @@
+## Audit — diff_file
+
+| Dimension              | Score | Notes                                                                 |
+|------------------------|-------|-----------------------------------------------------------------------|
+| 1. Section headers     | FAIL  | Flat prose; no ALL-CAPS headers separating behavioural rule blocks    |
+| 2. Compliance language | WARN  | "you may proceed" and "you should read" are hedged/permissive         |
+| 3. GOOD/BAD examples   | FAIL  | No examples; the trigger condition and diff usage are ambiguous       |
+| 4. Stop protocol       | FAIL  | No STOP PROTOCOL block; model not told to halt after presenting diff  |
+| 5. Failure prohibitions| FAIL  | No explicit prohibition on skipping the read or writing without approval |
+| 6. Output format       | WARN  | Mentions "unified diff string" but does not quote an exact format     |
+| 7. Trigger gate        | WARN  | "useful before overwriting files" is informal; no explicit gate condition |
+| 8. Verification        | N/A   | diff_file does not write state; verification requirement does not apply |
+
+**Critical findings:**
+- [FAIL] Stop protocol: After presenting a diff the model must halt and wait — no stop block means the model will continue with "you can now write the file if you approve" or similar pre-emption, a P-class failure pattern.
+- [FAIL] Failure prohibitions: Nothing forbids the model from skipping the read_file step or writing the file without explicit user approval; both are high-probability failure modes (W2, S3 eval classes).
+- [FAIL] Section headers: All rules are buried in a single prose paragraph; the model cannot scan for the approval gate or stop signal without reading the whole docstring, making selective compliance likely.
+- [FAIL] GOOD/BAD examples: The boundary between "show diff and stop" vs "show diff then offer to write" is exactly the kind of ambiguity that produces ~50% compliance without examples; none are present.
+- [WARN] Compliance language: "you should read the file first" and "you may proceed to write" are permissive — both must become imperative to close the advisory loophole.
+- [WARN] Output format: The diff output format is not quoted or exemplified; a model may produce a summary description rather than a raw unified diff, breaking downstream display.
+- [WARN] Trigger gate: "useful before overwriting files" describes use cases informally; there is no explicit conditional gate that tells the model exactly when to call this function vs read_file alone.
+
+**Rewritten docstring:**
+```python
+def diff_file(self, path: str, new_content: str) -> str:
+    """
+    Show a unified diff between the current on-disk content of a file and new_content.
+    Returns a unified diff string, or an error message if the file cannot be read.
+
+    GATE:
+      Call this function before any write_file call when the file already exists and
+      the user has not yet seen what will change. Never call this in place of read_file
+      when the goal is only to inspect content.
+
+    READ-FIRST RULE:
+      You must read the file with read_file before calling diff_file so that
+      new_content is complete and accurate.
+      Skipping the read when the file is readable is a protocol violation.
+
+    APPROVAL GATE:
+      After presenting the diff, you must ask the user for explicit approval before
+      writing. Do NOT proceed to write_file on the assumption that showing the diff
+      implies consent.
+      GOOD: Present diff, then ask "Shall I apply these changes? (yes/no)"   <- waits for user
+      BAD:  Present diff, then say "I'll go ahead and write the file now."    <- skips approval
+
+    OUTPUT FORMAT:
+      Present the raw unified diff exactly as returned by this function.
+      Do NOT summarise or paraphrase the diff in prose.
+      Format: render the full diff string inside a code block tagged `diff`.
+
+    STOP PROTOCOL — mandatory, no exceptions:
+      After presenting the diff and the approval question, output nothing further.
+      Do NOT add post-diff instructions, suggestions, or follow-up hints.
+      Do NOT pre-empt the user with "After you approve, I will..." statements.
+      Your next response must begin only after the user responds to the approval question.
+      Anything beyond the diff block and the single approval question before user input
+      is a protocol violation.
+
+    FAILURE MODE PROHIBITIONS:
+      - Skipping read_file before calling diff_file is a protocol violation.
+      - Proceeding to write_file without explicit user approval is a protocol violation.
+      - Summarising the diff instead of displaying it verbatim is a protocol violation.
+    """
+```

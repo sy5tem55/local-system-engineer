@@ -1,0 +1,25 @@
+Review of diff_file docstring — general analysis
+
+Key problems identified:
+
+1. No parameter descriptions — the agent cannot know what `path` format is expected 
+   (absolute? relative?) or what `new_content` semantics are (full content? encoding?)
+
+2. Return value underspecified — "unified diff string" does not define the format, 
+   and returning error messages as plain strings in the same return type as success 
+   values makes failure detection unreliable.
+
+3. "Show a unified diff" vs "returns a unified diff" — display-oriented language creates 
+   ambiguity about whether the function itself presents output to the user.
+
+4. Procedural instructions ("You should read the file first", "you may proceed to write") 
+   are agent-level policy embedded in a function docstring — a category error that blurs 
+   the line between function contract and workflow guidance.
+
+5. The function does not state it is read-only, which matters for agent safety reasoning.
+
+6. Edge cases (file not found, identical content producing empty diff, binary files, 
+   directories) are unaddressed.
+
+Suggested revision restructures with proper Args/Returns/Notes sections and 
+precise language about what the function returns and what the model should do with it.

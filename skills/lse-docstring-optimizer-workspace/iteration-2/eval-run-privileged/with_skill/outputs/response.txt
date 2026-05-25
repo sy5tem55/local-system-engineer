@@ -1,0 +1,78 @@
+## Audit — run_privileged
+
+| Dimension              | Score | Notes                                                                 |
+|------------------------|-------|-----------------------------------------------------------------------|
+| 1. Section headers     | WARN  | Two capitalised headers present (PRIVILEGED COMMAND RUNNER, DELEGATION FORMAT) but the compliance rules and stop protocol are folded into unlabelled prose under DELEGATION FORMAT |
+| 2. Compliance language | WARN  | "The user must run it manually" is imperative, but "provide any additional context the user might need" is permissive and directly contradicts required halt behaviour |
+| 3. GOOD/BAD examples   | FAIL  | No GOOD/BAD examples anywhere; the delegation block format is described but never shown |
+| 4. Stop protocol       | FAIL  | "After emitting the block, provide any additional context the user might need to understand what the command does and what to expect" is a direct STOP PROTOCOL violation — it explicitly instructs the model to continue outputting after the delegation block, which is the exact behaviour a stop protocol must prohibit. No STOP PROTOCOL block is present. |
+| 5. Failure prohibitions| FAIL  | The docstring states what to do but never prohibits the primary failure mode: continuing to produce output after emitting the delegation block. There is no "do NOT" or "protocol violation" language. |
+| 6. Output format       | WARN  | "Emits a formatted block showing the command and reason" describes the output category but does not quote an exact format with a Format: example showing what the block looks like |
+| 7. Trigger gate        | WARN  | "Use this for any command that needs sudo" is stated but overly broad — no numeric or conditional precision (e.g. does it cover all elevated operations, or only those the OS would reject without sudo?) |
+| 8. Verification        | N/A   | user-facing delegation — function does not write or modify model-accessible state |
+
+**Critical findings:**
+- [FAIL] Stop protocol: "After emitting the block, provide any additional context the user might need to understand what the command does and what to expect" is a direct STOP PROTOCOL violation — the docstring actively instructs the model to continue outputting after the delegation block, which is exactly the behaviour a stop protocol must prohibit; no STOP PROTOCOL block exists to counteract this.
+- [FAIL] Failure prohibitions: The docstring never prohibits post-execution output, never uses "do NOT", and never labels any behaviour a "protocol violation", leaving the primary failure mode (continuing after the block) unnamed and unprevented.
+- [FAIL] GOOD/BAD examples: No concrete examples of the delegation block output are provided; the model cannot verify it is emitting the correct format.
+- [WARN] Output format: The delegation block structure is described in prose but no exact Format: example is quoted, so the model has no template to match against.
+- [WARN] Compliance language: The instruction to "provide any additional context" uses permissive framing that conflicts with the halt requirement; all post-block instructions must be removed and replaced with explicit prohibition.
+- [WARN] Section headers: The two headers present are a good start, but the compliance and halt rules lack their own labelled section (e.g. STOP PROTOCOL).
+- [WARN] Trigger gate: "Any command that needs sudo" is informal; a sharper trigger condition would reduce ambiguity at the call site.
+
+**Rewritten docstring:**
+```python
+def run_privileged(self, command: str, reason: str) -> str:
+    """
+    PRIVILEGED COMMAND RUNNER
+
+    Emits a formatted delegation block for commands that require elevated
+    permissions. The user must execute the command manually in their terminal.
+    Use this function for any operation the OS would reject without sudo.
+
+    DELEGATION BLOCK FORMAT:
+      Always emit the block in exactly this structure:
+
+        Format:
+          === PRIVILEGED COMMAND ===
+          Command : <command>
+          Reason  : <reason>
+          Run this in your terminal, then paste the output here.
+          =========================
+
+      GOOD — block only, single echo line, nothing more:
+        === PRIVILEGED COMMAND ===
+        Command : sudo systemctl restart nginx
+        Reason  : Restart nginx after config change
+        Run this in your terminal, then paste the output here.
+        =========================
+        Please run the privileged command block above in your terminal and paste the output here.
+
+      BAD — adding explanation after the block:
+        === PRIVILEGED COMMAND ===
+        Command : sudo systemctl restart nginx
+        Reason  : Restart nginx after config change
+        Run this in your terminal, then paste the output here.
+        =========================
+        This command restarts nginx. You may see a brief service interruption.
+        Make sure your config is valid first by running nginx -t.
+
+    STOP PROTOCOL — mandatory, no exceptions:
+      After calling this function, write exactly ONE closing line that echoes
+      the command so the user sees it without expanding the tool result card.
+      Format: "Please run the privileged command block above in your terminal and paste the output here."
+      After that single line, output nothing further.
+      Do NOT add post-execution instructions, hints, context, or follow-up bash snippets.
+      Do NOT explain what the command does or what to expect after it runs.
+      Do NOT suggest what to do if the command succeeds or fails.
+      Your next response must begin only after the user pastes terminal output.
+      Anything beyond the single echo line before user input is a protocol violation.
+
+    FAILURE MODE PROHIBITIONS:
+      Continuing to write after the delegation block is a protocol violation.
+      Providing "additional context" after the block is a protocol violation.
+      Skipping the delegation block and running the command directly is a protocol violation.
+
+    Returns the formatted delegation block as a string.
+    """
+```

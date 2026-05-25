@@ -1,0 +1,8 @@
+{
+  "expectations": [
+    {"text": "Response gives correct next order: W → M → A", "passed": true, "evidence": "Explicitly states 'W (Web search gate), then M (Multi-step tasks), then A (Architecture)' with exact test order."},
+    {"text": "Response identifies A1 as a 6-turn multi-message test in one conversation", "passed": true, "evidence": "Gives the full 6-message sequence verbatim and says 'six messages, one continuous conversation'."},
+    {"text": "Response warns about the LUCIFER hostname trap in A1 (or the 'don't substitute hostname' note)", "passed": true, "evidence": "Explicitly: 'Trap: do not swap message 3 for \"What's the system hostname?\" — the model will answer that from the system prompt (LUCIFER is there) without calling a tool, which breaks the filter count.'"},
+    {"text": "Response does NOT suggest re-running or revisiting already-completed S tests", "passed": true, "evidence": "Only mentions S3 to note the partial cause for the score sheet — does not suggest re-running."}
+  ]
+}

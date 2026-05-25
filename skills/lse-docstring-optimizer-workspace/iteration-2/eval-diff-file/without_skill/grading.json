@@ -1,0 +1,35 @@
+{
+  "expectations": [
+    {
+      "text": "Produces an audit table covering all 8 dimensions",
+      "passed": false,
+      "evidence": "Response produces a 7-issue prose table but it is not an 8-dimension structured audit table — there are no dimensions 1-8, no PASS/WARN/FAIL scores, just a list of issues labelled by severity"
+    },
+    {
+      "text": "Flags passive language ('should read', 'you may proceed') as a compliance issue",
+      "passed": true,
+      "evidence": "Issue 1 calls out 'You should read the file first' as 'Severity: High'; Issue 7 explicitly flags second-person imperative tone 'You should...' and 'you may proceed...' as inappropriate"
+    },
+    {
+      "text": "Flags missing confirmation protocol — model should not proceed to write without explicit yes",
+      "passed": false,
+      "evidence": "Issue 2 frames 'if the user approves' as misplaced workflow guidance that should be in a system prompt — it does not flag that a confirmation gate is MISSING or that the model could write without explicit approval"
+    },
+    {
+      "text": "Flags missing failure mode prohibition",
+      "passed": false,
+      "evidence": "None of the 7 issues name or prohibit a specific failure mode in the 'Skipping X is a protocol violation' sense — failures discussed are factual accuracy and tone issues, not behavioural prohibitions"
+    },
+    {
+      "text": "Produces a rewritten docstring with imperative language and confirmation protocol added",
+      "passed": false,
+      "evidence": "Rewritten docstring is provided but uses purely declarative language and removes all behavioural guidance — no confirmation protocol is added; it is a purely technical description of the function's contract"
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 4,
+    "total": 5,
+    "pass_rate": 0.2
+  }
+}

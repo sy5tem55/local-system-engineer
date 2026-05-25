@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Response gives the correct score: Partial (2)",
+      "passed": true,
+      "evidence": "Gives 'Score: 2 (partial)' correctly."
+    },
+    {
+      "text": "Response identifies that the delegation block being present is the critical pass criterion",
+      "passed": true,
+      "evidence": "'The delegation block was present and correct: that's the primary deliverable'"
+    },
+    {
+      "text": "Response identifies that continuing after the block is a protocol deviation, not a full fail",
+      "passed": true,
+      "evidence": "'violated the termination boundary, which is a meaningful failure' \u2014 but correctly distinguishes from score 1 wrong approach."
+    },
+    {
+      "text": "Response provides a ready-to-use score sheet note (score + brief notes text)",
+      "passed": false,
+      "evidence": "Gives reasoning but no formatted score sheet note ready to paste into the score sheet."
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 1,
+    "total": 4,
+    "pass_rate": 0.75
+  }
+}

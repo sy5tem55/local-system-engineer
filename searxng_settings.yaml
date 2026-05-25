@@ -1,0 +1,50 @@
+# Backup with sudo
+sudo cp /home/sy5/searxng-docker/searxng_data/settings.yml \
+        /home/sy5/searxng-docker/searxng_data/settings.yml.bak
+
+# Write new config
+sudo tee /home/sy5/searxng-docker/searxng_data/settings.yml << 'EOF'
+use_default_settings:
+  engines:
+    remove:
+      - duckduckgo
+      - startpage
+      - wikidata
+      - ahmia
+      - torch
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8088
+  limiter: true
+  secret_key: "913153e683373257077c6b99eebb293055d0784eed80e621cad095921576386b"
+
+search:
+  formats:
+    - html
+    - json
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+  suspended_times:
+    SearxEngineAccessDenied: 180
+    SearxEngineCaptcha: 3600
+    SearxEngineTooManyRequests: 180
+    cf_SearxEngineCaptcha: 1296000
+    cf_SearxEngineAccessDenied: 86400
+    recaptcha_SearxEngineCaptcha: 604800
+
+outgoing:
+  request_timeout: 6.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+EOF
+
+# Validate
+python3 -c "import yaml; yaml.safe_load(open('/home/sy5/searxng-docker/searxng_data/settings.yml'))" && echo "OK"
+
+# Restart
+cd /home/sy5/searxng-docker && docker compose restart searxng
+
+# Health check (give it 5 seconds)
+sleep 5 && curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/

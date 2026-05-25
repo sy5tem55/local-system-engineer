@@ -1,0 +1,8 @@
+{
+  "expectations": [
+    {"text": "Response uses the pre-run checklist (mentions llama-server, SearxNG, or clean conversation checks)", "passed": false, "evidence": "No checklist. Asks clarifying questions about what eval tasks to run and what output format is expected."},
+    {"text": "Response does NOT ask what eval tasks to run or what output format is expected", "passed": false, "evidence": "Explicitly asks: 'What eval tasks or scenarios are you running?' and 'What's the expected output format?'"},
+    {"text": "Response shows the correct test category order (S → P → W → M → A or equivalent)", "passed": false, "evidence": "No test order mentioned."},
+    {"text": "Response correctly identifies which checklist items are already confirmed from user message", "passed": false, "evidence": "Acknowledges config params but does not use them to check off a checklist."}
+  ]
+}

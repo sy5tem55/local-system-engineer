@@ -1,0 +1,303 @@
+{
+  "metadata": {
+    "skill_name": "lse-docstring-optimizer",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-25T11:53:17Z",
+    "evals_run": [
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces an audit table covering all 8 dimensions",
+          "passed": true,
+          "evidence": "The audit table contains all 8 rows: '1. Section headers', '2. Compliance language', '3. GOOD/BAD examples', '4. Stop protocol', '5. Failure prohibitions', '6. Output format', '7. Trigger gate', '8. Verification' \u2014 each with a Score and Notes column."
+        },
+        {
+          "text": "Flags passive language ('should read', 'you may proceed') as a compliance issue",
+          "passed": true,
+          "evidence": "Dimension 2 scores FAIL with the note '\"You should read\", \"you may proceed\" \u2014 passive/hedged throughout', and the critical findings state: 'Compliance language: \"You should read the file first\" and \"you may proceed\" are hedged/passive directives \u2014 they must be replaced with imperative forms'."
+        },
+        {
+          "text": "Flags missing confirmation protocol \u2014 model should not proceed to write without explicit yes",
+          "passed": true,
+          "evidence": "Dimension 4 scores FAIL with note 'No STOP PROTOCOL; \"you may proceed to write\" implies continuation without waiting', and critical findings state the existing language 'permits the model to continue without a hard stop, violating the user-facing output requirement for a STOP PROTOCOL'."
+        },
+        {
+          "text": "Flags missing failure mode prohibition",
+          "passed": true,
+          "evidence": "Dimension 5 scores FAIL with note 'Names no forbidden action; never says \"do NOT write without explicit user yes\"', and critical findings state: 'The most critical failure mode \u2014 writing the file without waiting for explicit user confirmation \u2014 is never named or forbidden'."
+        },
+        {
+          "text": "Produces a rewritten docstring with imperative language and confirmation protocol added",
+          "passed": true,
+          "evidence": "The rewritten docstring replaces passive language with 'ALWAYS call read_file', 'Do NOT call diff_file', and includes a full STOP PROTOCOL block with the exact format line: 'Please review the diff above and reply YES to confirm the write, or NO to cancel.' plus explicit prohibition 'Proceeding to write without explicit user approval is a protocol violation'."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does NOT assign FAIL to dimensions that are actually fine (trigger gate, compliance language)",
+          "passed": true,
+          "evidence": "Trigger gate scored PASS ('Explicit numeric trigger: 5+ tool calls'); compliance language scored PASS ('Do NOT call this is imperative and unambiguous'). Neither was penalised."
+        },
+        {
+          "text": "Recognises this is a short, relatively well-formed docstring and says so",
+          "passed": true,
+          "evidence": "Scope assessment states '4 lines, single-purpose, internal-data function' and overall verdict states 'This docstring is already well-formed for its scope.'"
+        },
+        {
+          "text": "Does NOT add STOP PROTOCOL \u2014 get_context_status is an internal-data function, not user-facing",
+          "passed": true,
+          "evidence": "Dimension 4 scored N/A with note 'Internal/data-return \u2014 returns token stats for silent model use, not user-facing output'. No STOP PROTOCOL was added to the rewritten docstring."
+        },
+        {
+          "text": "Rewrite is conservative \u2014 does not bloat the docstring with unnecessary additions",
+          "passed": true,
+          "evidence": "Rewritten docstring remains 4 lines. Changes are minimal: 'explicitly' added to secondary trigger and final line converted from passive to active voice. No headers, examples, or stop protocol added."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies that 'provide any additional context the user might need' is a direct STOP PROTOCOL violation \u2014 this is the critical failure",
+          "passed": true,
+          "evidence": "Stop protocol row scores FAIL with note: '\"After emitting the block, provide any additional context the user might need to understand what the command does and what to expect\" is a direct STOP PROTOCOL violation \u2014 it explicitly instructs the model to continue outputting after the delegation block'; critical findings lead with this same point verbatim."
+        },
+        {
+          "text": "Flags missing exact echo-line format specification",
+          "passed": true,
+          "evidence": "Output format row scores WARN: 'describes the output category but does not quote an exact format with a Format: example'; rewritten docstring adds 'Format: \"Please run the privileged command block above in your terminal and paste the output here.\"' inside the STOP PROTOCOL block."
+        },
+        {
+          "text": "Flags missing explicit prohibition of post-execution instructions",
+          "passed": true,
+          "evidence": "Failure prohibitions row scores FAIL: 'The docstring states what to do but never prohibits the primary failure mode: continuing to produce output after emitting the delegation block. There is no \"do NOT\" or \"protocol violation\" language.'"
+        },
+        {
+          "text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL block",
+          "passed": true,
+          "evidence": "The rewritten docstring contains no 'additional context' instruction and includes a full STOP PROTOCOL section with 'Do NOT add post-execution instructions, hints, context, or follow-up bash snippets' and 'Anything beyond the single echo line before user input is a protocol violation.'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.2,
+        "passed": 1,
+        "failed": 4,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces an audit table covering all 8 dimensions",
+          "passed": false,
+          "evidence": "Response produces a 7-issue prose table but it is not an 8-dimension structured audit table \u2014 there are no dimensions 1-8, no PASS/WARN/FAIL scores, just a list of issues labelled by severity"
+        },
+        {
+          "text": "Flags passive language ('should read', 'you may proceed') as a compliance issue",
+          "passed": true,
+          "evidence": "Issue 1 calls out 'You should read the file first' as 'Severity: High'; Issue 7 explicitly flags second-person imperative tone 'You should...' and 'you may proceed...' as inappropriate"
+        },
+        {
+          "text": "Flags missing confirmation protocol \u2014 model should not proceed to write without explicit yes",
+          "passed": false,
+          "evidence": "Issue 2 frames 'if the user approves' as misplaced workflow guidance that should be in a system prompt \u2014 it does not flag that a confirmation gate is MISSING or that the model could write without explicit approval"
+        },
+        {
+          "text": "Flags missing failure mode prohibition",
+          "passed": false,
+          "evidence": "None of the 7 issues name or prohibit a specific failure mode in the 'Skipping X is a protocol violation' sense \u2014 failures discussed are factual accuracy and tone issues, not behavioural prohibitions"
+        },
+        {
+          "text": "Produces a rewritten docstring with imperative language and confirmation protocol added",
+          "passed": false,
+          "evidence": "Rewritten docstring is provided but uses purely declarative language and removes all behavioural guidance \u2014 no confirmation protocol is added; it is a purely technical description of the function's contract"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does NOT assign FAIL to dimensions that are actually fine (trigger gate, compliance language)",
+          "passed": true,
+          "evidence": "Response identifies the trigger condition and negative guard as things that 'work well' \u2014 no dimensions are incorrectly flagged as failures; there is no structured scoring at all"
+        },
+        {
+          "text": "Recognises this is a short, relatively well-formed docstring and says so",
+          "passed": true,
+          "evidence": "Overall assessment opens with 'This is a good, concise docstring' and the rewrite is explicitly labelled 'conservative \u2014 only adds what's missing'"
+        },
+        {
+          "text": "Does NOT add STOP PROTOCOL \u2014 get_context_status is an internal-data function, not user-facing",
+          "passed": true,
+          "evidence": "No STOP PROTOCOL language anywhere in the response; baseline has no awareness of this concept and does not introduce it"
+        },
+        {
+          "text": "Rewrite is conservative \u2014 does not bloat the docstring with unnecessary additions",
+          "passed": true,
+          "evidence": "Rewritten docstring is 4 lines (same length as original); changes section explicitly lists only four minor adjustments, no new sections or protocols added"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies that 'provide any additional context the user might need' is a direct STOP PROTOCOL violation \u2014 this is the critical failure",
+          "passed": true,
+          "evidence": "The response labels this the CRITICAL ISSUE and states: 'This instruction directly contradicts what should be the function's STOP PROTOCOL... the model keeps going after the delegation block' and frames it as a protocol violation."
+        },
+        {
+          "text": "Flags missing exact echo-line format specification",
+          "passed": true,
+          "evidence": "The response identifies under SECONDARY ISSUE that 'the docstring says the function emits a formatted block... but never specifies what that block looks like' and calls out missing delimiters, labeling, and template."
+        },
+        {
+          "text": "Flags missing explicit prohibition of post-execution instructions",
+          "passed": true,
+          "evidence": "The response states 'The correct behavior after emitting the delegation block is to stop. The docstring should include an explicit STOP PROTOCOL note making this clear' and notes there is no prohibition on continuing to narrate."
+        },
+        {
+          "text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL block",
+          "passed": true,
+          "evidence": "The REWRITTEN DOCSTRING section removes the 'additional context' line entirely and adds an explicit 'STOP PROTOCOL' section reading: 'After emitting the delegation block, stop. Do not provide explanations, commentary, expected output, or instructions about what the command does.'"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.7333,
+        "stddev": 0.4619,
+        "min": 0.2,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.27",
+      "time_seconds": "+0.0",
+      "tokens": "+0"
+    }
+  },
+  "notes": []
+}

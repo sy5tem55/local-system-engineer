@@ -1,0 +1,35 @@
+{
+  "expectations": [
+    {
+      "text": "Produces an audit table covering all 8 dimensions",
+      "passed": true,
+      "evidence": "The audit table contains all 8 rows: '1. Section headers', '2. Compliance language', '3. GOOD/BAD examples', '4. Stop protocol', '5. Failure prohibitions', '6. Output format', '7. Trigger gate', '8. Verification' — each with a Score and Notes column."
+    },
+    {
+      "text": "Flags passive language ('should read', 'you may proceed') as a compliance issue",
+      "passed": true,
+      "evidence": "Dimension 2 scores FAIL with the note '\"You should read\", \"you may proceed\" — passive/hedged throughout', and the critical findings state: 'Compliance language: \"You should read the file first\" and \"you may proceed\" are hedged/passive directives — they must be replaced with imperative forms'."
+    },
+    {
+      "text": "Flags missing confirmation protocol — model should not proceed to write without explicit yes",
+      "passed": true,
+      "evidence": "Dimension 4 scores FAIL with note 'No STOP PROTOCOL; \"you may proceed to write\" implies continuation without waiting', and critical findings state the existing language 'permits the model to continue without a hard stop, violating the user-facing output requirement for a STOP PROTOCOL'."
+    },
+    {
+      "text": "Flags missing failure mode prohibition",
+      "passed": true,
+      "evidence": "Dimension 5 scores FAIL with note 'Names no forbidden action; never says \"do NOT write without explicit user yes\"', and critical findings state: 'The most critical failure mode — writing the file without waiting for explicit user confirmation — is never named or forbidden'."
+    },
+    {
+      "text": "Produces a rewritten docstring with imperative language and confirmation protocol added",
+      "passed": true,
+      "evidence": "The rewritten docstring replaces passive language with 'ALWAYS call read_file', 'Do NOT call diff_file', and includes a full STOP PROTOCOL block with the exact format line: 'Please review the diff above and reply YES to confirm the write, or NO to cancel.' plus explicit prohibition 'Proceeding to write without explicit user approval is a protocol violation'."
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "failed": 0,
+    "total": 5,
+    "pass_rate": 1.0
+  }
+}

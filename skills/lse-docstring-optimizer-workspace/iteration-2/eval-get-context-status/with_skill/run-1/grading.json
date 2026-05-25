@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Does NOT assign FAIL to dimensions that are actually fine (trigger gate, compliance language)",
+      "passed": true,
+      "evidence": "Trigger gate scored PASS ('Explicit numeric trigger: 5+ tool calls'); compliance language scored PASS ('Do NOT call this is imperative and unambiguous'). Neither was penalised."
+    },
+    {
+      "text": "Recognises this is a short, relatively well-formed docstring and says so",
+      "passed": true,
+      "evidence": "Scope assessment states '4 lines, single-purpose, internal-data function' and overall verdict states 'This docstring is already well-formed for its scope.'"
+    },
+    {
+      "text": "Does NOT add STOP PROTOCOL — get_context_status is an internal-data function, not user-facing",
+      "passed": true,
+      "evidence": "Dimension 4 scored N/A with note 'Internal/data-return — returns token stats for silent model use, not user-facing output'. No STOP PROTOCOL was added to the rewritten docstring."
+    },
+    {
+      "text": "Rewrite is conservative — does not bloat the docstring with unnecessary additions",
+      "passed": true,
+      "evidence": "Rewritten docstring remains 4 lines. Changes are minimal: 'explicitly' added to secondary trigger and final line converted from passive to active voice. No headers, examples, or stop protocol added."
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  }
+}

@@ -1,0 +1,20 @@
+Optimized get_context_status docstring — general analysis
+
+Strengths of original: trigger conditions present, downstream use mentioned.
+
+Main weaknesses:
+- Opens with implementation detail (querying llama.cpp) rather than what the agent gets back
+- No description of return value structure
+- No interpretation thresholds — "drives decisions" with no criteria for making them
+- Trigger conditions buried in prose rather than structured for quick parsing
+- Forward reference to "the system prompt" not useful at call-time
+
+Rewrite makes four changes:
+1. Opens with return value — tokens used, remaining, fill percentage 0-100
+2. Uses labeled sections ("When to call" / "When NOT to call") for cleaner parsing
+3. Adds a third trigger: before large prompt or tool-chain sequences
+4. Adds interpretation thresholds (~70% healthy, 70-90% consider compaction, 90%+ act)
+
+Conservative approach — notes that thresholds can be trimmed for token-constrained 
+environments. Does not add unnecessary sections. Does not add a STOP PROTOCOL since 
+this is a read-only function whose output is consumed internally by the model.

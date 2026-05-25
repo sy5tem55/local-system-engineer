@@ -1,0 +1,154 @@
+DOCSTRING REVIEW: diff_file
+
+Function signature:
+    def diff_file(self, path: str, new_content: str) -> str
+
+Current docstring:
+    """
+    Show a unified diff between the current file content and new_content.
+    You should read the file first to get the current content.
+    After showing the diff, you may proceed to write the file if the user approves.
+    This is useful before overwriting files so the user can see what will change.
+    Returns a unified diff string, or an error message if the file cannot be read.
+    """
+
+---
+
+OVERALL ASSESSMENT
+
+The docstring has a correct core idea but contains several significant problems that will cause a model to misuse or misunderstand this tool. The issues range from factual inaccuracies about how the tool works, to misleading behavioral guidance, to missing information the model needs to call the tool correctly.
+
+---
+
+ISSUE 1: FACTUALLY INCORRECT — "You should read the file first"
+
+Severity: High
+
+The docstring says "You should read the file first to get the current content." This implies that the model must separately read the file, then pass the content into diff_file. But based on the function signature, diff_file takes only a path and new_content — it does not take the old content as a parameter. The function itself is responsible for reading the file at the given path to get the current content.
+
+Telling the model to "read the file first" is misleading in two ways:
+1. It suggests the model needs to do something it does not need to do (the function handles this internally).
+2. It may cause the model to believe it needs to pass the read content somewhere, which the signature does not support.
+
+This instruction should be removed entirely, or replaced with a clear statement that the function reads the file at `path` automatically.
+
+---
+
+ISSUE 2: BEHAVIORAL GUIDANCE BELONGS OUTSIDE THE DOCSTRING
+
+Severity: Medium-High
+
+The sentence "After showing the diff, you may proceed to write the file if the user approves" is workflow guidance, not a description of what the function does. A docstring should describe the tool's behavior and contract. Embedding decision-making logic ("if the user approves") inside the docstring conflates the tool's specification with the agent's reasoning process.
+
+This causes two problems:
+- It ties the tool's description to a specific usage pattern, which may not always apply.
+- The word "may" is ambiguous — does it mean the model is permitted to, or that it should consider doing so? A model following this literally might interpret "after showing the diff" as a signal to always prompt the user next, which is not necessarily the right behavior in all contexts.
+
+If workflow guidance is needed, it belongs in a system prompt or agent instructions, not in the tool docstring.
+
+---
+
+ISSUE 3: "SHOW" IS THE WRONG VERB — RETURN BEHAVIOR IS UNDERSPECIFIED
+
+Severity: Medium
+
+The docstring opens with "Show a unified diff..." The verb "show" implies the function displays output somewhere (to a terminal, to the user). But the function returns a string — it does not show anything. The model is responsible for doing something with the returned string.
+
+A model reading "show" may:
+- Assume the function handles display and not bother surfacing the result to the user.
+- Be confused about whether it needs to relay the return value.
+
+The correct framing is "Returns a unified diff string between the current file content and new_content." The return behavior is already partially described in the last sentence, but the opening verb contradicts it.
+
+---
+
+ISSUE 4: ERROR RETURN IS UNDERSPECIFIED
+
+Severity: Medium
+
+The docstring says the function returns "an error message if the file cannot be read." This is too vague for a model that needs to handle errors correctly. A model parsing the return value needs to know:
+
+- Is the error return distinguishable from a valid diff? (e.g., does it start with a specific prefix, or is it just a plain string?)
+- What specific conditions trigger the error? "Cannot be read" could mean: file does not exist, permission denied, path is a directory, binary file, encoding error, etc.
+- Should the model treat an error return as a signal to stop, report to the user, or try something else?
+
+Without this information, a model cannot reliably detect that an error occurred versus receiving a diff that happens to look like an error message.
+
+---
+
+ISSUE 5: MISSING — WHAT HAPPENS WHEN THE FILE DOES NOT EXIST
+
+Severity: Medium
+
+A very common use case for diff_file would be generating a diff for a new file (no existing content). The docstring does not say whether this is supported. If the file at `path` does not exist:
+
+- Does the function return an error?
+- Does it treat the current content as empty and produce a diff showing all lines as additions?
+
+A model cannot know which behavior to expect without this being stated. If new-file diffs are not supported, the model should know to check existence first. If they are supported, the model should know it can safely call diff_file on new paths.
+
+---
+
+ISSUE 6: MISSING — FORMAT DETAILS OF THE RETURNED DIFF
+
+Severity: Low-Medium
+
+The docstring says the return is "a unified diff string" but provides no detail about format. For a model that will relay this to a user or parse it, useful details include:
+
+- Are filenames included in the diff header? If so, what labels are used (e.g., "original" vs "modified", or the actual path)?
+- Is the diff context-aware (how many lines of context)?
+- Is the output empty string if the content is identical?
+
+At minimum, the docstring should clarify what is returned when new_content is identical to the current file content, since this is a likely edge case.
+
+---
+
+ISSUE 7: INSTRUCTION TONE IS INCONSISTENT WITH A TOOL DOCSTRING
+
+Severity: Low
+
+Two sentences use second-person imperative ("You should...", "you may proceed..."). Tool docstrings should be declarative descriptions of what the tool does and returns. Second-person instructions blur the line between tool contract and agent instruction, which can cause confusion when the model is reasoning about which instructions take precedence.
+
+---
+
+SUMMARY OF ISSUES
+
+| # | Issue                                              | Severity     |
+|---|----------------------------------------------------|--------------|
+| 1 | Incorrectly tells model to read the file first     | High         |
+| 2 | Workflow guidance embedded in tool docstring       | Medium-High  |
+| 3 | "Show" implies display rather than return          | Medium       |
+| 4 | Error return is too vague to act on                | Medium       |
+| 5 | Behavior on nonexistent files is unspecified       | Medium       |
+| 6 | Diff format details missing (empty case, headers)  | Low-Medium   |
+| 7 | Second-person imperative tone is inappropriate     | Low          |
+
+---
+
+SUGGESTED REPLACEMENT DOCSTRING
+
+    """
+    Returns a unified diff string comparing the current content of the file at `path`
+    with `new_content`. The file is read automatically — do not read it separately before
+    calling this function.
+
+    Returns an empty string if the file content is identical to `new_content`.
+    Returns an error message string (prefixed with "Error:") if the file cannot be read
+    (e.g., file does not exist, permission denied). The function does not support
+    diffing against nonexistent files; if the file does not exist, an error is returned.
+
+    The diff uses standard unified diff format with the file path as the filename label
+    and three lines of context around each change.
+    """
+
+Notes on the suggested replacement:
+- Corrects the false "read first" instruction.
+- Removes embedded workflow guidance.
+- Replaces "show" with "returns".
+- Specifies behavior for identical content (empty string).
+- Specifies error format (prefixed with "Error:") so the model can detect errors reliably.
+- Specifies behavior for nonexistent files.
+- Adds format details (unified diff, filename label, context lines).
+- Uses declarative tone throughout.
+
+The exact details of the suggested replacement (error prefix, context lines, etc.) should be adjusted to match the actual implementation before finalizing.

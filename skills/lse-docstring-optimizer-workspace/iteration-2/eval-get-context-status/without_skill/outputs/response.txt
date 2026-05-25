@@ -1,0 +1,52 @@
+DOCSTRING REVIEW: get_context_status
+
+Function signature:
+    def get_context_status(self) -> str:
+
+Current docstring:
+    """
+    Query the llama.cpp server to get the current token usage and context fill percentage.
+    Call this when a session has had 5+ tool calls, or the user asks about context health.
+    Do NOT call this for simple single-tool queries.
+    Results drive compaction and hard-reset decisions described in the system prompt.
+    """
+
+---
+
+OVERALL ASSESSMENT
+
+This is a good, concise docstring for a monitoring/status function. It covers the three things a caller most needs to know: what the function does, when to call it, and when not to call it. There is one minor gap and one small improvement possible.
+
+---
+
+WHAT WORKS WELL
+
+1. Clear trigger condition with a concrete number ("5+ tool calls") — no ambiguity about when to call.
+2. Explicit negative guard ("Do NOT call this for simple single-tool queries") — reduces unnecessary overhead.
+3. The downstream usage note ("Results drive compaction and hard-reset decisions") gives the caller context for why the output matters.
+
+---
+
+MINOR GAPS
+
+1. Return format not described: The return type annotation is `-> str` but the docstring doesn't describe what the string looks like (JSON? plain text? a formatted report?). If downstream decisions depend on parsing specific fields like "token usage" or "context fill percentage", the caller needs to know the format.
+
+2. "Simple single-tool queries" is slightly undefined: The negative guard is useful, but "simple" is subjective. A brief clarification — e.g., "queries where only one tool call is needed to answer" — would make the gate unambiguous.
+
+---
+
+SUGGESTED REWRITE (conservative — only adds what's missing):
+
+    """
+    Queries the llama.cpp server for current token usage and context fill percentage.
+    Call this when a session has had 5+ tool calls, or when the user explicitly asks about context health.
+    Do NOT call this for simple single-tool queries (queries requiring only one tool call).
+    Returns a plain-text status string; use the result to inform compaction and hard-reset decisions per the system prompt.
+    """
+
+Changes made:
+- "query" → "queries" (declarative form consistent with tool docstrings)
+- Added "explicitly" to secondary trigger for precision
+- Added clarification of "simple single-tool queries"
+- Added brief return format description ("plain-text status string")
+- Made downstream usage line active ("use the result") rather than passive ("Results drive")

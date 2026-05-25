@@ -1,0 +1,73 @@
+DOCSTRING REVIEW: run_privileged
+
+OVERALL ASSESSMENT
+
+The docstring has a reasonable structure but has several issues that make it suboptimal for use as an AI tool function description. AI tool docstrings serve a different purpose than human-facing documentation — they guide model behavior, set boundaries, and communicate the tool's contract precisely. The current docstring conflates behavioral instructions with interface documentation and is missing critical safety-relevant details.
+
+---
+
+SPECIFIC ISSUES
+
+1. Title is redundant and adds no information
+   "PRIVILEGED COMMAND RUNNER" just repeats what "run_privileged" already says. A good one-liner should summarize the purpose or scope, not restate the name.
+
+2. "Use this for any command that needs sudo" is too broad and potentially unsafe
+   This phrasing could encourage overuse. An AI model reading this may invoke the function for commands that technically need sudo but should not be run at all, or where a safer non-privileged alternative exists. The docstring should establish criteria for when this tool is appropriate, not just say "use it whenever sudo is needed."
+
+3. The DELEGATION FORMAT section describes implementation behavior, not the tool's contract
+   From an AI tool perspective, what matters is: what does calling this function cause to happen, and what comes back? Internal formatting details ("Emits a formatted block") belong in implementation comments, not the tool description. The model needs to know the effect and the return value — it doesn't need to know the rendering format.
+
+4. The return value description is imprecise
+   "Returns the formatted delegation block as a string" tells you the type but not the semantics. Does the function block until the user runs the command? Does it return the block before or after the user acts? If the return value is purely the formatted string and execution happens out-of-band, the docstring should make clear that this function does NOT execute the command — it only produces the delegation artifact.
+
+5. Missing: what happens next / what the model should do after calling this
+   After calling run_privileged, should the model wait for user confirmation? Proceed as if the command ran? The current docstring buries one hint ("provide any additional context") inside the format block description, which is easy to miss and poorly positioned.
+
+6. Missing: parameter semantics
+   Neither `command` nor `reason` has any description. For a privileged command runner, the `reason` parameter is especially important — the model needs to know that this will be shown to the user and should be a clear, human-readable justification, not an internal note.
+
+7. Missing: scope or constraint on what commands are appropriate
+   No guidance on what kinds of commands belong here vs. should be refused outright. A safety-sensitive tool should be explicit.
+
+---
+
+SUGGESTED REVISED DOCSTRING
+
+def run_privileged(self, command: str, reason: str) -> str:
+    """
+    Delegates a privileged shell command to the user for manual execution.
+
+    Use this tool when a task requires a command that needs elevated permissions
+    (e.g., sudo). Do NOT use this as a general command runner — only invoke it
+    when elevated permissions are strictly necessary and the command is safe,
+    well-understood, and directly relevant to the user's stated goal.
+
+    This function does NOT execute the command. It formats a delegation block
+    that the user must run manually in their terminal. After calling this tool,
+    explain what the command does and what output or side effects the user
+    should expect. Do not assume the command has been run until the user
+    confirms it.
+
+    Args:
+        command: The exact shell command to be run with elevated privileges.
+                 Must be a complete, ready-to-run command string.
+        reason:  A concise, human-readable explanation of why elevated
+                 permissions are required. This is shown to the user as
+                 justification, so write it clearly and honestly.
+
+    Returns:
+        A formatted string containing the delegation block to present to
+        the user. The command has NOT been executed.
+    """
+
+---
+
+SUMMARY OF KEY CHANGES
+
+- Replaced the redundant title with a clear one-line purpose statement
+- Added explicit guidance on when NOT to use the tool
+- Clarified that this function does not execute the command (critical for model safety reasoning)
+- Described post-call model behavior (explain, don't assume execution)
+- Added parameter-level documentation with semantic guidance
+- Made the return value semantically precise, not just type-correct
+- Removed internal implementation details (formatting mechanics) from the contract description

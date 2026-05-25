@@ -1,0 +1,32 @@
+## Audit — get_context_status
+
+**Scope assessment:** 4 lines, single-purpose, internal-data function. Applying proportionality rules — short/single-purpose category. Most structural dimensions are N/A. The function returns data the model processes silently; it is NOT user-facing output.
+
+| Dimension              | Score | Notes                                                                 |
+|------------------------|-------|-----------------------------------------------------------------------|
+| 1. Section headers     | N/A   | Single-purpose, 4-line docstring; headers would be over-engineering   |
+| 2. Compliance language | PASS  | "Do NOT call this" is imperative and unambiguous                      |
+| 3. GOOD/BAD examples   | N/A   | Single behavioural rule; "5+ tool calls" is already concrete enough  |
+| 4. Stop protocol       | N/A   | Internal/data-return — returns token stats for silent model use, not user-facing output |
+| 5. Failure prohibitions| PASS  | "Do NOT call this for simple single-tool queries" names the failure mode explicitly |
+| 6. Output format       | N/A   | Returns data for internal model use; no user-visible format required  |
+| 7. Trigger gate        | PASS  | Explicit numeric trigger: "5+ tool calls"; secondary: "user asks about context health" |
+| 8. Verification        | N/A   | Function does not write or modify state                               |
+
+**Critical findings:**
+- This is a short, well-formed docstring. Two minor items worth monitoring but neither warrants a rewrite:
+- WARN — Compliance language (minor): "Results drive compaction and hard-reset decisions described in the system prompt" is informational but slightly passive. Not a compliance risk at this scope.
+- WARN — Trigger gate (minor): The secondary trigger "user asks about context health" is informal compared to the numeric "5+" trigger. Acceptable at this scope but could be tightened if the docstring grows.
+
+**Overall verdict:** This docstring is already well-formed for its scope. It has a clear imperative prohibition, an explicit numeric trigger, and correctly omits headers, examples, and stop protocols that would only add noise. The rewrite below makes two minimal adjustments — converting the passive closing line to an active directive and tightening the secondary trigger — without bloating the docstring.
+
+**Rewritten docstring:**
+```python
+def get_context_status(self) -> str:
+    """
+    Query the llama.cpp server to get current token usage and context fill percentage.
+    Call this when a session has had 5+ tool calls, or when the user explicitly asks about context health.
+    Do NOT call this for simple single-tool queries.
+    Use the result to decide whether to trigger compaction or hard-reset per the system prompt.
+    """
+```

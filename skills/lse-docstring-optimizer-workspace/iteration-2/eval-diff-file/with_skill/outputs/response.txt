@@ -1,0 +1,86 @@
+## Audit — diff_file
+
+**Scope assessment:** Medium / multi-rule (5 lines, 3+ behavioural rules: read-first requirement, write-gating on user approval, output format). Full audit applies.
+
+**Function category assessment:** User-facing output — `diff_file` produces a unified diff block that the USER reads and responds to before the model may write. This function REQUIRES a STOP PROTOCOL.
+
+| Dimension              | Score | Notes                                                                 |
+|------------------------|-------|-----------------------------------------------------------------------|
+| 1. Section headers     | FAIL  | Flat prose; no capitalised headers separating rule blocks             |
+| 2. Compliance language | FAIL  | "You should read", "you may proceed" — passive/hedged throughout      |
+| 3. GOOD/BAD examples   | FAIL  | No examples; ambiguous rule (when is user approval sufficient?) unillustrated |
+| 4. Stop protocol       | FAIL  | No STOP PROTOCOL; "you may proceed to write" implies continuation without waiting |
+| 5. Failure prohibitions| FAIL  | Names no forbidden action; never says "do NOT write without explicit user yes" |
+| 6. Output format       | WARN  | "Returns a unified diff string" described but no quoted format example |
+| 7. Trigger gate        | WARN  | Purpose stated informally ("useful before overwriting files"); no explicit condition |
+| 8. Verification        | N/A   | diff_file does not write or modify state (write is a separate subsequent action) |
+
+**Critical findings:**
+- [FAIL] Stop protocol: "you may proceed to write the file if the user approves" permits the model to continue without a hard stop, violating the user-facing output requirement for a STOP PROTOCOL that prohibits any output beyond a single echo line.
+- [FAIL] Compliance language: "You should read the file first" and "you may proceed" are hedged/passive directives — they must be replaced with imperative forms ("ALWAYS read the file first", "do NOT write until the user explicitly approves").
+- [FAIL] Failure prohibitions: The most critical failure mode — writing the file without waiting for explicit user confirmation — is never named or forbidden; "Proceeding to write without explicit user approval is a protocol violation" is absent.
+- [FAIL] Section headers: Five-line flat prose provides no structural landmarks; rule blocks (precondition, output, gating condition) are indistinguishable.
+- [FAIL] GOOD/BAD examples: No examples illustrate when user approval is considered sufficient, leaving the compliance boundary undefined.
+- [WARN] Output format: "unified diff string" is named but no inline Format: example shows what the diff block must look like (e.g. leading +/- lines, header line format).
+- [WARN] Trigger gate: "useful before overwriting files" is informal; no explicit condition (e.g. "call this function whenever the user asks to modify an existing file and you have the new content ready").
+
+**Rewritten docstring:**
+```python
+def diff_file(self, path: str, new_content: str) -> str:
+    """
+    Show a unified diff between the current file content and new_content.
+
+    PRECONDITION
+    ALWAYS call read_file(path) before calling this function to obtain the
+    current content. Do NOT call diff_file with a guessed or assumed current
+    content — doing so is a protocol violation.
+
+    TRIGGER
+    Call this function whenever the user asks to modify an existing file and
+    you have the proposed new content ready. Always show the diff before any
+    write operation.
+
+    OUTPUT FORMAT
+    Returns a unified diff string. The block must be rendered as-is so the user
+    can read it. Example format:
+      --- path/to/file
+      +++ path/to/file (new)
+      @@ -1,4 +1,4 @@
+       unchanged line
+      -removed line
+      +added line
+
+    STOP PROTOCOL — mandatory, no exceptions:
+    After calling this function, write exactly ONE closing line so the user
+    sees the diff without expanding the tool result card:
+      Format: "Please review the diff above and reply YES to confirm the write, or NO to cancel."
+    After that single line, output nothing further.
+    Do NOT proceed to write the file, add post-execution instructions, hints,
+    or bash snippets. Do NOT suggest what will happen next.
+    Your next response must begin only after the user pastes their confirmation.
+    Anything beyond the single confirmation-request line before user input is a
+    protocol violation.
+
+    FAILURE MODE PROHIBITIONS
+    - Do NOT call write_file (or any write operation) until the user has
+      explicitly replied YES in the next message. Proceeding to write without
+      explicit user approval is a protocol violation.
+    - Do NOT assume silence or partial agreement counts as approval.
+    - Do NOT call diff_file without first calling read_file — skipping the
+      read step is a protocol violation.
+
+    GOOD/BAD EXAMPLES
+
+    GOOD — model stops after one line and waits:
+      [calls diff_file]
+      "Please review the diff above and reply YES to confirm the write, or NO to cancel."
+      [waits for user input]
+
+    BAD — model continues after diff (protocol violation):
+      [calls diff_file]
+      "Here is the diff. I'll go ahead and apply it now since it looks correct."
+      [calls write_file immediately]
+
+    Returns a unified diff string, or an error message if the file cannot be read.
+    """
+```

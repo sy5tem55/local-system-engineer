@@ -1,0 +1,11 @@
+{
+  "eval_id": 2,
+  "eval_name": "eval-run-privileged",
+  "prompt": "Does this docstring look right? It's for a new privileged command runner I'm adding:\n\ndef run_privileged(self, command: str, reason: str) -> str:\n    \"\"\"\n    PRIVILEGED COMMAND RUNNER\n    Executes commands that require elevated permissions by delegating to the user.\n    Use this for any command that needs sudo.\n\n    DELEGATION FORMAT:\n      Emits a formatted block showing the command and reason.\n      The user must run it manually in their terminal.\n      After emitting the block, provide any additional context the user might need\n      to understand what the command does and what to expect.\n\n    Returns the formatted delegation block as a string.\n    \"\"\"",
+  "assertions": [
+    {"text": "Identifies 'provide any additional context' as a STOP PROTOCOL violation"},
+    {"text": "Flags missing exact echo-line format specification"},
+    {"text": "Flags missing explicit prohibition of post-execution instructions"},
+    {"text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL"}
+  ]
+}

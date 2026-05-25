@@ -1,0 +1,303 @@
+{
+  "metadata": {
+    "skill_name": "lse-docstring-optimizer",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-25T02:00:01Z",
+    "evals_run": [
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces an audit table covering all 8 dimensions",
+          "passed": true,
+          "evidence": "Full 8-row audit table present with FAIL/WARN/N/A for each dimension"
+        },
+        {
+          "text": "Flags passive language ('should read', 'you may proceed') as a compliance issue",
+          "passed": true,
+          "evidence": "WARN on dimension 2: 'you may proceed and you should read are hedged/permissive'"
+        },
+        {
+          "text": "Flags missing confirmation protocol",
+          "passed": true,
+          "evidence": "FAIL on dimension 5: 'Nothing forbids the model from skipping the read_file step or writing without approval'"
+        },
+        {
+          "text": "Flags missing failure mode prohibition",
+          "passed": true,
+          "evidence": "FAIL on dimension 5 explicitly; rewritten docstring adds FAILURE MODE PROHIBITIONS section"
+        },
+        {
+          "text": "Produces a rewritten docstring with imperative language and confirmation protocol",
+          "passed": true,
+          "evidence": "Full rewrite present with GATE, READ-FIRST RULE, APPROVAL GATE, STOP PROTOCOL, FAILURE MODE PROHIBITIONS \u2014 all imperative"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.25,
+        "passed": 1,
+        "failed": 3,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)",
+          "passed": false,
+          "evidence": "Trigger gate assigned WARN (acceptable) but also assigns FAIL to stop protocol \u2014 get_context_status is an internal read-only function; adding STOP PROTOCOL is over-engineering"
+        },
+        {
+          "text": "Recognises this is a relatively well-formed short docstring and says so",
+          "passed": false,
+          "evidence": "Assigns 4 FAILs and 2 WARNs; treats a 4-line well-formed docstring as severely deficient \u2014 no acknowledgment that it is appropriate for its scope"
+        },
+        {
+          "text": "Rewrite is conservative \u2014 does not bloat the docstring",
+          "passed": false,
+          "evidence": "Rewrite adds GATE, RESULT USAGE, STOP PROTOCOL blocks to a function whose original 4 lines were appropriate \u2014 significant over-engineering"
+        },
+        {
+          "text": "Any suggested improvements are genuinely useful",
+          "passed": true,
+          "evidence": "GOOD/BAD example for the 5-tool-call boundary and clarifying 'simple single-tool query' are genuinely useful suggestions"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies 'provide any additional context' as a STOP PROTOCOL violation",
+          "passed": true,
+          "evidence": "Critical finding #1: 'docstring actively instructs the model to provide any additional context \u2014 this is the exact P2/P3 failure pattern'"
+        },
+        {
+          "text": "Flags missing exact echo-line format specification",
+          "passed": true,
+          "evidence": "WARN on dimension 6: 'Says formatted block but never quotes the exact format template'"
+        },
+        {
+          "text": "Flags missing explicit prohibition of post-execution instructions",
+          "passed": true,
+          "evidence": "FAIL on dimension 5: 'The key failure mode (adding follow-up hints) is not forbidden'"
+        },
+        {
+          "text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL",
+          "passed": true,
+          "evidence": "Rewrite removes the instruction entirely; adds full STOP PROTOCOL block with explicit prohibitions and echo-line format"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.0,
+        "passed": 0,
+        "failed": 5,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Produces an audit table covering all 8 dimensions",
+          "passed": false,
+          "evidence": "No audit table. Provides a numbered list of general software engineering issues"
+        },
+        {
+          "text": "Flags passive language ('should read', 'you may proceed') as a compliance issue",
+          "passed": false,
+          "evidence": "Notes procedural instructions as 'category error' but not framed as compliance language issue"
+        },
+        {
+          "text": "Flags missing confirmation protocol",
+          "passed": false,
+          "evidence": "Does not mention confirmation protocol, protocol violation framing, or LSE-specific approval gate"
+        },
+        {
+          "text": "Flags missing failure mode prohibition",
+          "passed": false,
+          "evidence": "No mention of failure mode prohibitions or LSE failure patterns"
+        },
+        {
+          "text": "Produces a rewritten docstring with imperative language and confirmation protocol",
+          "passed": false,
+          "evidence": "Rewrite adds Args/Returns sections \u2014 standard Python docstring improvement, not LSE compliance rewrite"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.75,
+        "passed": 3,
+        "failed": 1,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)",
+          "passed": true,
+          "evidence": "Acknowledges trigger conditions and downstream use as strengths; does not over-flag the existing compliance language"
+        },
+        {
+          "text": "Recognises this is a relatively well-formed short docstring and says so",
+          "passed": true,
+          "evidence": "Opens with 'Strengths of original: trigger conditions present' \u2014 explicitly acknowledges what works"
+        },
+        {
+          "text": "Rewrite is conservative \u2014 does not bloat the docstring",
+          "passed": true,
+          "evidence": "Adds 4 specific improvements without restructuring; notes thresholds can be trimmed; explicitly declines to add STOP PROTOCOL"
+        },
+        {
+          "text": "Any suggested improvements are genuinely useful",
+          "passed": false,
+          "evidence": "Interpretation thresholds (70%/90%) are not present in the system prompt \u2014 adding them to the docstring duplicates guidance that belongs in the system prompt, not the tool"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.25,
+        "passed": 1,
+        "failed": 3,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Identifies 'provide any additional context' as a STOP PROTOCOL violation",
+          "passed": false,
+          "evidence": "Notes post-call behavior is missing guidance but never identifies 'provide any additional context' as an active violation \u2014 frames it as a gap, not an anti-pattern"
+        },
+        {
+          "text": "Flags missing exact echo-line format specification",
+          "passed": false,
+          "evidence": "Mentions format is 'internal implementation detail' \u2014 does not flag missing echo-line template as a problem"
+        },
+        {
+          "text": "Flags missing explicit prohibition of post-execution instructions",
+          "passed": false,
+          "evidence": "No mention of prohibition pattern or protocol violation framing"
+        },
+        {
+          "text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL",
+          "passed": true,
+          "evidence": "Revised docstring adds 'expected model behavior after the call' section, removes commentary instruction \u2014 partially correct though not LSE-framed"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 0.75,
+        "stddev": 0.433,
+        "min": 0.25,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.3333,
+        "stddev": 0.3819,
+        "min": 0.0,
+        "max": 0.75
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.42",
+      "time_seconds": "+0.0",
+      "tokens": "+0"
+    }
+  },
+  "notes": []
+}
