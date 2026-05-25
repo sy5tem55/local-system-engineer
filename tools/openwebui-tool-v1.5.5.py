@@ -527,4 +527,51 @@ class Tools:
             )
             slots = resp.json()
             if not slots:
-                return "No active slots found on llama.
+                return "No active slots found on llama.cpp server."
+            s = slots[0]
+
+            # v1.5.4 fix: llama-server build >=9307 uses n_prompt_tokens, not n_past.
+            # n_past does not exist in the /slots response; s.get("n_past", 0) always
+            # returned 0, making every context check report 0% fill.
+            n_prompt = s.get("n_prompt_tokens", 0)
+            n_ctx    = s.get("n_ctx", 65536)
+            n_cache  = s.get("n_prompt_tokens_cache", 0)
+            n_proc   = s.get("n_prompt_tokens_processed", 0)
+
+            # n_decoded and n_remain live inside next_token[0]; n_predict in params
+            next_tok  = s.get("next_token", [{}])
+            nt        = next_tok[0] if next_tok else {}
+            n_decoded = nt.get("n_decoded", 0)
+            n_remain  = nt.get("n_remain", -1)
+            n_predict = s.get("params", {}).get("n_predict", 0)
+
+            pct       = round(n_prompt / n_ctx * 100, 1) if n_ctx   else 0.0
+            cache_pct = round(n_cache  / n_prompt * 100) if n_prompt else 0
+
+            if pct >= 85:
+                status = "🔴 CRITICAL — HARD RESET required before next tool call."
+            elif pct >= 70:
+                status = "🟠 HIGH — COMPACTION required before next tool call."
+            elif pct >= 50:
+                status = "🟡 ELEVATED — minimise tool output verbosity."
+            else:
+                status = "🟢 OK — normal operation."
+
+            # Flag if the last generation was cut off by the max_tokens cap.
+            truncation = ""
+            if n_predict > 0 and n_remain == 0 and n_decoded >= n_predict:
+                truncation = (
+                    f"⚠️  Last response truncated at {n_decoded:,} tokens "
+                    f"(hit max_tokens={n_predict} cap — raise in OpenWebUI model settings).\n"
+                )
+
+            return (
+                f"Context: {n_prompt:,} / {n_ctx:,} tokens ({pct}%)\n"
+                f"Prefix cache: {n_cache:,} cached / {n_proc:,} processed "
+                f"({cache_pct}% hit rate)\n"
+                f"Last generation: {n_decoded:,} tokens\n"
+                f"{truncation}"
+                f"Status: {status}"
+            )
+        except Exception as e:
+            return f"ERROR querying llama.cpp: {str(e)}"
