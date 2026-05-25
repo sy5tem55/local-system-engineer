@@ -1,0 +1,78 @@
+{
+  "skill_name": "lse-version-manager",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Log this version. We just shipped prompt v0.5.2 — removed the SUDO DELEGATION FORMAT section, added 'DO NOT call again.' to the sudo_delegation_block one-liner, and added the KB path to KNOWLEDGE BASE.",
+      "expected_output": "Reads prompts/CHANGELOG.md first. Drafts an entry in the correct format (## vX.Y.Z — YYYY-MM-DD, Changes from vX.Y.Z-1: bulleted list). Also drafts VERSION.md updates: new Current Versions row, new Version History row, Unpaired Versions updated. Asks for confirmation before writing. Does not write immediately.",
+      "assertions": [
+        {
+          "text": "Reads prompts/CHANGELOG.md before drafting (Step 1 of Operation A)",
+          "type": "qualitative"
+        },
+        {
+          "text": "Drafted entry uses correct format: ## v0.5.2 — <date> header, Changes from v0.5.1: bulleted list",
+          "type": "qualitative"
+        },
+        {
+          "text": "Entry names all three changes: SUDO DELEGATION FORMAT removal, 'DO NOT call again.', KB path",
+          "type": "qualitative"
+        },
+        {
+          "text": "Also drafts VERSION.md updates: Current Versions row + Version History row + Unpaired block",
+          "type": "qualitative"
+        },
+        {
+          "text": "Asks for confirmation before writing — does not write immediately",
+          "type": "qualitative"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Which versions haven't been tested yet?",
+      "expected_output": "Reads VERSION.md, specifically the Unpaired Versions and Co-test Matrix sections. Reports unpaired tool versions, unpaired prompt versions, and the next recommended eval pairing. Does NOT write anything — read-only operation.",
+      "assertions": [
+        {
+          "text": "Reads VERSION.md before responding (does not answer from memory)",
+          "type": "qualitative"
+        },
+        {
+          "text": "Reports unpaired tool versions and unpaired prompt versions as separate lists",
+          "type": "qualitative"
+        },
+        {
+          "text": "Identifies the next recommended eval pairing (most recent tool + most recent prompt)",
+          "type": "qualitative"
+        },
+        {
+          "text": "Makes no writes — Operation B is read-only",
+          "type": "qualitative"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "What changed in v1.5.4?",
+      "expected_output": "Classifies v1.5.4 as a tool version (v1.x.x pattern). Reads the header of tools/openwebui-tool-v1.5.4.py. Finds and quotes the v1.5.4 entry from the Changelog: block verbatim. No writes.",
+      "assertions": [
+        {
+          "text": "Correctly classifies v1.5.4 as a tool version based on the v1.x.x pattern",
+          "type": "qualitative"
+        },
+        {
+          "text": "Reads tools/openwebui-tool-v1.5.4.py (not the CHANGELOG.md) to find the entry",
+          "type": "qualitative"
+        },
+        {
+          "text": "Quotes the v1.5.4 changelog entry — mentions get_context_status field-name fix and sudo READ-FIRST RULE",
+          "type": "qualitative"
+        },
+        {
+          "text": "Makes no writes — Operation C is read-only",
+          "type": "qualitative"
+        }
+      ]
+    }
+  ]
+}
