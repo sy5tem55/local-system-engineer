@@ -1,0 +1,9 @@
+{
+  "expectations": [
+    {"text": "Identifies 'provide any additional context' as a STOP PROTOCOL violation", "passed": false, "evidence": "Notes post-call behavior is missing guidance but never identifies 'provide any additional context' as an active violation — frames it as a gap, not an anti-pattern"},
+    {"text": "Flags missing exact echo-line format specification", "passed": false, "evidence": "Mentions format is 'internal implementation detail' — does not flag missing echo-line template as a problem"},
+    {"text": "Flags missing explicit prohibition of post-execution instructions", "passed": false, "evidence": "No mention of prohibition pattern or protocol violation framing"},
+    {"text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL", "passed": true, "evidence": "Revised docstring adds 'expected model behavior after the call' section, removes commentary instruction — partially correct though not LSE-framed"}
+  ],
+  "summary": {"passed": 1, "failed": 3, "total": 4, "pass_rate": 0.25}
+}

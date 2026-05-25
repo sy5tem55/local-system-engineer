@@ -1,0 +1,11 @@
+{
+  "eval_id": 3,
+  "eval_name": "eval-get-context-status",
+  "prompt": "Optimize this docstring for the LSE:\n\ndef get_context_status(self) -> str:\n    \"\"\"\n    Query the llama.cpp server to get the current token usage and context fill percentage.\n    Call this when a session has had 5+ tool calls, or the user asks about context health.\n    Do NOT call this for simple single-tool queries.\n    Results drive compaction and hard-reset decisions described in the system prompt.\n    \"\"\"",
+  "assertions": [
+    {"text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)"},
+    {"text": "Recognises this is a relatively well-formed short docstring and says so"},
+    {"text": "Rewrite is conservative — does not bloat the docstring"},
+    {"text": "Any suggested improvements are genuinely useful"}
+  ]
+}

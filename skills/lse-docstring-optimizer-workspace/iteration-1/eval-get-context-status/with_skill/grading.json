@@ -1,0 +1,9 @@
+{
+  "expectations": [
+    {"text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)", "passed": false, "evidence": "Trigger gate assigned WARN (acceptable) but also assigns FAIL to stop protocol — get_context_status is an internal read-only function; adding STOP PROTOCOL is over-engineering"},
+    {"text": "Recognises this is a relatively well-formed short docstring and says so", "passed": false, "evidence": "Assigns 4 FAILs and 2 WARNs; treats a 4-line well-formed docstring as severely deficient — no acknowledgment that it is appropriate for its scope"},
+    {"text": "Rewrite is conservative — does not bloat the docstring", "passed": false, "evidence": "Rewrite adds GATE, RESULT USAGE, STOP PROTOCOL blocks to a function whose original 4 lines were appropriate — significant over-engineering"},
+    {"text": "Any suggested improvements are genuinely useful", "passed": true, "evidence": "GOOD/BAD example for the 5-tool-call boundary and clarifying 'simple single-tool query' are genuinely useful suggestions"}
+  ],
+  "summary": {"passed": 1, "failed": 3, "total": 4, "pass_rate": 0.25}
+}

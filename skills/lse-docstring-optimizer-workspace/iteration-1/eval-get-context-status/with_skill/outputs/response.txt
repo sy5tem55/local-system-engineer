@@ -1,0 +1,77 @@
+## Audit — get_context_status
+
+| Dimension              | Score | Notes                                                                 |
+|------------------------|-------|-----------------------------------------------------------------------|
+| 1. Section headers     | FAIL  | Flat prose; no ALL-CAPS structural headers anywhere                   |
+| 2. Compliance language | PASS  | "Do NOT call" is imperative; "Call this when" is directive            |
+| 3. GOOD/BAD examples   | FAIL  | No examples for the ambiguous "5+ tool calls" trigger boundary        |
+| 4. Stop protocol       | FAIL  | No STOP PROTOCOL; model may narrate context stats or suggest actions  |
+| 5. Failure prohibitions| WARN  | "Do NOT call this for simple single-tool queries" present but the     |
+|                        |       | key failure (calling on turn 1 or narrating results) is not forbidden |
+|                        |       | with "protocol violation" language                                    |
+| 6. Output format       | FAIL  | No format specified for what the model should say after calling this  |
+| 7. Trigger gate        | WARN  | Numeric trigger present ("5+ tool calls") but gate is informal;       |
+|                        |       | "user asks about context health" is too broad with no criteria        |
+| 8. Verification        | N/A   | Read-only query; no write or state modification                       |
+
+
+**Critical findings:**
+
+- [FAIL] Stop protocol: No STOP PROTOCOL block means the model will narrate context
+  stats, add suggestions like "you may want to compact now", or prompt the user for
+  follow-up action — the exact P2/P3 failure pattern seen with sudo_delegation_block.
+
+- [FAIL] Section headers: All rules are in flat prose; without ALL-CAPS headers the
+  model must read the entire docstring linearly and is more likely to miss or
+  deprioritise individual rules at inference time.
+
+- [FAIL] GOOD/BAD examples: The "5+ tool calls" boundary is ambiguous — does turn 5
+  count, or only turns after 5? Without a GOOD/BAD pair the model will misapply the
+  gate, matching the S1 failure class (get_context_status called on turn 1).
+
+- [FAIL] Output format: "Results drive compaction and hard-reset decisions" implies
+  the model should do something with the output, but there is no specified format for
+  how to report the result or what to say to the user — this causes drift between runs.
+
+- [WARN] Trigger gate: "user asks about context health" is too broad and has no
+  stopping criterion; a user saying "are you doing okay?" could plausibly trigger a
+  call under this wording.
+
+- [WARN] Failure prohibitions: The existing "Do NOT call" prohibition covers eager
+  calling but does not explicitly forbid narrating results or acting on them without
+  user input; neither prohibition uses "protocol violation" language, so the model
+  may treat them as advisory.
+
+
+**Rewritten docstring:**
+
+```python
+def get_context_status(self) -> str:
+    """
+    Query the llama.cpp server for current token usage and context fill percentage.
+
+    GATE — when to call this:
+      Call this function before responding on any turn where you have made 5 or more
+      tool calls in the current session, OR when the user explicitly asks about
+      context health (e.g. "how full is your context?", "are you running low?").
+      Count tool calls from the start of the session, not from the last reset.
+      GOOD: Turn 6, you have made 5 tool calls — call before replying.  ← gate met
+      BAD:  Turn 2, first tool call of the session — do not call.        ← gate not met
+      BAD:  User says "are you doing okay?" (general check-in) — do not call. ← not a context query
+      Calling this function when the gate condition is not met is a protocol violation.
+
+    RESULT USAGE:
+      The returned data drives compaction and hard-reset decisions as described in the
+      system prompt. Apply those rules silently — do NOT narrate the raw token counts
+      or fill percentage to the user unless they explicitly asked for the number.
+
+    STOP PROTOCOL — mandatory, no exceptions:
+      After calling this function, write exactly ONE closing line that reports status.
+      Format: "Context is at <fill_pct>% — [within limits / approaching limit / limit reached]."
+      After that single line, output nothing further until the user responds.
+      Do NOT add suggestions such as "you may want to compact now" or "consider a reset".
+      Do NOT pre-empt compaction or reset actions — wait for user input if action is needed.
+      Do NOT narrate token counts, server response fields, or internal thresholds.
+      Anything beyond the single status line before user input is a protocol violation.
+    """
+```

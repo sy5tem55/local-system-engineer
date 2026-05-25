@@ -1,0 +1,11 @@
+{
+  "eval_id": 3,
+  "eval_name": "eval-3-midsession",
+  "prompt": "We're halfway through the eval session. We've finished all the S tests (14/15 — S3 was a partial) and all the P tests (15/15). What do we run next and in what order?",
+  "assertions": [
+    {"text": "Response gives correct next order: W → M → A"},
+    {"text": "Response identifies A1 as a 6-turn multi-message test in one conversation"},
+    {"text": "Response warns about the LUCIFER hostname trap in A1 (or the 'don't substitute hostname' note)"},
+    {"text": "Response does NOT suggest re-running or revisiting already-completed S tests"}
+  ]
+}

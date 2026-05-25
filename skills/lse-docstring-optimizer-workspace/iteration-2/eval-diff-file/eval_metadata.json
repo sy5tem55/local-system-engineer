@@ -1,0 +1,12 @@
+{
+  "eval_id": 1,
+  "eval_name": "eval-diff-file",
+  "prompt": "Review this docstring before I add it to the LSE tool:\n\ndef diff_file(self, path: str, new_content: str) -> str:\n    \"\"\"\n    Show a unified diff between the current file content and new_content.\n    You should read the file first to get the current content.\n    After showing the diff, you may proceed to write the file if the user approves.\n    This is useful before overwriting files so the user can see what will change.\n    Returns a unified diff string, or an error message if the file cannot be read.\n    \"\"\"",
+  "assertions": [
+    {"text": "Produces an audit table covering all 8 dimensions"},
+    {"text": "Flags passive language ('should read', 'you may proceed') as a compliance issue"},
+    {"text": "Flags missing confirmation protocol — model should not proceed to write without explicit yes"},
+    {"text": "Flags missing failure mode prohibition"},
+    {"text": "Produces a rewritten docstring with imperative language and confirmation protocol added"}
+  ]
+}

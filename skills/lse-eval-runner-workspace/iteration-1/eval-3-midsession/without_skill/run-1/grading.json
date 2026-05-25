@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Response gives correct next order: W \u2192 M \u2192 A",
+      "passed": true,
+      "evidence": "Gives W \u2192 M \u2192 A order correctly with reasoning."
+    },
+    {
+      "text": "Response identifies A1 as a 6-turn multi-message test in one conversation",
+      "passed": false,
+      "evidence": "No mention of A1 being multi-turn or requiring a single continuous conversation."
+    },
+    {
+      "text": "Response warns about the LUCIFER hostname trap in A1 (or the 'don't substitute hostname' note)",
+      "passed": false,
+      "evidence": "No mention of the hostname trap or any A1-specific caveats."
+    },
+    {
+      "text": "Response does NOT suggest re-running or revisiting already-completed S tests",
+      "passed": false,
+      "evidence": "Recommends 'revisit S3' and 'schedule a re-run alongside W tests' \u2014 S tests are done, this is incorrect guidance."
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 3,
+    "total": 4,
+    "pass_rate": 0.25
+  }
+}

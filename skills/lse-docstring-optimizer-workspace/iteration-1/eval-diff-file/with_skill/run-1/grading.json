@@ -1,0 +1,10 @@
+{
+  "expectations": [
+    {"text": "Produces an audit table covering all 8 dimensions", "passed": true, "evidence": "Full 8-row audit table present with FAIL/WARN/N/A for each dimension"},
+    {"text": "Flags passive language ('should read', 'you may proceed') as a compliance issue", "passed": true, "evidence": "WARN on dimension 2: 'you may proceed and you should read are hedged/permissive'"},
+    {"text": "Flags missing confirmation protocol", "passed": true, "evidence": "FAIL on dimension 5: 'Nothing forbids the model from skipping the read_file step or writing without approval'"},
+    {"text": "Flags missing failure mode prohibition", "passed": true, "evidence": "FAIL on dimension 5 explicitly; rewritten docstring adds FAILURE MODE PROHIBITIONS section"},
+    {"text": "Produces a rewritten docstring with imperative language and confirmation protocol", "passed": true, "evidence": "Full rewrite present with GATE, READ-FIRST RULE, APPROVAL GATE, STOP PROTOCOL, FAILURE MODE PROHIBITIONS — all imperative"}
+  ],
+  "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0}
+}

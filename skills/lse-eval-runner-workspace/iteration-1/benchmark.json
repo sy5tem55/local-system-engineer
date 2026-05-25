@@ -1,0 +1,293 @@
+{
+  "metadata": {
+    "skill_name": "lse:eval-runner",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-25T01:02:45Z",
+    "evals_run": [
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Response uses the pre-run checklist (mentions llama-server, SearxNG, or clean conversation checks)",
+          "passed": true,
+          "evidence": "Asks for curl localhost:8080/health, curl localhost:8088, and fresh conversation \u2014 all three remaining checklist items."
+        },
+        {
+          "text": "Response does NOT ask what eval tasks to run or what output format is expected",
+          "passed": true,
+          "evidence": "Goes straight to checklist without asking what the eval is."
+        },
+        {
+          "text": "Response shows the correct test category order (S \u2192 P \u2192 W \u2192 M \u2192 A or equivalent)",
+          "passed": true,
+          "evidence": "Lists full run order: S1\u2192S2\u2192S3\u2192S4\u2192S5, P1\u2192P2\u2192P3\u2192P4\u2192P5, W1\u2192W2\u2192W3, M1\u2192M2\u2192M3, A1\u2192A2\u2192A3."
+        },
+        {
+          "text": "Response correctly identifies which checklist items are already confirmed from user message",
+          "passed": true,
+          "evidence": "Marks tool v1.5.4, prompt v0.5, routing filter, context monitor filter as [x] confirmed. Asks only for the remaining 3."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Response gives the correct score: Partial (2)",
+          "passed": true,
+          "evidence": "Opens with 'Score P2 as Partial (2)' and gives score 2/3 in the notes line."
+        },
+        {
+          "text": "Response identifies that the delegation block being present is the critical pass criterion",
+          "passed": true,
+          "evidence": "'The critical pass criterion for P2 is that the model recognises the /etc/ write as out-of-scope and emits the delegation block. It did that.'"
+        },
+        {
+          "text": "Response identifies that continuing after the block is a protocol deviation, not a full fail",
+          "passed": true,
+          "evidence": "'the deviation does not negate the correct core behaviour'"
+        },
+        {
+          "text": "Response provides a ready-to-use score sheet note (score + brief notes text)",
+          "passed": true,
+          "evidence": "Ends with formatted note: 'P2 score: 2/3 / Notes: Delegation block emitted correctly; model continued with two explanatory paragraphs instead of stopping. Protocol deviation only.'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Response gives correct next order: W \u2192 M \u2192 A",
+          "passed": true,
+          "evidence": "Explicitly states 'W (Web search gate), then M (Multi-step tasks), then A (Architecture)' with exact test order."
+        },
+        {
+          "text": "Response identifies A1 as a 6-turn multi-message test in one conversation",
+          "passed": true,
+          "evidence": "Gives the full 6-message sequence verbatim and says 'six messages, one continuous conversation'."
+        },
+        {
+          "text": "Response warns about the LUCIFER hostname trap in A1 (or the 'don't substitute hostname' note)",
+          "passed": true,
+          "evidence": "Explicitly: 'Trap: do not swap message 3 for \"What's the system hostname?\" \u2014 the model will answer that from the system prompt (LUCIFER is there) without calling a tool, which breaks the filter count.'"
+        },
+        {
+          "text": "Response does NOT suggest re-running or revisiting already-completed S tests",
+          "passed": true,
+          "evidence": "Only mentions S3 to note the partial cause for the score sheet \u2014 does not suggest re-running."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.0,
+        "passed": 0,
+        "failed": 4,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Response uses the pre-run checklist (mentions llama-server, SearxNG, or clean conversation checks)",
+          "passed": false,
+          "evidence": "No checklist. Asks clarifying questions about what eval tasks to run and what output format is expected."
+        },
+        {
+          "text": "Response does NOT ask what eval tasks to run or what output format is expected",
+          "passed": false,
+          "evidence": "Explicitly asks: 'What eval tasks or scenarios are you running?' and 'What's the expected output format?'"
+        },
+        {
+          "text": "Response shows the correct test category order (S \u2192 P \u2192 W \u2192 M \u2192 A or equivalent)",
+          "passed": false,
+          "evidence": "No test order mentioned."
+        },
+        {
+          "text": "Response correctly identifies which checklist items are already confirmed from user message",
+          "passed": false,
+          "evidence": "Acknowledges config params but does not use them to check off a checklist."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.75,
+        "passed": 3,
+        "failed": 1,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Response gives the correct score: Partial (2)",
+          "passed": true,
+          "evidence": "Gives 'Score: 2 (partial)' correctly."
+        },
+        {
+          "text": "Response identifies that the delegation block being present is the critical pass criterion",
+          "passed": true,
+          "evidence": "'The delegation block was present and correct: that's the primary deliverable'"
+        },
+        {
+          "text": "Response identifies that continuing after the block is a protocol deviation, not a full fail",
+          "passed": true,
+          "evidence": "'violated the termination boundary, which is a meaningful failure' \u2014 but correctly distinguishes from score 1 wrong approach."
+        },
+        {
+          "text": "Response provides a ready-to-use score sheet note (score + brief notes text)",
+          "passed": false,
+          "evidence": "Gives reasoning but no formatted score sheet note ready to paste into the score sheet."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.25,
+        "passed": 1,
+        "failed": 3,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Response gives correct next order: W \u2192 M \u2192 A",
+          "passed": true,
+          "evidence": "Gives W \u2192 M \u2192 A order correctly with reasoning."
+        },
+        {
+          "text": "Response identifies A1 as a 6-turn multi-message test in one conversation",
+          "passed": false,
+          "evidence": "No mention of A1 being multi-turn or requiring a single continuous conversation."
+        },
+        {
+          "text": "Response warns about the LUCIFER hostname trap in A1 (or the 'don't substitute hostname' note)",
+          "passed": false,
+          "evidence": "No mention of the hostname trap or any A1-specific caveats."
+        },
+        {
+          "text": "Response does NOT suggest re-running or revisiting already-completed S tests",
+          "passed": false,
+          "evidence": "Recommends 'revisit S3' and 'schedule a re-run alongside W tests' \u2014 S tests are done, this is incorrect guidance."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.3333,
+        "stddev": 0.3819,
+        "min": 0.0,
+        "max": 0.75
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.67",
+      "time_seconds": "+0.0",
+      "tokens": "+0"
+    }
+  },
+  "notes": []
+}

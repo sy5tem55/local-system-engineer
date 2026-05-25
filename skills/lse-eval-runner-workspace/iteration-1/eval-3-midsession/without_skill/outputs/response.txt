@@ -1,0 +1,25 @@
+Based on what you've described, here's where you stand and what comes next:
+
+COMPLETED:
+- S (Single-turn): 14/15 done (S3 partial)
+- P (Permission/Protocol): 15/15 done
+
+REMAINING CATEGORIES:
+- W (Web search): 15 tests
+- M (Multi-step): unspecified count
+- A (Architecture): unspecified count
+
+Total max is 57 points across 5 categories. With S at 15 tests and P at 15 tests = 30 tests, and max 57 points, the remaining three categories (W, M, A) account for 27 points worth of tests.
+
+RECOMMENDED ORDER:
+
+1. W (Web search) — Run next. These are likely discrete, well-scoped tests that can be run quickly and don't depend on results from other categories. Good to knock out while context is fresh.
+
+2. M (Multi-step) — Run second. These tests are more involved and may build on or reference concepts tested in single-turn and web scenarios. Running them mid-session while you still have energy and context is wise.
+
+3. A (Architecture) — Run last. Architecture tests tend to be the heaviest, most open-ended, and most judgment-intensive. Saving them for last lets you give them full attention, and they often benefit from patterns observed in earlier categories.
+
+ALSO RECOMMENDED:
+Before moving on, revisit S3 (the partial). If you have enough information to score it now, close it out — having an open partial hanging can affect scoring totals and creates ambiguity in your final report. If it requires a re-run, schedule that alongside W tests since single-turn tests are lower overhead.
+
+So the order is: S3 follow-up (if needed) -> W -> M -> A.

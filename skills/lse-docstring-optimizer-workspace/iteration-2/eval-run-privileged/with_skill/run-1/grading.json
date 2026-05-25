@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Identifies that 'provide any additional context the user might need' is a direct STOP PROTOCOL violation — this is the critical failure",
+      "passed": true,
+      "evidence": "Stop protocol row scores FAIL with note: '\"After emitting the block, provide any additional context the user might need to understand what the command does and what to expect\" is a direct STOP PROTOCOL violation — it explicitly instructs the model to continue outputting after the delegation block'; critical findings lead with this same point verbatim."
+    },
+    {
+      "text": "Flags missing exact echo-line format specification",
+      "passed": true,
+      "evidence": "Output format row scores WARN: 'describes the output category but does not quote an exact format with a Format: example'; rewritten docstring adds 'Format: \"Please run the privileged command block above in your terminal and paste the output here.\"' inside the STOP PROTOCOL block."
+    },
+    {
+      "text": "Flags missing explicit prohibition of post-execution instructions",
+      "passed": true,
+      "evidence": "Failure prohibitions row scores FAIL: 'The docstring states what to do but never prohibits the primary failure mode: continuing to produce output after emitting the delegation block. There is no \"do NOT\" or \"protocol violation\" language.'"
+    },
+    {
+      "text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL block",
+      "passed": true,
+      "evidence": "The rewritten docstring contains no 'additional context' instruction and includes a full STOP PROTOCOL section with 'Do NOT add post-execution instructions, hints, context, or follow-up bash snippets' and 'Anything beyond the single echo line before user input is a protocol violation.'"
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  }
+}

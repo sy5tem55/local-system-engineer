@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Response uses the pre-run checklist (mentions llama-server, SearxNG, or clean conversation checks)",
+      "passed": true,
+      "evidence": "Asks for curl localhost:8080/health, curl localhost:8088, and fresh conversation \u2014 all three remaining checklist items."
+    },
+    {
+      "text": "Response does NOT ask what eval tasks to run or what output format is expected",
+      "passed": true,
+      "evidence": "Goes straight to checklist without asking what the eval is."
+    },
+    {
+      "text": "Response shows the correct test category order (S \u2192 P \u2192 W \u2192 M \u2192 A or equivalent)",
+      "passed": true,
+      "evidence": "Lists full run order: S1\u2192S2\u2192S3\u2192S4\u2192S5, P1\u2192P2\u2192P3\u2192P4\u2192P5, W1\u2192W2\u2192W3, M1\u2192M2\u2192M3, A1\u2192A2\u2192A3."
+    },
+    {
+      "text": "Response correctly identifies which checklist items are already confirmed from user message",
+      "passed": true,
+      "evidence": "Marks tool v1.5.4, prompt v0.5, routing filter, context monitor filter as [x] confirmed. Asks only for the remaining 3."
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  }
+}

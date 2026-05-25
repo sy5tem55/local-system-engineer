@@ -1,0 +1,13 @@
+Got it! Starting the LSE eval session with the following configuration:
+
+- Tool version: v1.5.4
+- Prompt version: v0.5
+- Filters: Both enabled
+
+To proceed, I'll need a bit more context:
+
+1. What eval tasks or scenarios are you running? (e.g., a specific list of prompts, a test suite file, or ad-hoc commands?)
+2. What's the expected output format? (scores, pass/fail, raw responses, structured JSON?)
+3. Is there a reference baseline or ground truth to compare against?
+
+If you have an eval script or task list ready, go ahead and share it and I'll work through the cases. Otherwise, if this is an interactive session where you'll feed prompts one at a time, just send the first one and we'll get started.

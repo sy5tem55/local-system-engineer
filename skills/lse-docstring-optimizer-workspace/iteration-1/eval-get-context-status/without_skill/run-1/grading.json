@@ -1,0 +1,9 @@
+{
+  "expectations": [
+    {"text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)", "passed": true, "evidence": "Acknowledges trigger conditions and downstream use as strengths; does not over-flag the existing compliance language"},
+    {"text": "Recognises this is a relatively well-formed short docstring and says so", "passed": true, "evidence": "Opens with 'Strengths of original: trigger conditions present' — explicitly acknowledges what works"},
+    {"text": "Rewrite is conservative — does not bloat the docstring", "passed": true, "evidence": "Adds 4 specific improvements without restructuring; notes thresholds can be trimmed; explicitly declines to add STOP PROTOCOL"},
+    {"text": "Any suggested improvements are genuinely useful", "passed": false, "evidence": "Interpretation thresholds (70%/90%) are not present in the system prompt — adding them to the docstring duplicates guidance that belongs in the system prompt, not the tool"}
+  ],
+  "summary": {"passed": 3, "failed": 1, "total": 4, "pass_rate": 0.75}
+}

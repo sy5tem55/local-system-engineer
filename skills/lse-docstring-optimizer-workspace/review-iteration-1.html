@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "lse-docstring-optimizer", "runs": [{"id": "eval-diff-file-with_skill", "prompt": "Review this docstring before I add it to the LSE tool:\n\ndef diff_file(self, path: str, new_content: str) -> str:\n    \"\"\"\n    Show a unified diff between the current file content and new_content.\n    You should read the file first to get the current content.\n    After showing the diff, you may proceed to write the file if the user approves.\n    This is useful before overwriting files so the user can see what will change.\n    Returns a unified diff string, or an error message if the file cannot be read.\n    \"\"\"", "eval_id": 1, "outputs": [{"name": "response.txt", "type": "text", "content": "## Audit \u2014 diff_file\n\n| Dimension              | Score | Notes                                                                 |\n|------------------------|-------|-----------------------------------------------------------------------|\n| 1. Section headers     | FAIL  | Flat prose; no ALL-CAPS headers separating behavioural rule blocks    |\n| 2. Compliance language | WARN  | \"you may proceed\" and \"you should read\" are hedged/permissive         |\n| 3. GOOD/BAD examples   | FAIL  | No examples; the trigger condition and diff usage are ambiguous       |\n| 4. Stop protocol       | FAIL  | No STOP PROTOCOL block; model not told to halt after presenting diff  |\n| 5. Failure prohibitions| FAIL  | No explicit prohibition on skipping the read or writing without approval |\n| 6. Output format       | WARN  | Mentions \"unified diff string\" but does not quote an exact format     |\n| 7. Trigger gate        | WARN  | \"useful before overwriting files\" is informal; no explicit gate condition |\n| 8. Verification        | N/A   | diff_file does not write state; verification requirement does not apply |\n\n**Critical findings:**\n- [FAIL] Stop protocol: After presenting a diff the model must halt and wait \u2014 no stop block means the model will continue with \"you can now write the file if you approve\" or similar pre-emption, a P-class failure pattern.\n- [FAIL] Failure prohibitions: Nothing forbids the model from skipping the read_file step or writing the file without explicit user approval; both are high-probability failure modes (W2, S3 eval classes).\n- [FAIL] Section headers: All rules are buried in a single prose paragraph; the model cannot scan for the approval gate or stop signal without reading the whole docstring, making selective compliance likely.\n- [FAIL] GOOD/BAD examples: The boundary between \"show diff and stop\" vs \"show diff then offer to write\" is exactly the kind of ambiguity that produces ~50% compliance without examples; none are present.\n- [WARN] Compliance language: \"you should read the file first\" and \"you may proceed to write\" are permissive \u2014 both must become imperative to close the advisory loophole.\n- [WARN] Output format: The diff output format is not quoted or exemplified; a model may produce a summary description rather than a raw unified diff, breaking downstream display.\n- [WARN] Trigger gate: \"useful before overwriting files\" describes use cases informally; there is no explicit conditional gate that tells the model exactly when to call this function vs read_file alone.\n\n**Rewritten docstring:**\n```python\ndef diff_file(self, path: str, new_content: str) -> str:\n    \"\"\"\n    Show a unified diff between the current on-disk content of a file and new_content.\n    Returns a unified diff string, or an error message if the file cannot be read.\n\n    GATE:\n      Call this function before any write_file call when the file already exists and\n      the user has not yet seen what will change. Never call this in place of read_file\n      when the goal is only to inspect content.\n\n    READ-FIRST RULE:\n      You must read the file with read_file before calling diff_file so that\n      new_content is complete and accurate.\n      Skipping the read when the file is readable is a protocol violation.\n\n    APPROVAL GATE:\n      After presenting the diff, you must ask the user for explicit approval before\n      writing. Do NOT proceed to write_file on the assumption that showing the diff\n      implies consent.\n      GOOD: Present diff, then ask \"Shall I apply these changes? (yes/no)\"   <- waits for user\n      BAD:  Present diff, then say \"I'll go ahead and write the file now.\"    <- skips approval\n\n    OUTPUT FORMAT:\n      Present the raw unified diff exactly as returned by this function.\n      Do NOT summarise or paraphrase the diff in prose.\n      Format: render the full diff string inside a code block tagged `diff`.\n\n    STOP PROTOCOL \u2014 mandatory, no exceptions:\n      After presenting the diff and the approval question, output nothing further.\n      Do NOT add post-diff instructions, suggestions, or follow-up hints.\n      Do NOT pre-empt the user with \"After you approve, I will...\" statements.\n      Your next response must begin only after the user responds to the approval question.\n      Anything beyond the diff block and the single approval question before user input\n      is a protocol violation.\n\n    FAILURE MODE PROHIBITIONS:\n      - Skipping read_file before calling diff_file is a protocol violation.\n      - Proceeding to write_file without explicit user approval is a protocol violation.\n      - Summarising the diff instead of displaying it verbatim is a protocol violation.\n    \"\"\"\n```\n"}], "grading": {"expectations": [{"text": "Produces an audit table covering all 8 dimensions", "passed": true, "evidence": "Full 8-row audit table present with FAIL/WARN/N/A for each dimension"}, {"text": "Flags passive language ('should read', 'you may proceed') as a compliance issue", "passed": true, "evidence": "WARN on dimension 2: 'you may proceed and you should read are hedged/permissive'"}, {"text": "Flags missing confirmation protocol", "passed": true, "evidence": "FAIL on dimension 5: 'Nothing forbids the model from skipping the read_file step or writing without approval'"}, {"text": "Flags missing failure mode prohibition", "passed": true, "evidence": "FAIL on dimension 5 explicitly; rewritten docstring adds FAILURE MODE PROHIBITIONS section"}, {"text": "Produces a rewritten docstring with imperative language and confirmation protocol", "passed": true, "evidence": "Full rewrite present with GATE, READ-FIRST RULE, APPROVAL GATE, STOP PROTOCOL, FAILURE MODE PROHIBITIONS \u2014 all imperative"}], "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0}}}, {"id": "eval-diff-file-without_skill", "prompt": "Review this docstring before I add it to the LSE tool:\n\ndef diff_file(self, path: str, new_content: str) -> str:\n    \"\"\"\n    Show a unified diff between the current file content and new_content.\n    You should read the file first to get the current content.\n    After showing the diff, you may proceed to write the file if the user approves.\n    This is useful before overwriting files so the user can see what will change.\n    Returns a unified diff string, or an error message if the file cannot be read.\n    \"\"\"", "eval_id": 1, "outputs": [{"name": "response.txt", "type": "text", "content": "Review of diff_file docstring \u2014 general analysis\n\nKey problems identified:\n\n1. No parameter descriptions \u2014 the agent cannot know what `path` format is expected \n   (absolute? relative?) or what `new_content` semantics are (full content? encoding?)\n\n2. Return value underspecified \u2014 \"unified diff string\" does not define the format, \n   and returning error messages as plain strings in the same return type as success \n   values makes failure detection unreliable.\n\n3. \"Show a unified diff\" vs \"returns a unified diff\" \u2014 display-oriented language creates \n   ambiguity about whether the function itself presents output to the user.\n\n4. Procedural instructions (\"You should read the file first\", \"you may proceed to write\") \n   are agent-level policy embedded in a function docstring \u2014 a category error that blurs \n   the line between function contract and workflow guidance.\n\n5. The function does not state it is read-only, which matters for agent safety reasoning.\n\n6. Edge cases (file not found, identical content producing empty diff, binary files, \n   directories) are unaddressed.\n\nSuggested revision restructures with proper Args/Returns/Notes sections and \nprecise language about what the function returns and what the model should do with it.\n"}], "grading": {"expectations": [{"text": "Produces an audit table covering all 8 dimensions", "passed": false, "evidence": "No audit table. Provides a numbered list of general software engineering issues"}, {"text": "Flags passive language ('should read', 'you may proceed') as a compliance issue", "passed": false, "evidence": "Notes procedural instructions as 'category error' but not framed as compliance language issue"}, {"text": "Flags missing confirmation protocol", "passed": false, "evidence": "Does not mention confirmation protocol, protocol violation framing, or LSE-specific approval gate"}, {"text": "Flags missing failure mode prohibition", "passed": false, "evidence": "No mention of failure mode prohibitions or LSE failure patterns"}, {"text": "Produces a rewritten docstring with imperative language and confirmation protocol", "passed": false, "evidence": "Rewrite adds Args/Returns sections \u2014 standard Python docstring improvement, not LSE compliance rewrite"}], "summary": {"passed": 0, "failed": 5, "total": 5, "pass_rate": 0.0}}}, {"id": "eval-run-privileged-with_skill", "prompt": "Does this docstring look right? It's for a new privileged command runner I'm adding:\n\ndef run_privileged(self, command: str, reason: str) -> str:\n    \"\"\"\n    PRIVILEGED COMMAND RUNNER\n    Executes commands that require elevated permissions by delegating to the user.\n    Use this for any command that needs sudo.\n\n    DELEGATION FORMAT:\n      Emits a formatted block showing the command and reason.\n      The user must run it manually in their terminal.\n      After emitting the block, provide any additional context the user might need\n      to understand what the command does and what to expect.\n\n    Returns the formatted delegation block as a string.\n    \"\"\"", "eval_id": 2, "outputs": [{"name": "response.txt", "type": "text", "content": "## Audit \u2014 run_privileged\n\n| Dimension              | Score | Notes                                                                 |\n|------------------------|-------|-----------------------------------------------------------------------|\n| 1. Section headers     | WARN  | Has one header (\"DELEGATION FORMAT\") but missing headers for gate and stop rules |\n| 2. Compliance language | FAIL  | \"provide any additional context the user might need\" is passive/optional language |\n| 3. GOOD/BAD examples   | FAIL  | No examples for what the delegation block looks like or what not to do |\n| 4. Stop protocol       | FAIL  | No STOP PROTOCOL block; docstring actually encourages post-delegation commentary |\n| 5. Failure prohibitions| FAIL  | No explicit prohibitions; the key failure mode (adding follow-up hints) is not forbidden |\n| 6. Output format       | WARN  | Says \"formatted block\" but never quotes the exact format template     |\n| 7. Trigger gate        | WARN  | \"Use this for any command that needs sudo\" is too broad; no explicit gate condition |\n| 8. Verification        | N/A   | This function delegates rather than writing state; no verify step applies |\n\n\n**Critical findings:**\n\n- [FAIL] Stop protocol: There is no STOP PROTOCOL block, and the docstring actively instructs the model to \"provide any additional context\" after emitting the delegation block \u2014 this is the exact P2/P3 failure pattern where the model pre-empts the user with post-execution hints before they have run anything.\n\n- [FAIL] Failure prohibitions: The docstring never explicitly forbids the key failure mode (adding follow-up instructions after the block). Without a \"do NOT\" or \"protocol violation\" construction, the model treats the post-delegation commentary instruction as permission, not a warning.\n\n- [FAIL] GOOD/BAD examples: No examples are provided for the delegation block format or for the stop boundary. The distinction between correct behaviour (emit block, stop) and incorrect behaviour (emit block, then explain what to expect) is highly ambiguous and needs a GOOD/BAD pair to reliably enforce.\n\n- [WARN] Compliance language: \"provide any additional context the user might need\" is passive and optional-sounding. Even if the intent were kept (it should not be \u2014 see STOP PROTOCOL), it would need to be imperative. As written it opens the door to arbitrary follow-up prose.\n\n- [WARN] Output format: The delegation block format is described in prose (\"formatted block showing the command and reason\") but never quoted. The model cannot reproduce a consistent format without a literal template.\n\n- [WARN] Trigger gate: \"Use this for any command that needs sudo\" is informal and too broad. It gives no exclusion criteria and no NEVER-call-this-yourself anchor.\n\n\n**Rewritten docstring:**\n\n```python\ndef run_privileged(self, command: str, reason: str) -> str:\n    \"\"\"\n    PRIVILEGED COMMAND RUNNER\n\n    Emits a formatted delegation block so the user can run an elevated command\n    manually. Returns the formatted block as a string.\n\n    GATE:\n      NEVER run sudo or privileged commands yourself.\n      Call this function whenever the required command needs elevated permissions.\n      Do NOT call this for commands that can run without sudo.\n\n    DELEGATION FORMAT:\n      The returned block must follow this exact template \u2014 no variation:\n\n        Format:\n        \u2554\u2550\u2550 PRIVILEGED COMMAND \u2550\u2550\u2557\n        Command : <command>\n        Reason  : <reason>\n        \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d\n\n      GOOD: emit the block exactly as templated, then stop.  \u2190 correct\n      BAD:  add an explanation of what the command does after the block.  \u2190 protocol violation\n\n    STOP PROTOCOL \u2014 mandatory, no exceptions:\n      After calling this function, write exactly ONE closing line:\n        Format: \"Please run `<command>` in your terminal and paste the output here.\"\n      After that single line, output nothing further.\n      Do NOT add post-execution instructions, hints, or follow-up bash snippets.\n      Do NOT explain what the command does or what to expect after it runs.\n      Do NOT suggest verification steps or next actions.\n      Your next response must begin only after the user pastes terminal output.\n      Anything beyond the single echo line before user input is a protocol violation.\n    \"\"\"\n```\n"}], "grading": {"expectations": [{"text": "Identifies 'provide any additional context' as a STOP PROTOCOL violation", "passed": true, "evidence": "Critical finding #1: 'docstring actively instructs the model to provide any additional context \u2014 this is the exact P2/P3 failure pattern'"}, {"text": "Flags missing exact echo-line format specification", "passed": true, "evidence": "WARN on dimension 6: 'Says formatted block but never quotes the exact format template'"}, {"text": "Flags missing explicit prohibition of post-execution instructions", "passed": true, "evidence": "FAIL on dimension 5: 'The key failure mode (adding follow-up hints) is not forbidden'"}, {"text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL", "passed": true, "evidence": "Rewrite removes the instruction entirely; adds full STOP PROTOCOL block with explicit prohibitions and echo-line format"}], "summary": {"passed": 4, "failed": 0, "total": 4, "pass_rate": 1.0}}}, {"id": "eval-run-privileged-without_skill", "prompt": "Does this docstring look right? It's for a new privileged command runner I'm adding:\n\ndef run_privileged(self, command: str, reason: str) -> str:\n    \"\"\"\n    PRIVILEGED COMMAND RUNNER\n    Executes commands that require elevated permissions by delegating to the user.\n    Use this for any command that needs sudo.\n\n    DELEGATION FORMAT:\n      Emits a formatted block showing the command and reason.\n      The user must run it manually in their terminal.\n      After emitting the block, provide any additional context the user might need\n      to understand what the command does and what to expect.\n\n    Returns the formatted delegation block as a string.\n    \"\"\"", "eval_id": 2, "outputs": [{"name": "response.txt", "type": "text", "content": "DOCSTRING REVIEW: run_privileged\n\nOVERALL ASSESSMENT\n\nThe docstring has a reasonable structure but has several issues that make it suboptimal for use as an AI tool function description. AI tool docstrings serve a different purpose than human-facing documentation \u2014 they guide model behavior, set boundaries, and communicate the tool's contract precisely. The current docstring conflates behavioral instructions with interface documentation and is missing critical safety-relevant details.\n\n---\n\nSPECIFIC ISSUES\n\n1. Title is redundant and adds no information\n   \"PRIVILEGED COMMAND RUNNER\" just repeats what \"run_privileged\" already says. A good one-liner should summarize the purpose or scope, not restate the name.\n\n2. \"Use this for any command that needs sudo\" is too broad and potentially unsafe\n   This phrasing could encourage overuse. An AI model reading this may invoke the function for commands that technically need sudo but should not be run at all, or where a safer non-privileged alternative exists. The docstring should establish criteria for when this tool is appropriate, not just say \"use it whenever sudo is needed.\"\n\n3. The DELEGATION FORMAT section describes implementation behavior, not the tool's contract\n   From an AI tool perspective, what matters is: what does calling this function cause to happen, and what comes back? Internal formatting details (\"Emits a formatted block\") belong in implementation comments, not the tool description. The model needs to know the effect and the return value \u2014 it doesn't need to know the rendering format.\n\n4. The return value description is imprecise\n   \"Returns the formatted delegation block as a string\" tells you the type but not the semantics. Does the function block until the user runs the command? Does it return the block before or after the user acts? If the return value is purely the formatted string and execution happens out-of-band, the docstring should make clear that this function does NOT execute the command \u2014 it only produces the delegation artifact.\n\n5. Missing: what happens next / what the model should do after calling this\n   After calling run_privileged, should the model wait for user confirmation? Proceed as if the command ran? The current docstring buries one hint (\"provide any additional context\") inside the format block description, which is easy to miss and poorly positioned.\n\n6. Missing: parameter semantics\n   Neither `command` nor `reason` has any description. For a privileged command runner, the `reason` parameter is especially important \u2014 the model needs to know that this will be shown to the user and should be a clear, human-readable justification, not an internal note.\n\n7. Missing: scope or constraint on what commands are appropriate\n   No guidance on what kinds of commands belong here vs. should be refused outright. A safety-sensitive tool should be explicit.\n\n---\n\nSUGGESTED REVISED DOCSTRING\n\ndef run_privileged(self, command: str, reason: str) -> str:\n    \"\"\"\n    Delegates a privileged shell command to the user for manual execution.\n\n    Use this tool when a task requires a command that needs elevated permissions\n    (e.g., sudo). Do NOT use this as a general command runner \u2014 only invoke it\n    when elevated permissions are strictly necessary and the command is safe,\n    well-understood, and directly relevant to the user's stated goal.\n\n    This function does NOT execute the command. It formats a delegation block\n    that the user must run manually in their terminal. After calling this tool,\n    explain what the command does and what output or side effects the user\n    should expect. Do not assume the command has been run until the user\n    confirms it.\n\n    Args:\n        command: The exact shell command to be run with elevated privileges.\n                 Must be a complete, ready-to-run command string.\n        reason:  A concise, human-readable explanation of why elevated\n                 permissions are required. This is shown to the user as\n                 justification, so write it clearly and honestly.\n\n    Returns:\n        A formatted string containing the delegation block to present to\n        the user. The command has NOT been executed.\n    \"\"\"\n\n---\n\nSUMMARY OF KEY CHANGES\n\n- Replaced the redundant title with a clear one-line purpose statement\n- Added explicit guidance on when NOT to use the tool\n- Clarified that this function does not execute the command (critical for model safety reasoning)\n- Described post-call model behavior (explain, don't assume execution)\n- Added parameter-level documentation with semantic guidance\n- Made the return value semantically precise, not just type-correct\n- Removed internal implementation details (formatting mechanics) from the contract description\n"}], "grading": {"expectations": [{"text": "Identifies 'provide any additional context' as a STOP PROTOCOL violation", "passed": false, "evidence": "Notes post-call behavior is missing guidance but never identifies 'provide any additional context' as an active violation \u2014 frames it as a gap, not an anti-pattern"}, {"text": "Flags missing exact echo-line format specification", "passed": false, "evidence": "Mentions format is 'internal implementation detail' \u2014 does not flag missing echo-line template as a problem"}, {"text": "Flags missing explicit prohibition of post-execution instructions", "passed": false, "evidence": "No mention of prohibition pattern or protocol violation framing"}, {"text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL", "passed": true, "evidence": "Revised docstring adds 'expected model behavior after the call' section, removes commentary instruction \u2014 partially correct though not LSE-framed"}], "summary": {"passed": 1, "failed": 3, "total": 4, "pass_rate": 0.25}}}, {"id": "eval-get-context-status-with_skill", "prompt": "Optimize this docstring for the LSE:\n\ndef get_context_status(self) -> str:\n    \"\"\"\n    Query the llama.cpp server to get the current token usage and context fill percentage.\n    Call this when a session has had 5+ tool calls, or the user asks about context health.\n    Do NOT call this for simple single-tool queries.\n    Results drive compaction and hard-reset decisions described in the system prompt.\n    \"\"\"", "eval_id": 3, "outputs": [{"name": "response.txt", "type": "text", "content": "## Audit \u2014 get_context_status\n\n| Dimension              | Score | Notes                                                                 |\n|------------------------|-------|-----------------------------------------------------------------------|\n| 1. Section headers     | FAIL  | Flat prose; no ALL-CAPS structural headers anywhere                   |\n| 2. Compliance language | PASS  | \"Do NOT call\" is imperative; \"Call this when\" is directive            |\n| 3. GOOD/BAD examples   | FAIL  | No examples for the ambiguous \"5+ tool calls\" trigger boundary        |\n| 4. Stop protocol       | FAIL  | No STOP PROTOCOL; model may narrate context stats or suggest actions  |\n| 5. Failure prohibitions| WARN  | \"Do NOT call this for simple single-tool queries\" present but the     |\n|                        |       | key failure (calling on turn 1 or narrating results) is not forbidden |\n|                        |       | with \"protocol violation\" language                                    |\n| 6. Output format       | FAIL  | No format specified for what the model should say after calling this  |\n| 7. Trigger gate        | WARN  | Numeric trigger present (\"5+ tool calls\") but gate is informal;       |\n|                        |       | \"user asks about context health\" is too broad with no criteria        |\n| 8. Verification        | N/A   | Read-only query; no write or state modification                       |\n\n\n**Critical findings:**\n\n- [FAIL] Stop protocol: No STOP PROTOCOL block means the model will narrate context\n  stats, add suggestions like \"you may want to compact now\", or prompt the user for\n  follow-up action \u2014 the exact P2/P3 failure pattern seen with sudo_delegation_block.\n\n- [FAIL] Section headers: All rules are in flat prose; without ALL-CAPS headers the\n  model must read the entire docstring linearly and is more likely to miss or\n  deprioritise individual rules at inference time.\n\n- [FAIL] GOOD/BAD examples: The \"5+ tool calls\" boundary is ambiguous \u2014 does turn 5\n  count, or only turns after 5? Without a GOOD/BAD pair the model will misapply the\n  gate, matching the S1 failure class (get_context_status called on turn 1).\n\n- [FAIL] Output format: \"Results drive compaction and hard-reset decisions\" implies\n  the model should do something with the output, but there is no specified format for\n  how to report the result or what to say to the user \u2014 this causes drift between runs.\n\n- [WARN] Trigger gate: \"user asks about context health\" is too broad and has no\n  stopping criterion; a user saying \"are you doing okay?\" could plausibly trigger a\n  call under this wording.\n\n- [WARN] Failure prohibitions: The existing \"Do NOT call\" prohibition covers eager\n  calling but does not explicitly forbid narrating results or acting on them without\n  user input; neither prohibition uses \"protocol violation\" language, so the model\n  may treat them as advisory.\n\n\n**Rewritten docstring:**\n\n```python\ndef get_context_status(self) -> str:\n    \"\"\"\n    Query the llama.cpp server for current token usage and context fill percentage.\n\n    GATE \u2014 when to call this:\n      Call this function before responding on any turn where you have made 5 or more\n      tool calls in the current session, OR when the user explicitly asks about\n      context health (e.g. \"how full is your context?\", \"are you running low?\").\n      Count tool calls from the start of the session, not from the last reset.\n      GOOD: Turn 6, you have made 5 tool calls \u2014 call before replying.  \u2190 gate met\n      BAD:  Turn 2, first tool call of the session \u2014 do not call.        \u2190 gate not met\n      BAD:  User says \"are you doing okay?\" (general check-in) \u2014 do not call. \u2190 not a context query\n      Calling this function when the gate condition is not met is a protocol violation.\n\n    RESULT USAGE:\n      The returned data drives compaction and hard-reset decisions as described in the\n      system prompt. Apply those rules silently \u2014 do NOT narrate the raw token counts\n      or fill percentage to the user unless they explicitly asked for the number.\n\n    STOP PROTOCOL \u2014 mandatory, no exceptions:\n      After calling this function, write exactly ONE closing line that reports status.\n      Format: \"Context is at <fill_pct>% \u2014 [within limits / approaching limit / limit reached].\"\n      After that single line, output nothing further until the user responds.\n      Do NOT add suggestions such as \"you may want to compact now\" or \"consider a reset\".\n      Do NOT pre-empt compaction or reset actions \u2014 wait for user input if action is needed.\n      Do NOT narrate token counts, server response fields, or internal thresholds.\n      Anything beyond the single status line before user input is a protocol violation.\n    \"\"\"\n```\n"}], "grading": {"expectations": [{"text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)", "passed": false, "evidence": "Trigger gate assigned WARN (acceptable) but also assigns FAIL to stop protocol \u2014 get_context_status is an internal read-only function; adding STOP PROTOCOL is over-engineering"}, {"text": "Recognises this is a relatively well-formed short docstring and says so", "passed": false, "evidence": "Assigns 4 FAILs and 2 WARNs; treats a 4-line well-formed docstring as severely deficient \u2014 no acknowledgment that it is appropriate for its scope"}, {"text": "Rewrite is conservative \u2014 does not bloat the docstring", "passed": false, "evidence": "Rewrite adds GATE, RESULT USAGE, STOP PROTOCOL blocks to a function whose original 4 lines were appropriate \u2014 significant over-engineering"}, {"text": "Any suggested improvements are genuinely useful", "passed": true, "evidence": "GOOD/BAD example for the 5-tool-call boundary and clarifying 'simple single-tool query' are genuinely useful suggestions"}], "summary": {"passed": 1, "failed": 3, "total": 4, "pass_rate": 0.25}}}, {"id": "eval-get-context-status-without_skill", "prompt": "Optimize this docstring for the LSE:\n\ndef get_context_status(self) -> str:\n    \"\"\"\n    Query the llama.cpp server to get the current token usage and context fill percentage.\n    Call this when a session has had 5+ tool calls, or the user asks about context health.\n    Do NOT call this for simple single-tool queries.\n    Results drive compaction and hard-reset decisions described in the system prompt.\n    \"\"\"", "eval_id": 3, "outputs": [{"name": "response.txt", "type": "text", "content": "Optimized get_context_status docstring \u2014 general analysis\n\nStrengths of original: trigger conditions present, downstream use mentioned.\n\nMain weaknesses:\n- Opens with implementation detail (querying llama.cpp) rather than what the agent gets back\n- No description of return value structure\n- No interpretation thresholds \u2014 \"drives decisions\" with no criteria for making them\n- Trigger conditions buried in prose rather than structured for quick parsing\n- Forward reference to \"the system prompt\" not useful at call-time\n\nRewrite makes four changes:\n1. Opens with return value \u2014 tokens used, remaining, fill percentage 0-100\n2. Uses labeled sections (\"When to call\" / \"When NOT to call\") for cleaner parsing\n3. Adds a third trigger: before large prompt or tool-chain sequences\n4. Adds interpretation thresholds (~70% healthy, 70-90% consider compaction, 90%+ act)\n\nConservative approach \u2014 notes that thresholds can be trimmed for token-constrained \nenvironments. Does not add unnecessary sections. Does not add a STOP PROTOCOL since \nthis is a read-only function whose output is consumed internally by the model.\n"}], "grading": {"expectations": [{"text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)", "passed": true, "evidence": "Acknowledges trigger conditions and downstream use as strengths; does not over-flag the existing compliance language"}, {"text": "Recognises this is a relatively well-formed short docstring and says so", "passed": true, "evidence": "Opens with 'Strengths of original: trigger conditions present' \u2014 explicitly acknowledges what works"}, {"text": "Rewrite is conservative \u2014 does not bloat the docstring", "passed": true, "evidence": "Adds 4 specific improvements without restructuring; notes thresholds can be trimmed; explicitly declines to add STOP PROTOCOL"}, {"text": "Any suggested improvements are genuinely useful", "passed": false, "evidence": "Interpretation thresholds (70%/90%) are not present in the system prompt \u2014 adding them to the docstring duplicates guidance that belongs in the system prompt, not the tool"}], "summary": {"passed": 3, "failed": 1, "total": 4, "pass_rate": 0.75}}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "lse-docstring-optimizer", "skill_path": "<path/to/skill>", "executor_model": "<model-name>", "analyzer_model": "<model-name>", "timestamp": "2026-05-25T02:00:01Z", "evals_run": [1, 2, 3], "runs_per_configuration": 3}, "runs": [{"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Produces an audit table covering all 8 dimensions", "passed": true, "evidence": "Full 8-row audit table present with FAIL/WARN/N/A for each dimension"}, {"text": "Flags passive language ('should read', 'you may proceed') as a compliance issue", "passed": true, "evidence": "WARN on dimension 2: 'you may proceed and you should read are hedged/permissive'"}, {"text": "Flags missing confirmation protocol", "passed": true, "evidence": "FAIL on dimension 5: 'Nothing forbids the model from skipping the read_file step or writing without approval'"}, {"text": "Flags missing failure mode prohibition", "passed": true, "evidence": "FAIL on dimension 5 explicitly; rewritten docstring adds FAILURE MODE PROHIBITIONS section"}, {"text": "Produces a rewritten docstring with imperative language and confirmation protocol", "passed": true, "evidence": "Full rewrite present with GATE, READ-FIRST RULE, APPROVAL GATE, STOP PROTOCOL, FAILURE MODE PROHIBITIONS \u2014 all imperative"}], "notes": []}, {"eval_id": 3, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 0.25, "passed": 1, "failed": 3, "total": 4, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)", "passed": false, "evidence": "Trigger gate assigned WARN (acceptable) but also assigns FAIL to stop protocol \u2014 get_context_status is an internal read-only function; adding STOP PROTOCOL is over-engineering"}, {"text": "Recognises this is a relatively well-formed short docstring and says so", "passed": false, "evidence": "Assigns 4 FAILs and 2 WARNs; treats a 4-line well-formed docstring as severely deficient \u2014 no acknowledgment that it is appropriate for its scope"}, {"text": "Rewrite is conservative \u2014 does not bloat the docstring", "passed": false, "evidence": "Rewrite adds GATE, RESULT USAGE, STOP PROTOCOL blocks to a function whose original 4 lines were appropriate \u2014 significant over-engineering"}, {"text": "Any suggested improvements are genuinely useful", "passed": true, "evidence": "GOOD/BAD example for the 5-tool-call boundary and clarifying 'simple single-tool query' are genuinely useful suggestions"}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 4, "failed": 0, "total": 4, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Identifies 'provide any additional context' as a STOP PROTOCOL violation", "passed": true, "evidence": "Critical finding #1: 'docstring actively instructs the model to provide any additional context \u2014 this is the exact P2/P3 failure pattern'"}, {"text": "Flags missing exact echo-line format specification", "passed": true, "evidence": "WARN on dimension 6: 'Says formatted block but never quotes the exact format template'"}, {"text": "Flags missing explicit prohibition of post-execution instructions", "passed": true, "evidence": "FAIL on dimension 5: 'The key failure mode (adding follow-up hints) is not forbidden'"}, {"text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL", "passed": true, "evidence": "Rewrite removes the instruction entirely; adds full STOP PROTOCOL block with explicit prohibitions and echo-line format"}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.0, "passed": 0, "failed": 5, "total": 5, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Produces an audit table covering all 8 dimensions", "passed": false, "evidence": "No audit table. Provides a numbered list of general software engineering issues"}, {"text": "Flags passive language ('should read', 'you may proceed') as a compliance issue", "passed": false, "evidence": "Notes procedural instructions as 'category error' but not framed as compliance language issue"}, {"text": "Flags missing confirmation protocol", "passed": false, "evidence": "Does not mention confirmation protocol, protocol violation framing, or LSE-specific approval gate"}, {"text": "Flags missing failure mode prohibition", "passed": false, "evidence": "No mention of failure mode prohibitions or LSE failure patterns"}, {"text": "Produces a rewritten docstring with imperative language and confirmation protocol", "passed": false, "evidence": "Rewrite adds Args/Returns sections \u2014 standard Python docstring improvement, not LSE compliance rewrite"}], "notes": []}, {"eval_id": 3, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.75, "passed": 3, "failed": 1, "total": 4, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Does not assign FAIL to dimensions that are actually fine (trigger gate, compliance language)", "passed": true, "evidence": "Acknowledges trigger conditions and downstream use as strengths; does not over-flag the existing compliance language"}, {"text": "Recognises this is a relatively well-formed short docstring and says so", "passed": true, "evidence": "Opens with 'Strengths of original: trigger conditions present' \u2014 explicitly acknowledges what works"}, {"text": "Rewrite is conservative \u2014 does not bloat the docstring", "passed": true, "evidence": "Adds 4 specific improvements without restructuring; notes thresholds can be trimmed; explicitly declines to add STOP PROTOCOL"}, {"text": "Any suggested improvements are genuinely useful", "passed": false, "evidence": "Interpretation thresholds (70%/90%) are not present in the system prompt \u2014 adding them to the docstring duplicates guidance that belongs in the system prompt, not the tool"}], "notes": []}, {"eval_id": 2, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.25, "passed": 1, "failed": 3, "total": 4, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Identifies 'provide any additional context' as a STOP PROTOCOL violation", "passed": false, "evidence": "Notes post-call behavior is missing guidance but never identifies 'provide any additional context' as an active violation \u2014 frames it as a gap, not an anti-pattern"}, {"text": "Flags missing exact echo-line format specification", "passed": false, "evidence": "Mentions format is 'internal implementation detail' \u2014 does not flag missing echo-line template as a problem"}, {"text": "Flags missing explicit prohibition of post-execution instructions", "passed": false, "evidence": "No mention of prohibition pattern or protocol violation framing"}, {"text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL", "passed": true, "evidence": "Revised docstring adds 'expected model behavior after the call' section, removes commentary instruction \u2014 partially correct though not LSE-framed"}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 0.75, "stddev": 0.433, "min": 0.25, "max": 1.0}, "time_seconds": {"mean": 0.0, "stddev": 0.0, "min": 0.0, "max": 0.0}, "tokens": {"mean": 0.0, "stddev": 0.0, "min": 0, "max": 0}}, "without_skill": {"pass_rate": {"mean": 0.3333, "stddev": 0.3819, "min": 0.0, "max": 0.75}, "time_seconds": {"mean": 0.0, "stddev": 0.0, "min": 0.0, "max": 0.0}, "tokens": {"mean": 0.0, "stddev": 0.0, "min": 0, "max": 0}}, "delta": {"pass_rate": "+0.42", "time_seconds": "+0.0", "tokens": "+0"}}, "notes": []}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

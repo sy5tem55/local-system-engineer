@@ -1,0 +1,9 @@
+{
+  "expectations": [
+    {"text": "Identifies 'provide any additional context' as a STOP PROTOCOL violation", "passed": true, "evidence": "Critical finding #1: 'docstring actively instructs the model to provide any additional context — this is the exact P2/P3 failure pattern'"},
+    {"text": "Flags missing exact echo-line format specification", "passed": true, "evidence": "WARN on dimension 6: 'Says formatted block but never quotes the exact format template'"},
+    {"text": "Flags missing explicit prohibition of post-execution instructions", "passed": true, "evidence": "FAIL on dimension 5: 'The key failure mode (adding follow-up hints) is not forbidden'"},
+    {"text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL", "passed": true, "evidence": "Rewrite removes the instruction entirely; adds full STOP PROTOCOL block with explicit prohibitions and echo-line format"}
+  ],
+  "summary": {"passed": 4, "failed": 0, "total": 4, "pass_rate": 1.0}
+}

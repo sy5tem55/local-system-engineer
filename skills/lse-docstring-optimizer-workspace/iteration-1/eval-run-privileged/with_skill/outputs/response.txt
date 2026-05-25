@@ -1,0 +1,67 @@
+## Audit — run_privileged
+
+| Dimension              | Score | Notes                                                                 |
+|------------------------|-------|-----------------------------------------------------------------------|
+| 1. Section headers     | WARN  | Has one header ("DELEGATION FORMAT") but missing headers for gate and stop rules |
+| 2. Compliance language | FAIL  | "provide any additional context the user might need" is passive/optional language |
+| 3. GOOD/BAD examples   | FAIL  | No examples for what the delegation block looks like or what not to do |
+| 4. Stop protocol       | FAIL  | No STOP PROTOCOL block; docstring actually encourages post-delegation commentary |
+| 5. Failure prohibitions| FAIL  | No explicit prohibitions; the key failure mode (adding follow-up hints) is not forbidden |
+| 6. Output format       | WARN  | Says "formatted block" but never quotes the exact format template     |
+| 7. Trigger gate        | WARN  | "Use this for any command that needs sudo" is too broad; no explicit gate condition |
+| 8. Verification        | N/A   | This function delegates rather than writing state; no verify step applies |
+
+
+**Critical findings:**
+
+- [FAIL] Stop protocol: There is no STOP PROTOCOL block, and the docstring actively instructs the model to "provide any additional context" after emitting the delegation block — this is the exact P2/P3 failure pattern where the model pre-empts the user with post-execution hints before they have run anything.
+
+- [FAIL] Failure prohibitions: The docstring never explicitly forbids the key failure mode (adding follow-up instructions after the block). Without a "do NOT" or "protocol violation" construction, the model treats the post-delegation commentary instruction as permission, not a warning.
+
+- [FAIL] GOOD/BAD examples: No examples are provided for the delegation block format or for the stop boundary. The distinction between correct behaviour (emit block, stop) and incorrect behaviour (emit block, then explain what to expect) is highly ambiguous and needs a GOOD/BAD pair to reliably enforce.
+
+- [WARN] Compliance language: "provide any additional context the user might need" is passive and optional-sounding. Even if the intent were kept (it should not be — see STOP PROTOCOL), it would need to be imperative. As written it opens the door to arbitrary follow-up prose.
+
+- [WARN] Output format: The delegation block format is described in prose ("formatted block showing the command and reason") but never quoted. The model cannot reproduce a consistent format without a literal template.
+
+- [WARN] Trigger gate: "Use this for any command that needs sudo" is informal and too broad. It gives no exclusion criteria and no NEVER-call-this-yourself anchor.
+
+
+**Rewritten docstring:**
+
+```python
+def run_privileged(self, command: str, reason: str) -> str:
+    """
+    PRIVILEGED COMMAND RUNNER
+
+    Emits a formatted delegation block so the user can run an elevated command
+    manually. Returns the formatted block as a string.
+
+    GATE:
+      NEVER run sudo or privileged commands yourself.
+      Call this function whenever the required command needs elevated permissions.
+      Do NOT call this for commands that can run without sudo.
+
+    DELEGATION FORMAT:
+      The returned block must follow this exact template — no variation:
+
+        Format:
+        ╔══ PRIVILEGED COMMAND ══╗
+        Command : <command>
+        Reason  : <reason>
+        ╚════════════════════════╝
+
+      GOOD: emit the block exactly as templated, then stop.  ← correct
+      BAD:  add an explanation of what the command does after the block.  ← protocol violation
+
+    STOP PROTOCOL — mandatory, no exceptions:
+      After calling this function, write exactly ONE closing line:
+        Format: "Please run `<command>` in your terminal and paste the output here."
+      After that single line, output nothing further.
+      Do NOT add post-execution instructions, hints, or follow-up bash snippets.
+      Do NOT explain what the command does or what to expect after it runs.
+      Do NOT suggest verification steps or next actions.
+      Your next response must begin only after the user pastes terminal output.
+      Anything beyond the single echo line before user input is a protocol violation.
+    """
+```

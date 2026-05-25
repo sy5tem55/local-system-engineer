@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Does NOT assign FAIL to dimensions that are actually fine (trigger gate, compliance language)",
+      "passed": true,
+      "evidence": "Response identifies the trigger condition and negative guard as things that 'work well' — no dimensions are incorrectly flagged as failures; there is no structured scoring at all"
+    },
+    {
+      "text": "Recognises this is a short, relatively well-formed docstring and says so",
+      "passed": true,
+      "evidence": "Overall assessment opens with 'This is a good, concise docstring' and the rewrite is explicitly labelled 'conservative — only adds what's missing'"
+    },
+    {
+      "text": "Does NOT add STOP PROTOCOL — get_context_status is an internal-data function, not user-facing",
+      "passed": true,
+      "evidence": "No STOP PROTOCOL language anywhere in the response; baseline has no awareness of this concept and does not introduce it"
+    },
+    {
+      "text": "Rewrite is conservative — does not bloat the docstring with unnecessary additions",
+      "passed": true,
+      "evidence": "Rewritten docstring is 4 lines (same length as original); changes section explicitly lists only four minor adjustments, no new sections or protocols added"
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  }
+}

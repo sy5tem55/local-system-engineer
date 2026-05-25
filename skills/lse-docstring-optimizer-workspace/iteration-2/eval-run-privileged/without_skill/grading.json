@@ -1,0 +1,30 @@
+{
+  "expectations": [
+    {
+      "text": "Identifies that 'provide any additional context the user might need' is a direct STOP PROTOCOL violation — this is the critical failure",
+      "passed": true,
+      "evidence": "The response labels this the CRITICAL ISSUE and states: 'This instruction directly contradicts what should be the function's STOP PROTOCOL... the model keeps going after the delegation block' and frames it as a protocol violation."
+    },
+    {
+      "text": "Flags missing exact echo-line format specification",
+      "passed": true,
+      "evidence": "The response identifies under SECONDARY ISSUE that 'the docstring says the function emits a formatted block... but never specifies what that block looks like' and calls out missing delimiters, labeling, and template."
+    },
+    {
+      "text": "Flags missing explicit prohibition of post-execution instructions",
+      "passed": true,
+      "evidence": "The response states 'The correct behavior after emitting the delegation block is to stop. The docstring should include an explicit STOP PROTOCOL note making this clear' and notes there is no prohibition on continuing to narrate."
+    },
+    {
+      "text": "Rewritten docstring removes the 'additional context' instruction and adds a proper STOP PROTOCOL block",
+      "passed": true,
+      "evidence": "The REWRITTEN DOCSTRING section removes the 'additional context' line entirely and adds an explicit 'STOP PROTOCOL' section reading: 'After emitting the delegation block, stop. Do not provide explanations, commentary, expected output, or instructions about what the command does.'"
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  }
+}
