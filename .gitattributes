@@ -1,0 +1,32 @@
+# ── Line-ending policy for the LSE repo ───────────────────────────────────────
+#
+# This repo is edited from two environments:
+#   Windows  — PowerShell scripts, certsign, git.exe
+#   WSL2     — Python tools, bash scripts, the LSE itself
+#
+# Without this file, WSL git strips CRLF from PS1 files and marks every line of
+# the Authenticode signature block as "modified" even though no content changed.
+#
+# Rule: PS1 files always check out CRLF (Windows native).
+#       Everything else always checks out LF (Unix native).
+# ──────────────────────────────────────────────────────────────────────────────
+
+# PowerShell — always CRLF (Authenticode signatures are CRLF-sensitive)
+*.ps1       text eol=crlf
+*.psm1      text eol=crlf
+*.psd1      text eol=crlf
+
+# Python, shell, YAML, Markdown, HTML — always LF
+*.py        text eol=lf
+*.sh        text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.md        text eol=lf
+*.html      text eol=lf
+*.json      text eol=lf
+
+# Binary — no conversion
+*.gguf      binary
+*.png       binary
+*.jpg       binary
+*.zip       binary
