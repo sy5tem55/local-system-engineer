@@ -1,34 +1,107 @@
+<#
+.SYNOPSIS
+    Signs LSE launcher scripts with the SY5TEM5 Authenticode certificate.
 
-#Retieve the cert
+.DESCRIPTION
+    Retrieves the SY5TEM5 code-signing certificate from the current user's
+    certificate store and signs one or more launcher .ps1 files. Use after
+    creating or modifying any lse-stack-launch-*.ps1 file.
 
-$cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -like "*SY5TEM5*" }
-Set-AuthenticodeSignature "C:\Users\SY5\Documents\Claude\Projects\local-system-engineer\lse-stack-launch.ps1" -Certificate $cert
+.PARAMETER Target
+    The launcher filename (without path) to sign, e.g. "lse-stack-launch-1.062.ps1".
+    Pass "all" to sign every lse-stack-launch-*.ps1 in the project directory.
+    Defaults to "lse-stack-launch-1.062.ps1" (current production version).
 
-#Sign it
+.EXAMPLE
+    .\certsign.ps1
+    Signs the current production launcher (v1.062).
 
-Get-AuthenticodeSignature "C:\Users\SY5\Documents\Claude\Projects\local-system-engineer\lse-stack-launch.ps1" | Select-Object Status, StatusMessage
+.EXAMPLE
+    .\certsign.ps1 -Target lse-stack-launch-1.062.ps1
+    Signs a specific version.
 
+.EXAMPLE
+    .\certsign.ps1 -Target all
+    Signs every lse-stack-launch-*.ps1 found in the project directory.
 
+.NOTES
+    The signing certificate must be in Cert:\CurrentUser\My with Subject
+    matching "*SY5TEM5*". Run from any PowerShell window — does not require
+    elevation. After signing, commit the updated file to git.
+#>
 
+[CmdletBinding()]
+param(
+    [string]$Target = 'lse-stack-launch-1.062.ps1'
+)
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
+$ProjectDir = $PSScriptRoot
 
+# --- Locate certificate ---
+$Cert = Get-ChildItem Cert:\CurrentUser\My |
+        Where-Object { $_.Subject -like '*SY5TEM5*' } |
+        Select-Object -First 1
 
+if (-not $Cert) {
+    Write-Error "SY5TEM5 certificate not found in Cert:\CurrentUser\My. Ensure the code-signing cert is installed."
+    exit 1
+}
 
+Write-Host "Certificate : $($Cert.Thumbprint)  ($($Cert.Subject))" -ForegroundColor Cyan
 
-PS C:\Users\SY5> $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -like "*SY5TEM5*" }
-PS C:\Users\SY5> Set-AuthenticodeSignature "C:\Users\SY5\Documents\Claude\Projects\local-system-engineer\lse-stack-launch.ps1" -Certificate $cert
+# --- Resolve target file list ---
+if ($Target -eq 'all') {
+    $Files = Get-ChildItem -Path $ProjectDir -Filter 'lse-stack-launch-*.ps1' |
+             Where-Object { $_.Name -notmatch '\.signed\.ps1$' } |
+             Sort-Object Name
+    if ($Files.Count -eq 0) {
+        Write-Warning "No lse-stack-launch-*.ps1 files found in $ProjectDir"
+        exit 0
+    }
+} else {
+    $FilePath = Join-Path $ProjectDir $Target
+    if (-not (Test-Path $FilePath)) {
+        Write-Error "File not found: $FilePath"
+        exit 1
+    }
+    $Files = @(Get-Item $FilePath)
+}
 
-    Directory: C:\Users\SY5\Documents\Claude\Projects\local-system-engineer
+# --- Sign and verify each file ---
+$Results = @()
 
-SignerCertificate                         Status                         StatusMessage                 Path
------------------                         ------                         -------------                 ----
-2ACAC827D2AF5D24469E07B33A1E62A7464826FB  Valid                          Signature verified.           lse-stack-launch.ps1
+foreach ($File in $Files) {
+    Write-Host "`nSigning : $($File.Name)" -ForegroundColor Yellow
 
-PS C:\Users\SY5> Get-AuthenticodeSignature "C:\Users\SY5\Documents\Claude\Projects\local-system-engineer\lse-stack-launch.ps1" | Select-Object Status, StatusMessage
+    $Sig = Set-AuthenticodeSignature -FilePath $File.FullName -Certificate $Cert
 
-Status StatusMessage
------- -------------
- Valid Signature verified.
+    $Verify = Get-AuthenticodeSignature -FilePath $File.FullName
 
-PS C:\Users\SY5>
+    $Ok = $Verify.Status -eq 'Valid'
+    $Icon = if ($Ok) { '[OK]' } else { '[FAIL]' }
+    $Color = if ($Ok) { 'Green' } else { 'Red' }
+
+    Write-Host "$Icon  $($File.Name)  —  $($Verify.StatusMessage)" -ForegroundColor $Color
+
+    $Results += [PSCustomObject]@{
+        File          = $File.Name
+        Status        = $Verify.Status
+        StatusMessage = $Verify.StatusMessage
+        Thumbprint    = $Sig.SignerCertificate.Thumbprint
+    }
+}
+
+# --- Summary ---
+Write-Host "`n--- Summary ---" -ForegroundColor Cyan
+$Results | Format-Table -AutoSize
+
+$Failed = $Results | Where-Object { $_.Status -ne 'Valid' }
+if ($Failed) {
+    Write-Error "$($Failed.Count) file(s) failed signing. Do not commit unsigned launchers."
+    exit 1
+}
+
+Write-Host "All files signed successfully. Remember to commit the updated launcher(s) to git." -ForegroundColor Green
