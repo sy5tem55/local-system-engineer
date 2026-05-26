@@ -1,8 +1,8 @@
 # Skill system temp IDs
-skills/zi*/
+skills/zi*
 
 # Backup files
-*.BKP.ps1
+*BKP.ps1
 
 # Eval viewer workspace artifacts
 viewer.html
