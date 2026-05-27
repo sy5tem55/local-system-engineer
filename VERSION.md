@@ -10,7 +10,7 @@ Updated by the `lse:version-manager` skill whenever a new version ships.
 | Component | Version | Shipped | Changelog |
 |---|---|---|---|
 | Tool | v1.5.7 | 2026-05-26 | tools/openwebui-tool-v1.5.7.py (header) |
-| Prompt | v0.5.2 | 2026-05-25 | prompts/CHANGELOG.md |
+| Prompt | v0.5.3 | 2026-05-27 | prompts/CHANGELOG.md |
 | Filter | v1.1.0 | 2026-05-23 | tools/lse-routing-filter-v1.1.0.py |
 | Context Monitor | v1.3.0 | 2026-05-26 | tools/lse-context-monitor-v1.3.0.py |
 | Launcher | v1.070 | 2026-05-27 | lse-stack-launch-1.070.ps1 |
@@ -72,6 +72,7 @@ These should be tested before being considered production-ready.
 | v0.5 | 2026-05-24 | CONTEXT HANDOVER section |
 | v0.5.1 | 2026-05-24 | LIVE SERVICE RULE |
 | v0.5.2 | 2026-05-25 | Remove SUDO DELEGATION FORMAT; DO NOT call again; KB path |
+| v0.5.3 | 2026-05-27 | Align with context-monitor v1.3.0: remove proactive get_context_status rule; CONTEXT HANDOVER reacts to filter signals |
 
 ### Context Monitor versions
 | Version | Shipped | Key change |

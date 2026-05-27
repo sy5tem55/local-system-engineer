@@ -1,5 +1,27 @@
 # Prompt Version Changelog
 
+## v0.5.3 — 2026-05-27
+**Changes from v0.5.2:**
+- ENVIRONMENT: bumped tool to v1.5.7, context-monitor to v1.3.0.
+- TOOLS: removed "call after 5th tool call" rule from `get_context_status`. With
+  context-monitor v1.3.0 the filter fetches `/metrics` and injects fill % as a fact
+  on every turn — the model must not call the tool proactively. Call only when the
+  user explicitly asks about context health.
+- OUTPUT RULES: removed "after your 5th tool call: call get_context_status" line —
+  redundant and conflicting with filter-based injection.
+- CONTEXT HANDOVER: rewritten to reference filter-injected signals (⚠ CONTEXT WARNING
+  at ≥ 70%, 🔴 CONTEXT CRITICAL at ≥ 85%) rather than tool call return values. Added
+  explicit note: "do not call get_context_status to check fill — read what the filter
+  injects." Thresholds now match filter valve defaults exactly.
+
+Root cause of v0.5.2 issue: prompt instructed model to call `get_context_status` after
+every 5th tool call. With v1.3.0 active, this produced redundant tool calls and
+conflicting threshold instructions (prompt: 70%, no floor; filter: injects fact silently
+below 70%). Model followed both, calling the tool unnecessarily and emitting output
+when it should have been silent.
+
+---
+
 ## v0.5.2 — 2026-05-25
 **Changes from v0.5.1:**
 - Removed SUDO DELEGATION FORMAT section entirely — it specified a different format from what
