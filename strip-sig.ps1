@@ -42,7 +42,7 @@ process {
         $Lines = Get-Content -LiteralPath $Resolved.FullName -Encoding UTF8
 
         # Find the SIG block start (line number is 1-based from Select-String)
-        $SigMatch = $Lines | Select-String -Pattern '^# SIG # Begin signature block' -SimpleMatch
+        $SigMatch = $Lines | Select-String -Pattern '^# SIG # Begin signature block'
         if (-not $SigMatch) {
             Write-Host "  [SKIP] No SIG block found in $($Resolved.Name)"
             continue
