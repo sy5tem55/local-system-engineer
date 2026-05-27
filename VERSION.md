@@ -13,7 +13,7 @@ Updated by the `lse:version-manager` skill whenever a new version ships.
 | Prompt | v0.5.2 | 2026-05-25 | prompts/CHANGELOG.md |
 | Filter | v1.1.0 | 2026-05-23 | tools/lse-routing-filter-v1.1.0.py |
 | Context Monitor | v1.3.0 | 2026-05-26 | tools/lse-context-monitor-v1.3.0.py |
-| Launcher | v1.069 | 2026-05-27 | lse-stack-launch-1.069.ps1 |
+| Launcher | v1.070 | 2026-05-27 | lse-stack-launch-1.070.ps1 |
 | Test Suite | v3.5 | 2026-05-26 | eval/test-suite-v3.5.md |
 
 ---
@@ -102,3 +102,4 @@ These should be tested before being considered production-ready.
 | v1.067 | 2026-05-27 | Q5_K_M 64k profile: q8_0→q4_0 KV cache (saves ~1.1 GB; only ~1.1 GB headroom at q8_0) |
 | v1.068 | 2026-05-27 | Q5_K_M 64k banner: add KV:q4_0 label so quant is visible at runtime |
 | v1.069 | 2026-05-27 | KV quant in all profile names/banners; add [64k · iq4_nl] test profile; revert Q5 64k to q8_0 |
+| v1.070 | 2026-05-27 | Remove iq4_nl profile (prefill collapse confirmed); add VRAM limit note to Q5 64k profile |
