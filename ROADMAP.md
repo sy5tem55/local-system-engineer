@@ -14,7 +14,7 @@ The Local System Engineer (LSE) is a locally-hosted AI sysadmin agent running Qw
 | Component | Version | Date |
 |---|---|---|
 | Tool | v1.5.7 | 2026-05-26 |
-| Prompt | v0.5.2 | 2026-05-25 |
+| Prompt | v0.5.3 | 2026-05-27 |
 | Routing filter | v1.1.0 | 2026-05-23 |
 | Context monitor filter | v1.3.0 | 2026-05-26 |
 | Launch script | v1.070 | 2026-05-27 |
