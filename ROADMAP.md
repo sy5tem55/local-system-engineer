@@ -1,7 +1,7 @@
 # LSE Project Roadmap & Progress Report
 
-**Last updated:** 2026-05-25  
-**Current state:** Active development — Run 5 prep in progress
+**Last updated:** 2026-05-26  
+**Current state:** Active development — Run 6 pending; Grafana metrics integration complete
 
 ---
 
@@ -13,12 +13,12 @@ The Local System Engineer (LSE) is a locally-hosted AI sysadmin agent running Qw
 
 | Component | Version | Date |
 |---|---|---|
-| Tool | v1.5.5 | 2026-05-25 |
+| Tool | v1.5.7 | 2026-05-26 |
 | Prompt | v0.5.2 | 2026-05-25 |
 | Routing filter | v1.1.0 | 2026-05-23 |
-| Context monitor filter | v1.0.0 | 2026-05-23 |
-| Launch script | v1.061 | 2026-05-25 |
-| Test suite | v3.2 | 2026-05-25 |
+| Context monitor filter | v1.3.0 | 2026-05-26 |
+| Launch script | v1.064 | 2026-05-26 |
+| Test suite | v3.5 | 2026-05-26 |
 
 **Eval score trajectory:**
 
@@ -28,8 +28,9 @@ The Local System Engineer (LSE) is a locally-hosted AI sysadmin agent running Qw
 | Run 2 | v1.5.1 | v0.4.1 | thinking | 45/57 |
 | Run 3 | v1.5.4 | v0.5.1 | thinking (budget 3072) | **57/57** |
 | Run 4 | v1.5.5 | v0.5.2 | no-think (budget 0) | 49/57 |
+| Run 5 (partial) | v1.5.6 | v0.5.2 | thinking (budget 3072) | 15/21 subset |
 
-Run 4's 49/57 is not a regression — it's a no-think mode experiment. The 57/57 ceiling from Run 3 has not been re-confirmed against the current versions. Run 5 will establish that baseline.
+Run 4's 49/57 is not a regression — it's a no-think mode experiment. Run 5 was a targeted subset eval confirming P2 (3/3), W2 (3/3), A3 (3/3) fixes. P1/P3 were 0/3 — root cause: execute_command lacked a destructive-op confirmation gate. Fixed in v1.5.7. A1 was 0/3 — root cause: questions answerable from model inference; context monitor never triggered. Fixed in v1.2.0 + test-suite v3.5. Run 6 will be the first full scored run against the corrected stack.
 
 ---
 
@@ -42,13 +43,16 @@ Run 4's 49/57 is not a regression — it's a no-think mode experiment. The 57/57
 - [x] VRAM budget documented (RTX 4090: 18–22 GB normal for 32k profile)
 - [x] Stack health check one-liner and `lse:stack-health-check` skill
 
-### Tool (openwebui-tool-v1.5.5.py)
+### Tool (openwebui-tool-v1.5.7.py)
 - [x] execute_command — denylist, combine rule, live service rule, privileged path block
+- [x] execute_command — POST-DELETE VERIFY RULE (v1.5.6)
+- [x] execute_command — DESTRUCTIVE OPERATION PROTOCOL: confirm before rm/truncate/overwrite (v1.5.7)
 - [x] read_file — routing rules, privileged path block
 - [x] write_file — 5-step protocol, confirmation gate
 - [x] sudo_delegation_block — return value semantics, stop protocol, read-first rule
-- [x] search_web — announcement gate, single-call rule
+- [x] search_web — announcement gate, single-call rule, NO YEAR INJECTION (v1.5.6)
 - [x] get_context_status — correct field names for llama-server build ≥9307
+- [x] get_github_release(repo) — live release lookup via GitHub API (v1.5.6)
 
 ### Prompt (v0.5.2)
 - [x] Three-tier permission model (execute / delegate / deny unconditionally)
@@ -58,9 +62,10 @@ Run 4's 49/57 is not a regression — it's a no-think mode experiment. The 57/57
 - [x] SUDO DELEGATION FORMAT conflict resolved (section removed in v0.5.2)
 
 ### Eval infrastructure
-- [x] Test suite v3.2 (19 tests across S/P/M/W/A categories)
+- [x] Test suite v3.5 (21 tests — unfakeable A1 questions, all preconditions verified)
 - [x] `lse:eval-runner` skill — structured session guide with scoring rubric
-- [x] 4 eval runs completed with written reports
+- [x] 4 full eval runs + 1 partial targeted subset (Run 5) with written reports
+- [x] .gitattributes — CRLF enforcement for PS1 files across WSL/Windows boundary
 
 ### Skills (all have SKILL.md + evals.json)
 - [x] `lse:eval-runner` — structured eval session guide
@@ -80,40 +85,37 @@ Run 4's 49/57 is not a regression — it's a no-think mode experiment. The 57/57
 
 ---
 
-## Immediate — Run 5 Prep
+## Immediate — Run 6
 
-These are the specific items needed before Run 5 can produce a clean score.
+Full scored eval against the corrected stack. All precondition fixes are in place.
 
-### Tool v1.5.6 (three changes)
+**Stack for Run 6:**
+- Tool: v1.5.7 (DESTRUCTIVE OPERATION PROTOCOL)
+- Prompt: v0.5.2
+- Context monitor: v1.3.0 (self-fetching filter — no model action required)
+- Test suite: v3.5 (unfakeable A1 questions)
+- Profile: 32k · MTP · thinking (--reasoning-budget 3072)
 
-**1. Fix P3 — post-delete verify step missing**  
-Add to `execute_command` docstring (or write_file if destructive-delete path lives there):  
-"After any deletion, always verify with a follow-up call confirming the file/directory no longer exists."
+**Deploy checklist before Run 6:**
+- [ ] Hot-swap tool to v1.5.7 in OpenWebUI Admin → Tools
+- [ ] Hot-swap context monitor to v1.3.0 in OpenWebUI Admin → Functions
+- [ ] Set metrics_url valve to http://localhost:8080/metrics (default is correct)
+- [ ] Verify debug flag is OFF (valve in UI)
+- [ ] Fresh conversation (no prior tool-call history)
+- [ ] Run all 21 questions per test-suite-v3.5 using lse:eval-runner skill
 
-**2. Fix W2 — search query date injection**  
-Add to `search_web` docstring:  
-"Do not append a year to the query — use the current date from the system prompt if recency matters, not your training-data estimate of the year."
+**Expected outcome:** P1/P3 confirmation gates enforced by v1.5.7. Context fill now injected as a fact by v1.3.0 — model no longer needs to call get_context_status proactively. A1 questions are unfakeable. Targeting 19–21/21.
 
-**3. Add `get_github_release(repo)` function**  
-New function querying `https://api.github.com/repos/{repo}/releases/latest`. Directly solves the W2 llama.cpp version lookup without SearxNG. Read-only, narrow scope.
+---
 
-### Test suite v3.3 (four precondition fixes)
+## Completed — Grafana Metrics Integration
 
-**P2:** Change target setting from `vm.swappiness=10` (already present in `/etc/sysctl.conf`) to `vm.dirty_ratio=20` to force the write path.
+The launcher v1.063 added `--metrics` to the llama-server command, exposing a Prometheus-compatible endpoint at `http://localhost:8080/metrics`. Dashboard build completed 2026-05-26.
 
-**M2:** Change alias from `ll='ls -lah --color=auto'` (already in `.bashrc` at line 21) to `alias gs='git status'` to force the 5-step write protocol.
-
-**A2:** Run inside a session with >70% context fill to exercise the save-state + fresh-start path. Current test hits 35% — the high-context response path is never triggered.
-
-**A3:** Redesign prompt so commands cannot be trivially semicoloned. Current "run these 5 commands in sequence" correctly triggers the combine rule from S1. Use prompts that require separate calls (e.g. "check if process X is running, then if it is, show its open ports").
-
-### Context monitor filter — debug flag cleanup
-
-Change `debug: bool = Field(default=True, ...)` back to `default=False` in `lse-context-monitor-v1.0.0.py`. The runtime valve is already set to False from the UI — this is a code hygiene item only. Hot-swap via Admin → Functions after editing.
-
-### Run 5
-
-Run the full test suite (v3.3) against tool v1.5.6 + prompt v0.5.2 with the standard 32k profile (`--reasoning-budget 3072`). Expected target: reproduce 57/57 or close to it, confirming the current production versions are solid.
+- [x] `--metrics` flag in launcher v1.063
+- [x] Prometheus scrape config targeting `localhost:8080/metrics`
+- [x] Grafana dashboard with llama.cpp performance panels
+- [ ] Add metrics endpoint reference to ops runbook (docs/07-operations-runbook.md)
 
 ---
 
@@ -123,7 +125,7 @@ Run the full test suite (v3.3) against tool v1.5.6 + prompt v0.5.2 with the stan
 `README.md` is severely out of date — still references Gemma 4 and the v0.3 prompt as "latest". Should be updated to reflect Qwen3.6-27B, the full component stack, current version table, and accurate repo layout.
 
 ### Architecture decision: filter vs tool for context monitoring
-The context monitor is currently an OpenWebUI filter (inlet hook). An alternative is moving the trigger logic into the tool itself — specifically having `execute_command` track a call counter and emit a `get_context_status` reminder when the count hits threshold. The filter approach is cleaner (model-agnostic, no tool pollution) but has shown one failure mode (Run 4 no-think regression). Evaluate after Run 5.
+**Resolved in v1.3.0.** All compliance-based approaches (v1.0–v1.2) failed because task-focused models always prioritise answering the user over calling a meta-tool. v1.3.0 removes the model from the loop: the filter fetches context fill from `/metrics` directly and injects it as a fact in the system message. The model reads it and acts naturally — no tool call required. The `/metrics` endpoint is available thanks to launcher v1.063.
 
 ### `get_github_release` — extend scope if useful
 After shipping for llama.cpp, assess whether the function is useful for other packages (open-webui releases, Ubuntu package versions via GitHub). Could replace a whole class of W2-type searches.

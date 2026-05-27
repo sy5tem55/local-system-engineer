@@ -12,8 +12,8 @@ Updated by the `lse:version-manager` skill whenever a new version ships.
 | Tool | v1.5.7 | 2026-05-26 | tools/openwebui-tool-v1.5.7.py (header) |
 | Prompt | v0.5.2 | 2026-05-25 | prompts/CHANGELOG.md |
 | Filter | v1.1.0 | 2026-05-23 | tools/lse-routing-filter-v1.1.0.py |
-| Context Monitor | v1.2.0 | 2026-05-26 | tools/lse-context-monitor-v1.2.0.py |
-| Launcher | v1.063 | 2026-05-26 | lse-stack-launch-1.063.ps1 |
+| Context Monitor | v1.3.0 | 2026-05-26 | tools/lse-context-monitor-v1.3.0.py |
+| Launcher | v1.064 | 2026-05-26 | lse-stack-launch-1.064.ps1 |
 | Test Suite | v3.5 | 2026-05-26 | eval/test-suite-v3.5.md |
 
 ---
@@ -78,7 +78,8 @@ These should be tested before being considered production-ready.
 |---|---|---|
 | v1.0.0 | 2026-05-23 | Initial — system message injection only |
 | v1.1.0 | 2026-05-26 | Dual injection: system message + user message prepend |
-| v1.2.0 | 2026-05-26 | Structured interrupt block replacing prepend (Step 1 / Step 2 format) |
+| v1.2.0 | 2026-05-26 | Structured interrupt block replacing prepend (Step 1 / Step 2 format) — FAILED same root cause |
+| v1.3.0 | 2026-05-26 | Self-fetching filter: queries /metrics, injects fill % as fact — no model action required |
 
 ### Test Suite versions
 | Version | Shipped | Key change |
@@ -95,3 +96,4 @@ These should be tested before being considered production-ready.
 | v1.061 | 2026-05-25 | Minor profile adjustments |
 | v1.062 | 2026-05-26 | draft-mtp profiles for Q5_K_M + Q4_K_M; Authenticode signed |
 | v1.063 | 2026-05-26 | --metrics flag for Prometheus/Grafana scraping |
+| v1.064 | 2026-05-26 | llama-optimus tuning: BatchSize, UBatchSize, OverrideTensor (MoE expert CPU offload), ngl 99→117/129, threads tuned per model |
