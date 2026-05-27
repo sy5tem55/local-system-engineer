@@ -467,12 +467,42 @@ bash -l
 foreach ($Name in $Scripts.Keys) {
     $Content = $Scripts[$Name]
     $WslPath = "$LaunchDir/$Name"
-    $Content | wsl.exe -- bash -c "mkdir -p '$LaunchDir' && tr -d '\r' > '$WslPath' && chm
+    $Content | wsl.exe -- bash -c "mkdir -p '$LaunchDir' && tr -d '\r' > '$WslPath' && chmod +x '$WslPath'"
+    Write-Host "  ${g}✓${r}  $Name" -ForegroundColor Green
+}
+
+Write-Host ""
+Write-Host "  ${y}Opening Windows Terminal...${r}"
+Write-Host ""
+
+# ── Windows Terminal: five colour-coded tabs ───────────────────────────────
+#
+#   Tab colours (tab stripe only — terminal theme stays as your default):
+#     Red    #CC2222  — model server (GPU-heavy, stands out)
+#     Blue   #2255CC  — Open WebUI
+#     Purple #8822CC  — Playwright
+#     Orange #CC7722  — Open Terminal
+#     Green  #229966  — LSE terminal
+
+$WtArgs = (
+    "new-tab --title `"$($Prof.TabLabel)`"   --tabColor `"#CC2222`" -- wsl.exe bash $LaunchDir/model.sh",
+    "; new-tab --title `"  Open WebUI`"    --tabColor `"#2255CC`" -- wsl.exe bash $LaunchDir/webui.sh",
+    "; new-tab --title `"  Playwright`"    --tabColor `"#8822CC`" -- wsl.exe bash $LaunchDir/playwright.sh",
+    "; new-tab --title `"  Open Terminal`" --tabColor `"#CC7722`" -- wsl.exe bash $LaunchDir/open-terminal.sh",
+    "; new-tab --title `"  LSE Terminal`"  --tabColor `"#229966`" -- wsl.exe bash $LaunchDir/terminal.sh"
+) -join " "
+
+Start-Process wt -ArgumentList $WtArgs
+
+Write-Host "  ${g}All tabs launched.${r}"
+Write-Host "  Model server takes ~30 s to load — watch the red tab."
+Write-Host ""
+
 # SIG # Begin signature block
 # MIIFngYJKoZIhvcNAQcCoIIFjzCCBYsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDRSdr1bkS45bRM
-# 22nB8oD7hNXxMatHxG06zwQycbkof6CCAxgwggMUMIIB/KADAgECAhAnjvKeW2tW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCACgyhwKj9Iguh1
+# tDx8e/DnvBheW/3LREZpNuCFdlLXhqCCAxgwggMUMIIB/KADAgECAhAnjvKeW2tW
 # hkFhZBM0k1neMA0GCSqGSIb3DQEBCwUAMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0
 # MB4XDTI1MDkwNzEzMzcxNVoXDTI2MDkwNzEzNTcxNVowFjEUMBIGA1UEAwwLU1k1
 # VEVNNUNlcnQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDsHkeVknvs
@@ -492,12 +522,12 @@ foreach ($Name in $Scripts.Keys) {
 # EjUxggHcMIIB2AIBATAqMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0AhAnjvKeW2tW
 # hkFhZBM0k1neMA0GCWCGSAFlAwQCAQUAoIGEMBgGCisGAQQBgjcCAQwxCjAIoAKA
 # AKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEO
-# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIEXmAwagfgqC67dez1GrMSGa
-# JSxdvLplhb/2XczkUtPCMA0GCSqGSIb3DQEBAQUABIIBAIVzpCfk7XiSCGjGAoZz
-# j6hTr5rZb2vbDqnAOWYB6blbCEfpb/ABqxQ03JYuQGj19IVxFocEbbqG88Rj93T3
-# KGZ0b1FRaNiorTZgh23aJ7/YoaX2xjD8N6fSATG54betQjG90RneidNPFF/NEJTv
-# fj7Mc8r9n7BrcfzI4/KhSTVY+xt/fXGhYkAee+GkQqAUbzxAnKthe6J43rnd5Jn+
-# 56xt6HdBHsxauVBWy0XdbUlgJG+SGjDpDYCZAFZn4/INJVz+JIw3iZ1EIgRB/BKj
-# iL7wYw6YXchjTVVzL3juCr8gwE+f87uYa+/ufFyA+YCffdlf2w1JRhjatNaBxNy0
-# hns=
+# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIMaDYccqOhyvM6BJJx+8qB8v
+# S8w6FsvdL5DFh7w14kYYMA0GCSqGSIb3DQEBAQUABIIBAAAUB0MatUEjYIj56bF7
+# Y0QsYwnFlhDOgYdlxVSriRAkzjqb4fR0zk5AkLqR5/U4OeDdjh4fu/dkYv4bHw66
+# JxnoWnqYdhxliErm8pnKvss04lwQDxhndKJzpTW3Y3IHj9AyrfjqE3bxmP1mka21
+# Ws60ofxi99Mi8QlfLUiBF6QKfaEj6aF4tx542Z06eUlEnGQQ7jankA/xCTIipXhr
+# MQBW4AfeBXuoHYxL4BIObXkAzRhm2ywWr2z0r8FyWrrZ8hLISfLC0rEilpngdvvo
+# 3KS4AV0uAqHjkD+Syne2Gj6o8f0PWB5nW7wBZD7mVqbZybMjfAXAsVAjKk2eYigx
+# iL8=
 # SIG # End signature block
