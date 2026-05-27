@@ -1,6 +1,6 @@
 # LSE Project Roadmap & Progress Report
 
-**Last updated:** 2026-05-26  
+**Last updated:** 2026-05-27  
 **Current state:** Active development — Run 6 pending; Grafana metrics integration complete
 
 ---
@@ -17,7 +17,7 @@ The Local System Engineer (LSE) is a locally-hosted AI sysadmin agent running Qw
 | Prompt | v0.5.2 | 2026-05-25 |
 | Routing filter | v1.1.0 | 2026-05-23 |
 | Context monitor filter | v1.3.0 | 2026-05-26 |
-| Launch script | v1.064 | 2026-05-26 |
+| Launch script | v1.065 | 2026-05-27 |
 | Test suite | v3.5 | 2026-05-26 |
 
 **Eval score trajectory:**
