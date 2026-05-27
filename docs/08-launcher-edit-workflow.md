@@ -87,12 +87,14 @@ The fix (already in place): remove `-SimpleMatch` so `^` works as a regex anchor
 Before signing, parse-check the file to confirm no corruption:
 
 ```powershell
+$errors = $null
 $null = [System.Management.Automation.Language.Parser]::ParseFile(
     (Resolve-Path 'lse-stack-launch-1.NNN.ps1').Path,
-    [ref]$null, [ref]$errors
-)
+    [ref]$null, [ref]$errors)
 if ($errors.Count -eq 0) { "Parse OK" } else { $errors }
 ```
+
+> **PS5 note:** `$errors = $null` must appear before the ParseFile call. PS5 refuses `[ref]` on an undeclared variable — omitting it gives `InvalidOperation: [ref] cannot be applied to a variable that does not exist` and silently skips the check.
 
 **Only sign if you get `Parse OK`.** If there are errors, do not run certsign — fix the corruption first (see Recovery section below).
 
@@ -168,6 +170,6 @@ git commit -m "docs: bump launcher to v1.NNN in VERSION.md and ROADMAP.md"
 | Copy | `Copy-Item lse-stack-launch-1.NNN.ps1 lse-stack-launch-1.NNN+1.ps1` | Always work on a new file |
 | Strip | `.\strip-sig.ps1 -Target lse-stack-launch-1.NNN+1.ps1` | Must see `[OK]` before editing |
 | Edit | Claude Edit tool | Safe on unsigned files |
-| Parse check | `$null = [System.Management.Automation.Language.Parser]::ParseFile(...)` | Must see `Parse OK` before signing |
+| Parse check | `$errors = $null` then `ParseFile(...)` | Must see `Parse OK` before signing; `$errors = $null` required on PS5 |
 | Sign | `.\certsign.ps1 -Target lse-stack-launch-1.NNN+1.ps1` | Only after parse check passes |
 | Commit | `git add ... && git commit -m "..."` | Include VERSION.md + ROADMAP.md |
