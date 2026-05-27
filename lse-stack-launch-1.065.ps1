@@ -240,6 +240,79 @@ $ModelProfiles = [ordered]@{
         BannerLine2      = 'MTP · 64k · thinking off  →  :8080'
     }
 
+    # ── DEBUG / BISECT profiles — remove after regression is identified ──────────
+    #
+    #    Three profiles that strip the v1.064 changes back layer by layer.
+    #    Run each and compare tg speed to identify which setting causes the crawl.
+    #
+    #    D1 — v1.063 baseline: ngl=99, threads=8, no BatchSize/UBatchSize/OverrideTensor
+    #         If D1 is fast → regression is in one of the v1.064 changes (try D2 next)
+    #         If D1 is slow → regression is environmental (VRAM, WSL memory, thermal)
+    #
+    #    D2 — ngl+threads only: ngl=117, threads=13, no BatchSize/UBatchSize/OverrideTensor
+    #         If D2 is fast and D1 is fast → OverrideTensor or batch settings are the culprit
+    #         If D2 is slow → ngl increase itself is causing pressure (likely VRAM OOM/paging)
+    #
+    #    D3 — ngl+threads+batch, no OverrideTensor: adds BatchSize/UBatchSize, still no expert offload
+    #         If D3 is slow and D2 is fast → batch/ubatch values are the culprit
+    #         If D3 is fast → OverrideTensor (CPU expert offload) is the culprit
+
+    'DEBUG D1 · v1.063 baseline (ngl=99, no tuning)' = @{
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
+        CtxSize          = 32768
+        GpuLayers        = 99
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 8
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        SpecType         = 'draft-mtp'
+        SpecDraftNMax    = 3
+        TabLabel         = '  DEBUG D1 · baseline'
+        BannerLine1      = 'DEBUG D1  ·  v1.063 baseline'
+        BannerLine2      = 'ngl=99  threads=8  no overrides'
+    }
+
+    'DEBUG D2 · ngl+threads only (no batch, no OverrideTensor)' = @{
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
+        CtxSize          = 32768
+        GpuLayers        = 117
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 13
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        SpecType         = 'draft-mtp'
+        SpecDraftNMax    = 3
+        TabLabel         = '  DEBUG D2 · ngl+threads'
+        BannerLine1      = 'DEBUG D2  ·  ngl+threads only'
+        BannerLine2      = 'ngl=117  threads=13  no overrides'
+    }
+
+    'DEBUG D3 · ngl+threads+batch (no OverrideTensor)' = @{
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
+        CtxSize          = 32768
+        GpuLayers        = 117
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 13
+        BatchSize        = 6637
+        UBatchSize       = 2875
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        SpecType         = 'draft-mtp'
+        SpecDraftNMax    = 3
+        TabLabel         = '  DEBUG D3 · ngl+batch'
+        BannerLine1      = 'DEBUG D3  ·  ngl+batch (no CPU offload)'
+        BannerLine2      = 'ngl=117  batch=6637  no OverrideTensor'
+    }
+
     # ── Standard profiles (no MTP — stable baseline) ──────────────────────────
     #    Same llama-optimus tuning applied as MTP profiles above.
 
@@ -497,12 +570,11 @@ Start-Process wt -ArgumentList $WtArgs
 Write-Host "  ${g}All tabs launched.${r}"
 Write-Host "  Model server takes ~30 s to load — watch the red tab."
 Write-Host ""
-
 # SIG # Begin signature block
 # MIIFngYJKoZIhvcNAQcCoIIFjzCCBYsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCACgyhwKj9Iguh1
-# tDx8e/DnvBheW/3LREZpNuCFdlLXhqCCAxgwggMUMIIB/KADAgECAhAnjvKeW2tW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCq5ldJ37ELKCtd
+# +7lH1+BDyDvazGJ5/gVTiUN6r46o1KCCAxgwggMUMIIB/KADAgECAhAnjvKeW2tW
 # hkFhZBM0k1neMA0GCSqGSIb3DQEBCwUAMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0
 # MB4XDTI1MDkwNzEzMzcxNVoXDTI2MDkwNzEzNTcxNVowFjEUMBIGA1UEAwwLU1k1
 # VEVNNUNlcnQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDsHkeVknvs
@@ -522,12 +594,12 @@ Write-Host ""
 # EjUxggHcMIIB2AIBATAqMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0AhAnjvKeW2tW
 # hkFhZBM0k1neMA0GCWCGSAFlAwQCAQUAoIGEMBgGCisGAQQBgjcCAQwxCjAIoAKA
 # AKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEO
-# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIMaDYccqOhyvM6BJJx+8qB8v
-# S8w6FsvdL5DFh7w14kYYMA0GCSqGSIb3DQEBAQUABIIBAAAUB0MatUEjYIj56bF7
-# Y0QsYwnFlhDOgYdlxVSriRAkzjqb4fR0zk5AkLqR5/U4OeDdjh4fu/dkYv4bHw66
-# JxnoWnqYdhxliErm8pnKvss04lwQDxhndKJzpTW3Y3IHj9AyrfjqE3bxmP1mka21
-# Ws60ofxi99Mi8QlfLUiBF6QKfaEj6aF4tx542Z06eUlEnGQQ7jankA/xCTIipXhr
-# MQBW4AfeBXuoHYxL4BIObXkAzRhm2ywWr2z0r8FyWrrZ8hLISfLC0rEilpngdvvo
-# 3KS4AV0uAqHjkD+Syne2Gj6o8f0PWB5nW7wBZD7mVqbZybMjfAXAsVAjKk2eYigx
-# iL8=
+# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIEuPbyho5zqpEzW9Nt7OaFIz
+# G99vN3HZPHP6nJYMHSNQMA0GCSqGSIb3DQEBAQUABIIBAJln31led/3/JNRefnHV
+# eKEARiLw6BQxlhxbAuQ64gklCrt/fyAEG5SxF7rtmcv/qaO87qzw+7Ko3WpXkAvM
+# DJ9ubFTFyGu9ptpxB+b/ZSglnnqqkyMSRYw9qBXBfWsAJ8kniK9VJob1hHnBzmiT
+# ZaKVRFLkcTo35a3qGg+XYBYx0NczOW4wAUb3KWZ5xlMaJCgONNKVtBvfRAxgP2JR
+# 2ihDT5865Mq6iLyqB1S6DKxGhRrHSkanEGlf4uUf/qeq/jyQJFD3ECuKbdD+K1kW
+# AFvqhN7JI0euMYociLCcXCWW4iHDqd24B0KONUasMxBNAP8Jfryj6WnBxxqP3muY
+# AKc=
 # SIG # End signature block
