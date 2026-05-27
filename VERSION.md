@@ -13,7 +13,7 @@ Updated by the `lse:version-manager` skill whenever a new version ships.
 | Prompt | v0.5.2 | 2026-05-25 | prompts/CHANGELOG.md |
 | Filter | v1.1.0 | 2026-05-23 | tools/lse-routing-filter-v1.1.0.py |
 | Context Monitor | v1.3.0 | 2026-05-26 | tools/lse-context-monitor-v1.3.0.py |
-| Launcher | v1.064 | 2026-05-26 | lse-stack-launch-1.064.ps1 |
+| Launcher | v1.065 | 2026-05-27 | lse-stack-launch-1.065.ps1 |
 | Test Suite | v3.5 | 2026-05-26 | eval/test-suite-v3.5.md |
 
 ---
@@ -41,7 +41,7 @@ These should be tested before being considered production-ready.
 **Tool:** v1.5.2, v1.5.3, v1.5.4 *(all superseded — evaluate v1.5.7 only)*
 **Prompt:** v0.5.0 *(superseded)*
 
-> Next planned eval: Run 6 — tool v1.5.7 + prompt v0.5.2 + context monitor v1.2.0 against test-suite-v3.5. Full 21-question scored run.
+> Next planned eval: Run 6 — tool v1.5.7 + prompt v0.5.2 + context monitor v1.3.0 against test-suite-v3.5. Full 21-question scored run.
 
 ---
 
@@ -97,3 +97,4 @@ These should be tested before being considered production-ready.
 | v1.062 | 2026-05-26 | draft-mtp profiles for Q5_K_M + Q4_K_M; Authenticode signed |
 | v1.063 | 2026-05-26 | --metrics flag for Prometheus/Grafana scraping |
 | v1.064 | 2026-05-26 | llama-optimus tuning: BatchSize, UBatchSize, OverrideTensor (MoE expert CPU offload), ngl 99→117/129, threads tuned per model |
+| v1.065 | 2026-05-27 | Add Q4_K_M 64k profiles (thinking + no-think) for extended-context sessions |
