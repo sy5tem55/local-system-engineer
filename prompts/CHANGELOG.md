@@ -1,5 +1,25 @@
 # Prompt Version Changelog
 
+## v0.5.4 — 2026-05-28
+**Changes from v0.5.3:**
+- ENVIRONMENT: removed context-monitor version reference; context monitoring now handled
+  externally by Grafana → grafana-owui-adapter → OpenWebUI channel pipeline.
+- TOOLS: `get_context_status()` reduced to one line — "Call only when the user explicitly
+  asks about context health." Filter caveat removed (filter is retired).
+- CONTEXT HANDOVER: removed entirely. The model does not need to track context fill.
+  External alert pipeline (Grafana threshold > 0.8 on `llama_kv_cache_usage_ratio`) fires
+  a notification to the `lse-alerts` OpenWebUI channel when context exceeds 80%.
+- OUTPUT RULES: added minimal fallback — if the user explicitly asks to save session state,
+  write `/opt/local-se/session-handover.md`. No autonomous trigger.
+
+Root cause of v0.5.3 retirement: CONTEXT HANDOVER never worked reliably across any version.
+Additionally, the v1.3.0 context monitor filter was silently inoperative — this llama.cpp
+build exports metrics with `llamacpp:` prefix; the filter searched for
+`llama_kv_cache_usage_ratio` (non-existent in this build), causing a silent no-op on every
+turn. Architectural fix: moved monitoring entirely out of the model loop.
+
+---
+
 ## v0.5.3 — 2026-05-27
 **Changes from v0.5.2:**
 - ENVIRONMENT: bumped tool to v1.5.7, context-monitor to v1.3.0.
