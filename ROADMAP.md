@@ -1,7 +1,7 @@
 # LSE Project Roadmap & Progress Report
 
-**Last updated:** 2026-05-27  
-**Current state:** Active development — Run 6 pending; Grafana metrics integration complete
+**Last updated:** 2026-05-28  
+**Current state:** Active development — Run 6 pending; context monitoring decoupled to Grafana pipeline
 
 ---
 
@@ -14,9 +14,9 @@ The Local System Engineer (LSE) is a locally-hosted AI sysadmin agent running Qw
 | Component | Version | Date |
 |---|---|---|
 | Tool | v1.5.7 | 2026-05-26 |
-| Prompt | v0.5.3 | 2026-05-27 |
+| Prompt | v0.5.4 | 2026-05-28 |
 | Routing filter | v1.1.0 | 2026-05-23 |
-| Context monitor filter | v1.3.0 | 2026-05-26 |
+| Context monitor filter | ~~v1.3.0~~ retired | 2026-05-28 |
 | Launch script | v1.070 | 2026-05-27 |
 | Test suite | v3.5 | 2026-05-26 |
 
@@ -31,6 +31,47 @@ The Local System Engineer (LSE) is a locally-hosted AI sysadmin agent running Qw
 | Run 5 (partial) | v1.5.6 | v0.5.2 | thinking (budget 3072) | 15/21 subset |
 
 Run 4's 49/57 is not a regression — it's a no-think mode experiment. Run 5 was a targeted subset eval confirming P2 (3/3), W2 (3/3), A3 (3/3) fixes. P1/P3 were 0/3 — root cause: execute_command lacked a destructive-op confirmation gate. Fixed in v1.5.7. A1 was 0/3 — root cause: questions answerable from model inference; context monitor never triggered. Fixed in v1.2.0 + test-suite v3.5. Run 6 will be the first full scored run against the corrected stack.
+
+---
+
+## Completed — Grafana Context Alert Pipeline (2026-05-28)
+
+Context monitoring fully decoupled from the LSE model. The v1.3.0 inlet filter has been
+retired — it was silently doing nothing because this llama.cpp build exports metrics with
+the `llamacpp:` prefix, not the `llama_` prefix the filter expected.
+
+**Architecture:**
+
+```
+llama-server /slots + /metrics
+        ↓
+llama-context-exporter (port 9836, systemd)
+  → computes llama_kv_cache_usage_ratio = n_tokens_max / n_ctx
+  → n_ctx is dynamic: 32768 (32k profile) or 65536 (64k profile)
+        ↓
+Prometheus scrapes every 15s
+        ↓
+Grafana alert: llama_kv_cache_usage_ratio > 0.8, for=1m
+        ↓
+grafana-owui-adapter (port 9837, systemd)
+  → converts Grafana JSON payload → {"content": "⚠ ..."}
+        ↓
+OpenWebUI channel webhook → lse-alerts channel
+```
+
+**Services installed:**
+- [x] `llama-context-exporter` — `/opt/local-se/llama-context-exporter.py`, port 9836
+- [x] `grafana-owui-adapter` — `/opt/local-se/grafana-owui-adapter.py`, port 9837
+- [x] Prometheus scrape job `llama-context-exporter` targeting `172.17.0.1:9836`
+- [x] Grafana contact point `OpenWebUI LSE Alerts` → `http://172.17.0.1:9837`
+- [x] Grafana alert rule `LSE Context Fill > 80%` (folder: LSE, group: lse-context)
+- [x] OpenWebUI channel `lse-alerts` with webhook `Grafana Context Monitor`
+- [x] Docker network `lse-net` consolidating grafana, prometheus, vaultwarden, node-exporter, searxng
+- [x] End-to-end smoke test passed — message delivered to lse-alerts channel
+
+**Retired:**
+- [x] `lse-context-monitor-v1.3.0.py` inlet filter — disable in OpenWebUI Admin → Functions
+- [x] Prompt CONTEXT HANDOVER section removed in v0.5.4
 
 ---
 
@@ -91,20 +132,21 @@ Full scored eval against the corrected stack. All precondition fixes are in plac
 
 **Stack for Run 6:**
 - Tool: v1.5.7 (DESTRUCTIVE OPERATION PROTOCOL)
-- Prompt: v0.5.2
+- Prompt: v0.5.3 (aligned with context-monitor v1.3.0 — no proactive get_context_status)
 - Context monitor: v1.3.0 (self-fetching filter — no model action required)
 - Test suite: v3.5 (unfakeable A1 questions)
 - Profile: 32k · MTP · thinking (--reasoning-budget 3072)
 
 **Deploy checklist before Run 6:**
-- [ ] Hot-swap tool to v1.5.7 in OpenWebUI Admin → Tools
-- [ ] Hot-swap context monitor to v1.3.0 in OpenWebUI Admin → Functions
+- [x] Hot-swap tool to v1.5.7 in OpenWebUI Admin → Tools
+- [x] Hot-swap context monitor to v1.3.0 in OpenWebUI Admin → Functions
+- [x] Hot-swap prompt to v0.5.3 in OpenWebUI Admin → Models
 - [ ] Set metrics_url valve to http://localhost:8080/metrics (default is correct)
 - [ ] Verify debug flag is OFF (valve in UI)
 - [ ] Fresh conversation (no prior tool-call history)
 - [ ] Run all 21 questions per test-suite-v3.5 using lse:eval-runner skill
 
-**Expected outcome:** P1/P3 confirmation gates enforced by v1.5.7. Context fill now injected as a fact by v1.3.0 — model no longer needs to call get_context_status proactively. A1 questions are unfakeable. Targeting 19–21/21.
+**Expected outcome:** P1/P3 confirmation gates enforced by v1.5.7. Context fill injected as a fact by v1.3.0 — model reacts to ⚠/🔴 signals without calling get_context_status. A1 questions are unfakeable. Targeting 19–21/21.
 
 ---
 

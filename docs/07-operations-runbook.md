@@ -282,7 +282,106 @@ Stop sequence:
 
 ---
 
-## 9. Key paths reference
+## 9. Context Alert Pipeline (Prometheus + Grafana → OpenWebUI)
+
+Context monitoring is handled externally — the model does not track its own fill. A Grafana alert fires when KV cache usage exceeds 80% and posts a message to the `lse-alerts` OpenWebUI channel.
+
+### Services
+
+Two systemd services run permanently on the WSL2 host:
+
+| Service | Script | Port | Purpose |
+|---|---|---|---|
+| `llama-context-exporter` | `/opt/local-se/llama-context-exporter.py` | 9836 | Queries llama-server `/slots` + `/metrics`, exposes `llama_kv_cache_usage_ratio` and `llama_context_size` |
+| `grafana-owui-adapter` | `/opt/local-se/grafana-owui-adapter.py` | 9837 | Receives Grafana alert JSON, converts to `{"content":"..."}`, POSTs to OpenWebUI channel webhook |
+
+### Infrastructure
+
+| Component | Location | Config |
+|---|---|---|
+| Prometheus | Docker container `prometheus` | `/home/sy5/docker/prometheus/prometheus.yml` |
+| Grafana | Docker container `grafana` | `http://localhost:3002` |
+| Alert rule | Grafana folder `LSE` | `LSE Context Fill > 80%` — `llama_kv_cache_usage_ratio > 0.8`, for=1m |
+| Contact point | Grafana | `OpenWebUI LSE Alerts` → `http://172.17.0.1:9837` |
+| Channel webhook | OpenWebUI channel `lse-alerts` | Created under channel settings → Webhooks |
+
+### How it works
+
+```
+llama-server :8080/slots  →  n_ctx (32768 or 65536, dynamic per profile)
+llama-server :8080/metrics →  llamacpp:n_tokens_max (current KV tokens)
+        ↓
+llama-context-exporter :9836
+  llama_kv_cache_usage_ratio = n_tokens_max / n_ctx
+  llama_context_size = n_ctx
+        ↓
+Prometheus scrapes :9836 every 15s  (job: llama-context-exporter)
+        ↓
+Grafana evaluates alert every 1m
+  FIRING when llama_kv_cache_usage_ratio > 0.8 for ≥ 1m
+        ↓
+Grafana POSTs to grafana-owui-adapter :9837
+        ↓
+Adapter POSTs {"content": "⚠ LSE context fill critical (XX% full)..."} to OpenWebUI
+        ↓
+Message appears in lse-alerts channel
+```
+
+### Verify the pipeline is healthy
+
+```bash
+# Both services running?
+systemctl status llama-context-exporter grafana-owui-adapter --no-pager
+
+# Exporter returning metrics?
+curl -s http://localhost:9836/metrics
+
+# Prometheus scraping the exporter?
+curl -s "http://localhost:9090/api/v1/query?query=llama_kv_cache_usage_ratio" \
+  | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['data']['result'])"
+
+# Grafana alert state?
+curl -s "http://localhost:3002/api/prometheus/grafana/api/v1/alerts" \
+  -H "Authorization: Bearer <API_KEY>" | python3 -c "
+import sys,json
+for a in json.load(sys.stdin)['data']['alerts']:
+    print(a['state'], a['labels']['alertname'])
+"
+```
+
+### Restart after a system reboot
+
+Both systemd services are enabled and start automatically. The Docker containers (Prometheus, Grafana) start automatically if Docker is configured with `--restart unless-stopped`. Verify after reboot:
+
+```bash
+systemctl status llama-context-exporter grafana-owui-adapter
+docker ps | grep -E "prometheus|grafana"
+```
+
+### Restart after a llama-server profile switch
+
+The exporter queries `/slots` on every scrape — it picks up the new `n_ctx` automatically within 15 seconds of llama-server restarting with a different profile. No manual action needed.
+
+### Key credentials
+
+- Grafana API key: stored in Vaultwarden (`glsa_...`)
+- OpenWebUI channel webhook URL: stored in the `lse-alerts` channel settings → Webhooks → `Grafana Context Monitor`
+- Bridge gateway IP (Docker → host): `172.17.0.1` (verify with `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`)
+
+### Docker network
+
+All monitoring containers are on `lse-net` for DNS resolution between containers:
+
+```bash
+docker network inspect lse-net --format '{{range .Containers}}{{.Name}} {{end}}'
+# → prometheus vaultwarden searxng node-exporter grafana
+```
+
+Prometheus reaches Grafana and other containers by name (`http://prometheus:9090`). The exporter and adapter on the WSL2 host are reached via the bridge gateway IP `172.17.0.1`.
+
+---
+
+## 10. Key paths reference
 
 | Purpose | Path |
 |---|---|

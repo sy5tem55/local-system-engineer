@@ -1,30 +1,48 @@
-# Local System Engineer — AI Agent Design Kit
+# Local System Engineer (LSE)
 
-A structured engineering reference for building a reliable, safe, and context-aware AI system administrator running on a local inference stack.
-
-## Stack
-
-| Layer | Component |
-|---|---|
-| Host | Windows 11 → WSL2 → Ubuntu 24.04 |
-| Inference engine | llama.cpp server (`llama-server`) |
-| Frontend | OpenWebUI |
-| Models under eval | `gemma-4-26B-A4B-it-GGUF` (MoE) · `gemma-4-31B-it-GGUF` (dense) |
-| Web search | SearxNG (self-hosted, called only on demand) |
+A locally-hosted AI system administrator running on a private inference stack. Operates within a strict permission boundary on WSL2/Ubuntu 24.04: executes shell commands, reads/writes files in allowed paths, delegates sudo to the user, searches the web only on demand, and never escalates privileges silently.
 
 ---
 
-## Agent Purpose
+## Current Stack
 
-The Local System Engineer is an AI admin that operates as a careful, step-by-step shell operator inside a defined permission boundary on a WSL/Ubuntu 24.04 machine. It can:
+| Layer | Component |
+|---|---|
+| Host | Windows 11 → WSL2 → Ubuntu 24.04 (hostname: LUCIFER) |
+| Inference | llama.cpp `llama-server` |
+| Model | Qwen3.6-27B-Q5_K_M (32k ctx · MTP · thinking budget 3072) |
+| Frontend | OpenWebUI (localhost:3000) |
+| Web search | SearxNG (self-hosted, localhost:8088) |
+| Monitoring | Prometheus + Grafana + custom context alert pipeline |
+| Launcher | Windows Terminal PowerShell profiles (lse-stack-launch-*.ps1) |
 
-- Read and write files within allowed directories
-- Inspect and manage systemd services and running processes
-- Install, update, and audit packages via `apt`
-- Edit config files and dotfiles
-- Delegate any operation requiring `sudo` back to the human user with exact commands
-- Search the web via SearxNG only when local knowledge is insufficient
-- Monitor and manage its own context budget to stay below hallucination thresholds
+---
+
+## Current Component Versions
+
+| Component | Version | File |
+|---|---|---|
+| Tool | v1.5.7 | `tools/openwebui-tool-v1.5.7.py` |
+| Prompt | v0.5.4 | `prompts/v0.5.4.md` |
+| Routing filter | v1.1.0 | `tools/lse-routing-filter-v1.1.0.py` |
+| Launcher | v1.070 | `lse-stack-launch-1.070.ps1` |
+| Test suite | v3.5 | `eval/test-suite-v3.5.md` |
+
+Context monitoring is handled externally — see [Context Alert Pipeline](#context-alert-pipeline).
+
+---
+
+## Agent Capabilities
+
+- Read files within `/home/` `/etc/` `/var/log/` `/tmp/lse/` `/opt/local-se/`
+- Write files within `/home/` `/tmp/lse/` `/opt/local-se/`
+- Execute shell commands with output filtering (never >80 lines raw)
+- Delegate any `sudo` operation to the user via `sudo_delegation_block` — never runs sudo itself
+- Search the web via SearxNG only when knowledge is insufficient, announced before calling
+- Look up GitHub release versions via `get_github_release()`
+- Report context fill on explicit user request via `get_context_status()`
+
+**Permanently blocked (no exceptions, no delegation):** `mkfs fdisk parted iptables -F passwd visudo wipefs dd if=`
 
 ---
 
@@ -32,50 +50,108 @@ The Local System Engineer is an AI admin that operates as a careful, step-by-ste
 
 ```
 local-system-engineer/
-├── README.md                          ← this file
+├── README.md
+├── ROADMAP.md                             ← project status and pending work
+├── VERSION.md                             ← component version registry + co-test matrix
 │
 ├── docs/
-│   ├── 01-model-evaluation.md         ← Gemma 4 MoE vs dense, eval methodology, recommendation
-│   ├── 02-terminal-interaction.md     ← OpenWebUI tool design, safety layer, sudo delegation
-│   ├── 03-context-management.md       ← Context bloat observability and remediation
-│   └── 04-knowledge-base.md           ← KB design: content, structure, injection strategy
+│   ├── 01-model-evaluation.md             ← model selection rationale (Qwen3.6-27B)
+│   ├── 02-terminal-interaction.md         ← OpenWebUI tool design and safety model
+│   ├── 03-context-management.md           ← context observability and remediation
+│   ├── 04-knowledge-base.md               ← KB design and injection strategy
+│   ├── 05-skills-planning.md              ← skills roadmap
+│   ├── 06-safety-and-delegation.md        ← three-tier model, denylist, SEP template
+│   ├── 07-operations-runbook.md           ← stack start, recovery, hot-swap, shutdown
+│   └── 08-launcher-edit-workflow.md       ← strip-sig / edit / certsign workflow for PS1 files
 │
 ├── prompts/
-│   ├── CHANGELOG.md                   ← Version history and rationale
-│   ├── v0.1-baseline.md               ← Minimal viable system prompt
-│   ├── v0.2-structured.md             ← + tool protocol, sudo delegation, step-by-step
-│   └── v0.3-context-aware.md          ← + context budget awareness, search policy
+│   ├── CHANGELOG.md                       ← version history and rationale for every bump
+│   ├── v0.5.4.md                          ← current production prompt
+│   └── v0.1-baseline.md … v0.5.3.md      ← full history (never overwrite)
 │
-└── tools/
-    └── context_monitor.py             ← Live llama.cpp token usage monitor
+├── tools/
+│   ├── openwebui-tool-v1.5.7.py           ← current production tool (upload to OpenWebUI Admin → Tools)
+│   └── lse-routing-filter-v1.1.0.py       ← active routing filter (OpenWebUI Admin → Functions)
+│
+├── eval/
+│   ├── test-suite-v3.5.md                 ← 21-question scored eval suite
+│   ├── eval-report-v1.md … v4.md          ← scored run reports
+│   └── eval-runner/                       ← lse:eval-runner skill
+│
+└── skills/
+    ├── lse-eval-runner/                   ← structured eval session guide
+    ├── lse-docstring-optimizer/           ← docstring review against LSE failure history
+    ├── lse-stack-health-check/            ← pre-session service verification
+    ├── lse-session-debrief/               ← end-of-session KB update guide
+    └── lse-version-manager/               ← changelog + co-test matrix management
 ```
+
+---
+
+## Context Alert Pipeline
+
+Context monitoring is decoupled from the model. A Grafana alert fires when the KV cache exceeds 80% and posts to the `lse-alerts` OpenWebUI channel.
+
+```
+llama-server /slots + /metrics
+    ↓
+llama-context-exporter  (systemd, port 9836)
+    → llama_kv_cache_usage_ratio  (dynamic: works for 32k and 64k profiles)
+    → llama_context_size
+    ↓
+Prometheus scrapes every 15s
+    ↓
+Grafana alert: llama_kv_cache_usage_ratio > 0.8, for=1m
+    ↓
+grafana-owui-adapter  (systemd, port 9837)
+    → converts Grafana JSON → {"content": "⚠ ..."}
+    ↓
+OpenWebUI channel webhook → lse-alerts channel
+```
+
+Service files: `/etc/systemd/system/llama-context-exporter.service` and `grafana-owui-adapter.service`
+Scripts: `/opt/local-se/llama-context-exporter.py` and `/opt/local-se/grafana-owui-adapter.py`
+
+---
+
+## Eval Score History
+
+| Run | Tool | Prompt | Mode | Score |
+|---|---|---|---|---|
+| Run 1 | v1.4.0 | v0.1-baseline | thinking | unscored baseline |
+| Run 2 | v1.5.1 | v0.4.1 | thinking | 45/57 |
+| Run 3 | v1.5.4 | v0.5.1 | thinking (budget 3072) | **57/57** |
+| Run 4 | v1.5.5 | v0.5.2 | no-think (budget 0) | 49/57 |
+| Run 5 (partial) | v1.5.6 | v0.5.2 | thinking (budget 3072) | 15/21 subset |
 
 ---
 
 ## Key Design Decisions
 
-**Why not sudo?** The agent must never silently escalate privileges. Any command requiring `sudo` produces a `SUDO_REQUIRED` block that the user runs manually. This keeps the trust boundary explicit and auditable.
+**No autonomous sudo.** Every privileged operation emits a `sudo_delegation_block` the user runs manually. No silent escalation, ever.
 
-**Why conditional web search?** Every SearxNG call injects a variable-length payload into context. The agent only calls search when it explicitly cannot answer from its system prompt knowledge or knowledge base — and it announces this decision before doing so.
+**Confirmation before destruction.** Any `rm`, truncate, or file overwrite requires the model to state exactly what will be deleted and wait for an explicit yes/no.
 
-**Why context limits matter here?** Both Gemma 4 models running under llama.cpp show measurable quality degradation beyond ~30 000 tokens. System engineering tasks generate verbose tool output (file contents, service logs, package lists) that bloats context fast. Context management is therefore a first-class concern, not an afterthought.
+**Read before write.** Any sudo operation touching a config file must read the current state first.
 
----
+**Eval-driven development.** Every version bump gets a scored eval run before being considered production-ready.
 
-## Quick Start
-
-1. Start `llama-server` with your chosen model and a 32 768 token context window.
-2. Import the latest prompt from `prompts/v0.3-context-aware.md` as the OpenWebUI system prompt for the model.
-3. Add the tool functions from `docs/02-terminal-interaction.md` as OpenWebUI Tools.
-4. Run `tools/context_monitor.py` in a separate terminal to watch token usage in real time.
-5. Load the knowledge base snippet from `docs/04-knowledge-base.md` into the OpenWebUI Knowledge section (or prepend inline to the system prompt for small KBs).
+**Context monitoring outside the model.** All previous in-model context monitoring approaches (v1.0–v1.3 filter) failed — the model always prioritises task completion over meta-monitoring. Monitoring is now handled externally by the Grafana pipeline.
 
 ---
 
-## Versioning Convention
+## Launcher Edit Workflow
 
-Prompt versions follow `vMAJOR.MINOR`:
-- **MAJOR** bump: structural change (new tool protocol, new safety model, architectural shift)
-- **MINOR** bump: wording tuning, added examples, tightened constraints
+The launcher (`.ps1`) is Authenticode-signed. Any edit requires stripping the signature first:
 
-Every version lives as its own file. Never overwrite a previous version — the full history is the audit trail.
+```powershell
+.\strip-sig.ps1 -Path .\lse-stack-launch-1.070.ps1
+# edit the file
+$errors = $null
+$null = [System.Management.Automation.Language.Parser]::ParseFile(
+    (Resolve-Path .\lse-stack-launch-1.070.ps1).Path, [ref]$null, [ref]$errors)
+$errors   # must be empty before signing
+.\certsign.ps1 -Path .\lse-stack-launch-1.070.ps1
+```
+
+See `docs/08-launcher-edit-workflow.md` for full details.
