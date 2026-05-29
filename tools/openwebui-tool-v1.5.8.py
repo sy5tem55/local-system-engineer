@@ -753,40 +753,44 @@ class Tools:
             return "ERROR: __chat_id__ not injected. This tool must be called from within an OpenWebUI chat."
 
         api_base = self.valves.OWUI_BASE_URL.rstrip("/")
-        headers = {
-            "Authorization": f"Bearer {self.valves.OWUI_API_KEY}",
-            "Content-Type": "application/json",
-        }
+        token    = self.valves.OWUI_API_KEY
 
-        # Run the entire API workflow in a daemon thread so the self-referential
-        # HTTP call back to OpenWebUI doesn't deadlock the tool executor.
-        import threading
+        # Use curl subprocess for all OpenWebUI API calls.
+        # urllib/requests deadlock when a tool calls back to the same OpenWebUI
+        # process — the async event loop cannot dispatch the incoming request
+        # while it is blocked executing this tool. curl runs as a separate OS
+        # process and is completely independent of the event loop.
 
-        result_box = [None]
-        error_box  = [None]
+        def curl_get(path: str) -> dict:
+            cmd = [
+                "curl", "-s", "--max-time", "30",
+                "-H", f"Authorization: Bearer {token}",
+                "-H", "Content-Type: application/json",
+                f"{api_base}{path}",
+            ]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
+            if r.returncode != 0:
+                raise RuntimeError(f"curl GET failed (rc={r.returncode}): {r.stderr[:200]}")
+            return json.loads(r.stdout)
 
-        def owui_get(path: str):
-            req = urllib.request.Request(f"{api_base}{path}", headers=headers)
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode())
+        def curl_post(path: str, payload: dict) -> dict:
+            body = json.dumps(payload)
+            cmd = [
+                "curl", "-s", "--max-time", "30",
+                "-X", "POST",
+                "-H", f"Authorization: Bearer {token}",
+                "-H", "Content-Type: application/json",
+                "-d", body,
+                f"{api_base}{path}",
+            ]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
+            if r.returncode != 0:
+                raise RuntimeError(f"curl POST failed (rc={r.returncode}): {r.stderr[:200]}")
+            return json.loads(r.stdout)
 
-        def owui_post(path: str, payload: dict):
-            data = json.dumps(payload).encode()
-            req = urllib.request.Request(
-                f"{api_base}{path}", data=data, headers=headers, method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode())
-
-        def _run():
-            try:
-                result_box[0] = _compact()
-            except Exception as exc:
-                error_box[0] = exc
-
-        def _compact():
+        try:
             # ── 1. Fetch the chat ─────────────────────────────────────────────
-            chat = owui_get(f"/api/v1/chats/{__chat_id__}")
+            chat = curl_get(f"/api/v1/chats/{__chat_id__}")
 
             history = chat.get("chat", {}).get("history", {})
             messages_map = history.get("messages", {})
@@ -850,7 +854,7 @@ class Tools:
             # Preserve the full chat object, only replace history
             chat_body = chat.get("chat", {})
             chat_body["history"] = new_history
-            owui_post(f"/api/v1/chats/{__chat_id__}", {"chat": chat_body})
+            curl_post(f"/api/v1/chats/{__chat_id__}", {"chat": chat_body})
 
             # ── 7. Erase KV cache slot ────────────────────────────────────────
             kv_status = "KV cache erase skipped"
@@ -874,17 +878,5 @@ class Tools:
                 f"Summary node prepended. {kv_status}."
             )
 
-        # ── Launch in background thread and wait up to 60s ───────────────────
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        t.join(timeout=60)
-
-        if t.is_alive():
-            return "ERROR: compact_context timed out after 60s — OpenWebUI API unreachable."
-        if error_box[0] is not None:
-            e = error_box[0]
-            if isinstance(e, urllib.error.HTTPError):
-                body = e.read().decode(errors="replace")
-                return f"ERROR: OpenWebUI API returned HTTP {e.code}: {body[:300]}"
+        except Exception as e:
             return f"ERROR during compact_context: {str(e)}"
-        return result_box[0]
