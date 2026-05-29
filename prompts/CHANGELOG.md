@@ -1,5 +1,19 @@
 # Prompt Version Changelog
 
+## v0.5.5 — 2026-05-29
+**Changes from v0.5.4:**
+- TOOLS: added `compact_context(summary)` entry — documents when to call it (🟠 HIGH ≥70%
+  or 🔴 CRITICAL ≥85%), what to put in the summary, and the required post-call response.
+- OUTPUT RULES: added NO AUTONOMOUS NOTE-WRITING rule — explicitly prohibits writing session
+  notes or state files during active task execution. The only approved response to high context
+  is `compact_context`. Writing notes during a task is declared a protocol violation.
+  Root cause: model was writing notes in a loop as a self-preservation response to high context,
+  destroying task focus and burning context faster. Notes do not preserve the KV cache;
+  `compact_context` does.
+- ENVIRONMENT: bumped to v0.5.5, tool v1.5.8.
+
+---
+
 ## v0.5.4 — 2026-05-28
 **Changes from v0.5.3:**
 - ENVIRONMENT: removed context-monitor version reference; context monitoring now handled

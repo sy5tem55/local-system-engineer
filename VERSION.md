@@ -10,7 +10,7 @@ Updated by the `lse:version-manager` skill whenever a new version ships.
 | Component | Version | Shipped | Changelog |
 |---|---|---|---|
 | Tool | v1.5.8 | 2026-05-29 | tools/openwebui-tool-v1.5.8.py (header) |
-| Prompt | v0.5.4 | 2026-05-28 | prompts/CHANGELOG.md |
+| Prompt | v0.5.5 | 2026-05-29 | prompts/CHANGELOG.md |
 | Filter | v1.1.0 | 2026-05-23 | tools/lse-routing-filter-v1.1.0.py |
 | Context Monitor | ~~v1.3.0~~ retired | 2026-05-28 | replaced by Grafana alert pipeline |
 | Launcher | v1.072 | 2026-05-29 | lse-stack-launch-1.072.ps1 |
@@ -75,6 +75,7 @@ These should be tested before being considered production-ready.
 | v0.5.2 | 2026-05-25 | Remove SUDO DELEGATION FORMAT; DO NOT call again; KB path |
 | v0.5.3 | 2026-05-27 | Align with context-monitor v1.3.0: remove proactive get_context_status rule; CONTEXT HANDOVER reacts to filter signals |
 | v0.5.4 | 2026-05-28 | Remove CONTEXT HANDOVER entirely; retire context-monitor filter; monitoring moved to Grafana pipeline |
+| v0.5.5 | 2026-05-29 | NO AUTONOMOUS NOTE-WRITING rule; compact_context protocol added to TOOLS |
 
 ### Context Monitor versions
 | Version | Shipped | Key change |
@@ -106,4 +107,5 @@ These should be tested before being considered production-ready.
 | v1.068 | 2026-05-27 | Q5_K_M 64k banner: add KV:q4_0 label so quant is visible at runtime |
 | v1.069 | 2026-05-27 | KV quant in all profile names/banners; add [64k · iq4_nl] test profile; revert Q5 64k to q8_0 |
 | v1.070 | 2026-05-27 | Remove iq4_nl profile (prefill collapse confirmed); add VRAM limit note to Q5 64k profile |
-| v1.071 | 2026-05-28 | Remove Q5 64k profiles (impossible on RTX 4090); strip MTP fro
+| v1.071 | 2026-05-28 | Remove Q5 64k profiles (impossible on RTX 4090); strip MTP from Q4 64k profiles; add Qwopus 35B A3B Q4_K_M + MTP and Huihui 35B A3B Q4_K profiles (MTP + standard) |
+| v1.072 | 2026-05-29 | Fix preset 9 (Qwopus): remove MTP (fails with MTP context memory error on 35B A3B); remove broken Huihui MTP profile; add HauhauCS Aggressive 35B A3B Q4_K_M (no MTP); 11→11 profiles |
