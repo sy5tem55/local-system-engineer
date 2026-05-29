@@ -758,9 +758,16 @@ class Tools:
             "Content-Type": "application/json",
         }
 
+        # Run the entire API workflow in a daemon thread so the self-referential
+        # HTTP call back to OpenWebUI doesn't deadlock the tool executor.
+        import threading
+
+        result_box = [None]
+        error_box  = [None]
+
         def owui_get(path: str):
             req = urllib.request.Request(f"{api_base}{path}", headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode())
 
         def owui_post(path: str, payload: dict):
@@ -768,10 +775,16 @@ class Tools:
             req = urllib.request.Request(
                 f"{api_base}{path}", data=data, headers=headers, method="POST"
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode())
 
-        try:
+        def _run():
+            try:
+                result_box[0] = _compact()
+            except Exception as exc:
+                error_box[0] = exc
+
+        def _compact():
             # ── 1. Fetch the chat ─────────────────────────────────────────────
             chat = owui_get(f"/api/v1/chats/{__chat_id__}")
 
@@ -861,8 +874,17 @@ class Tools:
                 f"Summary node prepended. {kv_status}."
             )
 
-        except urllib.error.HTTPError as e:
-            body = e.read().decode(errors="replace")
-            return f"ERROR: OpenWebUI API returned HTTP {e.code}: {body[:300]}"
-        except Exception as e:
+        # ── Launch in background thread and wait up to 60s ───────────────────
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout=60)
+
+        if t.is_alive():
+            return "ERROR: compact_context timed out after 60s — OpenWebUI API unreachable."
+        if error_box[0] is not None:
+            e = error_box[0]
+            if isinstance(e, urllib.error.HTTPError):
+                body = e.read().decode(errors="replace")
+                return f"ERROR: OpenWebUI API returned HTTP {e.code}: {body[:300]}"
             return f"ERROR during compact_context: {str(e)}"
+        return result_box[0]
