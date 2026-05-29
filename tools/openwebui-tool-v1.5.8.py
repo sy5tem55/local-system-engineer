@@ -175,14 +175,11 @@ class Tools:
             default="",
             description="Colon-separated extra paths the agent may write to.",
         )
-        OWUI_API_KEY: str = Field(
-            default="",
-            description="OpenWebUI API key for compact_context (Bearer token). "
-                        "Create in OpenWebUI → Settings → Account → API Keys.",
-        )
-        OWUI_BASE_URL: str = Field(
-            default="http://localhost:3000",
-            description="OpenWebUI base URL for compact_context API calls.",
+        OWUI_DB_PATH: str = Field(
+            default="/home/sy5/owui/lib/python3.12/site-packages/open_webui/data/webui.db",
+            description="Absolute path to the OpenWebUI SQLite database (webui.db). "
+                        "Used by compact_context to write chat history directly, "
+                        "bypassing the HTTP deadlock caused by single-worker uvicorn.",
         )
 
     # ── Hard-coded permission lists ───────────────────────────────────────────
@@ -737,7 +734,7 @@ class Tools:
           2. Traverses the active message branch (root → currentId).
           3. Keeps only the last 4 messages (2 user + 2 assistant turns).
           4. Prepends a system-role summary message so the model retains session state.
-          5. Writes the truncated history back via POST /api/v1/chats/{id}.
+          5. Writes the truncated history back directly to the OpenWebUI SQLite DB.
           6. Erases the llama.cpp KV cache slot via POST /slots/0 {"action":"erase"}.
           7. Returns a confirmation string for the model to echo to the user.
 
@@ -746,55 +743,33 @@ class Tools:
           "Context compacted. Session state preserved in summary. KV cache cleared."
           The next message will begin with a fresh context window.
         """
-        if not self.valves.OWUI_API_KEY:
-            return "ERROR: OWUI_API_KEY valve is not set. Configure it in OpenWebUI tool settings."
-
         if not __chat_id__:
             return "ERROR: __chat_id__ not injected. This tool must be called from within an OpenWebUI chat."
 
-        api_base = self.valves.OWUI_BASE_URL.rstrip("/")
-        token    = self.valves.OWUI_API_KEY
+        # ── Direct SQLite access — bypasses all HTTP deadlock issues ──────────
+        # OpenWebUI runs single-worker uvicorn; any HTTP call back to itself
+        # from within a tool deadlocks (curl rc=28). We write directly to the
+        # DB instead. The chat table stores history as a JSON column.
+        import sqlite3
+        import uuid as _uuid
 
-        # Use curl subprocess for all OpenWebUI API calls.
-        # urllib/requests deadlock when a tool calls back to the same OpenWebUI
-        # process — the async event loop cannot dispatch the incoming request
-        # while it is blocked executing this tool. curl runs as a separate OS
-        # process and is completely independent of the event loop.
-
-        def curl_get(path: str) -> dict:
-            cmd = [
-                "curl", "-s", "--max-time", "30",
-                "-H", f"Authorization: Bearer {token}",
-                "-H", "Content-Type: application/json",
-                f"{api_base}{path}",
-            ]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
-            if r.returncode != 0:
-                raise RuntimeError(f"curl GET failed (rc={r.returncode}): {r.stderr[:200]}")
-            return json.loads(r.stdout)
-
-        def curl_post(path: str, payload: dict) -> dict:
-            body = json.dumps(payload)
-            cmd = [
-                "curl", "-s", "--max-time", "30",
-                "-X", "POST",
-                "-H", f"Authorization: Bearer {token}",
-                "-H", "Content-Type: application/json",
-                "-d", body,
-                f"{api_base}{path}",
-            ]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
-            if r.returncode != 0:
-                raise RuntimeError(f"curl POST failed (rc={r.returncode}): {r.stderr[:200]}")
-            return json.loads(r.stdout)
+        DB_PATH = self.valves.OWUI_DB_PATH
 
         try:
-            # ── 1. Fetch the chat ─────────────────────────────────────────────
-            chat = curl_get(f"/api/v1/chats/{__chat_id__}")
+            # ── 1. Fetch the chat row ─────────────────────────────────────────
+            con = sqlite3.connect(DB_PATH, timeout=10)
+            con.row_factory = sqlite3.Row
+            cur = con.cursor()
+            cur.execute("SELECT chat FROM chat WHERE id = ?", (__chat_id__,))
+            row = cur.fetchone()
+            if not row:
+                con.close()
+                return f"ERROR: chat id '{__chat_id__}' not found in DB."
 
-            history = chat.get("chat", {}).get("history", {})
+            chat_obj  = json.loads(row["chat"])
+            history   = chat_obj.get("history", {})
             messages_map = history.get("messages", {})
-            current_id = history.get("currentId", "")
+            current_id   = history.get("currentId", "")
 
             if not messages_map or not current_id:
                 return "ERROR: Chat history is empty or malformed — nothing to compact."
@@ -850,11 +825,14 @@ class Tools:
                 "messages": new_messages,
             }
 
-            # ── 6. Write truncated history back ───────────────────────────────
-            # Preserve the full chat object, only replace history
-            chat_body = chat.get("chat", {})
-            chat_body["history"] = new_history
-            curl_post(f"/api/v1/chats/{__chat_id__}", {"chat": chat_body})
+            # ── 6. Write truncated history back via SQLite ────────────────────
+            chat_obj["history"] = new_history
+            cur.execute(
+                "UPDATE chat SET chat = ? WHERE id = ?",
+                (json.dumps(chat_obj), __chat_id__),
+            )
+            con.commit()
+            con.close()
 
             # ── 7. Erase KV cache slot ────────────────────────────────────────
             kv_status = "KV cache erase skipped"
