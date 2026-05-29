@@ -866,4 +866,3 @@ class Tools:
             return f"ERROR: OpenWebUI API returned HTTP {e.code}: {body[:300]}"
         except Exception as e:
             return f"ERROR during compact_context: {str(e)}"
-   
