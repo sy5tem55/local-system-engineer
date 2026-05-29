@@ -1,7 +1,7 @@
 # LSE Project Roadmap & Progress Report
 
-**Last updated:** 2026-05-28  
-**Current state:** Active development — Run 6 pending; context monitoring decoupled to Grafana pipeline
+**Last updated:** 2026-05-29  
+**Current state:** Active development — Run 6 pending; compact_context shipped in v1.5.8; write_file overwrite safety gap identified
 
 ---
 
@@ -13,11 +13,11 @@ The Local System Engineer (LSE) is a locally-hosted AI sysadmin agent running Qw
 
 | Component | Version | Date |
 |---|---|---|
-| Tool | v1.5.7 | 2026-05-26 |
+| Tool | v1.5.8 | 2026-05-29 |
 | Prompt | v0.5.4 | 2026-05-28 |
 | Routing filter | v1.1.0 | 2026-05-23 |
 | Context monitor filter | ~~v1.3.0~~ retired | 2026-05-28 |
-| Launch script | v1.070 | 2026-05-27 |
+| Launch script | v1.072 | 2026-05-29 |
 | Test suite | v3.5 | 2026-05-26 |
 
 **Eval score trajectory:**
@@ -84,7 +84,7 @@ OpenWebUI channel webhook → lse-alerts channel
 - [x] VRAM budget documented (RTX 4090: 18–22 GB normal for 32k profile)
 - [x] Stack health check one-liner and `lse:stack-health-check` skill
 
-### Tool (openwebui-tool-v1.5.7.py)
+### Tool (openwebui-tool-v1.5.8.py)
 - [x] execute_command — denylist, combine rule, live service rule, privileged path block
 - [x] execute_command — POST-DELETE VERIFY RULE (v1.5.6)
 - [x] execute_command — DESTRUCTIVE OPERATION PROTOCOL: confirm before rm/truncate/overwrite (v1.5.7)
@@ -94,6 +94,7 @@ OpenWebUI channel webhook → lse-alerts channel
 - [x] search_web — announcement gate, single-call rule, NO YEAR INJECTION (v1.5.6)
 - [x] get_context_status — correct field names for llama-server build ≥9307
 - [x] get_github_release(repo) — live release lookup via GitHub API (v1.5.6)
+- [x] compact_context(summary) — true in-place compaction via direct SQLite write + KV cache erase (v1.5.8)
 
 ### Prompt (v0.5.2)
 - [x] Three-tier permission model (execute / delegate / deny unconditionally)
@@ -123,6 +124,25 @@ OpenWebUI channel webhook → lse-alerts channel
 - [x] `docs/05-skills-planning.md` — skills roadmap (largely completed)
 - [x] `docs/06-safety-and-delegation.md` — three-tier model, denylist, SEP template
 - [x] `docs/07-operations-runbook.md` — stack start, recovery, hot-swap, shutdown
+
+---
+
+## Immediate — write_file Overwrite Safety Gap (v1.5.9)
+
+**Root cause identified 2026-05-29:** The LSE destroyed a 323-line GUI PowerShell file by calling `write_file` in overwrite mode with only a 5-line snippet. The existing `write_file` docstring requires a full read before overwrite and explicit confirmation — but compliance was zero in this instance. The model skipped both steps under the pressure of a recovery loop.
+
+**Fix:** Add a new P-class eval test case covering `write_file` overwrite on a large existing file. The test must verify that the model:
+1. Reads the full file before proposing any overwrite
+2. States the current line count and the proposed new line count
+3. Asks explicit yes/no confirmation before writing
+
+This mirrors the DESTRUCTIVE OPERATION PROTOCOL added to `execute_command` in v1.5.7 — the same pattern needs enforcement weight in `write_file`.
+
+**Also:** Add a `write_file` SIZE SANITY CHECK — if `mode=overwrite` and the new content is dramatically shorter than the existing file (e.g. <25% of current line count), the function should return an error requiring the model to confirm it intends to truncate.
+
+- [ ] Write eval test case: write_file overwrite with size regression
+- [ ] Add SIZE SANITY CHECK to write_file in v1.5.9
+- [ ] Run targeted P-class eval subset against v1.5.9
 
 ---
 
