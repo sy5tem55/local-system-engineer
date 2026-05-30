@@ -13,7 +13,7 @@ Updated by the `lse:version-manager` skill whenever a new version ships.
 | Prompt | v0.5.5 | 2026-05-29 | prompts/CHANGELOG.md |
 | Filter | v1.1.0 | 2026-05-23 | tools/lse-routing-filter-v1.1.0.py |
 | Context Monitor | ~~v1.3.0~~ retired | 2026-05-28 | replaced by Grafana alert pipeline |
-| Launcher | v1.072 | 2026-05-29 | lse-stack-launch-1.072.ps1 |
+| Launcher | v1.074 | 2026-05-30 | lse-stack-launch-1.074.ps1 |
 | Test Suite | v3.5 | 2026-05-26 | eval/test-suite-v3.5.md |
 
 ---
@@ -109,3 +109,4 @@ These should be tested before being considered production-ready.
 | v1.070 | 2026-05-27 | Remove iq4_nl profile (prefill collapse confirmed); add VRAM limit note to Q5 64k profile |
 | v1.071 | 2026-05-28 | Remove Q5 64k profiles (impossible on RTX 4090); strip MTP from Q4 64k profiles; add Qwopus 35B A3B Q4_K_M + MTP and Huihui 35B A3B Q4_K profiles (MTP + standard) |
 | v1.072 | 2026-05-29 | Fix preset 9 (Qwopus): remove MTP (fails with MTP context memory error on 35B A3B); remove broken Huihui MTP profile; add HauhauCS Aggressive 35B A3B Q4_K_M (no MTP); 11→11 profiles |
+| v1.074 | 2026-05-30 | Model vault restructure: rename Qwen_Qwen3.6-27B-Q4_K_M → Qwen3.6-27B-Q4_K_M; all models moved into named subfolders (model-name/model-name.gguf); ModelFile paths updated to subfolder/file.gguf; GUI v1.2: model vault panel polls \\wsl.localhost UNC every 30 s with size display; migrate-models.sh migration script |
