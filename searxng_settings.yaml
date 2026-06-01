@@ -1,17 +1,51 @@
-# Backup with sudo
-sudo cp /home/sy5/searxng-docker/searxng_data/settings.yml \
-        /home/sy5/searxng-docker/searxng_data/settings.yml.bak
+# SearXNG settings - curated engine whitelist for LSE sysadmin use
+# Live path: /home/sy5/docker/searxng_data/settings.yml
+#
+# Reddit engine REMOVED - Reddit blocks VPS IPs on search.json (returns 0 results)
+# Reddit content: use search_web("query site:reddit.com") via Google instead
+#
+# Engine tiers:
+#   Weight 4 - arXiv (science/IT/tech queries)
+#   Weight 3 - Google + Google Scholar (primary general/academic)
+#   Weight 2 - DuckDuckGo (primary fallback)
+#   Weight 1 - everything else (diversity, specialist sources)
 
-# Write new config
-sudo tee /home/sy5/searxng-docker/searxng_data/settings.yml << 'EOF'
 use_default_settings:
   engines:
-    remove:
+    keep_only:
+      # General web
+      - google
+      - google images
+      - google news
+      - google scholar
       - duckduckgo
-      - startpage
-      - wikidata
-      - ahmia
-      - torch
+      - duckduckgo images
+      - duckduckgo news
+      - bing
+      - bing news
+      - mojeek
+      - qwant
+      - brave
+      - brave.news
+      # Technical / developer
+      - arxiv
+      - github
+      - stackoverflow
+      - askubuntu
+      - superuser
+      - mdn
+      - hackernews
+      - pypi
+      - npm
+      - pkg.go.dev
+      - docker hub
+      - huggingface
+      # Scientific / security
+      - pubmed
+      - semantic scholar
+      - national vulnerability database
+      # Reference
+      - wikipedia
 
 server:
   bind_address: "0.0.0.0"
@@ -33,18 +67,30 @@ search:
     cf_SearxEngineAccessDenied: 86400
     recaptcha_SearxEngineCaptcha: 604800
 
+engines:
+  - name: arxiv
+    weight: 4
+    categories: [science, it, technology]
+
+  - name: google
+    weight: 3
+
+  - name: google scholar
+    weight: 3
+    categories: [science, it]
+
+  - name: duckduckgo
+    weight: 2
+
+  - name: duckduckgo news
+    weight: 2
+    categories: [news]
+
+  - name: brave
+    weight: 1
+
 outgoing:
   request_timeout: 6.0
   pool_connections: 100
   pool_maxsize: 20
   enable_http2: true
-EOF
-
-# Validate
-python3 -c "import yaml; yaml.safe_load(open('/home/sy5/searxng-docker/searxng_data/settings.yml'))" && echo "OK"
-
-# Restart
-cd /home/sy5/searxng-docker && docker compose restart searxng
-
-# Health check (give it 5 seconds)
-sleep 5 && curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/
