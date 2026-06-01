@@ -324,6 +324,87 @@ $ModelProfiles = [ordered]@{
         BannerLine2      = 'uncensored · KV:q8_0 · think:3072 → :8080'
     }
 
+    # ── GLM 4.7B Flash · Q4_K_M profiles ─────────────────────────────────────
+    #    Small/fast flash model (~4.7B parameters).
+    #    Parameters inherited from 35B A3B baseline — same hardware.
+
+    'GLM 4.7 Flash · Q4_K_M  [32k · q8_0]' = @{
+        ModelFile        = 'GLM-4.7-Flash-Q4_K_M/GLM-4.7-Flash-Q4_K_M.gguf'
+        CtxSize          = 32768
+        GpuLayers        = 99
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 8
+
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        TabLabel         = '  GLM 4.7 FLASH'
+        BannerLine1      = 'GLM 4.7 FLASH  ·  Q4_K_M'
+        BannerLine2      = 'KV:q8_0 · think:3072 → :8080'
+    }
+
+    'GLM 4.7 Flash · Q4_K_M  [no-think · q8_0]' = @{
+        ModelFile        = 'GLM-4.7-Flash-Q4_K_M/GLM-4.7-Flash-Q4_K_M.gguf'
+        CtxSize          = 32768
+        GpuLayers        = 99
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 8
+
+        ReasoningBudget  = '0'
+        MaxPredictTokens = '4096'
+        TabLabel         = '  GLM 4.7 FLASH fast'
+        BannerLine1      = 'GLM 4.7 FLASH  ·  Q4_K_M'
+        BannerLine2      = 'KV:q8_0 · thinking off → :8080'
+    }
+
+    # ── Gemma 4 26B A4B (MoE) · Q4_K_M profiles ──────────────────────────────
+    #    26B total / ~4B active parameters (MoE, A4B).
+    #    Vision-capable — mmproj BF16 available in same folder (text-only here).
+    #    Parameters inherited from 35B A3B baseline. MTP untested — omitted.
+
+    'Gemma 4 26B A4B · Q4_K_M  [32k · q8_0]' = @{
+        ModelFile        = 'Gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-Q4_K_M.gguf'
+        CtxSize          = 32768
+        GpuLayers        = 99
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 8
+
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        TabLabel         = '  GEMMA 4 26B A4B'
+        BannerLine1      = 'GEMMA 4 26B A4B  ·  Q4_K_M'
+        BannerLine2      = 'KV:q8_0 · think:3072 → :8080'
+    }
+
+    # ── Gemma 4 31B (dense) · Q4_K_M profiles ────────────────────────────────
+    #    31B dense model. Vision-capable — mmproj BF16 available (text-only here).
+    #    Parameters inherited from 35B A3B baseline. MTP untested — omitted.
+
+    'Gemma 4 31B · Q4_K_M  [32k · q8_0]' = @{
+        ModelFile        = 'Gemma-4-31B-it-GGUF/gemma-4-31B-it-Q4_K_M.gguf'
+        CtxSize          = 32768
+        GpuLayers        = 99
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 8
+
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        TabLabel         = '  GEMMA 4 31B'
+        BannerLine1      = 'GEMMA 4 31B  ·  Q4_K_M'
+        BannerLine2      = 'KV:q8_0 · think:3072 → :8080'
+    }
+
 }
 
 # ── Console banner ────────────────────────────────────────────────────────────
