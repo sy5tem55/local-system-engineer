@@ -1,0 +1,1 @@
+cd /home/sy5/llama.cpp/build && rm -f CMakeCache.txt && cmake .. -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="89" && make -j$(nproc) 2>&1 | tee /tmp/build.log

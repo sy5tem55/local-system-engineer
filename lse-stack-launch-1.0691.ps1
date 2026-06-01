@@ -71,13 +71,17 @@ $PlaywrightDir = '/home/sy5/owui/bin'
 
 $ModelProfiles = [ordered]@{
 
-    # ── Q5_K_M · 27B · MTP profiles ───────────────────────────────────────────
-    #    Q5_K_M on RTX 4090: fits cleanly at 32k. 64k is impossible — ~23 GB
-    #    weights + KV leaves no headroom under MTP load. Use Q4_K_M for 64k.
+    # ── MTP profiles (Multi-Token Prediction — ~1.7× faster generation) ──────
+    #    draft-mtp works natively with the standard GGUF — Qwen3.6 architecture
+    #    has MTP heads built in. No special MTP download required.
+    #    Confirmed: ~70 tok/s on no-thinking profile (vs ~38 tok/s baseline).
     #
     #    llama-optimus tuning (2026-05-26, build bb28c1fe2, RTX 4090):
     #      ngl 99→117, threads 8→13  ← applied
-    #      batch 6637, ubatch 2875   ← NOT applied: regression confirmed v1.064/v1.066
+    #      batch 6637, ubatch 2875   ← NOT applied: regression confirmed in v1.064/v1.065
+    #      OverrideTensor (CPU expert offload) ← NOT applied: batch test (D2→D3) showed
+    #        llama-optimus batch values degrade production perf with MTP+KV quant.
+    #        Bench was run without MTP or KV quant — values do not transfer to production.
 
     'Qwen3.6 27B · MTP  [32k · q8_0]' = @{
         ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
@@ -96,6 +100,47 @@ $ModelProfiles = [ordered]@{
         TabLabel         = '  QWEN 3.6 27B · MTP'
         BannerLine1      = 'QWEN 3.6 27B  ·  MTP'
         BannerLine2      = 'MTP · KV:q8_0 · think:3072 → :8080'
+    }
+
+    'Qwen3.6 27B · MTP  [64k · q8_0]' = @{
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
+        CtxSize          = 65536
+        GpuLayers        = 117
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 13
+
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        SpecType         = 'draft-mtp'
+        SpecDraftNMax    = 3
+        TabLabel         = '  QWEN 3.6 27B · MTP 64k'
+        BannerLine1      = 'QWEN 3.6 27B  ·  MTP'
+        BannerLine2      = 'MTP · 64k · KV:q8_0 · tk:3072 → :8080'
+    }
+
+    'Qwen3.6 27B · MTP  [64k · q5_1]' = @{
+        # TEST PROFILE — q5_1 KV cache: same VRAM as q4_0 but non-linear grid
+        # preserves attention outliers better. Evaluate whether multilingual drift
+        # (Chinese character injection seen with q4_0) is resolved before promoting.
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
+        CtxSize          = 65536
+        GpuLayers        = 117
+        FlashAttn        = $true
+        CacheTypeK       = 'q5_1'
+        CacheTypeV       = 'q5_1'
+        Parallel         = 1
+        Threads          = 13
+
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        SpecType         = 'draft-mtp'
+        SpecDraftNMax    = 3
+        TabLabel         = '  QWEN 3.6 27B · MTP iq4'
+        BannerLine1      = 'QWEN 3.6 27B  ·  MTP'
+        BannerLine2      = 'MTP · 64k · KV:q5_1 · tk:3072→:8080'
     }
 
     'Qwen3.6 27B · MTP  [no-think · q8_0]' = @{
@@ -117,13 +162,14 @@ $ModelProfiles = [ordered]@{
         BannerLine2      = 'MTP · KV:q8_0 · thinking off → :8080'
     }
 
-    # ── Q4_K_M · 27B · MTP profiles ───────────────────────────────────────────
-    #    Q4_K_M: ~4.8 bits/weight vs Q5_K_M ~5.7 bits/weight.
-    #    Supports 64k context without MTP (no headroom for draft tokens at 64k).
+    # ── Q4_K_M + MTP profiles (lower VRAM, slightly less precision, faster) ─────
+    #    Q4_K_M: ~4.8 bits/weight vs Q5_K_M ~5.7 bits/weight. Difference is small
+    #    for sysadmin tasks. Good option if VRAM headroom is tight.
     #
     #    llama-optimus tuning (2026-05-26, build bb28c1fe2, RTX 4090):
     #      ngl 99→129, threads 8→7  ← applied
-    #      batch 6377, ubatch 4399  ← NOT applied: same regression as Q5_K_M
+    #      batch 6377, ubatch 4399  ← NOT applied: same regression as Q5_K_M profiles
+    #      OverrideTensor (odd-block CPU offload) ← NOT applied (see Q5 note above)
 
     'Qwen3.6 27B · Q4_K_M + MTP  [32k · q8_0]' = @{
         ModelFile        = 'Qwen_Qwen3.6-27B-Q4_K_M.gguf'
@@ -163,9 +209,7 @@ $ModelProfiles = [ordered]@{
         BannerLine2      = 'MTP · KV:q8_0 · thinking off → :8080'
     }
 
-    # ── Q4_K_M · 27B · 64k profiles (no MTP — insufficient VRAM headroom at 64k) ─
-
-    'Qwen3.6 27B · Q4_K_M  [64k · q8_0]' = @{
+    'Qwen3.6 27B · Q4_K_M + MTP  [64k · q8_0]' = @{
         ModelFile        = 'Qwen_Qwen3.6-27B-Q4_K_M.gguf'
         CtxSize          = 65536
         GpuLayers        = 129
@@ -177,12 +221,14 @@ $ModelProfiles = [ordered]@{
 
         ReasoningBudget  = '3072'
         MaxPredictTokens = '8192'
-        TabLabel         = '  QWEN 3.6 27B · Q4 64k'
-        BannerLine1      = 'QWEN 3.6 27B  ·  Q4_K_M'
-        BannerLine2      = '64k · KV:q8_0 · think:3072 → :8080'
+        SpecType         = 'draft-mtp'
+        SpecDraftNMax    = 3
+        TabLabel         = '  QWEN 3.6 27B · Q4+MTP 64k'
+        BannerLine1      = 'QWEN 3.6 27B  ·  Q4_K_M + MTP'
+        BannerLine2      = 'MTP · 64k · KV:q8_0 · tk:3072 → :8080'
     }
 
-    'Qwen3.6 27B · Q4_K_M  [64k · no-think · q8_0]' = @{
+    'Qwen3.6 27B · Q4_K_M + MTP  [64k · no-think · q8_0]' = @{
         ModelFile        = 'Qwen_Qwen3.6-27B-Q4_K_M.gguf'
         CtxSize          = 65536
         GpuLayers        = 129
@@ -194,12 +240,15 @@ $ModelProfiles = [ordered]@{
 
         ReasoningBudget  = '0'
         MaxPredictTokens = '4096'
-        TabLabel         = '  QWEN 3.6 27B · Q4 64k fast'
-        BannerLine1      = 'QWEN 3.6 27B  ·  Q4_K_M'
-        BannerLine2      = '64k · KV:q8_0 · no-think → :8080'
+        SpecType         = 'draft-mtp'
+        SpecDraftNMax    = 3
+        TabLabel         = '  QWEN 3.6 27B · Q4+MTP 64k'
+        BannerLine1      = 'QWEN 3.6 27B  ·  Q4_K_M + MTP'
+        BannerLine2      = 'MTP · 64k · KV:q8_0 · no-think → :8080'
     }
 
-    # ── Q5_K_M · 27B · standard profiles (no MTP — stable baseline) ──────────
+    # ── Standard profiles (no MTP — stable baseline) ──────────────────────────
+    #    Same llama-optimus tuning applied as MTP profiles above.
 
     'Qwen3.6 27B · Q5_K_M  [32k · q8_0]' = @{
         ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
@@ -216,6 +265,23 @@ $ModelProfiles = [ordered]@{
         TabLabel         = '  QWEN 3.6 27B'
         BannerLine1      = 'QWEN 3.6 27B  ·  Q5_K_M'
         BannerLine2      = 'KV:q8_0 · think:3072 → localhost:8080'
+    }
+
+    'Qwen3.6 27B · Q5_K_M  [64k · q8_0]' = @{
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
+        CtxSize          = 65536
+        GpuLayers        = 117
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 13
+
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        TabLabel         = '  QWEN 3.6 27B · 64k'
+        BannerLine1      = 'QWEN 3.6 27B  ·  Q5_K_M'
+        BannerLine2      = '64k · KV:q8_0 · tk:3072 → :8080'
     }
 
     'Qwen3.6 27B · Q5_K_M  [no-think · q8_0]' = @{
@@ -235,72 +301,6 @@ $ModelProfiles = [ordered]@{
         BannerLine2      = 'KV:q8_0 · thinking off → localhost:8080'
     }
 
-    # ── 35B A3B (MoE) profiles ────────────────────────────────────────────────
-    #    35B total / ~3.5B active parameters (MoE architecture).
-    #    Q4_K_M / Q4_K file: ~19–21 GB on RTX 4090 (24 GB).
-    #    MTP DISABLED for all 35B A3B profiles — llama-server fails to measure
-    #    MTP context memory for this architecture: "failed to create llama_context
-    #    from model". Run without --spec-type until upstream fix lands.
-    #    ngl=99: full GPU offload. If OOM, reduce to 90 and check nvidia-smi.
-    #    threads=8: conservative for prompt prefill on the 9900K.
-
-    'Qwopus 3.6 35B A3B · Q4_K_M  [32k · q8_0]' = @{
-        ModelFile        = 'Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf'
-        CtxSize          = 32768
-        GpuLayers        = 99
-        FlashAttn        = $true
-        CacheTypeK       = 'q8_0'
-        CacheTypeV       = 'q8_0'
-        Parallel         = 1
-        Threads          = 8
-
-        ReasoningBudget  = '3072'
-        MaxPredictTokens = '8192'
-        TabLabel         = '  QWOPUS 35B'
-        BannerLine1      = 'QWOPUS 3.6 35B A3B  ·  Q4_K_M'
-        BannerLine2      = 'KV:q8_0 · think:3072 → :8080'
-    }
-
-    # ── Huihui Qwen3.6 35B A3B (MoE, abliterated) profiles ──────────────────
-    #    Claude 4.7 Opus merge, abliterated. MTP disabled (see 35B A3B note above).
-
-    'Huihui Qwen3.6 35B A3B · Q4_K  [32k · q8_0]' = @{
-        ModelFile        = 'Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-ggml-model-Q4_K.gguf'
-        CtxSize          = 32768
-        GpuLayers        = 99
-        FlashAttn        = $true
-        CacheTypeK       = 'q8_0'
-        CacheTypeV       = 'q8_0'
-        Parallel         = 1
-        Threads          = 8
-
-        ReasoningBudget  = '3072'
-        MaxPredictTokens = '8192'
-        TabLabel         = '  HUIHUI 35B'
-        BannerLine1      = 'HUIHUI 3.6 35B A3B  ·  Q4_K'
-        BannerLine2      = 'KV:q8_0 · think:3072 → :8080'
-    }
-
-    # ── HauhauCS Aggressive Qwen3.6 35B A3B (uncensored) profiles ────────────
-    #    Uncensored aggressive variant. MTP disabled (see 35B A3B note above).
-
-    'HauhauCS Aggressive 35B A3B · Q4_K_M  [32k · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf'
-        CtxSize          = 32768
-        GpuLayers        = 99
-        FlashAttn        = $true
-        CacheTypeK       = 'q8_0'
-        CacheTypeV       = 'q8_0'
-        Parallel         = 1
-        Threads          = 8
-
-        ReasoningBudget  = '3072'
-        MaxPredictTokens = '8192'
-        TabLabel         = '  HAUHAU 35B UNCENSORED'
-        BannerLine1      = 'HAUHAU 3.6 35B A3B  ·  Q4_K_M'
-        BannerLine2      = 'uncensored · KV:q8_0 · think:3072 → :8080'
-    }
-
 }
 
 # ── Console banner ────────────────────────────────────────────────────────────
@@ -318,7 +318,7 @@ Write-Host "  ${c}║   ██║     ╚════██║██╔══╝
 Write-Host "  ${c}║   ███████╗███████║███████╗   ███████║   ██║          ║${r}"
 Write-Host "  ${c}║   ╚══════╝╚══════╝╚══════╝   ╚══════╝   ╚═╝          ║${r}"
 Write-Host "  ${c}║                                                      ║${r}"
-Write-Host "  ${c}║              Stack Launcher  v1.071                   ║${r}"
+Write-Host "  ${c}║              Stack Launcher  v1.069                   ║${r}"
 Write-Host "  ${c}╚══════════════════════════════════════════════════════╝${r}"
 Write-Host ""
 
@@ -499,11 +499,12 @@ Write-Host "  ${g}All tabs launched.${r}"
 Write-Host "  Model server takes ~30 s to load — watch the red tab."
 Write-Host ""
 
+
 # SIG # Begin signature block
 # MIIFngYJKoZIhvcNAQcCoIIFjzCCBYsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCApeiuLx0U2o4Fb
-# GNaoIChbxuHaied2KuBrCoS28CJo6aCCAxgwggMUMIIB/KADAgECAhAnjvKeW2tW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAOUUgT4BS8FtDn
+# If7BS7SfcLqxChZMyz46cBDt+9T81qCCAxgwggMUMIIB/KADAgECAhAnjvKeW2tW
 # hkFhZBM0k1neMA0GCSqGSIb3DQEBCwUAMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0
 # MB4XDTI1MDkwNzEzMzcxNVoXDTI2MDkwNzEzNTcxNVowFjEUMBIGA1UEAwwLU1k1
 # VEVNNUNlcnQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDsHkeVknvs
@@ -523,12 +524,12 @@ Write-Host ""
 # EjUxggHcMIIB2AIBATAqMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0AhAnjvKeW2tW
 # hkFhZBM0k1neMA0GCWCGSAFlAwQCAQUAoIGEMBgGCisGAQQBgjcCAQwxCjAIoAKA
 # AKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEO
-# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEILtBDLjcgpCsgpPyNoeTy7ty
-# yscTHhqMmG6VhOfaSdeIMA0GCSqGSIb3DQEBAQUABIIBADmqgjat7PV9Nw3qGgUe
-# ahugYOlo8P+vfxHXgEefj+s7/Qen/B9j04ngL6MPIeVwD3glXwzMmzEgmJmqro2g
-# DnFrzTkeMTd7Z6m6G8GP34FOC0/++fcsSTitSJJHD/3qtIXftKy2L+ueb8LT+uQ3
-# A8kTmmcY6sTFO7XzN5sgTceoMDadHsbvtQrT/Gn2fBp9KsosImnVHE4gKTIsbCmp
-# 3GjABJOwYMs3FdNXHzQeLq+AFYODbgOnq0gsS/NYqo4JEYIxZWVreHfKHa+/4gxQ
-# 3jsybKvYJZv2FhWegElGb+s1UUqugG1IAnRW4roFhD+goh0pUtxNCjqP9U6iRMTZ
-# +Mk=
+# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIPBi+tT+j6qFJscM65RBszTh
+# 3VVQudlqQGwdX5Q5WrCIMA0GCSqGSIb3DQEBAQUABIIBADwTR/Dtw0B6G7I7To1w
+# sJIalnF34a7yMSRn0TqopwOpNwPly1Xd0gdd5ryT0M9abu2e6k4ZJ/LnJWRQl2Xc
+# dJdSkFoIy7mo3Ps0W/fVWVoej7Brqp3Dmok0L6JWtSyUVmBZ7BGpNb4HKSoDnewn
+# Cb01AB4/WdO2kjpd6CnYdl9M0LE0yLsMluvhDm/NaHbz+oBzCrrcDZthhrvSquyS
+# 20ZqPCPJwKFbiSGIs+TcO5e2r4vq1iF+Wegp9uoPXxAd3eleILyXG/Uy9uH14+/C
+# Ae7ipIne1z2t/fxGDA3pkrNaIjqDRIB41AWWYJznTPXDWJUBZ9c0Px7B/o16xIFX
+# 4DU=
 # SIG # End signature block

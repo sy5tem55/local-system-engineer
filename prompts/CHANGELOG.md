@@ -1,5 +1,30 @@
 # Prompt Version Changelog
 
+## v0.5.9 — 2026-06-01
+**Changes from v0.5.8:**
+- OUTPUT RULES: added MULTI-BLOCK TASK RULE — on any 2+ block task, immediately write
+  /opt/local-se/active-task.md with full checklist; update after each block; read at session
+  start to resume from first unchecked block. File persists across context resets and chat jumps.
+- HANDOVER PROTOCOL: must read active-task.md before compacting and include block status in summary.
+Root cause: block milestone lists lived only in model context — lost on compaction, chat jumps,
+  or session restarts with no persistent record of done vs pending.
+
+## v0.5.8 — 2026-05-31
+**Changes from v0.5.7:**
+- ENVIRONMENT: added Grafana URL, KB path, RAG Tools v2, tool v1.5.9, ComfyUI paths
+- PERMISSION BOUNDARY: explicit rule — never ask user to run apt/sudo in plain chat; always use sudo_delegation_block
+- TOOLS execute_command: added ComfyUI venv pip install torch version guard (check before and after)
+- TOOLS execute_command: added check_error_kb() call before killing/restarting any process
+- TOOLS search_web: added search_kb() pre-call requirement and index_to_kb() post-call requirement
+- TOOLS search_kb: added ES connection error recovery instruction
+- TOOLS: added search_kb, index_to_kb, record_error, record_outcome, check_error_kb, mentor_correct entries
+- TOOLS record_error/record_outcome: explicit clarification — different functions, different purposes
+- OUTPUT RULES: added WARNING ESCALATION RULE — [WARNING] lines must be read, checked, and surfaced before task complete
+- OUTPUT RULES: added BACKGROUND PROCESS RULE — check Grafana before intervening on any long-running process
+- OUTPUT RULES: added SYSTEM PACKAGE INSTALLATION RULE — no speculative apt installs; require exact error evidence
+Root causes: PyTorch cu124 rollback without reading [WARNING] cu130; libnccl proposed with no error evidence;
+  download polling without Grafana check; index_to_kb() not called after web searches; record_error used for successes.
+
 ## v0.5.5 — 2026-05-29
 **Changes from v0.5.4:**
 - TOOLS: added `compact_context(summary)` entry — documents when to call it (🟠 HIGH ≥70%
@@ -93,33 +118,4 @@ when it should have been silent.
 **Changes from v0.2:**
 - Added context budget awareness: agent checks `get_context_status` at start of each turn
 - Added compaction trigger: structured compaction pass when fill > 70 %
-- Added web search gate: explicit justification required before any `search_web` call
-- Added path compression rule: Windows paths translated once, Linux path used thereafter
-- Added output compression directive: agent extracts key facts from verbose tool output immediately
-- Added token budget estimation step inside plans
-- Added hard reset procedure instruction
-- Tightened step-by-step protocol with explicit "STEP N" labelling
-- Added few-shot compaction example
-
-**Test result target:** Pass all M1–M4 long-context tests with no more than 1-point drop from mid-context baseline.
-
----
-
-## v0.2-structured — 2026-05-23
-**Changes from v0.1:**
-- Added explicit tool use protocol section
-- Added sudo delegation protocol with `SUDO_REQUIRED` block format
-- Added step-by-step execution requirement with numbered plan format
-- Added error handling protocol
-- Tightened allowed/blocked path definitions
-- Added web search declaration requirement (no justification gate yet — that's v0.3)
-- Added confirmation requirement before destructive writes
-
-**Test result target:** Pass S1–S5 short-context tests perfectly; M1–M4 mid-context with score ≥ 10/12.
-
----
-
-## v0.1-baseline — 2026-05-23
-**Initial version.** Minimal role definition, basic constraints, and tool listing. No structured protocols — used to establish a baseline eval score.
-
-**Test result target:** Pass S1–S5 short-context tests. No expectation of long-context reliability.
+- Added web search gate: explicit justification requ

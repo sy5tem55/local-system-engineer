@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     LSE Stack Launcher — opens Windows Terminal with all services in dedicated tabs.
@@ -261,6 +261,27 @@ $ModelProfiles = [ordered]@{
         BannerLine2      = 'KV:q8_0 · think:3072 → :8080'
     }
 
+    # ── Qwopus 3.6 35B A3B · 64k profile ────────────────────────────────────────
+    #    64k context — needs ~2 GB CPU KV spillover at tail end.
+    #    MTP DISABLED (see 35B A3B note above).
+
+    'Qwopus 3.6 35B A3B · Q4_K_M  [96k · q8_0]' = @{
+        ModelFile        = 'Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf'
+        CtxSize          = 96000
+        GpuLayers        = 99
+        FlashAttn        = $true
+        CacheTypeK       = 'q8_0'
+        CacheTypeV       = 'q8_0'
+        Parallel         = 1
+        Threads          = 8
+
+        ReasoningBudget  = '3072'
+        MaxPredictTokens = '8192'
+        TabLabel         = '  QWOPUS 35B 96k'
+        BannerLine1      = 'QWOPUS 3.6 35B A3B  ·  Q4_K_M'
+        BannerLine2      = '64k · KV:q8_0 · think:3072 → :8080'
+    }
+
     # ── Huihui Qwen3.6 35B A3B (MoE, abliterated) profiles ──────────────────
     #    Claude 4.7 Opus merge, abliterated. MTP disabled (see 35B A3B note above).
 
@@ -318,7 +339,7 @@ Write-Host "  ${c}║   ██║     ╚════██║██╔══╝
 Write-Host "  ${c}║   ███████╗███████║███████╗   ███████║   ██║          ║${r}"
 Write-Host "  ${c}║   ╚══════╝╚══════╝╚══════╝   ╚══════╝   ╚═╝          ║${r}"
 Write-Host "  ${c}║                                                      ║${r}"
-Write-Host "  ${c}║              Stack Launcher  v1.071                   ║${r}"
+Write-Host "  ${c}║              Stack Launcher  v1.072                  ║${r}"
 Write-Host "  ${c}╚══════════════════════════════════════════════════════╝${r}"
 Write-Host ""
 
@@ -499,36 +520,4 @@ Write-Host "  ${g}All tabs launched.${r}"
 Write-Host "  Model server takes ~30 s to load — watch the red tab."
 Write-Host ""
 
-# SIG # Begin signature block
-# MIIFngYJKoZIhvcNAQcCoIIFjzCCBYsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
-# BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCApeiuLx0U2o4Fb
-# GNaoIChbxuHaied2KuBrCoS28CJo6aCCAxgwggMUMIIB/KADAgECAhAnjvKeW2tW
-# hkFhZBM0k1neMA0GCSqGSIb3DQEBCwUAMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0
-# MB4XDTI1MDkwNzEzMzcxNVoXDTI2MDkwNzEzNTcxNVowFjEUMBIGA1UEAwwLU1k1
-# VEVNNUNlcnQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDsHkeVknvs
-# WeMMMCfE8Nn7Y2CcbQUFA3XCMQth4BgbQzp5UndUrwyBWS/QIXcejWWsU3JNY7EG
-# S52t7rhdPLfNlK7rrTCpY2N0tDhhXf3Ghn4MyK3RcGx+NfkyOklc0VZS58iwcqda
-# V1Ei0ITVSHD04i9OunyaJh9fPtMRDckUtfW/oYcDeQUd8V7QnpgZG1hKTKhkkBYU
-# QjTcQQzx8h/E4J7FJq7xbx/cPMofsnZZJveh406M8gaYiFDvdWjSx/GjE0nPxFSL
-# tYi+mg+I5kc+nc+uVJh4iuox4xG6F5OzNC5THvww3DS23BLNcgtauYG6yX/OJbXz
-# EB4AOqU4uPY9AgMBAAGjXjBcMA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggr
-# BgEFBQcDAzAWBgNVHREEDzANggtTWTVURU01Q2VydDAdBgNVHQ4EFgQUdZz/MNsL
-# SXt/c3LsJRy6mW9ocyQwDQYJKoZIhvcNAQELBQADggEBADY1Pv1GpfeZE48k29yB
-# dibzGXLBM5CpH4ySpftbJ+PMTGfVejTGDJ1EI22/E5S1NXtbB8wyaiBvpt/O7Fw+
-# DFpNJJ+DiCedeiRUa1OkoUOmBf1Yg3Btv7Z56t4yJqMlOAVZFvcvgH+Dfdabvo+m
-# 3gFBzIQKKb5v88NjQ2VsjH/5LlA+MSQ9j7PbYCGOsdFgDOacPcE5sxzB2HJZ66aE
-# nr1tN8Jb6EOT1bYrsPW8773GqR5IzgCUmuvwSYbki4KbqLYG6ZafNNYgoAAkAV3y
-# dgj2eOPYlUZl+vrVZzyFNBtXyUj8eSi7Z1rosKXaYP1uzi6TH9liOGtrArGTL8rt
-# EjUxggHcMIIB2AIBATAqMBYxFDASBgNVBAMMC1NZNVRFTTVDZXJ0AhAnjvKeW2tW
-# hkFhZBM0k1neMA0GCWCGSAFlAwQCAQUAoIGEMBgGCisGAQQBgjcCAQwxCjAIoAKA
-# AKECgAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEO
-# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEILtBDLjcgpCsgpPyNoeTy7ty
-# yscTHhqMmG6VhOfaSdeIMA0GCSqGSIb3DQEBAQUABIIBADmqgjat7PV9Nw3qGgUe
-# ahugYOlo8P+vfxHXgEefj+s7/Qen/B9j04ngL6MPIeVwD3glXwzMmzEgmJmqro2g
-# DnFrzTkeMTd7Z6m6G8GP34FOC0/++fcsSTitSJJHD/3qtIXftKy2L+ueb8LT+uQ3
-# A8kTmmcY6sTFO7XzN5sgTceoMDadHsbvtQrT/Gn2fBp9KsosImnVHE4gKTIsbCmp
-# 3GjABJOwYMs3FdNXHzQeLq+AFYODbgOnq0gsS/NYqo4JEYIxZWVreHfKHa+/4gxQ
-# 3jsybKvYJZv2FhWegElGb+s1UUqugG1IAnRW4roFhD+goh0pUtxNCjqP9U6iRMTZ
-# +Mk=
-# SIG # End signature block
+
