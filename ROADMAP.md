@@ -1,7 +1,7 @@
 # LSE Project Roadmap & Progress Report
 
-**Last updated:** 2026-05-31 (RAG stack deployed; WAN2.1 deployment + RAG eval complete; model shootout v4 Runs 1-2 done)
-**Current state:** Active development. RAG stack (ES + nomic-embed-text + rag_tools_v2) is live in OpenWebUI. WAN2.1 fully deployed on LUCIFER — inference test pending VRAM. Model shootout v4 paused at Run 2 (44/50). Supervisor Pipe track closed and deleted.
+**Last updated:** 2026-06-01 (ES memory floor fixed; ES merged into docker-compose.yml; SearXNG metrics restored; Grafana observability stack fully operational; searxng-logger rewrite added to backlog)
+**Current state:** Active development. RAG stack fully operational with memory-stable ES. Observability stack (Prometheus + Grafana) fully healthy — all 6 targets up, SearXNG metrics live. WAN2.1 I2V + T2V tested and working. WAN2.2 active in separate chat. Model shootout v4 paused at Run 2 (44/50).
 
 ---
 
@@ -207,14 +207,93 @@ Four improvements identified from the WAN2.1 RAG eval session:
 
 ---
 
-## Immediate — ES stability (lse-elasticsearch container)
+## Immediate — SearXNG engine config
 
-Container exited with code 143 during session. Root cause unconfirmed.
+Engine strategy updated in `searxng_settings.yaml` (2026-06-01):
+- Brave **removed** (VPS rate-limiting, unreliable)
+- arXiv **Tier 1** weight 4 — preferred for science/IT/technology categories
+- Google Scholar weight 3 — technical/academic
+- Bing + DuckDuckGo weight 2 — broad coverage
+- Mojeek + Qwant weight 1 — independent index fallbacks (don't block VPS IPs)
+- Wikipedia + Bing News — always-on reference
 
-- [ ] Check `dmesg` and Docker stats for OOM evidence
-- [ ] Set `--memory` and `--memory-swap` limits on the container in Portainer
-- [ ] Add ES health preflight to `lse:stack-health-check` skill
-- [ ] Add proactive troubleshoot to `search_kb` docstring: if error contains 'connection refused', call `execute_command` with `docker ps -a --filter name=elasticsearch` before retrying
+- [ ] Deploy updated settings.yml to WSL host (`/home/sy5/docker/searxng_data/settings.yml`)
+- [ ] Restart SearXNG container: `cd /home/sy5/docker && docker compose restart searxng`
+- [ ] Add Redis to `lse-net` Docker stack for 5-minute result caching (stops repeated queries hitting engines)
+- [ ] Update `search_web` docstring in tool v1.5.11 — add SEARCH-THEN-FETCH protocol
+- [ ] Update `search_kb` to check `lse-search-cache` ES index before hitting upstream engines
+
+## Completed — SearXNG Observability Restoration (2026-06-01)
+
+SearXNG metrics were broken since initial deployment — the `/metrics` endpoint returned 404 because `open_metrics` password was not set (both `enable_metrics: true` AND a non-empty `open_metrics` password are required by the webapp). The Prometheus scrape job had been removed during diagnosis, causing metrics data loss.
+
+**Root cause chain:**
+1. `open_metrics` key missing from `/home/sy5/docker/searxng_data/settings.yml`
+2. SearXNG webapp.py: `if not (enable_metrics and password): return 404`
+3. Prometheus scrape job removed during investigation → historical data lost
+4. `searxng-logger` container has been logging "No metrics returned" since deployment
+
+**Fix applied:**
+- Added `open_metrics: 'metrics-admin-2025'` and `enable_metrics: true` to `searxng_data/settings.yml`
+- Prometheus scrape job restored in `prometheus.yml` with `basic_auth.password: metrics-admin-2025`
+- SearXNG force-recreated — metrics endpoint confirmed returning OpenMetrics format
+- Grafana dashboards now receiving live `searxng_engines_*` data
+
+- [x] SearXNG `/metrics` endpoint working — confirmed `200` with password
+- [x] Prometheus scraping `searxng:8080/metrics` — `lastError: ""`, scraping every 15s
+- [x] Grafana dashboards populated — `searxng_engines_request_count_total` confirmed non-empty
+
+**Known issue — `searxng-logger` container:**
+The `searxng-logger` service polls Prometheus for `searxng_engines_*` metrics that were never populated. It has been logging "No metrics returned" every minute since deployment. The logger needs a rewrite — see backlog below.
+
+---
+
+## Backlog — searxng-logger rewrite (~45 min)
+
+`/opt/local-se/searxng-logger/logger.py` was written assuming SearXNG exposes a `/metrics` endpoint, which it doesn't without the `open_metrics` password. The logger polls Prometheus for `searxng_engines_*` data that was never there.
+
+**Required changes:**
+- Replace Prometheus polling with direct `GET http://searxng:8080/stats` scrape (returns engine stats as HTML — needs parsing, or use `/search?format=json` side-channel)
+- Alternatively: now that `/metrics` works with the password, update the logger to scrape `http://searxng:8080/metrics` with `Authorization: Basic` header directly
+- Parse OpenMetrics format → write to SQLite → expose via a Prometheus exporter on a dedicated port
+- Add new scrape job to `prometheus.yml` for the exporter port
+
+**Fastest path:** update logger to scrape SearXNG `/metrics` directly with the password (1 HTTP call, existing OpenMetrics parse logic can be reused). ~30 min.
+
+---
+
+## Deferred — Grafana SearXNG Engine Health dashboard
+
+The existing "SearXNG Engine Health" dashboard legend is unreadable when multiple engines are active simultaneously. Needs:
+- Legend updated to reflect new engine set (remove Brave, add Mojeek/Qwant/arXiv)
+- Search engine favicons displayed in graph legend for visual engine identification
+- Panel annotation showing when engine config last changed
+
+Requires Grafana panel JSON edit. Deferred until after SearXNG engine config is verified stable in production.
+
+---
+
+## Completed — ES Memory Floor + Compose Migration (2026-06-01)
+
+ES was repeatedly exiting with code 143 (Docker OOM enforcement / SIGTERM). Root cause confirmed: container was started with bare `docker run` — no `--memory` flag, completely unconstrained. `docker inspect` showed Memory=0, MemoryReservation=0. ES_JAVA_OPTS already had `-Xms512m -Xmx1g` but OS/Lucene off-heap was unbounded.
+
+**Fix applied:**
+- ES migrated to `/home/sy5/docker/docker-compose.yml` with `mem_limit: 2g`, `mem_reservation: 1g`
+- Merged alongside grafana, prometheus, searxng — Docker orphan warning eliminated
+- `dcd` alias added to `~/.bashrc`: `alias dcd='cd /home/sy5/docker && docker compose'`
+- Named volume `es-data` preserved — data survived container recreation
+- Memory limits confirmed via `docker inspect`: `2147483648 1073741824`
+
+**Canonical recovery command (never use bare docker run):**
+```bash
+cd /home/sy5/docker && docker compose up -d elasticsearch
+```
+
+- [x] ES memory floor set — mem_limit=2g, mem_reservation=1g
+- [x] ES merged into main docker-compose.yml — orphan warning gone
+- [x] `lse:stack-health-check` skill updated — ES added as critical service with correct recovery command
+- [x] KB entry indexed into lse-kb — `kb-entry-es-memory-floor.md` (1 chunk, retrievable via search_kb)
+- [x] Skill file deployed to `skills/lse-stack-health-check/SKILL.md`
 
 ---
 
@@ -272,6 +351,20 @@ The launcher v1.063 added `--metrics` to the llama-server command, exposing a Pr
 - [x] Prometheus scrape config targeting `localhost:8080/metrics`
 - [x] Grafana dashboard with llama.cpp performance panels
 - [ ] Add metrics endpoint reference to ops runbook (docs/07-operations-runbook.md)
+
+---
+
+## Backlog — LSE profile management eval test
+
+The XML profile format (`lse-profiles.xml`) makes model profiles machine-readable by the LSE itself. Future eval test:
+
+1. LSE reads `lse-profiles.xml` to extract current hardware context (single RTX 4090 24 GB, sm_89, no NVLink) from the header comments and existing profiles
+2. LSE searches community sources (Reddit r/LocalLLaMA, GitHub llama.cpp issues/discussions) for reported launch parameters for a target model
+3. LSE cross-references findings against documented hardware — flags incompatible params (multi-GPU flags like `-mg`, wrong VRAM assumptions, wrong arch, tensor parallelism that requires NVLink)
+4. LSE proposes a new `<profile>` block with explicit reasoning for each parameter choice
+5. LSE writes the updated XML using `write_file` (size sanity check must pass — new file must be longer than old)
+
+This tests the full loop: `search_web` → `read_file` → hardware-aware reasoning → `write_file`. The hardware constraints documented in the XML header serve as the grounding facts. The multi-GPU misread trap (Reddit post, 2026-06-02) is a canonical example of what correct cross-referencing prevents.
 
 ---
 

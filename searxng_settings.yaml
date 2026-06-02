@@ -1,14 +1,76 @@
-# SearXNG settings - curated engine whitelist for LSE sysadmin use
+# SearXNG settings — curated engine whitelist for LSE sysadmin use
 # Live path: /home/sy5/docker/searxng_data/settings.yml
 #
-# Reddit engine REMOVED - Reddit blocks VPS IPs on search.json (returns 0 results)
-# Reddit content: use search_web("query site:reddit.com") via Google instead
+# ── Engine hierarchy (by estimated LSE usage) ────────────────────────────────
 #
-# Engine tiers:
-#   Weight 4 - arXiv (science/IT/tech queries)
-#   Weight 3 - Google + Google Scholar (primary general/academic)
-#   Weight 2 - DuckDuckGo (primary fallback)
-#   Weight 1 - everything else (diversity, specialist sources)
+#  #   Engine                    Weight  Notes
+#  1   google                      3     Primary, broadest coverage
+#  2   duckduckgo                  2     Primary fallback
+#  3   stackoverflow               1     Technical Q&A
+#  4   arxiv                       4     AI/ML research (weight 4 = Tier 1)
+#  5   github                      1     Code, issues, docs
+#  6   wikipedia                   1     Reference baseline
+#  7   huggingface                 1     Models, directly relevant
+#  8   askubuntu                   1     Ubuntu 24.04-specific sysadmin
+#  9   google scholar              3     Academic/technical papers
+# 10   mdn                         1     Web/API documentation
+# 11   duckduckgo news             2     Current events
+# 12   google news                 1     News fallback
+# 13   hackernews                  1     Tech community discussions
+# 14   national vulnerability db   1     CVEs, security
+# 15   docker hub                  1     Container images
+# 16   pypi                        1     Python package lookup
+# 17   mojeek                      1     Independent index fallback
+# 18   qwant                       1     Independent index fallback
+# 19   brave                       1     Low-weight fallback
+# 20   bing                        1     Low-weight fallback
+# 21   superuser                   1     Power user Q&A
+# 22   semantic scholar            1     Academic
+# 23   google images               1     Image queries
+# 24   duckduckgo images           1     Image fallback
+# 25   npm                         1     JS packages
+# 26   pkg.go.dev                  1     Go packages
+# 27   pubmed                      1     Biomedical
+#
+# Engines deliberately excluded:
+#   reddit       — blocks VPS IPs on search.json (use "site:reddit.com" via Google)
+#   brave.news   — redundant with google news / duckduckgo news
+#   bing news    — redundant, low value
+#
+# ── How to add or remove an engine ───────────────────────────────────────────
+#
+#  ADDING an engine:
+#   1. Add the engine name to the `keep_only` list below (exact SearXNG name).
+#      Run `docker exec searxng cat /usr/local/searxng/searx/engines/*.py | grep "name ="`
+#      to confirm the exact registered name.
+#   2. Optionally add an entry under the `engines:` section with a custom weight
+#      and/or categories override. If omitted, weight defaults to 1.
+#   3. Deploy: cp this file to /home/sy5/docker/searxng_data/settings.yml
+#   4. Restart: cd /home/sy5/docker && docker compose restart searxng
+#   5. Verify: curl -s "http://localhost:8088/search?q=test&format=json" | python3 -m json.tool | grep '"engine"' | sort -u
+#   6. Watch Grafana → SearXNG Engine Health dashboard for the new engine to appear
+#      in metrics within one scrape interval (~15s after first search).
+#
+#  REMOVING an engine:
+#   1. Delete its entry from `keep_only`.
+#   2. Delete its entry from `engines:` if one exists.
+#   3. Deploy and restart as above (steps 3–4).
+#   4. Update the hierarchy comment at the top of this file.
+#   5. If the engine appears in the Grafana dashboard legend, update
+#      grafana-dashboard-searxng-engine-health.json to remove the series.
+#
+#  ADJUSTING weight:
+#   1. Add or update an entry under `engines:` with the new weight value.
+#      Do NOT change `keep_only` — that only controls which engines are active.
+#   2. Deploy and restart.
+#
+#  COMMON FAILURE MODES:
+#   - Engine name not matching registered name → engine silently ignored
+#   - Engine blocking VPS IPs → will auto-suspend per `suspended_times` config
+#     (check: docker logs searxng 2>&1 | grep -i "suspend\|blocked\|429")
+#   - Weight not taking effect → confirm entry is under top-level `engines:`,
+#     not nested under `use_default_settings:`
+# ─────────────────────────────────────────────────────────────────────────────
 
 use_default_settings:
   engines:
@@ -22,11 +84,9 @@ use_default_settings:
       - duckduckgo images
       - duckduckgo news
       - bing
-      - bing news
       - mojeek
       - qwant
       - brave
-      - brave.news
       # Technical / developer
       - arxiv
       - github
@@ -49,7 +109,7 @@ use_default_settings:
 
 server:
   bind_address: "0.0.0.0"
-  port: 8088
+  port: 8080
   limiter: true
   secret_key: "913153e683373257077c6b99eebb293055d0784eed80e621cad095921576386b"
 
@@ -87,6 +147,9 @@ engines:
     categories: [news]
 
   - name: brave
+    weight: 1
+
+  - name: bing
     weight: 1
 
 outgoing:
