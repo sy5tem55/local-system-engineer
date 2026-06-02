@@ -7,3 +7,4 @@ skills/zi*
 # Eval viewer workspace artifacts
 viewer.html
 viewer-dark.html
+tools/__pycache__/

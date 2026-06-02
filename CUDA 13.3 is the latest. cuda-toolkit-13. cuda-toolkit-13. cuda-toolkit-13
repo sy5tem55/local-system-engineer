@@ -1,0 +1,132 @@
+CUDA 13.3 is the latest. cuda-toolkit-13 is the meta-package that tracks the latest (13.3). Here's the full procedure in order:
+
+1. Stop the stack first
+bash# Kill llama-server
+kill $(pgrep llama-server)
+# Stop OpenWebUI and Playwright from their terminal tabs, or just close those tabs
+
+2. Install CUDA 13.3
+bash
+sudo apt install cuda-toolkit-13-3
+
+This pulls in the compiler, libraries, and headers. CUDA 12.8 stays installed — they coexist.
+
+3. Verify the symlink and nvcc version
+bashls -la /usr/local/cuda
+nvcc --version
+The symlink should now point to cuda-13.3. If nvcc still reports 12.8, the symlink wasn't updated automatically — fix it with:
+bash
+
+sudo ln -sfn /usr/local/cuda-13.3 /usr/local/cuda
+Then re-check nvcc --version.
+
+4. Rebuild llama.cpp
+bash
+
+cd /home/sy5/llama.cpp/build
+rm CMakeCache.txt
+cmake .. -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="89"
+make -j$(nproc)
+
+5. Verify the new binary
+bash
+
+/home/sy5/llama.cpp/build/bin/llama-server --version
+Check the startup output confirms it was built with CUDA 13.
+
+6. Restart via the launcher — use the launcher rather than a manual command to ensure all tabs come up correctly.
+Start with step 1 and paste output as you go — the symlink step after install is the most likely place to need a manual fix.
+
+
+
+
+
+CUDA 13.3 is the latest. cuda-toolkit-13 is the meta-package that tracks the latest (13.3). Here's the full procedure in order:
+1. Stop the stack first
+bash# Kill llama-server
+kill $(pgrep llama-server)
+# Stop OpenWebUI and Playwright from their terminal tabs, or just close those tabs
+2. Install CUDA 13.3
+bashsudo apt install cuda-toolkit-13-3
+This pulls in the compiler, libraries, and headers. CUDA 12.8 stays installed — they coexist.
+3. Verify the symlink and nvcc version
+bashls -la /usr/local/cuda
+nvcc --version
+The symlink should now point to cuda-13.3. If nvcc still reports 12.8, the symlink wasn't updated automatically — fix it with:
+bashsudo ln -sfn /usr/local/cuda-13.3 /usr/local/cuda
+Then re-check nvcc --version.
+4. Rebuild llama.cpp
+bashcd /home/sy5/llama.cpp/build
+rm CMakeCache.txt
+cmake .. -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="89"
+make -j$(nproc)
+5. Verify the new binary
+bash/home/sy5/llama.cpp/build/bin/llama-server --version
+Check the startup output confirms it was built with CUDA 13.
+6. Restart via the launcher — use the launcher rather than a manual command to ensure all tabs come up correctly.
+Start with step 1 and paste output as you go — the symlink step after install is the most likely place to need a manual fix.You said: (base) sy5@LUCIFER:~/llama.(base) sy5@LUCIFER:~/llama.cpp/build$ /home/sy5/llama.cpp/build/bin/llama-server --version
+version: 9307 (549b9d843)
+built with GNU 13.3.0 for Linux x86_64Claude responded: That confirms the binary exists and runs, but --version doesn't show CUDA details.Thought processThought processThat confirms the binary exists and runs, but --version doesn't show CUDA details. Check what CUDA libraries it actually linked against:
+bashldd /home/sy5/llama.cpp/build/bin/llama-server | grep -i cuda
+That will show whether it's linked against libcuda from 12.8 or 13.3. Also, did the cmake output during the build show anything about the CUDA version it found? If you still have the terminal open, scrolling up in the build output would show a line like -- Found CUDAToolkit: ... (found version "13.3.x").You said: (base) sy5@LUCIFER:~$ ldd /home/sy5/llama.(base) sy5@LUCIFER:~$ ldd /home/sy5/llama.cpp/build/bin/llama-server | grep -i cuda
+        libggml-cuda.so.0 => /home/sy5/llama.cpp/build/bin/libggml-cuda.so.0 (0x00007bb5ff400000)
+        libcudart.so.12 => /usr/local/cuda-12/targets/x86_64-linux/lib/libcudart.so.12 (0x00007bb5ff000000)
+        libcublas.so.12 => /usr/local/cuda-12/targets/x86_64-linux/lib/libcublas.so.12 (0x00007bb5f7e00000)
+        libcuda.so.1 => /usr/lib/wsl/lib/libcuda.so.1 (0x00007bb6028b8000)
+        libcublasLt.so.12 => /usr/local/cuda-12/targets/x86_64-linux/lib/libcublasLt.so.12 (0x00007bb5c5a00000)Claude responded: Still linked against CUDA 12.Thought processThought processStill linked against CUDA 12. The symlink wasn't updated — cmake found CUDA 12 during configuration. Check where it points:
+bashls -la /usr/local/cuda
+ls -la /usr/local/ | grep cuda
+Almost certainly still pointing to cuda-12.8. Fix it, verify nvcc, then redo the cmake + make:
+bashsudo ln -sfn /usr/local/cuda-13.3 /usr/local/cuda
+nvcc --version
+If nvcc reports 13.3, then:
+bashcd /home/sy5/llama.cpp/build
+rm CMakeCache.txt
+cmake .. -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="89"
+make -j$(nproc)You said: wait during RTL pass: bbrowait during RTL pass: bbro
+/home/sy5/llama.cpp/ggml/src/ggml-cuda/template-instances/../mmq.cuh: In function ‘void launch_mul_mat_q(ggml_backend_cuda_context&, const mmq_args&, cudaStream_t) [with ggml_type type = GGML_TYPE_MXFP4; int mmq_x = 16]’:
+/home/sy5/llama.cpp/ggml/src/ggml-cuda/template-instances/../mmq.cuh:4053:1: internal compiler error: in try_forward_edges, at cfgcleanup.cc:580
+ 4053 | }
+      | ^
+0x1153298 internal_error(char const*, ...)
+        ???:0
+0x1147927 fancy_abort(char const*, int, char const*)
+        ???:0
+Please submit a full bug report, with preprocessed source (by using -freport-bug).
+Please include the complete backtrace with any bug report.
+See <file:///usr/share/doc/gcc-13/README.Bugs> for instructions.
+make[2]: *** [ggml/src/ggml-cuda/CMakeFiles/ggml-cuda.dir/build.make:1637: ggml/src/ggml-cuda/CMakeFiles/ggml-cuda.dir/template-instances/mmq-instance-mxfp4.cu.o] Error 1
+make[2]: *** Waiting for unfinished jobs....Show moreClaude responded: GCC 13.Thought processThought processGCC 13.3 internal compiler error (ICE) compiling the MXFP4 matrix multiplication kernel. MXFP4 is a microscaling format introduced in CUDA 13 for Blackwell hardware — the RTX 4090 (Ada Lovelace, SM 89) doesn't have MXFP4 hardware support anyway, but GCC 13.3 still tries to compile it and chokes on the template instantiation.
+Two options. Try the simpler one first:
+Option A — disable MXFP4 in the build (RTX 4090 doesn't need it):
+bashcd /home/sy5/llama.cpp/build
+rm CMakeCache.txt
+cmake .. -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="89" -DGGML_CUDA_MXFP4=OFF
+make -j$(nproc)
+If cmake rejects -DGGML_CUDA_MXFP4=OFF as unknown, move to option B.
+Option B — use GCC 14 as the host compiler (fixes the ICE):
+bashsudo apt install gcc-14 g++-14
+cd /home/sy5/llama.cpp/build
+rm CMakeCache.txt
+cmake .. -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="89" -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/gcc-14
+make -j$(nproc)
+Try A first — if the flag exists it's the cleanest solution since you're not compiling a feature the GPU can't use. Paste the cmake output and we'll know which path to continue on.You said: I will do option B check also this it seems correct: (base) sy5@LUCIFER:~$ ls -la /usr/local/cudaI will do option B check also this it seems correct: (base) sy5@LUCIFER:~$ ls -la /usr/local/cuda
+nvcc --version
+lrwxrwxrwx 1 root root 22 May 18 22:42 /usr/local/cuda -> /etc/alternatives/cuda
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2026 NVIDIA Corporation
+Built on Fri_Apr_24_07:22:02_PM_PDT_2026
+Cuda compilation tools, release 13.3, V13.3.33
+Build cuda_13.3.r13.3/compiler.37862127_0
+(base) sy5@LUCIFER:~$ nvcc --version
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2026 NVIDIA Corporation
+Built on Fri_Apr_24_07:22:02_PM_PDT_2026
+Cuda compilation tools, release 13.3, V13.3.33
+Build cuda_13.3.r13.3/compiler.37862127_0Show moreClaude responded: nvcc is 13.Thought processThought processnvcc is 13.3 and the symlink is correct via update-alternatives. The previous cmake attempt already failed mid-build so the cache is dirty — proceed directly with Option B:
+bashsudo apt install gcc-14 g++-14
+cd /home/sy5/llama.cpp/build
+rm CMakeCache.txt
+cmake .. -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="89" -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/gcc-14
+make -j$(nproc)
+The make will take a few minutes. Watch for the MXFP4 file compiling this time — if GCC 14 clears it, the build will complete cleanly.

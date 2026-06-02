@@ -1,0 +1,135 @@
+services:
+  valkey:
+    container_name: valkey
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    networks:
+      - searxng_net
+    command: valkey-server --save "" --appendonly no
+
+  searxng:
+    container_name: searxng
+    image: searxng/searxng:latest
+    restart: always
+    depends_on:
+      - valkey
+    ports:
+      - "8088:8080"
+    networks:
+      - searxng_net
+    volumes:
+      - ./searxng_data:/etc/searxng:rw
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    environment:
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+      - SEARXNG_REDIS_URL=valkey://valkey:6379/0
+
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    networks:
+      - searxng_net
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - ./prometheus/data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+    restart: unless-stopped
+
+  searxng-logger:
+    container_name: searxng-logger
+    build:
+      context: /opt/local-se/searxng-logger
+      dockerfile: Dockerfile
+    networks:
+      - searxng_net
+    volumes:
+      - ./searxng_data:/data
+    environment:
+      # SearXNG internal port is 8080 (external/host port is 8088)
+      - SEARXNG_URL=http://searxng:8080
+      - SEARXNG_METRICS_USER=
+      - SEARXNG_METRICS_PASSWORD=metrics-admin-2025
+      - POLL_INTERVAL=15
+      - DB_PATH=/data/searxng.db
+    restart: unless-stopped
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:latest
+    ports:
+      - "3002:3000"
+    networks:
+      - searxng_net
+    volumes:
+      - ./grafana/data:/var/lib/grafana
+      - ./grafana/datasources/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./grafana/dashboards/searxng-engine-health.json:/etc/grafana/provisioning/dashboards/searxng-engine-health.json:ro
+      - ./grafana/dashboards/llamacpp-dashboard.json:/etc/grafana/provisioning/dashboards/llamacpp-dashboard.json:ro
+    env_file:
+      - .env
+    environment:
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    restart: unless-stopped
+
+  node-exporter:
+    container_name: node-exporter
+    image: prom/node-exporter:latest
+    ports:
+      - "9100:9100"
+    networks:
+      - searxng_net
+    pid: "host"
+    restart: unless-stopped
+
+  vaultwarden:
+    container_name: vaultwarden
+    image: vaultwarden/server:latest
+    restart: always
+    ports:
+      - "3003:80"
+    volumes:
+      - ./vaultwarden/data:/data
+    environment:
+      - SIGNUPS_ALLOWED=true
+      - 'ADMIN_TOKEN=$$argon2id$$v=19$$m=65536,t=3,p=4$$UEqpdc45RyiF8B4DwJhzjg$$XU3crHOHKZMg1iM5UpmLDz3of5LDLsjjl35/XjZs19M'
+      - WEBSOCKET_ENABLED=true
+      - 'ROCKET_TLS={certs=/data/ssl/combined.pem,key=/data/ssl/server.key}'
+    networks:
+      - searxng_net
+
+  elasticsearch:
+    container_name: elasticsearch
+    image: elasticsearch:8.17.0
+    restart: unless-stopped
+    mem_limit: 2g
+    mem_reservation: 1g
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx1g
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    networks:
+      - searxng_net
+volumes:
+  es-data:
+    external: true
+networks:
+  searxng_net:
+    driver: bridge
