@@ -6,8 +6,8 @@
 
 | Component | Version | File | Notes |
 |---|---|---|---|
-| Tool | v1.5.13 | `tools/openwebui-tool-v1.5.13.py` | deploy to OpenWebUI pending |
-| Prompt | v0.5.10 | `prompts/v0.5.10.md` | deployed ✅ |
+| Tool | v1.5.13 | `tools/openwebui-tool-v1.5.13.py` | deployed ✅ |
+| Prompt | v0.5.11 | `prompts/v0.5.11.md` | deploy to OpenWebUI pending |
 | RAG Tools | v2 | (embedded in tool) | search_kb, index_to_kb, record_error, check_error_kb |
 | Routing filter | v1.1.0 | `tools/lse-routing-filter-v1.1.0.py` | |
 | Context monitor | retired | — | removed in v0.5.4; replaced by Grafana alert pipeline |
