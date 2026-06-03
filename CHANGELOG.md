@@ -4,7 +4,39 @@
 
 ---
 
-## 2026-06-02 — Tool v1.5.12 deployed, prompt v0.5.10, tracking restructure
+## 2026-06-03 — SearXNG 27-engine deploy, syslog live, network topology
+
+**SearXNG 27-engine config deployed** ✅
+- Config already written to `/home/sy5/docker/searxng_data/settings.yml` — container just needed restart
+- `valkey:` section added (replacing deprecated `redis:` key) — wires Valkey to limiter + caching
+- `limiter: true` re-enabled after testing
+- Verified: 27 engines configured, 11 active on `q=llama.cpp&categories=general,it,science`, 108 results
+- Brave suspended during testing (VPS rate-limiting confirmed) — weight 1 is correct
+- **Bug found:** `search_web` tool sends no `X-Forwarded-For` header → gets 429 from limiter; also missing `categories=general,it,science` → misses arxiv/github/scholar. Fix in tool v1.5.13.
+
+## 2026-06-03 — Network infrastructure bootstrap, syslog live
+
+**pfSense syslog pipeline established**
+- pfSense Plus 26.03.1 confirmed at 192.168.1.50 — no built-in REST API (docs verified)
+- SSH access confirmed: `ssh admin@pfsense.home.arpa`
+- Syslog config was not written to `/etc/syslog.conf` on first GUI save — root cause: syslogd was not restarted
+- Fix: re-saved settings in GUI → config regenerated → syslogd restarted with new PID
+- pfSense → LUCIFER:514 UDP syslog now live and verified with tcpdump + nc
+- WSL2 mirrored networking confirmed working (ping + port binding)
+
+**Network topology expanded — three subnets confirmed**
+- 192.168.1.0/24: LAN (pfSense, LUCIFER, HA Pi, Samsung TV)
+- 192.168.5.0/24: NAS subnet (TS-419P II via igc2)
+- 192.168.10.0/24: Solar/IoT subnet (inverter at 192.168.10.3 via igc3, already in HA)
+
+**Syslog-derived findings (first 10 min of data)**
+- Samsung S90C TV (192.168.1.90, MAC 1c:af:4a:04:5f:b6): DHCP hammer every 1–2 min + unblocked WAN access
+- `filterdns: cisco.lan` stale DNS host override — superseded by .home.arpa domain migration
+- cloudflare.time.com DNS reverse lookup error on Samsung TV DHCP events (benign)
+
+**docs/network-topology.md** created with full node inventory, subnet map, service placement, WSL2 networking options, T1 challenge set (10 challenges), HA Pi add-on capacity table, future Pi 4 NAS plan, pfSense bootstrap section
+
+## 2026-06-02 — Tool v1.5.12 deployed, prompt v0.5.10, tracking restructure `c5e3d84`
 
 **Tool v1.5.12** — deployed to OpenWebUI
 - `write_file` SIZE SANITY CHECK: code-level gate rejects overwrites where new content < 25% of existing line count; `force=True` override after explicit user confirmation
@@ -63,9 +95,13 @@
 - Prometheus scrape job restored with `basic_auth.password`
 - Grafana dashboards now receiving live `searxng_engines_*` data
 
-**SearXNG Engine Config Update (settings prepared, not yet deployed)**
-- Brave removed (VPS rate-limiting)
-- arXiv Tier 1 weight 4, Google Scholar weight 3, Bing+DDG weight 2, Mojeek+Qwant weight 1
+**SearXNG 27-engine config prepared (NOT YET DEPLOYED)**
+- Brave **demoted** (lower weight, not removed) — still contributes despite VPS rate-limiting
+- 27-engine target: arXiv T1 weight 4, Google Scholar weight 3, Bing+DDG weight 2, Brave+Mojeek+Qwant weight 1, Wikipedia+Bing News always-on
+- Config path confirmed: `/home/sy5/docker/searxng_data/settings.yml` (host) = `/etc/searxng/settings.yml` (container)
+- Backups: `settings.yml.backup`, `settings.yml.backup-v1.0-20260525`, `settings.yml.bak`
+- Valkey (Redis fork) already deployed on lse-net internal port 6379 — caching may already be available
+- Production still running 4-engine set; Grafana confirms only Brave/DDG/Google/Wikipedia active
 
 **Prompt v0.5.7–v0.5.9**
 - v0.5.7: Grafana URL, KB path, RAG Tools v2, pip torch version guard, WARNING ESCALATION RULE, BACKGROUND PROCESS RULE, SYSTEM PACKAGE INSTALLATION RULE, RAG tool discipline rules
