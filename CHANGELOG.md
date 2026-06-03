@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-06-03 — Tool v1.5.16, pfSense SSL, session close
+
+**Tool v1.5.16** — deployed ✅ (SHA-256: bcc04bb0fa3d944c9fa5a4e4786393950b2efc32f0ad69962716a217f88a66d1)
+- `PFSENSE_CA_CERT` valve + `_pfsense_verify()` helper
+- Uses `/opt/local-se/cert/pfsense-webgui-ca.crt` (sy5:sy5 644, valid → Apr 2036)
+- Falls back to `verify=False` with logged warning if cert missing
+- pfSense TLS now fully verified against WebGUI CA
+- git: `7275f45`
+
+**Repo hygiene pending:** `openwebui-tool-v1.5.14-BKP.py` committed accidentally — needs `git rm` + `.gitignore` rule for `*.BKP`
+
 ## 2026-06-03 — Tool v1.5.15, security hardening, launcher v1.078 + GUI v1.4
 
 **Tool v1.5.15** — deployed ✅ (SHA-256: b9d00a17ad44eda7c4630368a7a19fde9d282e7871536ae306482e619a9c9dd0)
