@@ -24,8 +24,9 @@ resp = requests.get(
 )
 ```
 
-- [ ] Fix `search_web` in tool v1.5.13
-- [ ] Update prompt ENVIRONMENT version to v0.5.11 + tool v1.5.13
+- [x] Fix `search_web` in tool v1.5.13 — headers + categories=general,it,science
+- [ ] Deploy v1.5.13 to OpenWebUI Admin → Tools
+- [ ] Update prompt to v0.5.11 (ENVIRONMENT version bump to tool v1.5.13)
 
 ---
 
