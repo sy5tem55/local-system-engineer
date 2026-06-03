@@ -365,63 +365,29 @@ What does the systemctl daemon-reload command do and when should I run it?
 
 ---
 
-### A1 — Context monitor triggers after multi-turn session *(questions redesigned v3.5)*
+### A1 — Port collision awareness *(redesigned Run 6 — context monitor retired)*
 
-**Architecture note:** The LSE Context Monitor Filter fires at the START of each user
-message and counts `role: "tool"` messages in history. When count % threshold == 0
-and count > 0, the v1.2.0 structured interrupt fires. Run 6 separate messages.
+**Architecture note:** The context monitor filter was retired in v0.5.4 and replaced by
+the Grafana alert pipeline. This test replaces the filter-trigger test with a stack-
+topology awareness test that is unfakeable and LUCIFER-specific.
 
-**All questions use unfakeable answers — the model MUST call a tool, it cannot infer
-the answer from training data, conversation context, or the system prompt.**
-
-**Run as 6 separate messages (do NOT start fresh between messages):**
-
-**Message 1:**
+**Send this (fresh conversation):**
 ```
-What is the current PID of the llama-server process?
+I'm about to start a new service on port 8080. Is that port safe to use?
 ```
-*(Expect: execute_command("pgrep -a llama-server") — PID changes each boot, unguessable)*
-
-**Message 2:**
-```
-How many inodes are free on the root filesystem right now?
-```
-*(Expect: execute_command("df -i /") — live filesystem state, unguessable)*
-
-**Message 3:**
-```
-What is the exact size in bytes of /home/sy5/.bashrc?
-```
-*(Expect: execute_command("stat -c %s /home/sy5/.bashrc") or wc -c — exact byte count)*
-
-**Message 4:**
-```
-What is the MD5 hash of /home/sy5/.bashrc?
-```
-*(Expect: execute_command("md5sum /home/sy5/.bashrc") — cryptographic hash, unguessable)*
-
-**Message 5:**
-```
-List the 3 most recently modified files in /home/sy5/ with their exact timestamps.
-```
-*(Expect: execute_command("ls -lt /home/sy5/ | head -4") — live filesystem mtime)*
-
-**Message 6:**
-```
-What is the current date and time?
-```
-*(Inlet filter fires: 5 tool calls in history, 5 % 5 == 0. v1.2.0 structured interrupt
-injected. Expect: model calls get_context_status as step 1, then execute_command("date"))*
 
 **What to observe:**
-- Does `get_context_status` appear in the tool call log on message 6?
-- With v1.2.0, it should appear BEFORE the date answer (step 1 of the interrupt block).
-- It is acceptable if called after the date answer (partial).
-- It is NOT acceptable if it never appears.
+- Does it call `execute_command` with `ss -tlnp` or `netstat` to check live bindings?
+- Does it identify **llama-server** bound on 0.0.0.0:8080 on WSL2?
+- Does it mention SearXNG's internal Docker port 8080 and explain why it does NOT
+  conflict (exposed externally as 8088 via Docker NAT)?
+- Does it correctly conclude: port 8080 is **NOT safe** — llama-server owns it on WSL2?
 
-**Pass (3):** `get_context_status` called on turn 6, before the date answer.
-**Partial (2):** `get_context_status` called on turn 6 but after the date answer, or on turn 7.
-**Fail (0):** Never called despite filter firing.
+**Pass (3):** Live tool call → identifies llama-server on 8080 → explains Docker NAT
+  nuance (SearXNG internal 8080 is isolated, WSL2 8080 is taken) → correct conclusion.
+**Partial (2):** Finds port in use and warns correctly, but misses one binding or omits
+  the Docker NAT explanation.
+**Fail (0):** Answers without a tool call, says port is free, or hallucinates the occupant.
 
 ---
 
@@ -548,7 +514,7 @@ Category W — Web search gate
   Subtotal:                            __/9
 
 Category A — Architecture and context awareness
-  A1 (context monitor, 6-turn):        __/3   Notes:
+  A1 (port 8080 collision awareness):   __/3   Notes:
   A2 (actual context status + action): __/3   Notes:
   A3 (dependent sequential calls):     __/3   Notes:
   Subtotal:                            __/9

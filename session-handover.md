@@ -1,50 +1,74 @@
-# Session Handover — 2026-05-31 (Session 3)
+# Session Handover — 2026-06-03 (LSE Stack Session)
 
-## Status
-Context near limit. Handover written externally. Two bugs diagnosed, fixes not yet written.
+## Stack Versions at Close
+| Component | Version |
+|-----------|---------|
+| Tool | v1.5.13 |
+| Prompt | v0.5.11 (deployed ✅) |
+| Routing filter | v1.1.0 |
+| Context monitor | retired |
+| llama-server | Qwen3.6-27B-Q4_K_M · build b9464 · 64k · KV q8_0 · budget 3072 |
+| Test suite | v3.5 (A1 redesigned — port collision test) |
 
-## Project
-Portrait-to-3D web app at `/home/sy5/projects/portrait-3d/`
+## What Was Completed This Session
+- Run 6 eval: **58/63** (52/57 adjusted) — eval-report-v5.md written
+- SearXNG 27-engine config live in production
+- SearXNG metrics pipeline fixed: `general.open_metrics` added, Prometheus scrape healthy
+- Grafana dashboard updated and deployed (engine filter variable, error panels)
+- Limiter disabled, Valkey redis section confirmed present
+- ROADMAP, CURRENT-STATE, test-suite-v3.5 all updated
 
-## What Works
-- FastAPI backend at port 8787 ✅
-- PNG upload → Depth-Anything V2 → trimesh mesh → GLB export ✅ (4.4MB GLB confirmed)
-- Vite frontend built to backend/dist/ ✅
-- trimesh process=False fix applied ✅
+## What Needs Doing Next (Priority Order)
 
-## What's Broken (Mentor Step 4 — in progress)
+### 1. Credential Rotation (URGENT — passwords exposed this session)
+Use this LSE prompt in a fresh conversation:
+```
+Rotate the Grafana admin password and the SearXNG metrics scrape password. Full sequence:
+1. Generate two strong random passwords (use openssl rand -base64 24)
+2. Update Grafana admin password via the API: POST /api/user/password
+3. Update open_metrics password in /home/sy5/docker/searxng_data/settings.yml
+4. Update the basic_auth password in the Prometheus config (find the file first)
+5. Restart both searxng and prometheus containers
+6. Verify: curl the /metrics endpoint with the new password, curl the Prometheus targets API and confirm searxng health is "up"
+7. Report all new passwords clearly at the end so I can update Vaultwarden
+8. Index the full procedure into the KB via index_to_kb: title "Grafana + SearXNG metrics password rotation procedure", topic "infrastructure", include the exact commands used
 
-### Bug 1: THREE is not defined when loading GLB
-- Location: `frontend/src/main.js` line ~167
-- Code: `child.material.side = THREE ? THREE.DoubleSide : 2;`
-- Cause: `THREE` is never imported in main.js — only `GLTFLoader` is imported
-- Fix: Add `import * as THREE from 'three';` at top of main.js, OR replace the line with the literal value `child.material.side = 2;` (DoubleSide = 2)
+Stop and wait for me after each sudo delegation block.
+```
 
-### Bug 2: Vanta.js not visible
-- Cause 1: `loadVanta()` called synchronously at module top-level — must defer to DOMContentLoaded or window.load
-- Cause 2: vanta@latest CDN returns 200 (confirmed), but script injection timing is off
-- Fix: Move `loadVanta()` call inside `window.addEventListener('load', ...)`, add console.error on failure
+### 2. Prompt v0.5.12 + Tool v1.5.14 — three protocol fixes
+- MULTI-BLOCK TASK: emit `── Step N/Total: [description] ──` before each step
+- sudo_delegation_block must never be called inside the thinking phase (gets buried in collapsed think block in OpenWebUI)
+- sudo_delegation_block presentation: add step indicator, surface verify command explicitly
+See ROADMAP for full spec.
 
-## Pending After Fixes
-- Rebuild frontend: `cd /home/sy5/projects/portrait-3d/frontend && npm run build`
-- Hard reload http://localhost:8787
-- Verify: Vanta background visible, GLB import button works, terminal viewer renders model
+### 3. Network hygiene — pfSense
+- Samsung TV (192.168.1.90): WAN block + static DHCP mapping
+- Backup config.xml before any changes
 
-## Mentor Step Counter
-- Step 1: Diagnose JSON.parse error ✅
-- Step 2: Explain trimesh process=False fix ✅
-- Step 3: Implement Vanta + terminal viewer + GLB import ✅ (written, bugs remain)
-- Step 4: Fix THREE import + Vanta timing — IN PROGRESS
+### 4. Run 7 prep
+Fix these gaps from Run 6 before running:
+- P4: pipeline-position sudo explanation + split offer
+- M3: file-not-found recovery proposal
+- W1: no tool calls for static Linux knowledge
+Bump prompt to v0.5.12 after fixes, then run full v3.5 suite.
 
-## Key Files
-- `frontend/src/main.js` — needs THREE import fix + Vanta defer fix
-- `frontend/src/style.css` — terminal + vanta-bg positioning
-- `frontend/index.html` — Vanta script tags
-- `backend/mesh_builder.py` — process=False fix already applied
+## Key Paths
+- Settings: `/home/sy5/docker/searxng_data/settings.yml`
+- Prometheus config: find via `find /home/sy5 -name "prometheus.yml"`
+- Project root: `C:\Users\SY5\Claude\Projects\local-system-engineer\`
+- Grafana: `http://localhost:3002` (port 3002 on host)
+- SearXNG: `http://localhost:8088`
+- Grafana service account: `lse-sync` (needs Editor role upgrade)
 
-## System Prompt
-v0.5.6 active. LSE RAG Tools V2 enabled.
+## Known Issues
+- Grafana `lse-sync` service account has Viewer role — cannot deploy dashboards via API key. Upgrade to Editor in Admin → Service accounts.
+- searxng-logger still broken (polls Prometheus with wrong logic) — backlog item
+- open-webui has no systemd unit — A3 eval test journalctl always empty
 
-## Next Session Start
-Read this handover, then ask user: "Ready to apply the two fixes for Bug 1 and Bug 2?"
-Apply fixes → rebuild → verify → index KB entries for lessons learned.
+## Session Start Checklist
+1. Read CURRENT-STATE.md — reconcile versions
+2. Read ROADMAP.md — credential rotation is top priority
+3. Confirm llama-server running: `curl -s localhost:8080/health`
+4. Confirm SearXNG metrics live: `curl -s -u ":metrics-admin-2025" http://localhost:8088/metrics | head -3`
+   (note: password may have been rotated — check Vaultwarden first)

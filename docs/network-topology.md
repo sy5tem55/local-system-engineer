@@ -49,7 +49,9 @@
 | Node | Subnet | IP | Role | Docker | Notes |
 |---|---|---|---|---|---|
 | pfSense Plus | 192.168.1.0/24 | 192.168.1.50 | Gateway, firewall, DNS, DHCP | No | 26.03.1 · Netgate appliance · J3710 · SSH access confirmed |
-| LUCIFER | 192.168.1.0/24 | 192.168.1.x | AI workstation | Yes (WSL2) | Main LSE stack, RTX 4090 |
+| LUCIFER | 192.168.1.0/24 | 192.168.1.57 | AI workstation (primary) | Yes (WSL2) | 9900K · RTX 4090 · Main LSE stack |
+| NODE2 | 192.168.1.0/24 | 192.168.1.x | AI workstation (secondary) | Yes (native) | 9900K · RTX 3090 24GB · Ubuntu · LM Studio · parallel LSE candidate |
+| NODE3 | 192.168.1.0/24 | 192.168.1.x | Gaming PC (untouched) | No | 9800X3D · RTX 5090 · 64GB RAM · no WSL — gaming performance constraint |
 | HA Pi (Pi 4) | 192.168.1.0/24 | 192.168.1.x | HA OS, automation hub | Add-ons only | rpi4-64, ext SSD, 1.2 GB in use |
 | Pi 4 (spare) | undeployed | — | Future NAS + Docker node | Yes (ARM64) | Same RAM as HA Pi — see §Future |
 | TS-419P II | 192.168.5.0/24 | 192.168.5.x | Cold storage NAS | ❌ ARMv5 | NFS/SMB archive only — no containers |
@@ -343,48 +345,83 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 ---
 
-## pfSense REST API — Built-in (Plus 26.03.1)
+## pfSense Access Strategy (Plus 26.03.1)
 
-pfSense Plus 26.03.1 ships with REST API v2 natively — **no package installation required.**
-API endpoint base: `https://192.168.1.1/api/v2/`
-Documentation: `https://192.168.1.1/api/v2/documentation` (live Swagger UI on the appliance)
+### Primary: pfSense REST API package (pfrest.org)
 
-**Enable steps (one-time, manual in UI):**
-1. System → REST API
-2. Enable: On
-3. Authentication: API Key (recommended for LSE automation)
-4. Allowed interfaces: LAN only (restrict to 192.168.1.0/24)
-5. Create API key → copy to LSE valve / `.env`
-6. Verify from LUCIFER WSL2:
-   ```bash
-   curl -sk -H "x-api-key: <key>" https://192.168.1.1/api/v2/system/version
-   ```
+pfSense Plus 26.03 is explicitly supported by the community REST API package at https://pfrest.org.
+This is an unofficial but well-maintained open-source package — 200+ endpoints, Swagger UI, GraphQL.
 
-**Key API v2 endpoints for T1 challenges:**
+**Install (one command from pfSense shell — requires SSH):**
+```bash
+pkg-static -C /dev/null add https://github.com/pfrest/pfSense-pkg-RESTAPI/releases/latest/download/pfSense-26.03-pkg-RESTAPI.pkg
+```
+
+**Configure after install:**
+- System → REST API → Enable: On
+- Authentication: API Key (recommended)
+- Allowed interfaces: LAN only
+- Create API key → store in LSE valve / `.env`
+
+**Verify from LUCIFER WSL2:**
+```bash
+curl -sk -H "x-api-key: <key>" https://192.168.1.1/api/v2/system/version
+```
+
+**Swagger UI (live on pfSense after install):**
+System → REST API → Documentation → `https://192.168.1.1/api/v2/documentation`
+
+**⚠️ Important:** pfSense removes unofficial packages during system updates. Reinstall after every pfSense upgrade.
+
+**Key endpoints for T1 challenges:**
 
 | Endpoint | T1 Challenge |
 |---|---|
-| `/api/v2/dhcp/server/lease` | Ch.01 — LAN device map |
-| `/api/v2/firewall/rule` | Ch.06 — Firewall rule map |
-| `/api/v2/services/unbound/settings` | Ch.07 — DNS resolver audit |
-| `/api/v2/status/logs/firewall` | Ch.03 — Log baseline |
-| `/api/v2/status/interface` | Ch.10 — Inter-subnet traffic |
-| `/api/v2/system/version` | Bootstrap verification |
+| `GET /api/v2/dhcp/server/lease` | Ch.01 — LAN device map |
+| `GET /api/v2/status/logs/firewall` | Ch.03 — Firewall log baseline |
+| `GET /api/v2/firewall/rule` | Ch.06 — Firewall rule map |
+| `GET /api/v2/services/unbound/host` | Ch.07 — DNS resolver audit |
+| `GET /api/v2/status/interface` | Ch.10 — Interface traffic stats |
+| `GET /api/v2/system/version` | Bootstrap verification |
 
-**Syslog forwarding (for Ch.03 and persistent log collection):**
-Status → System Logs → Settings → Remote Logging
-- Enable: checked
-- Remote log servers: `<LUCIFER_IP>:514`
-- Remote syslog contents: Firewall events, DHCP, Authentication
-- Protocol: UDP
+---
 
-**Pre-condition status update:**
+### Fallback: SSH + config.xml (always available, no package needed)
+
+If the REST API package is unavailable or after a pfSense upgrade before reinstall:
+
+```bash
+# Pull full config from pfSense over SSH
+ssh admin@192.168.1.50 cat /cf/conf/config.xml > /tmp/lse/pfsense-config.xml
+```
+
+config.xml contains: all firewall rules, DHCP config, DNS overrides, interface config.
+
+| Data needed | SSH command |
+|---|---|
+| Active DHCP leases | `cat /var/dhcpd/var/db/dhcpd.leases` |
+| ARP table (live hosts) | `arp -a` |
+| Firewall rule list | `pfctl -sr` |
+| Interface stats | `pfctl -si` or `netstat -ibn` |
+| DNS resolver stats | `unbound-control stats_noreset` |
+
+---
+
+### Syslog (primary source for log-based challenges)
+- pfSense → LUCIFER:514 UDP ✅ confirmed live
+- Firewall events, DHCP, auth events all flowing
+- T1-Ch.03 and log challenges use syslog stream or replayed corpus snapshot
+
+---
+
+**Pre-condition status:**
 
 | Pre-condition | Status | Action |
 |---|---|---|
-| WSL2 mirrored networking | ❌ pending | Add `networkingMode=mirrored` to `.wslconfig` |
-| pfSense REST API enabled | ❌ pending | System → REST API → enable + create key |
-| pfSense syslog → LUCIFER:514 | ❌ pending | Status → System Logs → Settings → Remote Logging |
+| WSL2 mirrored networking | ✅ confirmed | `networkingMode=mirrored` in `.wslconfig` |
+| pfSense SSH access | ✅ confirmed | `ssh admin@192.168.1.50` |
+| pfSense syslog → LUCIFER:514 | ✅ confirmed | Live and flowing |
+| pfSense REST API package | ✅ installed + live | v2.8, read-only, LAN+WAN+OPT1+OPT2, key in Vaultwarden, access list: 192.168.1.57/32 only |
 | HA long-lived access token | ❓ unknown | HA profile → Security → Long-lived tokens |
-| QNAP admin credentials | ❓ unknown | QNAP web UI or SSH |
-| Syslog collector container (LUCIFER) | ❌ pending | Docker container, UDP 514 listener |
+| QNAP admin credentials | ❓ unknown | QNAP web UI or SSH on 192.168.5.x |
+| Syslog collector container (LUCIFER) | ❌ pending | Docker container, UDP 514 listener (nc is temporary) |

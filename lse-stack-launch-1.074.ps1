@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     LSE Stack Launcher — opens Windows Terminal with all services in dedicated tabs.
@@ -21,6 +21,7 @@ $ErrorActionPreference = 'Stop'
 # ── Fixed paths (edit if your install locations change) ───────────────────────
 
 $LaunchDir     = '/home/sy5/.lse/launch'
+$SecretsFile   = '/home/sy5/.lse/secrets'   # chmod 600 — contains: export BW_PASSWORD='...'
 $LlamaBin      = '/home/sy5/llama.cpp/build/bin/llama-server'
 $OwuiEnv       = '/home/sy5/owui/bin/activate'
 $PlaywrightDir = '/home/sy5/owui/bin'
@@ -31,9 +32,7 @@ $PlaywrightDir = '/home/sy5/owui/bin'
 #   The launcher shows a numbered menu; press Enter to accept the default (first entry).
 #
 #   Key reference:
-#     ModelFile       — path relative to /home/sy5/models/ (subfolder/model.gguf)
-#                         Each model lives in its own named subfolder:
-#                         e.g. Qwen3.6-27B-Q5_K_M/Qwen3.6-27B-Q5_K_M.gguf
+#     ModelFile       — filename inside /home/sy5/models/
 #     CtxSize         — KV cache size in tokens
 #                         32768 → fits cleanly in VRAM (~22 GB total on RTX 4090)
 #                         65536 → needs ~2 GB CPU KV spillover at tail end
@@ -82,7 +81,7 @@ $ModelProfiles = [ordered]@{
     #      batch 6637, ubatch 2875   ← NOT applied: regression confirmed v1.064/v1.066
 
     'Qwen3.6 27B · MTP  [32k · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-27B-Q5_K_M/Qwen3.6-27B-Q5_K_M.gguf'
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
         CtxSize          = 32768
         GpuLayers        = 117
         FlashAttn        = $true
@@ -101,7 +100,7 @@ $ModelProfiles = [ordered]@{
     }
 
     'Qwen3.6 27B · MTP  [no-think · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-27B-Q5_K_M/Qwen3.6-27B-Q5_K_M.gguf'
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
         CtxSize          = 32768
         GpuLayers        = 117
         FlashAttn        = $true
@@ -128,7 +127,7 @@ $ModelProfiles = [ordered]@{
     #      batch 6377, ubatch 4399  ← NOT applied: same regression as Q5_K_M
 
     'Qwen3.6 27B · Q4_K_M + MTP  [32k · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-27B-Q4_K_M/Qwen3.6-27B-Q4_K_M.gguf'
+        ModelFile        = 'Qwen_Qwen3.6-27B-Q4_K_M.gguf'
         CtxSize          = 32768
         GpuLayers        = 129
         FlashAttn        = $true
@@ -147,7 +146,7 @@ $ModelProfiles = [ordered]@{
     }
 
     'Qwen3.6 27B · Q4_K_M + MTP  [no-think · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-27B-Q4_K_M/Qwen3.6-27B-Q4_K_M.gguf'
+        ModelFile        = 'Qwen_Qwen3.6-27B-Q4_K_M.gguf'
         CtxSize          = 32768
         GpuLayers        = 129
         FlashAttn        = $true
@@ -168,7 +167,7 @@ $ModelProfiles = [ordered]@{
     # ── Q4_K_M · 27B · 64k profiles (no MTP — insufficient VRAM headroom at 64k) ─
 
     'Qwen3.6 27B · Q4_K_M  [64k · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-27B-Q4_K_M/Qwen3.6-27B-Q4_K_M.gguf'
+        ModelFile        = 'Qwen_Qwen3.6-27B-Q4_K_M.gguf'
         CtxSize          = 65536
         GpuLayers        = 129
         FlashAttn        = $true
@@ -185,7 +184,7 @@ $ModelProfiles = [ordered]@{
     }
 
     'Qwen3.6 27B · Q4_K_M  [64k · no-think · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-27B-Q4_K_M/Qwen3.6-27B-Q4_K_M.gguf'
+        ModelFile        = 'Qwen_Qwen3.6-27B-Q4_K_M.gguf'
         CtxSize          = 65536
         GpuLayers        = 129
         FlashAttn        = $true
@@ -204,7 +203,7 @@ $ModelProfiles = [ordered]@{
     # ── Q5_K_M · 27B · standard profiles (no MTP — stable baseline) ──────────
 
     'Qwen3.6 27B · Q5_K_M  [32k · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-27B-Q5_K_M/Qwen3.6-27B-Q5_K_M.gguf'
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
         CtxSize          = 32768
         GpuLayers        = 117
         FlashAttn        = $true
@@ -221,7 +220,7 @@ $ModelProfiles = [ordered]@{
     }
 
     'Qwen3.6 27B · Q5_K_M  [no-think · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-27B-Q5_K_M/Qwen3.6-27B-Q5_K_M.gguf'
+        ModelFile        = 'Qwen3.6-27B-Q5_K_M.gguf'
         CtxSize          = 32768
         GpuLayers        = 117
         FlashAttn        = $true
@@ -247,7 +246,7 @@ $ModelProfiles = [ordered]@{
     #    threads=8: conservative for prompt prefill on the 9900K.
 
     'Qwopus 3.6 35B A3B · Q4_K_M  [32k · q8_0]' = @{
-        ModelFile        = 'Qwopus3.6-35B-A3B-v1-Q4_K_M/Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf'
+        ModelFile        = 'Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf'
         CtxSize          = 32768
         GpuLayers        = 99
         FlashAttn        = $true
@@ -268,7 +267,7 @@ $ModelProfiles = [ordered]@{
     #    MTP DISABLED (see 35B A3B note above).
 
     'Qwopus 3.6 35B A3B · Q4_K_M  [96k · q8_0]' = @{
-        ModelFile        = 'Qwopus3.6-35B-A3B-v1-Q4_K_M/Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf'
+        ModelFile        = 'Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf'
         CtxSize          = 96000
         GpuLayers        = 99
         FlashAttn        = $true
@@ -288,7 +287,7 @@ $ModelProfiles = [ordered]@{
     #    Claude 4.7 Opus merge, abliterated. MTP disabled (see 35B A3B note above).
 
     'Huihui Qwen3.6 35B A3B · Q4_K  [32k · q8_0]' = @{
-        ModelFile        = 'Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-ggml-model-Q4_K/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-ggml-model-Q4_K.gguf'
+        ModelFile        = 'Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-ggml-model-Q4_K.gguf'
         CtxSize          = 32768
         GpuLayers        = 99
         FlashAttn        = $true
@@ -308,7 +307,7 @@ $ModelProfiles = [ordered]@{
     #    Uncensored aggressive variant. MTP disabled (see 35B A3B note above).
 
     'HauhauCS Aggressive 35B A3B · Q4_K_M  [32k · q8_0]' = @{
-        ModelFile        = 'Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf'
+        ModelFile        = 'Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf'
         CtxSize          = 32768
         GpuLayers        = 99
         FlashAttn        = $true
@@ -322,87 +321,6 @@ $ModelProfiles = [ordered]@{
         TabLabel         = '  HAUHAU 35B UNCENSORED'
         BannerLine1      = 'HAUHAU 3.6 35B A3B  ·  Q4_K_M'
         BannerLine2      = 'uncensored · KV:q8_0 · think:3072 → :8080'
-    }
-
-    # ── GLM 4.7B Flash · Q4_K_M profiles ─────────────────────────────────────
-    #    Small/fast flash model (~4.7B parameters).
-    #    Parameters inherited from 35B A3B baseline — same hardware.
-
-    'GLM 4.7 Flash · Q4_K_M  [32k · q8_0]' = @{
-        ModelFile        = 'GLM-4.7-Flash-Q4_K_M/GLM-4.7-Flash-Q4_K_M.gguf'
-        CtxSize          = 32768
-        GpuLayers        = 99
-        FlashAttn        = $true
-        CacheTypeK       = 'q8_0'
-        CacheTypeV       = 'q8_0'
-        Parallel         = 1
-        Threads          = 8
-
-        ReasoningBudget  = '3072'
-        MaxPredictTokens = '8192'
-        TabLabel         = '  GLM 4.7 FLASH'
-        BannerLine1      = 'GLM 4.7 FLASH  ·  Q4_K_M'
-        BannerLine2      = 'KV:q8_0 · think:3072 → :8080'
-    }
-
-    'GLM 4.7 Flash · Q4_K_M  [no-think · q8_0]' = @{
-        ModelFile        = 'GLM-4.7-Flash-Q4_K_M/GLM-4.7-Flash-Q4_K_M.gguf'
-        CtxSize          = 32768
-        GpuLayers        = 99
-        FlashAttn        = $true
-        CacheTypeK       = 'q8_0'
-        CacheTypeV       = 'q8_0'
-        Parallel         = 1
-        Threads          = 8
-
-        ReasoningBudget  = '0'
-        MaxPredictTokens = '4096'
-        TabLabel         = '  GLM 4.7 FLASH fast'
-        BannerLine1      = 'GLM 4.7 FLASH  ·  Q4_K_M'
-        BannerLine2      = 'KV:q8_0 · thinking off → :8080'
-    }
-
-    # ── Gemma 4 26B A4B (MoE) · Q4_K_M profiles ──────────────────────────────
-    #    26B total / ~4B active parameters (MoE, A4B).
-    #    Vision-capable — mmproj BF16 available in same folder (text-only here).
-    #    Parameters inherited from 35B A3B baseline. MTP untested — omitted.
-
-    'Gemma 4 26B A4B · Q4_K_M  [32k · q8_0]' = @{
-        ModelFile        = 'Gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-Q4_K_M.gguf'
-        CtxSize          = 32768
-        GpuLayers        = 99
-        FlashAttn        = $true
-        CacheTypeK       = 'q8_0'
-        CacheTypeV       = 'q8_0'
-        Parallel         = 1
-        Threads          = 8
-
-        ReasoningBudget  = '3072'
-        MaxPredictTokens = '8192'
-        TabLabel         = '  GEMMA 4 26B A4B'
-        BannerLine1      = 'GEMMA 4 26B A4B  ·  Q4_K_M'
-        BannerLine2      = 'KV:q8_0 · think:3072 → :8080'
-    }
-
-    # ── Gemma 4 31B (dense) · Q4_K_M profiles ────────────────────────────────
-    #    31B dense model. Vision-capable — mmproj BF16 available (text-only here).
-    #    Parameters inherited from 35B A3B baseline. MTP untested — omitted.
-
-    'Gemma 4 31B · Q4_K_M  [32k · q8_0]' = @{
-        ModelFile        = 'Gemma-4-31B-it-GGUF/gemma-4-31B-it-Q4_K_M.gguf'
-        CtxSize          = 32768
-        GpuLayers        = 99
-        FlashAttn        = $true
-        CacheTypeK       = 'q8_0'
-        CacheTypeV       = 'q8_0'
-        Parallel         = 1
-        Threads          = 8
-
-        ReasoningBudget  = '3072'
-        MaxPredictTokens = '8192'
-        TabLabel         = '  GEMMA 4 31B'
-        BannerLine1      = 'GEMMA 4 31B  ·  Q4_K_M'
-        BannerLine2      = 'KV:q8_0 · think:3072 → :8080'
     }
 
 }
@@ -490,6 +408,34 @@ $L2 = $Prof.BannerLine2.PadRight(41)
 #   Each script: prints a colour banner, runs the service, then drops to bash
 #   if the service exits so the tab stays open for diagnostics.
 
+# ── Secrets pre-flight check ─────────────────────────────────────────────────
+#
+#   BW_PASSWORD must live in ~/.lse/secrets (chmod 600), not in OpenWebUI valves.
+#   Format: export BW_PASSWORD='your-master-password'
+#
+#   First-time setup (run once in WSL terminal):
+#     mkdir -p ~/.lse
+#     echo "export BW_PASSWORD='your-master-password'" > ~/.lse/secrets
+#     chmod 600 ~/.lse/secrets
+
+$secretsOk = wsl -e bash -c "[ -f '$SecretsFile' ] && grep -q 'BW_PASSWORD' '$SecretsFile' && echo ok" 2>$null
+if ($secretsOk -ne 'ok') {
+    Write-Host ""
+    Write-Host "  ${y}⚠  SECRETS FILE MISSING OR INCOMPLETE${r}" -ForegroundColor Yellow
+    Write-Host "  ${y}   BW_PASSWORD not found in $SecretsFile${r}" -ForegroundColor Yellow
+    Write-Host "  ${y}   Vaultwarden tool will not authenticate until this is set.${r}" -ForegroundColor Yellow
+    Write-Host "  ${y}   Run in WSL terminal:${r}" -ForegroundColor Yellow
+    Write-Host "  ${y}     mkdir -p ~/.lse${r}" -ForegroundColor Yellow
+    Write-Host "  ${y}     echo ""export BW_PASSWORD='<password>'"" > ~/.lse/secrets${r}" -ForegroundColor Yellow
+    Write-Host "  ${y}     chmod 600 ~/.lse/secrets${r}" -ForegroundColor Yellow
+    Write-Host ""
+    $cont = Read-Host "  Continue anyway? [y/N]"
+    if ($cont -ne 'y' -and $cont -ne 'Y') { exit 1 }
+} else {
+    Write-Host "  ${g}✓${r}  Secrets file found ($SecretsFile)" -ForegroundColor Green
+}
+Write-Host ""
+
 Write-Host "  ${y}Writing launch scripts to WSL...${r}"
 Write-Host ""
 
@@ -517,6 +463,8 @@ printf '  ║   Open WebUI  →  localhost:3000            ║\n'
 printf '  ║   Backend     →  localhost:8080 (llama.cpp)║\n'
 printf '  ╚════════════════════════════════════════════╝\n'
 printf '\033[0m\n'
+# Load secrets (BW_PASSWORD etc.) from protected file — never stored in valves
+[ -f ~/.lse/secrets ] && source ~/.lse/secrets || printf '\033[1;33m  WARN: ~/.lse/secrets not found — Vaultwarden auth will fail\033[0m\n'
 source $OwuiEnv
 OPENAI_API_BASE_URL=http://localhost:8080/v1 \
 OPENAI_API_KEY=none \
@@ -559,46 +507,4 @@ exec bash
 #!/usr/bin/env bash
 printf '\033[1;32m\n'
 printf '  ╔═══════════════════════════════════════════╗\n'
-printf '  ║   LSE Terminal  ·  LUCIFER                ║\n'
-printf '  ║   Ubuntu 24.04  ·  WSL2                   ║\n'
-printf '  ╚═══════════════════════════════════════════╝\n'
-printf '\033[0m\n'
-bash -l
-"@
-
-}
-
-# Write each script to WSL, make executable
-foreach ($Name in $Scripts.Keys) {
-    $Content = $Scripts[$Name]
-    $WslPath = "$LaunchDir/$Name"
-    $Content | wsl.exe -- bash -c "mkdir -p '$LaunchDir' && tr -d '\r' > '$WslPath' && chmod +x '$WslPath'"
-    Write-Host "  ${g}✓${r}  $Name" -ForegroundColor Green
-}
-
-Write-Host ""
-Write-Host "  ${y}Opening Windows Terminal...${r}"
-Write-Host ""
-
-# ── Windows Terminal: five colour-coded tabs ───────────────────────────────
-#
-#   Tab colours (tab stripe only — terminal theme stays as your default):
-#     Red    #CC2222  — model server (GPU-heavy, stands out)
-#     Blue   #2255CC  — Open WebUI
-#     Purple #8822CC  — Playwright
-#     Orange #CC7722  — Open Terminal
-#     Green  #229966  — LSE terminal
-
-$WtArgs = (
-    "new-tab --title `"$($Prof.TabLabel)`"   --tabColor `"#CC2222`" -- wsl.exe bash $LaunchDir/model.sh",
-    "; new-tab --title `"  Open WebUI`"    --tabColor `"#2255CC`" -- wsl.exe bash $LaunchDir/webui.sh",
-    "; new-tab --title `"  Playwright`"    --tabColor `"#8822CC`" -- wsl.exe bash $LaunchDir/playwright.sh",
-    "; new-tab --title `"  Open Terminal`" --tabColor `"#CC7722`" -- wsl.exe bash $LaunchDir/open-terminal.sh",
-    "; new-tab --title `"  LSE Terminal`"  --tabColor `"#229966`" -- wsl.exe bash $LaunchDir/terminal.sh"
-) -join " "
-
-Start-Process wt -ArgumentList $WtArgs
-
-Write-Host "  ${g}All tabs launched.${r}"
-Write-Host "  Model server takes ~30 s to load — watch the red tab."
-Write-Host ""
+printf '  ║   LSE Terminal  ·  
