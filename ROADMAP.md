@@ -6,6 +6,8 @@
 
 ## Immediate — Tool v1.5.13: search_web header fix + categories
 
+**cisco.lan stale DNS entry: ✅ fixed 2026-06-03**
+
 **Two bugs found during SearXNG deploy:**
 1. `search_web` sends no `X-Forwarded-For` header → gets 429 from SearXNG limiter mid-session
 2. `search_web` doesn't pass `categories=general,it,science` → misses arxiv, github, stackoverflow, scholar
@@ -25,8 +27,8 @@ resp = requests.get(
 ```
 
 - [x] Fix `search_web` in tool v1.5.13 — headers + categories=general,it,science
-- [ ] Deploy v1.5.13 to OpenWebUI Admin → Tools
-- [ ] Update prompt to v0.5.11 (ENVIRONMENT version bump to tool v1.5.13)
+- [x] Deploy v1.5.13 to OpenWebUI Admin → Tools ✅
+- [ ] Deploy prompt v0.5.11 to OpenWebUI Admin → Models
 
 ---
 
