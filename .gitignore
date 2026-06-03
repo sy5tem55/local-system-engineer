@@ -8,3 +8,4 @@ skills/zi*
 viewer.html
 viewer-dark.html
 tools/__pycache__/
+tools/*.BKP
