@@ -261,4 +261,34 @@ class Tools:
                     capture_output=True, text=True
                 )
                 encoded = encoded_result.stdout.strip()
-                rc, 
+                rc, out, err = self._bw(["edit", "item", item["id"], encoded], session=session)
+                if rc != 0:
+                    return f"ERROR: Could not update '{name}'. {err}"
+                return f"OK: Updated existing vault item '{name}'."
+            except (json.JSONDecodeError, KeyError) as e:
+                return f"ERROR: Failed to parse existing item '{name}' for update. Detail: {e}"
+        else:
+            template_rc, template_out, template_err = self._bw(["get", "template", "item"], session=session)
+            if template_rc != 0:
+                return f"ERROR: Could not fetch item template. {template_err}"
+            try:
+                template = json.loads(template_out)
+                template["name"] = name
+                template["type"] = 1  # Login type
+                template["login"] = {
+                    "username": username,
+                    "password": secret,
+                    "totp": None,
+                    "uris": []
+                }
+                encoded_result = subprocess.run(
+                    ["bw", "encode"], input=json.dumps(template),
+                    capture_output=True, text=True
+                )
+                encoded = encoded_result.stdout.strip()
+                rc, out, err = self._bw(["create", "item", encoded], session=session)
+                if rc != 0:
+                    return f"ERROR: Could not create vault item '{name}'. {err}"
+                return f"OK: Created new vault item '{name}'."
+            except (json.JSONDecodeError, KeyError) as e:
+                return f"ERROR: Failed to build item payload for '{name}'. Detail: {e}"

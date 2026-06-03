@@ -1,27 +1,44 @@
 """
 title: LSE System Admin Terminal
 author: local-system-engineer
-version: 1.5.14
+version: 1.5.16
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, read_file, write_file, sudo_delegation_block, search_web,
   get_github_release, get_context_status, compact_context, search_kb, index_to_kb,
-  record_error, check_error_kb, record_outcome, and mentor_correct. All commands are logged
+  record_error, check_error_kb, record_outcome, mentor_correct, and pfsense_query.
+  All commands are logged
   to a persistent audit file. Privileged operations are blocked at the code level and
   routed through a delegation block.
 
   Changelog:
+    v1.5.16: pfSense SSL verification via CA cert.
+              [PFSENSE_CA_CERT valve] Path to the exported pfSense WebGUI CA certificate.
+              Default: /opt/local-se/cert/pfsense-webgui-ca.crt (sy5:sy5 644).
+              When set and file exists: verify=PFSENSE_CA_CERT (proper TLS verification).
+              When empty or file missing: falls back to verify=False with a logged warning.
+              Cert: CN=pfsense-webgui-ca, SY5TEM5/4DMIN, valid Apr 2026 → Apr 2036.
+              Export procedure: pfSense → System → Cert Manager → CAs → Export CA cert.
+    v1.5.15: pfSense REST API integration.
+              [valves] PFSENSE_URL (base URL, not a secret) and PFSENSE_API_KEY
+              (read-only key, acceptable blast radius — see VALVES.md).
+              [pfsense_query] Authenticated GET/POST/PATCH/DELETE to pfSense REST API v2
+              (pfrest.org package, Plus 26.03). Key supplied as parameter (Vaultwarden)
+              or falls back to PFSENSE_API_KEY valve. SSL verify=False — pfSense
+              self-signed cert, LAN-only access, acceptable risk.
+              Write access protocol: pfSense API is read-only by default. Any non-GET
+              call requires manually disabling Read Only in pfSense UI first, and
+              re-enabling immediately after. Leaving write enabled is a protocol
+              violation (see lse-challenge-arena.md §pfSense write access gate).
+              [LOG_FILE] Default updated to /opt/local-se/agent_commands.log.
+              ~/.lse/ is now root:sy5 710 — sy5 cannot create files there.
     v1.5.14: sudo_delegation_block presentation improvements (Fix 3 — Run 6 gaps).
               [sudo_delegation_block] Added step_number, total_steps, verify_command params.
-              When step_number > 0, the block header now reads "Step N of Total" so the user
-              can track position in multi-block sequences without expanding the tool card.
-              verify_command is surfaced as an explicit labelled step ("Verify with:") in
-              the block body — previously verify instructions were buried in expected_output_hint
-              as a free-text hint with no clear label, causing users to miss the verify step.
-              expected_output_hint is retained for backward compatibility but is now secondary.
-              Root cause: Run 6 observed that delegation blocks in multi-step credential
-              rotation had no step counter (user had to count manually) and verify commands
-              were buried, not acted on.
+              When step_number > 0, the block header reads "Step N of Total".
+              verify_command surfaced as labelled "Verify with:" step in block body.
+              expected_output_hint retained for backward compatibility (secondary).
+              THINKING PHASE RULE added: never call inside a reasoning/thinking block.
+              [LOG_FILE] Default moved from ~/.lse/ to /opt/local-se/.
     v1.5.13: search_web header fix + categories fix.
               Root cause: SearXNG limiter (limiter: true) rejects requests without
               X-Forwarded-For/X-Real-IP headers with HTTP 429. LSE was sending no
@@ -189,8 +206,8 @@ class Tools:
         LOG_FILE: str = Field(
             default="/opt/local-se/agent_commands.log",
             description="Path to the persistent agent command audit log. "
-                        "Moved from ~/.lse/ (root-owned, privileged) to /opt/local-se/ "
-                        "(sy5-writable). Update valve if path differs.",
+                        "Moved from ~/.lse/ (root:sy5 710, sy5 cannot write) "
+                        "to /opt/local-se/ (sy5-writable).",
         )
         DEFAULT_WORKING_DIR: str = Field(
             default="/home/sy5",
@@ -233,6 +250,29 @@ class Tools:
         EMBED_MODEL: str = Field(
             default="nomic-embed-text",
             description="Ollama embedding model (768-dim). Must be pulled via 01-ollama-setup.sh.",
+        )
+        PFSENSE_URL: str = Field(
+            default="https://pfsense.home.arpa",
+            description="Base URL of the pfSense REST API (pfrest.org package, Plus 26.03). "
+                        "Not a secret — safe to store in valve.",
+        )
+        PFSENSE_API_KEY: str = Field(
+            default="",
+            description="pfSense REST API key (read-only). Acceptable blast radius: exposes "
+                        "network topology and firewall rules but cannot modify anything. "
+                        "Alternatively retrieve from Vaultwarden at runtime via vault_unlock() "
+                        "+ get_vault_secret() and pass as api_key parameter to pfsense_query(). "
+                        "WRITE ACCESS PROTOCOL: key is read-only by default. If pfSense write "
+                        "access is temporarily enabled (T3+ challenges), rotate this key "
+                        "immediately after and re-enable Read Only in pfSense UI.",
+        )
+        PFSENSE_CA_CERT: str = Field(
+            default="/opt/local-se/cert/pfsense-webgui-ca.crt",
+            description="Path to the exported pfSense WebGUI CA certificate for TLS verification. "
+                        "Export from pfSense: System → Cert Manager → CAs → Export CA. "
+                        "When set and the file exists, pfsense_query uses verify=<path>. "
+                        "When empty or file missing, falls back to verify=False (logged warning). "
+                        "Cert at default path: CN=pfsense-webgui-ca, valid until Apr 2036.",
         )
 
     # ── Hard-coded permission lists ───────────────────────────────────────────
@@ -587,21 +627,20 @@ class Tools:
         NEVER attempt to run sudo yourself. Always call this function instead.
 
         ARGS:
-          command           — The exact command the user must run (no sudo prefix needed;
-                              the block makes clear it requires a privileged terminal).
+          command           — The exact command the user must run.
           reason            — One sentence explaining why this delegation is needed.
-          expected_output_hint — (secondary) Free-text hint about what success looks like.
-                              Prefer verify_command for machine-verifiable checks.
-          step_number       — Position of this block in a multi-step sequence (1-based).
-                              When > 0, the block header reads "Step N of Total".
-                              Pass 0 (default) for standalone single delegations.
-          total_steps       — Total number of delegation blocks in this sequence.
-                              Required when step_number > 0.
-          verify_command    — Explicit follow-up command to run after the main command
-                              to confirm success (e.g. "curl -u admin:pass http://...").
-                              Surfaced as a labelled "Verify with:" step in the block.
-                              Use this instead of burying verify instructions in
-                              expected_output_hint — users miss unhighlighted text.
+          expected_output_hint — (secondary) Free-text hint about success. Prefer verify_command.
+          step_number       — Position in a multi-step sequence (1-based). When > 0, block
+                              header reads "Step N of Total". Pass 0 for standalone blocks.
+          total_steps       — Total delegation blocks in sequence. Required when step_number > 0.
+          verify_command    — Explicit follow-up command to confirm success. Surfaced as a
+                              labelled "Verify with:" step — not buried in expected_output_hint.
+
+        THINKING PHASE RULE — never call inside a reasoning block:
+          This function must only be called in the response phase, after thinking has closed.
+          A delegation block inside a <think> block is collapsed in OpenWebUI — the user must
+          expand it to find the command. Complete all reasoning first, then call this function.
+          Calling sudo_delegation_block during thinking is a protocol violation.
 
         READ-FIRST RULE — mandatory for any privileged file modification:
           Before calling this function to delegate a write or append to a config
@@ -613,13 +652,6 @@ class Tools:
           If the file is unreadable (e.g. permission denied), note this in the
           reason field and proceed without the read.
           Skipping the read when the file IS readable is a protocol violation.
-
-        THINKING PHASE RULE — never call inside a reasoning block:
-          This function must only be called in the response phase, after thinking
-          has closed. A delegation block emitted inside a <think> block is collapsed
-          in OpenWebUI — the user must manually expand it to find the command.
-          Complete all reasoning first. Then call this function in the response.
-          Calling sudo_delegation_block during thinking is a protocol violation.
 
         RETURN VALUE SEMANTICS — read this before calling:
           This function returns the formatted delegation block as a string.
@@ -669,6 +701,102 @@ class Tools:
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
         return block
+
+    def _pfsense_verify(self):
+        """Return verify param for pfSense requests: CA cert path or False."""
+        import os as _os  # noqa: PLC0415
+        cert = self.valves.PFSENSE_CA_CERT.strip()
+        if cert and _os.path.isfile(cert):
+            return cert
+        if cert:
+            self._log(f"PFSENSE-SSL-WARN: cert not found at {cert}, falling back to verify=False")
+        return False
+
+    def pfsense_query(
+        self,
+        endpoint: str,
+        method: str = "GET",
+        payload: dict = None,
+        api_key: str = "",
+    ) -> str:
+        """
+        Query the pfSense REST API v2 (pfrest.org package, installed on Plus 26.03.1).
+        Base URL: PFSENSE_URL valve (default: https://pfsense.home.arpa).
+        Full URL: PFSENSE_URL + endpoint, e.g. /api/v2/system/version
+
+        AUTHENTICATION — priority order (highest wins):
+          1. api_key parameter — retrieve from Vaultwarden:
+               vault_unlock() → get_vault_secret("pfsense-api-key") → pass here.
+          2. PFSENSE_API_KEY valve — fallback for read-only operations.
+          Returns ERROR if neither is set.
+
+        COMMON READ-ONLY ENDPOINTS (T1 challenges):
+          /api/v2/system/version           — pfSense version
+          /api/v2/dhcp/server/lease        — active DHCP leases (LAN device map)
+          /api/v2/firewall/rule            — all firewall rules
+          /api/v2/services/unbound/host    — DNS host overrides
+          /api/v2/status/logs/firewall     — firewall log entries
+          /api/v2/status/interface         — interface traffic statistics
+          Full reference: https://pfsense.home.arpa/api/v2/documentation (Swagger UI)
+
+        SSL: Uses PFSENSE_CA_CERT valve (default: /opt/local-se/cert/pfsense-webgui-ca.crt).
+          When the cert file exists, TLS is fully verified against the pfSense WebGUI CA.
+          Falls back to verify=False if the file is missing, with a logged warning.
+          Export cert: pfSense → System → Cert Manager → CAs → Export CA.
+
+        WRITE ACCESS PROTOCOL — mandatory, no exceptions:
+          Default method is GET (read-only). For any non-GET call:
+          1. Disable Read Only in pfSense UI (System → REST API → Read Only: off).
+          2. Complete the task and verify the result.
+          3. Re-enable Read Only before ending the session.
+          4. Log in CHANGELOG: timestamp + what was changed.
+          Non-GET calls without this protocol are a violation.
+          Leaving Read Only disabled at session end is a challenge failure.
+
+        Args:
+            endpoint: API path with leading slash, e.g. "/api/v2/system/version"
+            method:   HTTP method — default "GET". Use GET for all T1/T2 challenges.
+            payload:  Dict for POST/PATCH/PUT body (optional).
+            api_key:  Vaultwarden-sourced key override. Falls back to PFSENSE_API_KEY valve.
+        """
+        import requests   # noqa: PLC0415
+        import json as _json  # noqa: PLC0415
+
+        key = api_key.strip() or self.valves.PFSENSE_API_KEY.strip()
+        if not key:
+            return (
+                "ERROR: No pfSense API key. Set PFSENSE_API_KEY valve or retrieve from "
+                "Vaultwarden: vault_unlock() → get_vault_secret('pfsense-api-key') → "
+                "pass result as api_key parameter."
+            )
+
+        method = method.upper()
+        url = self.valves.PFSENSE_URL.rstrip("/") + "/" + endpoint.lstrip("/")
+        self._log(f"PFSENSE: {method} {url}")
+
+        try:
+            resp = requests.request(
+                method=method,
+                url=url,
+                headers={
+                    "x-api-key": key,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                json=payload if payload else None,
+                verify=self._pfsense_verify(),  # CA cert when available, else False
+                timeout=15,
+            )
+            try:
+                return _json.dumps(resp.json(), indent=2)
+            except Exception:
+                return f"[HTTP {resp.status_code}] {resp.text[:2000]}"
+        except requests.exceptions.ConnectionError as e:
+            return f"ERROR: Cannot reach pfSense at {self.valves.PFSENSE_URL}. Detail: {e}"
+        except requests.exceptions.Timeout:
+            return f"ERROR: pfSense API timed out after 15s ({url})."
+        except Exception as e:
+            return f"ERROR querying pfSense API: {e}"
 
     def search_web(self, query: str, max_results: int = 5) -> str:
         """

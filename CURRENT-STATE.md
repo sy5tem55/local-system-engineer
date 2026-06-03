@@ -6,8 +6,8 @@
 
 | Component | Version | File | Notes |
 |---|---|---|---|
-| Tool | v1.5.15 | `tools/openwebui-tool-v1.5.15.py` | pfsense_query() + PFSENSE_URL/KEY valves · deployed ✅ |
-| Tool (prev) | v1.5.14 | `tools/openwebui-tool-v1.5.14.py` | sudo_delegation_block step/verify params · deployed ✅ |
+| Tool | v1.5.16 | `tools/openwebui-tool-v1.5.16.py` | PFSENSE_CA_CERT valve + _pfsense_verify() · deployed ✅ |
+| Tool (prev) | v1.5.15 | `tools/openwebui-tool-v1.5.15.py` | pfsense_query() + PFSENSE_URL/KEY valves · deployed ✅ |
 | Prompt | v0.5.12 | `prompts/v0.5.12.md` | deployed ✅ |
 | RAG Tools | v2 | (embedded in tool) | search_kb, index_to_kb, record_error, check_error_kb |
 | Vaultwarden tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | env var wins over valve · deploy pending |
@@ -25,8 +25,8 @@ Verify on-disk files match deployed versions. Generate with:
 
 | File | SHA-256 |
 |---|---|
+| `openwebui-tool-v1.5.16.py` | `bcc04bb0fa3d944c9fa5a4e4786393950b2efc32f0ad69962716a217f88a66d1` |
 | `openwebui-tool-v1.5.15.py` | `b9d00a17ad44eda7c4630368a7a19fde9d282e7871536ae306482e619a9c9dd0` |
-| `openwebui-tool-v1.5.14.py` | `1cf298f74364426c4d25a06fb64cf43f7519c80a91b7d58a0799b3b4986b0e17` |
 
 ---
 
