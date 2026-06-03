@@ -1,0 +1,264 @@
+"""
+LSE Vaultwarden Tools
+version: 1.3.0
+Bitwarden CLI wrapper for non-interactive vault access on Vaultwarden.
+
+BW_HOST, BW_CLIENTID, BW_CLIENTSECRET are hardcoded as defaults in vault_unlock().
+No changes needed for those values unless the LSE account changes.
+
+BW_PASSWORD priority (highest to lowest):
+  1. BW_PASSWORD environment variable — set in ~/.lse/secrets (chmod 600), sourced
+     by the LSE launcher (lse-stack-launch-1.077+) before OpenWebUI starts.
+     This is the preferred method. Password never touches OpenWebUI's SQLite DB.
+  2. BW_PASSWORD valve — fallback only. Set to a placeholder string in the UI
+     (e.g. "see-lse-secrets-file"). Never set to the real password in the valve.
+
+NODE_TLS_REJECT_UNAUTHORIZED=0 is set per-subprocess only (bw CLI, localhost).
+It does not affect Vaultwarden's HTTPS server or browser access.
+
+Changelog:
+  1.3.0 — Reversed BW_PASSWORD priority: env var now wins over valve.
+           Previously: valve or env var (valve took priority if non-empty).
+           Now: env var or valve (env var always wins when set).
+           Valve is now a documented fallback/placeholder only — OpenWebUI does not
+           encrypt valves at rest; the real password must live in ~/.lse/secrets.
+           Updated valve description and error messages accordingly.
+  1.2.0 — BW_PASSWORD moved to Open WebUI Valves; set via gear icon in the UI.
+  1.1.0 — BW_PASSWORD removed from hardcoded defaults; must be set via env var.
+           Fixed NODE_TLS_REJECT_UNAUTHORIZED bug in login subprocess.
+  1.0.0 — Initial release.
+"""
+
+import subprocess
+import os
+import json
+from pydantic import BaseModel, Field
+
+
+class Tools:
+
+    class Valves(BaseModel):
+        BW_PASSWORD: str = Field(
+            default="see-lse-secrets-file",
+            description="FALLBACK ONLY — do not enter the real password here. "
+                        "OpenWebUI does not encrypt valves at rest (plaintext SQLite). "
+                        "Set BW_PASSWORD in ~/.lse/secrets (chmod 600) instead; the LSE "
+                        "launcher sources it before OpenWebUI starts and the env var takes "
+                        "priority over this field. Only use this valve if the secrets file "
+                        "is unavailable and you accept the security trade-off."
+        )
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    def _bw(self, args: list[str], session: str | None = None) -> tuple[int, str, str]:
+        """Internal helper. Run a bw CLI command. Returns (returncode, stdout, stderr)."""
+        env = os.environ.copy()
+        env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"  # bw CLI pkg binary ignores NODE_EXTRA_CA_CERTS; localhost-only so interception risk is nil
+        if session:
+            env["BW_SESSION"] = session
+        result = subprocess.run(
+            ["bw", "--nointeraction"] + args,
+            capture_output=True, text=True, env=env
+        )
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+    def vault_unlock(self) -> str:
+        """
+        Authenticate with Vaultwarden using the API key and unlock the vault.
+        Returns a BW_SESSION token string on success, or an error string starting with ERROR:.
+
+        GATE: Call this function exactly once per session, before the first call to
+        get_vault_secret, list_vault_items, or set_vault_secret. Do NOT call it again
+        on subsequent turns — the session token is valid until the process ends.
+        If vault_unlock was already called this session, reuse the returned token.
+        Calling vault_unlock more than once per session is a protocol violation.
+
+        REQUIRED: BW_PASSWORD must be available via one of these methods (priority order):
+          1. Environment variable BW_PASSWORD — set in ~/.lse/secrets (chmod 600),
+             sourced by lse-stack-launch-1.077+. Preferred — never touches SQLite.
+          2. Valve BW_PASSWORD — fallback only. Set to placeholder "see-lse-secrets-file"
+             in normal operation. Only use if secrets file is unavailable.
+        All other credentials are pre-configured and need no action.
+
+        API KEY AUTH — this function uses `bw login --apikey` internally.
+        Never call `bw login` manually in execute_command. Always use this function.
+
+          GOOD: call vault_unlock() → receive session token → pass to get_vault_secret()
+          BAD:  execute_command("bw login --apikey") ← bypasses this function; fails non-interactively
+
+        RETURN VALUE: pass the returned string verbatim as the `session` argument to all
+        other vault functions. Do not log, truncate, or modify it.
+        If the return value starts with ERROR:, do not call any other vault function.
+        Calling get_vault_secret or set_vault_secret after an ERROR: return is a protocol violation.
+        """
+        host = os.environ.get("BW_HOST", "https://localhost:3003")
+        client_id = os.environ.get("BW_CLIENTID", "user.7dc216f7-dc47-4b60-9ef6-4d4aca446bd0")
+        client_secret = os.environ.get("BW_CLIENTSECRET", "99cebf0ec0b88ea058fec485691c5264028e523159da3dde563c27731b394b42")
+        password = os.environ.get("BW_PASSWORD") or self.valves.BW_PASSWORD
+
+        if not password or password == "see-lse-secrets-file":
+            return (
+                "ERROR: BW_PASSWORD is not set. "
+                "Preferred: add 'export BW_PASSWORD=...' to ~/.lse/secrets (chmod 600) — "
+                "the LSE launcher sources this before OpenWebUI starts. "
+                "Fallback: set the real password in the tool's Valves UI (gear icon), "
+                "but note that valves are stored in plaintext SQLite."
+            )
+
+        # Enforce user. prefix on client_id (bare UUID is a common misconfiguration)
+        if not client_id.startswith("user."):
+            client_id = f"user.{client_id}"
+
+        # Configure server
+        rc, out, err = self._bw(["config", "server", host])
+        if rc != 0:
+            return f"ERROR configuring server '{host}': {err}"
+
+        # Login with API key (non-interactive)
+        env = os.environ.copy()
+        env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
+        env["BW_CLIENTID"] = client_id
+        env["BW_CLIENTSECRET"] = client_secret
+        subprocess.run(
+            ["bw", "--nointeraction", "login", "--apikey"],
+            capture_output=True, text=True, env=env
+        )
+        # login returns non-zero if already logged in — verify with status instead
+        rc2, status_out, _ = self._bw(["status"])
+        if '"status":"unauthenticated"' in status_out:
+            return "ERROR: Login failed. Verify BW_CLIENTID and BW_CLIENTSECRET are correct."
+
+        # Unlock vault
+        env2 = os.environ.copy()
+        env2["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
+        env2["BW_PASSWORD"] = password
+        unlock_result = subprocess.run(
+            ["bw", "--nointeraction", "unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
+            capture_output=True, text=True, env=env2
+        )
+        if unlock_result.returncode != 0:
+            return f"ERROR: Unlock failed. Check BW_PASSWORD in Valves settings. Detail: {unlock_result.stderr.strip()}"
+
+        session = unlock_result.stdout.strip()
+        if not session:
+            return "ERROR: Unlock returned an empty session token. Vault may already be locked by another process."
+
+        # Sync to get latest vault state
+        self._bw(["sync"], session=session)
+
+        return session
+
+    def list_vault_items(self, session: str, folder: str = "") -> str:
+        """
+        List all item names in the vault, optionally filtered by folder name.
+        Returns a newline-separated list of item names, or an error string starting with ERROR:.
+
+        Args:
+            session — BW_SESSION token returned by vault_unlock(); must not be empty
+            folder  — optional folder name filter; leave empty to list all items
+
+        GATE: Call this function before get_vault_secret whenever you are not 100% certain
+        of the exact item name as it appears in Vaultwarden. Names are case-sensitive.
+        Guessing an item name and passing it directly to get_vault_secret without listing
+        first is a protocol violation.
+
+          GOOD: list_vault_items(session) → find "API_KEY_OPENAI" → get_vault_secret("API_KEY_OPENAI", session)
+          BAD:  get_vault_secret("openai_api_key", session) ← guessed name; will return ERROR: or wrong item
+
+        ERROR HANDLING: If the return value starts with ERROR:, do not call get_vault_secret.
+        """
+        args = ["list", "items"]
+        if folder:
+            args += ["--folderid", folder]
+
+        rc, out, err = self._bw(args, session=session)
+        if rc != 0:
+            return f"ERROR: Could not list vault items. {err}"
+
+        try:
+            items = json.loads(out)
+            names = [item.get("name", "<unnamed>") for item in items]
+            return "\n".join(names) if names else "(vault is empty or no items in folder)"
+        except json.JSONDecodeError:
+            return f"ERROR: Could not parse vault response. Raw output: {out[:200]}"
+
+    def get_vault_secret(self, name: str, session: str) -> str:
+        """
+        Retrieve a vault item's password/secret by its exact item name.
+        Returns the secret value as a plain string, or an error string starting with ERROR:.
+
+        Args:
+            name    — exact item name as it appears in Vaultwarden (case-sensitive)
+            session — BW_SESSION token returned by vault_unlock(); must not be empty
+
+        GATE: Only call this function after:
+          1. vault_unlock() has returned a non-ERROR: session token this session, AND
+          2. The exact item name has been confirmed via list_vault_items() or the user.
+        Calling this with a guessed name is a protocol violation.
+
+        ERROR HANDLING: If the return value starts with ERROR:, the secret was not retrieved.
+        Do not proceed as if the secret was retrieved. Do not retry with a similar name.
+        Report the error to the user and call list_vault_items() to find the correct name.
+
+          GOOD: receive "sk-abc123..." → use as the API key value
+          BAD:  receive "ERROR: Could not retrieve..." → treat as if it succeeded ← protocol violation
+        """
+        rc, out, err = self._bw(["get", "password", name], session=session)
+        if rc != 0:
+            return f"ERROR: Could not retrieve '{name}'. {err or 'Item not found.'}"
+        if not out:
+            return f"ERROR: Item '{name}' found but its password field is empty."
+        return out
+
+    def set_vault_secret(self, name: str, secret: str, session: str, username: str = "") -> str:
+        """
+        Create or update a Login item in Vaultwarden with the given name and secret.
+        Returns a status string: "OK: ..." on success or "ERROR: ..." on failure.
+
+        Args:
+            name     — item name to create or update (case-sensitive)
+            secret   — password/secret value to store
+            session  — BW_SESSION token returned by vault_unlock()
+            username — optional username field (default: empty)
+
+        GATE: Only call this when the user has explicitly asked to store or update a secret.
+        Do not call this to cache values or speculatively write items. If in doubt, ask.
+
+        CONFIRMATION REQUIRED — before calling this function you must ask the user:
+          "Write secret to vault item '<name>'? (yes/no)"
+        Wait for the user to reply 'yes' before calling. Any other reply means do not call.
+        Skipping confirmation is a protocol violation.
+
+          GOOD: ask confirmation → user says "yes" → call set_vault_secret(...)
+          BAD:  call set_vault_secret(...) immediately after user says "save this key" ← no confirmation asked
+
+        VERIFICATION REQUIRED — after a successful write (return value starts with "OK:"):
+        Call get_vault_secret(name, session) and confirm the returned value matches
+        the secret you wrote. Report the result to the user.
+        Skipping verification is a protocol violation.
+
+          GOOD: set_vault_secret(...) → "OK: Created..." → get_vault_secret(name, session) → confirm match
+          BAD:  set_vault_secret(...) → "OK: Created..." → report success without verifying ← violation
+
+        ERROR HANDLING: If return value starts with ERROR:, do not call get_vault_secret to verify.
+        Report the error to the user and do not retry automatically.
+        """
+        # Check if item already exists
+        rc_check, out_check, _ = self._bw(["get", "item", name], session=session)
+        item_exists = rc_check == 0
+
+        if item_exists:
+            try:
+                item = json.loads(out_check)
+                if "login" not in item:
+                    item["login"] = {}
+                item["login"]["password"] = secret
+                if username:
+                    item["login"]["username"] = username
+                encoded_result = subprocess.run(
+                    ["bw", "encode"], input=json.dumps(item),
+                    capture_output=True, text=True
+                )
+                encoded = encoded_result.stdout.strip()
+                rc, 

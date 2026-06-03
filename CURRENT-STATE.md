@@ -6,15 +6,40 @@
 
 | Component | Version | File | Notes |
 |---|---|---|---|
-| Tool | v1.5.13 | `tools/openwebui-tool-v1.5.13.py` | deployed ✅ |
-| Prompt | v0.5.11 | `prompts/v0.5.11.md` | deploy to OpenWebUI pending |
+| Tool | v1.5.15 | `tools/openwebui-tool-v1.5.15.py` | pfsense_query() + PFSENSE_URL/KEY valves · deployed ✅ |
+| Tool (prev) | v1.5.14 | `tools/openwebui-tool-v1.5.14.py` | sudo_delegation_block step/verify params · deployed ✅ |
+| Prompt | v0.5.12 | `prompts/v0.5.12.md` | deployed ✅ |
 | RAG Tools | v2 | (embedded in tool) | search_kb, index_to_kb, record_error, check_error_kb |
+| Vaultwarden tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | env var wins over valve · deploy pending |
 | Routing filter | v1.1.0 | `tools/lse-routing-filter-v1.1.0.py` | |
 | Context monitor | retired | — | removed in v0.5.4; replaced by Grafana alert pipeline |
-| Launch script (CLI) | v1.073 | `/opt/local-se/lse-stack-launch-1.073.ps1` | |
-| Launch script (GUI) | v1.1 | `/opt/local-se/lse-stack-launch-gui/lse-stack-launch-gui.ps1` | |
-| Eval framework | Run 4 last complete | `eval/eval-report-v4.md` | Run 5 was partial subset only |
+| Launch script (CLI) | v1.078 | `LSEStack_gui\lse-stack-launch-1.078.ps1` | LaunchDir → /tmp/lse/launch (tmpfs, RAM-backed, ~10× faster than vhdx) · secrets pre-flight check |
+| Launch script (GUI) | v1.4 | `LSEStack_gui\lse-stack-launch-gui.ps1` | Profiles from lse-profiles.xml · LaunchDir → /tmp/lse/launch · secrets in webui.sh · tested ✅ |
+| Eval framework | Run 6 last complete | `eval/eval-report-v5.md` | 58/63 |
 | Test suite | v3.5 | `eval/test-suite-v2.md` (header) | 21 tests |
+
+## Tool Checksums (SHA-256)
+
+Verify on-disk files match deployed versions. Generate with:
+`sha256sum tools/openwebui-tool-v1.5.1*.py`
+
+| File | SHA-256 |
+|---|---|
+| `openwebui-tool-v1.5.15.py` | `b9d00a17ad44eda7c4630368a7a19fde9d282e7871536ae306482e619a9c9dd0` |
+| `openwebui-tool-v1.5.14.py` | `1cf298f74364426c4d25a06fb64cf43f7519c80a91b7d58a0799b3b4986b0e17` |
+
+---
+
+## Hardware Inventory
+
+| Node | CPU | RAM | GPU | OS | Role |
+|---|---|---|---|---|---|
+| LUCIFER | Intel 9900K | ? | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | Primary LSE stack |
+| NODE2 | Intel 9900K | 32GB | RTX 3090 24GB | Ubuntu (native) | LM Studio installed · parallel LSE candidate |
+| NODE3 | AMD 9800X3D | 64GB | RTX 5090 | Win11 (no WSL) | Gaming PC — do not touch |
+| HA Pi | ARM Cortex-A72 | 4GB (est) | — | HA OS (rpi4-64) | Home Assistant hub |
+| Pi 4 (spare) | ARM Cortex-A72 | 4GB (est) | — | undeployed | Future ARM64 Docker node |
+| TS-419P II | Marvell Kirkwood ARMv5 | — | — | QTS | NFS/SMB archive only |
 
 ## Hardware / Stack — LUCIFER (192.168.1.57)
 
@@ -78,10 +103,10 @@
 |---|---|
 | Live production engines | **27 engines configured** ✅ · 11 active on technical queries · 108 results confirmed |
 | Brave status | ✅ Demoted to weight 1 · suspended 180s during testing (VPS sensitivity confirmed) |
-| Config deployed | ✅ 2026-06-03 · limiter re-enabled · valkey key corrected |
+| Config deployed | ✅ 2026-06-03 · limiter disabled · valkey key corrected · redis section present |
 | Config location | `/home/sy5/docker/searxng_data/settings.yml` (host) = `/etc/searxng/settings.yml` (container) |
 | Config backups | `settings.yml.backup`, `settings.yml.backup-v1.0-20260525`, `settings.yml.bak` |
-| Valkey/Redis state | env var wired ✅ · `settings.yml` missing `redis:` section ❌ · limiter + caching falling back to in-memory · fix: add `redis:\n  url: valkey://valkey:6379/0` to settings.yml |
+| Valkey/Redis state | env var wired ✅ · `settings.yml` has `redis:` section ✅ (line 161) · limiter disabled ✅ (line 113) |
 | Grafana observability | Live — shows `searxng_engines_*` metrics, but only reflects current 4-engine production config |
 | searxng-logger | Still polling Prometheus with wrong logic — rewrite pending (backlog) |
 
@@ -100,4 +125,4 @@
 | Run 3 | v1.5.4 | v0.5.1 | thinking (budget 3072) | **57/57** |
 | Run 4 | v1.5.5 | v0.5.2 | no-think (budget 0) | 49/57 |
 | Run 5 (partial) | v1.5.6 | v0.5.2 | thinking (budget 3072) | 15/21 subset |
-| Run 6 | — | — | — | **pending** |
+| Run 6 | v1.5.13 | v0.5.11 | thinking (budget 3072) | **58/63** |

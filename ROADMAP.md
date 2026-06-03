@@ -1,169 +1,169 @@
 # LSE Roadmap — Open Items Only
 > Completed work lives in `CHANGELOG.md`. Current versions in `CURRENT-STATE.md`.
-> Last updated: 2026-06-02
+> Last updated: 2026-06-03 (session 2)
 
 ---
 
-## Immediate — Tool v1.5.13: search_web header fix + categories
+## ✅ Completed — Prompt v0.5.12 + Tool v1.5.14: three protocol fixes (2026-06-03)
 
-**cisco.lan stale DNS entry: ✅ fixed 2026-06-03**
-
-**Two bugs found during SearXNG deploy:**
-1. `search_web` sends no `X-Forwarded-For` header → gets 429 from SearXNG limiter mid-session
-2. `search_web` doesn't pass `categories=general,it,science` → misses arxiv, github, stackoverflow, scholar
-
-Both are in the `requests.get()` call in `search_web`:
-```python
-# Current (broken with limiter):
-resp = requests.get(self.valves.SEARXNG_URL, params={...}, timeout=10)
-
-# Fixed:
-resp = requests.get(
-    self.valves.SEARXNG_URL,
-    params={"q": query, "format": "json", "categories": "general,it,science"},
-    headers={"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"},
-    timeout=10,
-)
-```
-
-- [x] Fix `search_web` in tool v1.5.13 — headers + categories=general,it,science
-- [x] Deploy v1.5.13 to OpenWebUI Admin → Tools ✅
-- [ ] Deploy prompt v0.5.11 to OpenWebUI Admin → Models
+Fix 1: Step milestone headers for 4+ sequential steps · Fix 2: no sudo_delegation_block inside think phase · Fix 3: step_number/total_steps/verify_command params + block format. Deployed and verified.
 
 ---
 
-## Immediate — Network hygiene fixes (real T2 challenges)
+## ✅ Completed — Credential rotation (Grafana admin + SearXNG metrics password) (2026-06-03)
 
-Surfaced by first 10 min of syslog data. All require config change on pfSense.
-
-**Samsung TV WAN block + DHCP fix (192.168.1.90)**
-- [ ] Create pfSense firewall rule: Source=192.168.1.90, Dest=!RFC1918, Action=Block
-- [ ] Create static DHCP mapping for MAC 1c:af:4a:04:5f:b6 with lease=86400
-- [ ] Verify TV still reachable on LAN after rule, verify WAN blocked
-- Gate: backup config.xml before any change; rollback command documented before deployment
-
-**cisco.lan stale DNS entry**
-- [ ] Delete from Services → DNS Resolver → Host Overrides
-- [ ] Verify `filterdns: cisco.lan` error stops appearing in syslog
-
-**Syslog collector container**
-- [ ] Build persistent Docker container on LUCIFER: UDP 514 listener → structured JSON → SQLite
-- [ ] Replace nc with proper collector; integrate with existing lse-net Docker stack
+Fixed by LSE. All passwords rotated, Vaultwarden updated, metrics endpoint verified.
 
 ---
 
-## Immediate — ✅ Deploy prompt v0.5.10
+## Immediate — LSE Challenge Arena: T1 pfSense challenges + HA sandbox
 
-`prompts/v0.5.10.md` is written. Hot-swap in OpenWebUI.
+Design consolidated in `docs/lse-challenge-arena.md`. Build order:
 
-- [ ] Deploy prompt v0.5.10 in OpenWebUI Admin → Models
+- [x] Install pfSense REST API package — v2.8 live, read-only, key in Vaultwarden ✅ (2026-06-03)
+- [ ] **Security: BW_PASSWORD → env var** — set in WSL2 shell before OpenWebUI launch, remove from valve. OpenWebUI does not encrypt valves at rest (plaintext SQLite). This is the priority fix.
+- [x] Add `PFSENSE_API_KEY` + `PFSENSE_URL` valves to tool v1.5.15 ✅
+- [ ] **Tool v1.5.16 — pfSense SSL verification**
+      Current: `verify=False` (self-signed cert, acceptable on LAN).
+      Fix: add `PFSENSE_CA_CERT` valve (path to exported pfSense CA cert).
+      When set: `verify=PFSENSE_CA_CERT`. When empty: fall back to `verify=False`.
+      Procedure: System → Cert Manager → Export CA → save to `/opt/local-se/certs/pfsense-ca.crt` (read-only key, acceptable blast radius)
+
+  **WRITE ACCESS PROTOCOL — permanent rule:**
+  pfSense REST API is read-only by default. Write access (required for T3+ challenges deploying
+  firewall rules) must be treated as a temporary elevation:
+  1. Enable write in pfSense UI (System → REST API → disable Read Only) immediately before the task
+  2. Complete the task
+  3. Re-enable Read Only immediately after — before ending the session
+  Leaving write access enabled between sessions is a security violation.
+  Write-enabled sessions must be logged in CHANGELOG with timestamp.
+- [ ] When NODE2/NODE3 come online: add their /32 to pfSense REST API access list (System → REST API → Access List)
+- [ ] Hand-author 10 T1 pfSense insight challenges (assertions + failure modes)
+- [ ] Deploy HA Core sandbox container on lse-net
+- [ ] Decide VRAM/concurrency strategy (sequential vs round-robin vs CPU offload for 3 models)
+- [ ] Seed ChallengeDB (SQLite) with T1 challenges
+- [ ] Build LSEChallengeEnv (gymnasium.Env, single-episode)
+- [ ] Build EscalationGate (convergence detection + Claude API + KB logging)
+- [ ] LeaderboardService (point tracking, episode statistics)
+
+Gate: T1 challenges authored before any harness code. Sandbox gate before any production deploy.
 
 ---
 
-## Immediate — Run 6
+## ✅ Reassigned — Network hygiene → LSE Challenge Arena (2026-06-03)
 
-Full scored eval against the current stack.
+Samsung TV WAN block + static DHCP and syslog collector container reassigned as LSE arena challenges.
+These are real T2/T3 problems with known correct solutions — ideal challenge material.
 
-**Stack for Run 6:**
-- Tool: v1.5.12 ✅ deployed
-- Prompt: v0.5.10 (deploy first)
-- Filter: lse-routing-filter v1.1.0
-- Context monitor: none
-- Test suite: v3.5 (21 tests, /60 with P6)
-- Profile: 32k · thinking (--reasoning-budget 3072)
+**cisco.lan stale DNS entry** — Fixed 2026-06-03 ✅
 
-**Deploy checklist:**
-- [ ] Deploy prompt v0.5.10 in OpenWebUI Admin → Models
-- [ ] Verify debug flag OFF
-- [ ] Fresh conversation (no prior tool-call history)
-- [ ] Run all 21 questions per test-suite-v3.5 using `lse:eval-runner` skill
-- [ ] Write `eval/eval-report-v5.md`
+---
 
-**Expected outcome:** Run 3 was 57/57 on v1.5.4/v0.5.1. Major additions since then: RAG layer, MULTI-BLOCK TASK, BACKGROUND PROCESS, WARNING ESCALATION, SIZE SANITY CHECK. Targeting 55+/60; P6 is a new unknown.
+## Immediate — Run 7 prep: prompt fixes from Run 6 gaps
+
+From eval-report-v5.md Next Steps:
+
+- [ ] **P4 fix** — add to system prompt or execute_command docstring: when sudo appears anywhere in a pipeline, offer to split (run non-sudo portion directly, delegate sudo part)
+- [ ] **M3 fix** — on file-not-found, always propose one recovery action (list directory, suggest alternative path)
+- [ ] **W1 fix** — do not verify static Linux filesystem paths with tool calls
+- [ ] **A3 precondition** — verify open-webui has a systemd unit before running A3; update test suite note
+- [ ] Bump tool to v1.5.14 or prompt to v0.5.12 after fixes
+- [ ] Run 7 against v3.5 test suite
+
+---
+
+## ✅ Completed — Grafana SearXNG Engine Health Dashboard (2026-06-03)
+
+- Dashboard JSON updated: engine filter variable, error panels, dynamic queries
+- Deployed via Grafana API (`/api/dashboards/db`)
+- Metrics endpoint fixed: `general.open_metrics` added to settings.yml
+- Prometheus scrape confirmed working: 15+ engines now in metrics
+- Emoji overrides stripped (cleaner without favicons)
+- Note: engine metrics only populate after first query per engine — run varied searches to warm all 27
+
+---
+
+## ✅ Completed — SearXNG metrics pipeline fix (2026-06-03)
+
+- Root cause: `general.open_metrics` was missing → `/metrics` returned 404
+- Fix: added `general:\n  open_metrics: "metrics-admin-2025"` to settings.yml
+- Password aligned with existing Prometheus `basic_auth` config
+- Prometheus scrape target now healthy
+
+---
+
+## ✅ Completed — Run 6 eval (2026-06-03)
+
+**Score: 58/63** — `eval/eval-report-v5.md`
+Adjusted to 57-pt basis: **52/57** — −5 from Run 3 baseline.
+All regressions are 2/3 partials — no safety failures.
 
 ---
 
 ## ✅ Completed — SearXNG 27-Engine Config Deploy (2026-06-03)
 
-27-engine config prepared 2026-06-01, never deployed. Production running 4 engines only. Brave should be **demoted** (lower weight) not removed — it contributes results despite VPS rate-limiting.
+- 27-engine config live in production
+- Valkey/Redis section added to settings.yml
+- Limiter disabled (single-user local stack)
+- search_web headers + categories fix in tool v1.5.13
 
-**Config file:** `/home/sy5/docker/searxng_data/settings.yml` — backups at `.backup`, `.backup-v1.0-20260525`, `.bak`
+---
 
-**Target engine set:** arXiv (T1, weight 4), Google Scholar (weight 3), Bing + DDG (weight 2), Brave + Mojeek + Qwant (weight 1, demoted), Wikipedia + Bing News (always-on) + additional engines to 27 total.
+## ✅ Completed — Tool v1.5.13 + Prompt v0.5.11 (2026-06-03)
 
-**Valkey already deployed** (internal port 6379, lse-net) — check if SearXNG `settings.yml` already has `redis:` section before adding caching task.
+- search_web X-Forwarded-For header fix
+- categories=general,it,science added
+- Both deployed to OpenWebUI
 
-**Three changes in one deploy — all go into settings.yml together:**
-1. 27-engine config (Brave demoted, arXiv/Scholar/Mojeek/Qwant/Bing added)
-2. Valkey/Redis section (env var already wired, settings.yml missing the block)
-3. Verify rate limiter backend switches from in-memory to Valkey
+---
 
-```yaml
-# Add to settings.yml:
-redis:
-  url: valkey://valkey:6379/0
-```
+## Backlog — WSL Gaming Teardown script (NODE3 enabler)
 
-- [ ] `cat /home/sy5/docker/searxng_data/settings.yml` — read current state
-- [ ] Diff against prepared 27-engine config; confirm Brave is demoted not removed
-- [ ] Add `redis:` section + 27-engine changes to settings.yml
-- [ ] Backup: `cp settings.yml settings.yml.backup-v2-$(date +%Y%m%d)`
-- [ ] `cd /home/sy5/docker && docker compose restart searxng`
-- [ ] Verify: `curl -s http://localhost:8088/search?q=test&format=json | python3 -m json.tool | head -20`
-- [ ] Verify Grafana shows new engine set in `searxng_engines_*` metrics
-- [ ] Update `search_web` docstring — SEARCH-THEN-FETCH protocol (tool v1.5.13)
+Script written: `wsl-gaming-teardown.ps1`
+
+Brings down the full LSE stack (Docker containers, llama-server, OpenWebUI, Ollama, all exporters),
+runs `wsl --shutdown`, kills Windows-side WSL processes, verifies VRAM released via nvidia-smi.
+
+Resolves the gaming performance concern for NODE3 (9800X3D / RTX 5090): WSL installation has
+near-zero idle overhead; this script guarantees a pristine system before any gaming session.
+
+- [ ] Test on LUCIFER — verify all 6 steps complete cleanly
+- [ ] Test VRAM clears to < 5% after run
+- [ ] Pin shortcut to desktop or Windows Terminal profile for quick access
+- [ ] After testing: deploy same script on NODE3 once WSL is installed there
 
 ---
 
 ## Backlog — searxng-logger rewrite (~30 min)
 
-`/opt/local-se/searxng-logger/logger.py` polls Prometheus for metrics that were never populated (logged "No metrics returned" every minute since deployment).
+`/opt/local-se/searxng-logger/logger.py` polls Prometheus with wrong logic.
+Now that `/metrics` is live with auth, the rewrite path is clear.
 
-**Fastest fix:** update logger to scrape SearXNG `/metrics` directly with `Authorization: Basic metrics-admin-2025` header. Parse OpenMetrics → write to SQLite → expose via Prometheus exporter on a dedicated port. Add scrape job to `prometheus.yml`.
+**Fix:** scrape SearXNG `/metrics` directly with `Authorization: Basic` header.
+Parse OpenMetrics → SQLite → expose via Prometheus exporter on dedicated port.
 
-- [ ] Rewrite logger to scrape `/metrics` with auth header directly
+- [ ] Rewrite logger to scrape `/metrics` with auth header
 - [ ] Add new Prometheus scrape job for exporter port
-- [ ] Verify `searxng_engines_*` metrics flowing in Grafana
+- [ ] Verify `searxng_engines_*` flowing in Grafana
 
 ---
 
 ## Backlog — KB Retrieval Accuracy Baseline
 
-RAG stack has no baseline. Without one, impossible to tell if KB improves LSE or just adds latency.
+No baseline exists. Without one, impossible to measure KB value.
 
-**Procedure:**
-1. Write 15 questions answerable only from stack-specific operational facts (ports, recovery commands, failure modes, paths)
-2. Run each twice: KB disabled (`min_score=1.1`) vs KB enabled
-3. Score: correct / partial / wrong
-4. Store in `/opt/local-se/kb/eval-kb-baseline.md`; index into ES
-
-**Ongoing:** re-run monthly. KB-enabled delta vs baseline = KB value signal.
-
-- [ ] Write 15-question baseline set
+- [ ] Write 15-question baseline set (stack-specific operational facts only)
 - [ ] Run KB-disabled pass, record scores
 - [ ] Run KB-enabled pass, record scores
 - [ ] Store `eval-kb-baseline.md`, index into ES
-
----
-
-## Backlog — Grafana SearXNG Engine Health Dashboard
-
-Current dashboard legend is unreadable with multiple active engines. Needs:
-- Legend updated (remove Brave, add Mojeek/Qwant/arXiv)
-- Engine favicons in graph legend
-- Panel annotation for engine config change date
-
-Deferred until SearXNG engine config is stable in production.
-
-- [ ] Edit Grafana panel JSON for updated engine set
+- [ ] Re-run monthly
 
 ---
 
 ## Backlog — LSE Profile Management Eval Test
 
-New eval category: LSE reads `lse-profiles.xml`, searches community sources, cross-references against RTX 4090 hardware constraints, proposes a new `<profile>` block, writes the updated XML (size sanity check must pass).
-
-Tests the full loop: `search_web` → `read_file` → hardware-aware reasoning → `write_file`.
+New eval category: LSE reads `lse-profiles.xml`, searches community sources,
+cross-references RTX 4090 constraints, proposes new `<profile>` block, writes XML.
 
 - [ ] Write eval test spec
 - [ ] Add to test suite as new category
@@ -173,18 +173,18 @@ Tests the full loop: `search_web` → `read_file` → hardware-aware reasoning �
 
 ## Backlog — Docs Update
 
-- [ ] `docs/07-operations-runbook.md` — add metrics endpoint reference (Grafana alert pipeline)
-- [ ] `README.md` — severely out of date; rewrite to reflect current stack (RAG, Grafana, lse-net, active-task.md)
+- [ ] `docs/07-operations-runbook.md` — add metrics endpoint reference + auth header
+- [ ] `README.md` — rewrite to reflect current stack (RAG, Grafana, lse-net, Valkey, 27-engine SearXNG)
 
 ---
 
-## Tracking Discipline (new — 2026-06-02)
+## Tracking Discipline (2026-06-02)
 
 At the **start** of each session:
-1. Read `CURRENT-STATE.md` — update version table from actual file headers if anything drifted
+1. Read `CURRENT-STATE.md` — update version table if anything drifted
 2. Read `ROADMAP.md` — pick the top Immediate item
 
 At the **end** of each session (or on context handover):
-1. Move completed items from ROADMAP to a new dated entry in `CHANGELOG.md`
+1. Move completed items to a new dated entry in `CHANGELOG.md`
 2. Update `CURRENT-STATE.md` version table
 3. Update `active-task.md` with any unfinished block state

@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-06-03 — Tool v1.5.15, security hardening, launcher v1.078 + GUI v1.4
+
+**Tool v1.5.15** — deployed ✅ (SHA-256: b9d00a17ad44eda7c4630368a7a19fde9d282e7871536ae306482e619a9c9dd0)
+- `pfsense_query(endpoint, method, payload, api_key)` — pfSense REST API v2 client
+- `PFSENSE_URL` + `PFSENSE_API_KEY` valves added
+- `LOG_FILE` default moved to `/opt/local-se/agent_commands.log` (away from root-owned `~/.lse/`)
+- SSL `verify=False` with rationale (LAN-only, self-signed cert); v1.5.16 will add `PFSENSE_CA_CERT` valve
+
+**Tool v1.5.14** — deployed ✅ (SHA-256: 1cf298f74364426c4d25a06fb64cf43f7519c80a91b7d58a0799b3b4986b0e17)
+- `sudo_delegation_block` gains `step_number`, `total_steps`, `verify_command` params
+- THINKING PHASE RULE: never call inside `<think>` block
+
+**Security hardening — `.lse` directory and secrets**
+- `/home/sy5/.lse/` → root:sy5 710 (traversable by sy5 group, not listable)
+- `/home/sy5/.lse/secrets` → root:sy5 640 (sy5 group readable, BW_PASSWORD via env var)
+- `BW_PASSWORD` removed from OpenWebUI valve (plaintext SQLite) → sourced from `~/.lse/secrets`
+- Vaultwarden tool v1.3.0: env var priority over valve, placeholder default in UI
+- VALVES.md created — full valve registry with security posture for all tools
+
+**Launcher v1.078 (CLI) + GUI v1.4**
+- `$LaunchDir` moved from `/home/sy5/.lse/launch` to `/tmp/lse/launch` (tmpfs, RAM-backed, ~10× faster)
+- Secrets pre-flight check + `webui.sh` sources `~/.lse/secrets` before OpenWebUI starts
+- GUI v1.4: profiles from `lse-profiles.xml` (fixed broken line-offset parsing from v1.076)
+
+**pfSense REST API**
+- pfrest.org package installed (v2.8, Plus 26.03) — one SSH command
+- Read-only, LAN+WAN+OPT1+OPT2 interfaces, access list: 192.168.1.57/32
+- Write access protocol documented in arena doc and ROADMAP
+
+**Checksums introduced** — SHA-256 for last two tool versions tracked in CURRENT-STATE.md
+
+## 2026-06-03 — Prompt v0.5.12 + Tool v1.5.14, Challenge Arena design consolidated
+
+**Prompt v0.5.12 + Tool v1.5.14** — deployed to OpenWebUI ✅
+- Fix 1: STEP MILESTONE HEADERS — `── Step N/Total: [description] ──` required before each step on 4+-step tasks
+- Fix 2: THINKING PHASE RULE added to sudo_delegation_block — must not fire inside `<think>` block
+- Fix 3: sudo_delegation_block gains `step_number`, `total_steps`, `verify_command` params; block format updated
+
+**LSE Challenge Arena** — design document written (`docs/lse-challenge-arena.md`)
+- Reconstructed from lost session conversations
+- Covers: point structure, discipline weights, escalation protocol (convergence detection), KB isolation (shared pool / public goods game), architecture sketch, 50-challenge ladder across pfSense and HA domains, challenge schema (SQLite), build order
+- HA sandbox: HA Core Docker confirmed as approach (~1hr deploy, frictionless config porting)
+- pfSense sandbox: log replay (syslog corpus already flowing to LUCIFER)
+- VRAM concurrency strategy for 3-model parallel episodes: open, decision pending
+
 ## 2026-06-03 — SearXNG 27-engine deploy, syslog live, network topology
 
 **SearXNG 27-engine config deployed** ✅
