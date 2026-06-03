@@ -1,6 +1,6 @@
 # LSE Current State
 > Auto-reconcile at session start: read file headers, update this table.
-> Last updated: 2026-06-03
+> Last updated: 2026-06-03 (session 2 close)
 
 ## Deployed Versions
 
@@ -10,7 +10,7 @@
 | Tool (prev) | v1.5.15 | `tools/openwebui-tool-v1.5.15.py` | pfsense_query() + PFSENSE_URL/KEY valves · deployed ✅ |
 | Prompt | v0.5.12 | `prompts/v0.5.12.md` | deployed ✅ |
 | RAG Tools | v2 | (embedded in tool) | search_kb, index_to_kb, record_error, check_error_kb |
-| Vaultwarden tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | env var wins over valve · deploy pending |
+| Vaultwarden tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | env var wins over valve · deployed ✅ |
 | Routing filter | v1.1.0 | `tools/lse-routing-filter-v1.1.0.py` | |
 | Context monitor | retired | — | removed in v0.5.4; replaced by Grafana alert pipeline |
 | Launch script (CLI) | v1.078 | `LSEStack_gui\lse-stack-launch-1.078.ps1` | LaunchDir → /tmp/lse/launch (tmpfs, RAM-backed, ~10× faster than vhdx) · secrets pre-flight check |
@@ -94,7 +94,7 @@ Verify on-disk files match deployed versions. Generate with:
 
 **Syslog pipeline:** pfSense → UDP 514 → LUCIFER WSL2 ✅ live  
 **pfSense SSH:** `ssh admin@192.168.1.50` ✅ confirmed  
-**pfSense API:** ❌ not available in Plus 26.03.1 — using SSH + config.xml instead  
+**pfSense REST API:** ✅ v2.8 installed (pfrest.org) · read-only · LAN+WAN+OPT1+OPT2 · access list: 192.168.1.57/32 · key in Vaultwarden · CA cert: `/opt/local-se/cert/pfsense-webgui-ca.crt`  
 **WSL2 mirrored networking:** ✅ confirmed (`networkingMode=mirrored` in .wslconfig)
 
 ## SearXNG Engine Configuration
@@ -110,11 +110,17 @@ Verify on-disk files match deployed versions. Generate with:
 | Grafana observability | Live — shows `searxng_engines_*` metrics, but only reflects current 4-engine production config |
 | searxng-logger | Still polling Prometheus with wrong logic — rewrite pending (backlog) |
 
-## Open Issues Found via Syslog
-- Samsung TV (192.168.1.90) hammering DHCP every 1–2 min + needs WAN block
-- `filterdns: cisco.lan` stale DNS entry — delete from DNS Resolver host overrides
-- Syslog collector container not yet built (using nc for testing only)
-- `v1.5.10.py` renamed to `v1.5.11.py` by git at commit c5e3d84 (96% similarity — duplicate resolved)
+## Open Issues
+
+| Issue | Status | Notes |
+|---|---|---|
+| Samsung TV (192.168.1.90) DHCP hammer + WAN block | 🎯 Arena challenge | Reassigned as T2/T3 challenge — real problem with known solution |
+| Syslog collector container | 🎯 Arena challenge | Reassigned as T2 challenge — nc is temporary |
+| `filterdns: cisco.lan` stale DNS entry | ✅ Fixed 2026-06-03 | |
+| HA long-lived access token | ❓ Unknown | Create in HA profile → Security → Long-lived tokens |
+| QNAP admin credentials | ❓ Unknown | QNAP web UI or SSH on 192.168.5.x |
+| Repo contains openwebui-tool-v1.5.14-BKP.py | ⚠️ Cleanup needed | `git rm tools/openwebui-tool-v1.5.14-BKP.py && git commit` |
+| .gitignore missing *.BKP rule | ⚠️ Cleanup needed | `echo "tools/*.BKP" >> .gitignore` |
 
 ## Eval Score Trajectory
 
