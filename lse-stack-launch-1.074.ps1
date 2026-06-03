@@ -507,4 +507,48 @@ exec bash
 #!/usr/bin/env bash
 printf '\033[1;32m\n'
 printf '  ╔═══════════════════════════════════════════╗\n'
-printf '  ║   LSE Terminal  ·  
+printf '  ║   LSE Terminal  ·  LUCIFER                ║\n'
+printf '  ║   Ubuntu 24.04  ·  WSL2                   ║\n'
+printf '  ╚═══════════════════════════════════════════╝\n'
+printf '\033[0m\n'
+bash -l
+"@
+
+}
+
+# Write each script to WSL, make executable
+foreach ($Name in $Scripts.Keys) {
+    $Content = $Scripts[$Name]
+    $WslPath = "$LaunchDir/$Name"
+    $Content | wsl.exe -- bash -c "mkdir -p '$LaunchDir' && tr -d '\r' > '$WslPath' && chmod +x '$WslPath'"
+    Write-Host "  ${g}✓${r}  $Name" -ForegroundColor Green
+}
+
+Write-Host ""
+Write-Host "  ${y}Opening Windows Terminal...${r}"
+Write-Host ""
+
+# ── Windows Terminal: five colour-coded tabs ───────────────────────────────
+#
+#   Tab colours (tab stripe only — terminal theme stays as your default):
+#     Red    #CC2222  — model server (GPU-heavy, stands out)
+#     Blue   #2255CC  — Open WebUI
+#     Purple #8822CC  — Playwright
+#     Orange #CC7722  — Open Terminal
+#     Green  #229966  — LSE terminal
+
+$WtArgs = (
+    "new-tab --title `"$($Prof.TabLabel)`"   --tabColor `"#CC2222`" -- wsl.exe bash $LaunchDir/model.sh",
+    "; new-tab --title `"  Open WebUI`"    --tabColor `"#2255CC`" -- wsl.exe bash $LaunchDir/webui.sh",
+    "; new-tab --title `"  Playwright`"    --tabColor `"#8822CC`" -- wsl.exe bash $LaunchDir/playwright.sh",
+    "; new-tab --title `"  Open Terminal`" --tabColor `"#CC7722`" -- wsl.exe bash $LaunchDir/open-terminal.sh",
+    "; new-tab --title `"  LSE Terminal`"  --tabColor `"#229966`" -- wsl.exe bash $LaunchDir/terminal.sh"
+) -join " "
+
+Start-Process wt -ArgumentList $WtArgs
+
+Write-Host "  ${g}All tabs launched.${r}"
+Write-Host "  Model server takes ~30 s to load — watch the red tab."
+Write-Host ""
+
+

@@ -23,11 +23,10 @@ Design consolidated in `docs/lse-challenge-arena.md`. Build order:
 - [x] Install pfSense REST API package — v2.8 live, read-only, key in Vaultwarden ✅ (2026-06-03)
 - [ ] **Security: BW_PASSWORD → env var** — set in WSL2 shell before OpenWebUI launch, remove from valve. OpenWebUI does not encrypt valves at rest (plaintext SQLite). This is the priority fix.
 - [x] Add `PFSENSE_API_KEY` + `PFSENSE_URL` valves to tool v1.5.15 ✅
-- [ ] **Tool v1.5.16 — pfSense SSL verification**
-      Current: `verify=False` (self-signed cert, acceptable on LAN).
-      Fix: add `PFSENSE_CA_CERT` valve (path to exported pfSense CA cert).
-      When set: `verify=PFSENSE_CA_CERT`. When empty: fall back to `verify=False`.
-      Procedure: System → Cert Manager → Export CA → save to `/opt/local-se/certs/pfsense-ca.crt` (read-only key, acceptable blast radius)
+- [x] **Tool v1.5.16 — pfSense SSL verification** ✅
+      `PFSENSE_CA_CERT` valve + `_pfsense_verify()` helper. Cert at
+      `/opt/local-se/cert/pfsense-webgui-ca.crt` (sy5:sy5 644, valid → Apr 2036).
+      Falls back to `verify=False` with logged warning if cert missing. Deploy pending. (read-only key, acceptable blast radius)
 
   **WRITE ACCESS PROTOCOL — permanent rule:**
   pfSense REST API is read-only by default. Write access (required for T3+ challenges deploying
