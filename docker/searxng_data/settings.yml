@@ -1,0 +1,197 @@
+# SearXNG settings — curated engine whitelist for LSE sysadmin use
+# Live path: /home/sy5/docker/searxng_data/settings.yml
+# Last tuned: 2026-06-04 (v2 — post-diagnostic tuning)
+#
+# ── Engine hierarchy (by estimated LSE usage) ────────────────────────────────
+#
+#  #   Engine                    Weight  Notes
+#  1   google                      4     Primary — 100% reliable, 0.3s avg (was 3)
+#  2   duckduckgo                  2     Primary fallback — 100% reliable
+#  3   stackoverflow               1     Technical Q&A
+#  4   semantic scholar            3     Science primary — 100% reliable (was 1)
+#  5   pubmed                      2     Biomedical — 100% reliable (was 1)
+#  6   arxiv                       2     AI/ML research — 15% reliable, use cautiously (was 4, timeout was 15s!)
+#  7   github                      1     Code, issues, docs
+#  8   wikipedia                   1     Reference baseline
+#  9   huggingface                 1     Models, directly relevant
+# 10   askubuntu                   1     Ubuntu 24.04-specific sysadmin
+# 11   mdn                         1     Web/API documentation
+# 12   duckduckgo news             2     Current events
+# 13   google news                 1     News fallback
+# 14   hackernews                  1     Tech community discussions
+# 15   national vulnerability db   1     CVEs, security
+# 16   docker hub                  1     Container images
+# 17   pypi                        1     Python package lookup
+# 18   mojeek                      1     Independent index fallback
+# 19   qwant                       1     Independent index fallback
+# 20   brave                       1     Low-weight fallback — 40% reliable (VPS rate-limited)
+# 21   bing                        1     Low-weight fallback
+# 22   superuser                   1     Power user Q&A
+# 23   google images               1     Image queries
+# 24   duckduckgo images           1     Image fallback
+# 25   npm                         1     JS packages
+# 26   pkg.go.dev                  1     Go packages
+#
+# Engines deliberately excluded:
+#   google scholar   — 0% reliability (silently failing all requests, VPS IP blocked by Google)
+#                      Re-add when fixed: weight 3, categories: [science, it]
+#                      Debug: docker exec searxng curl -sA "Mozilla/5.0" "https://scholar.google.com/scholar?q=test"
+#   reddit           — blocks VPS IPs on search.json (use "site:reddit.com" via Google)
+#   brave.news       — redundant with google news / duckduckgo news
+#   bing news        — redundant, low value
+#
+# ── Tuning history ───────────────────────────────────────────────────────────
+#
+#  v1 (original):  arxiv weight=4 timeout=15, google weight=3, scholar weight=3
+#  v3 (2026-06-04): Second diagnostic — news gap + URL leak identified.
+#    FIXED: bing news re-added (weight=3) — news category was critically under-resourced
+#    FIXED: google news weight=3 — article-level results vs homepage links
+#    FIXED: national vulnerability database weight=3 — security queries now have specialist engine
+#    NOTE: filter_urls / suspended: false are NOT valid SearXNG config fields — not applied
+#    NOTE: URL redirect leak (google.com/search?q= in results) is a SearXNG parser issue,
+#          not config-fixable. Requires SearXNG version update to resolve.
+#  v2 (2026-06-04): Diagnostic run via Claude Sonnet 4.6 + search_web tool.
+#    FIXED: arxiv timeout 15→5 (eliminated 15s tail latency on 85% of science queries)
+#    FIXED: arxiv weight 4→2 (was over-represented for its 15% reliability)
+#    FIXED: google scholar disabled (0% reliability, silently consuming connections)
+#    FIXED: google weight 3→4 (fastest+most reliable, should rank highest)
+#    FIXED: semantic scholar weight 1→3 (promoted to primary science engine)
+#    FIXED: pubmed weight 1→2 (promoted, 100% reliable biomedical coverage)
+#    FIXED: outgoing.request_timeout 6→4 (faster fallback, healthy engines unaffected)
+#
+# ── How to add or remove an engine ───────────────────────────────────────────
+#
+#  ADDING an engine:
+#   1. Add the engine name to the `keep_only` list below (exact SearXNG name).
+#      Run `docker exec searxng cat /usr/local/searxng/searx/engines/*.py | grep "name ="`
+#      to confirm the exact registered name.
+#   2. Optionally add an entry under the `engines:` section with a custom weight
+#      and/or categories override. If omitted, weight defaults to 1.
+#   3. Deploy: cp this file to /home/sy5/docker/searxng_data/settings.yml
+#   4. Restart: cd /home/sy5/docker && docker compose restart searxng
+#   5. Verify: curl -s "http://localhost:8088/search?q=test&format=json" | python3 -m json.tool | grep '"engine"' | sort -u
+#   6. Watch Grafana → SearXNG Engine Health dashboard for the new engine to appear
+#      in metrics within one scrape interval (~15s after first search).
+#
+#  REMOVING an engine:
+#   1. Delete its entry from `keep_only`.
+#   2. Delete its entry from `engines:` if one exists.
+#   3. Deploy and restart as above (steps 3–4).
+#   4. Update the hierarchy comment at the top of this file.
+#
+#  ADJUSTING weight:
+#   1. Add or update an entry under `engines:` with the new weight value.
+#      Do NOT change `keep_only` — that only controls which engines are active.
+#   2. Deploy and restart.
+#
+#  COMMON FAILURE MODES:
+#   - Engine name not matching registered name → engine silently ignored
+#   - Engine blocking VPS IPs → will auto-suspend per `suspended_times` config
+#     (check: docker logs searxng 2>&1 | grep -i "suspend\|blocked\|429")
+#   - Weight not taking effect → confirm entry is under top-level `engines:`,
+#     not nested under `use_default_settings:`
+# ─────────────────────────────────────────────────────────────────────────────
+use_default_settings:
+  engines:
+    keep_only:
+      # General web
+      - google
+      - google images
+      - google news
+      - duckduckgo
+      - duckduckgo images
+      - duckduckgo news
+      - bing
+      - mojeek
+      - qwant
+      - brave
+      # Technical / developer
+      - arxiv
+      - github
+      - stackoverflow
+      - askubuntu
+      - superuser
+      - mdn
+      - hackernews
+      - pypi
+      - npm
+      - pkg.go.dev
+      - docker hub
+      - huggingface
+      # Scientific / security
+      - pubmed
+      - semantic scholar
+      - national vulnerability database
+      # Reference
+      - wikipedia
+      # google scholar: REMOVED — 0% reliability, silently failing
+      # Re-add when fixed (see tuning history above)
+      # bing news: RE-ADDED — news category critically under-resourced per v3 diagnostic
+      - bing news
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+  secret_key: "913153e683373257077c6b99eebb293055d0784eed80e621cad095921576386b"
+general:
+  enable_metrics: true
+  open_metrics: "JZVeoVch20+FvyjXEn4BMVHtu1AM6JCH"
+search:
+  formats:
+    - html
+    - json
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+  suspended_times:
+    SearxEngineAccessDenied: 180
+    SearxEngineCaptcha: 3600
+    SearxEngineTooManyRequests: 180
+    cf_SearxEngineCaptcha: 1296000
+    cf_SearxEngineAccessDenied: 86400
+    recaptcha_SearxEngineCaptcha: 604800
+engines:
+  - name: arxiv
+    weight: 2          # was: 4 — over-weighted for 15% reliability
+    timeout: 5         # was: 15 — was causing 15s tail latency on 85% of science queries
+    categories: [science, it, technology]
+
+  - name: google
+    weight: 4          # was: 3 — fastest (0.3s) and most reliable (100%), should rank highest
+
+  - name: duckduckgo
+    weight: 2
+
+  - name: duckduckgo news
+    weight: 2
+    categories: [news]
+
+  - name: semantic scholar
+    weight: 3          # was: 1 — promoted to primary science engine while scholar is down
+
+  - name: pubmed
+    weight: 2          # was: 1 — 100% reliable, good biomedical coverage
+
+  - name: brave
+    weight: 1          # unchanged — suspended_times handles 429s automatically
+
+  - name: bing
+    weight: 1
+
+  - name: bing news
+    weight: 3          # NEW — article-level news results, compensates for Brave down
+
+  - name: google news
+    weight: 3          # NEW — article-level news results (distinct from google web engine)
+    categories: [news]
+
+  - name: cvedetails
+    weight: 3          # security CVE source — verified working in SearXNG 2025.5.13
+    categories: [it]   # national vulnerability database module doesn't exist — use cvedetails
+
+  # google scholar: REMOVED from engines block (disabled in keep_only above)
+outgoing:
+  request_timeout: 4.0       # was: 6.0 — healthy engines respond in <2s
+  max_request_timeout: 10.0  # NEW — hard cap on per-engine timeout overrides (belt-and-suspenders)
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true

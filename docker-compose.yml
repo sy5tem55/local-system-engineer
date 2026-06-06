@@ -59,7 +59,7 @@ services:
       # SearXNG internal port is 8080 (external/host port is 8088)
       - SEARXNG_URL=http://searxng:8080
       - SEARXNG_METRICS_USER=
-      - SEARXNG_METRICS_PASSWORD=metrics-admin-2025
+      - SEARXNG_METRICS_PASSWORD=JZVeoVch20+FvyjXEn4BMVHtu1AM6JCH
       - POLL_INTERVAL=15
       - DB_PATH=/data/searxng.db
     restart: unless-stopped
@@ -83,6 +83,24 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=http://localhost:3000
     restart: unless-stopped
+
+  searxng-error-exporter:
+    container_name: searxng-error-exporter
+    build:
+      context: /opt/local-se/searxng-error-exporter
+      dockerfile: Dockerfile
+    ports:
+      - "9837:9837"
+    networks:
+      - searxng_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - SEARXNG_CONTAINER=searxng
+      - EXPORTER_PORT=9837
+    restart: unless-stopped
+    depends_on:
+      - searxng
 
   node-exporter:
     container_name: node-exporter

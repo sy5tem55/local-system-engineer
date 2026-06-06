@@ -110,8 +110,12 @@ use_default_settings:
 server:
   bind_address: "0.0.0.0"
   port: 8080
-  limiter: true
+  limiter: false
   secret_key: "913153e683373257077c6b99eebb293055d0784eed80e621cad095921576386b"
+
+general:
+  enable_metrics: true
+  open_metrics: "JZVeoVch20+FvyjXEn4BMVHtu1AM6JCH"
 
 search:
   formats:
@@ -130,6 +134,7 @@ search:
 engines:
   - name: arxiv
     weight: 4
+    timeout: 15
     categories: [science, it, technology]
 
   - name: google

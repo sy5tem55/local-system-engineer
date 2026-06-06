@@ -1,0 +1,125 @@
+# SearXNG settings.yml — Surgical patch v2
+# Apply over: /home/sy5/docker/searxng_data/settings.yml
+# Date: 2026-06-04
+#
+# CHANGES FROM BASELINE:
+#   1. outgoing.request_timeout: 6.0 → 4.0
+#      Rationale: healthy engines respond in <2s. Stragglers get 4s not 6s.
+#      Biggest impact: stops slow engines from holding up result rendering.
+#
+#   2. arxiv: weight 4→2, timeout 15→5
+#      Rationale: 15% reliable, 3.5s avg. Timeout override was the worst
+#      offender — 15s hang on every failed attempt (85% of requests).
+#      5s gives it realistic headroom (3.5s avg + 1.5s buffer).
+#      Weight 2 keeps it active but stops it dominating science results.
+#
+#   3. google scholar: removed from keep_only
+#      Rationale: 7 requests, 0% reliability — silently failing every query.
+#      Wastes outbound connections, contributes nothing. Disable until fixed.
+#      NOTE: likely cause is Google's scraping detection on VPS IPs.
+#      Fix path: test manually with `docker exec searxng curl -A "Mozilla/5.0..."
+#      "https://scholar.google.com/scholar?q=test"` — if 429/captcha, it's IP-blocked.
+#
+#   4. semantic scholar: weight 1→3
+#      Rationale: 100% reliable, 1.0s avg. Now primary science engine
+#      while google scholar is down.
+#
+#   5. pubmed: weight 1→2
+#      Rationale: 100% reliable, 0.7s avg. Strong biomedical coverage.
+#
+#   6. google: weight 3→4
+#      Rationale: 100% reliable, 0.3s avg — fastest and most reliable engine.
+#      Should be weighted highest.
+#
+# CHANGES REJECTED vs. Claude's suggestions:
+#   - brave timeout: 3s — NOT adding. suspended_times already handles 429s
+#     (SearxEngineTooManyRequests: 180s). Adding a short timeout would cut
+#     the 40% of queries where Brave responds fine.
+#   - brave weight: 0.5 — kept at 1. SearXNG weights are integers; 0.5
+#     may parse but is non-standard. Let suspension handle bad periods.
+#   - global timeout under search: — WRONG location. Must be under outgoing:.
+#   - display_error_messages per-engine — not a standard SearXNG field, omitted.
+#   - max_results: 15 — not needed; result count is determined per-query
+#     by how many engines respond within timeout.
+#
+# HOW TO APPLY:
+#   1. Backup: cp ~/docker/searxng_data/settings.yml ~/docker/searxng_data/settings.yml.bak-$(date +%Y%m%d)
+#   2. Apply the diffs below to ~/docker/searxng_data/settings.yml
+#   3. cd ~/docker && docker compose restart searxng
+#   4. Verify: curl -s "http://localhost:8088/search?q=test&format=json" | python3 -m json.tool | grep '"engine"' | sort -u
+#   5. Watch Prometheus metrics — reliability should improve within 10 queries
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── SECTION: use_default_settings.engines.keep_only ──────────────────────────
+# REMOVE "google scholar" from this list.
+# Before:
+#   - google scholar
+# After: (delete that line)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── SECTION: engines ─────────────────────────────────────────────────────────
+# Replace the entire engines: block with this:
+
+engines:
+  - name: arxiv
+    weight: 2          # was: 4
+    timeout: 5         # was: 15  ← THE BIGGEST FIX
+    categories: [science, it, technology]
+
+  - name: google
+    weight: 4          # was: 3
+
+  - name: duckduckgo
+    weight: 2
+
+  - name: duckduckgo news
+    weight: 2
+    categories: [news]
+
+  - name: semantic scholar
+    weight: 3          # was: 1 (promoted — primary science engine now)
+
+  - name: pubmed
+    weight: 2          # was: 1
+
+  - name: brave
+    weight: 1          # unchanged — let suspended_times handle rate limits
+
+  - name: bing
+    weight: 1
+
+  # google scholar: REMOVED — 0% reliability, silently failing
+  # Re-add when fixed: weight: 3, categories: [science, it]
+
+# ── SECTION: outgoing ────────────────────────────────────────────────────────
+# Change request_timeout from 6.0 to 4.0
+
+outgoing:
+  request_timeout: 4.0   # was: 6.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+
+# ── SECTIONS UNCHANGED ───────────────────────────────────────────────────────
+# server, general, search (including suspended_times) — leave exactly as-is
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── EXPECTED OUTCOME AFTER RESTART ───────────────────────────────────────────
+# Science queries:
+#   - p50 latency: ~2s (unchanged)
+#   - p85 latency: ~5s (was ~15s — arxiv timeout fix)
+#   - Primary engines: semantic scholar (wt 3), arxiv (wt 2), pubmed (wt 2)
+#
+# General queries:
+#   - p50 latency: ~2s (unchanged)
+#   - google now primary (wt 4), duckduckgo secondary (wt 2)
+#
+# News queries:
+#   - duckduckgo news remains anchor (wt 2)
+#   - brave contributes when not suspended
+#
+# Engine health (expected after ~20 queries):
+#   - arxiv reliability: may improve (no longer timing out on every fail)
+#   - semantic scholar: should stay 100%
+#   - google scholar: gone from metrics (no more silent failures)
+# ─────────────────────────────────────────────────────────────────────────────

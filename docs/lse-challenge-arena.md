@@ -75,17 +75,40 @@ The +2 "useful context" on escalation is load-bearing: it keeps the losing model
 
 4. search_web(authoritative docs)
    → official docs, man pages, project GitHub — sharp queries only
+   → NO PENALTY. Web search is a mandatory pre-escalation step, not an escalation.
    → index_to_kb(result + query_that_found_it) ALWAYS — regardless of outcome
+     ↳ A failed web-assisted attempt that gets indexed is still valuable:
+       it tells future sessions "this official doc path was tried and didn't
+       resolve this specific variant." The query construction is institutional
+       knowledge — future search_kb() retrieves BOTH the result AND the query
+       that found it, so the search discipline compounds across episodes.
    → Web-assisted attempt 4
    → Solved? Done. quality_score=0.9 (web-verified).
    → Failed? → ESCALATE
 
-5. Escalation to Claude
+5. Escalation to Claude API (OpenWebUI endpoint)
    → full context: all attempt embeddings + search findings + failure reasons
-   → Claude solution indexed to KB (layered entry, see below)
-   → Apply −5 (escalation) + +1 (indexing bonus) to triggering model
+   → Claude solution returned and immediately:
+     a. record_error(failure_pattern, resolution=claude_solution)
+        — indexes to lse-errors so future check_error_kb() hits at step 0
+        — next session hitting the same error class: resolved before attempt 1
+     b. index_to_kb(layered_entry, quality_score=1.0, source="competition_escalation")
+        — full entry: attempts + failure reasons + web result + Claude solution + diff
+        — becomes top search_kb() result for this challenge class immediately
+   → Apply −5 (escalation penalty — Claude API call only) to triggering model
+   → Apply +1 (indexing bonus) to triggering model
    → Apply +2 to triggering model if escalation context was well-framed
 ```
+
+### Why web search is never penalized
+
+Web search is infrastructure, not escalation. It is a mandatory step that runs unconditionally before any Claude API call is made. Penalizing it would punish the correct behavior (exhaust all options before calling Claude). The −5 penalty applies solely to the Claude API call at step 5.
+
+The two costs are completely separate:
+- **Web search (step 4):** zero penalty, zero bonus, always mandatory, always indexes
+- **Escalation (step 5):** −5 penalty, +1 indexing bonus, +2 if context is well-framed
+
+A model that solves at step 4 (web-assisted) earns +4 (attempt 3 solve timing) with no penalty at all.
 
 ### Why the convergence check beats the attempt counter
 
@@ -95,6 +118,20 @@ A model that genuinely tries different approaches gets more runway. A model stuc
 
 ### What gets logged on escalation (KB entry structure)
 
+Two KB writes happen simultaneously on escalation resolution:
+
+**Write 1 — lse-errors index (via record_error):**
+```
+{
+  "error_text": "...",          # the failure pattern, embedded for future check_error_kb()
+  "context": "...",             # challenge class + environment state
+  "resolution": "...",          # Claude's solution — applied at step 0 in future sessions
+  "occurrence_count": 1,        # increments on each future hit
+  "embedding": [...]            # for dedup — cosine > 0.92 = update existing, not new entry
+}
+```
+
+**Write 2 — lse-kb index (via index_to_kb, quality_score=1.0):**
 ```
 {
   "attempts": [embed1, embed2, embed3],          # all attempt texts + embeddings
@@ -102,15 +139,18 @@ A model that genuinely tries different approaches gets more runway. A model stuc
   "failure_reasons": ["...", "...", "..."],       # why each failed
   "escalation_trigger": "convergence|attempt_limit|claude_only_override",
   "web_search_query": "...",                      # the query that was tried
-  "web_search_result": "...",                     # what was found
+  "web_search_result": "...",                     # what was found (the authoritative source)
+  "web_assisted_attempt": "...",                  # attempt 4 text
   "claude_solution": "...",                       # what actually worked
-  "attempt_vs_solution_diff": "...",              # structured delta
+  "attempt_vs_solution_diff": "...",              # structured delta between best attempt and solution
   "quality_score": 1.0,
   "source": "competition_escalation"
 }
 ```
 
-The attempt-vs-solution diff is the most valuable signal for tracking model capability growth. If the gap between "what the model tried" and "what worked" shrinks across episodes, the model is improving. That is the PhD metric made concrete.
+The **attempt-vs-solution diff** is the most valuable signal for tracking model capability growth. If the gap between "what the model tried" and "what worked" shrinks across episodes, the model is improving. That is the PhD metric made concrete.
+
+The **lse-errors write** is what closes the loop permanently. The next session hitting the same error pattern reaches step 0, applies the resolution, and never reaches step 5 again. Claude is called once per error class, not once per episode.
 
 ---
 
@@ -134,20 +174,33 @@ LSEChallengeEnv(gymnasium.Env)
   - terminated: solved or escalated
   - info: discipline, attempt_n, convergence_score, kb_assisted
         ↓
-┌──────────────┬──────────────┬──────────────┐
-│  Gemma-26B   │  Qwen-27B    │  Qwopus-35B  │
-│  :8081       │  :8080       │  :8082       │
-└──────────────┴──────────────┴──────────────┘
+┌─────────────────────┬──────────────────────┬──────────────────────┐
+│  Gemma 4 31B        │  Qwen3.6-27B         │  Qwen3.6-35B-A3B     │
+│  NODE2 :8081        │  LUCIFER :8080        │  LUCIFER :8082 (seq) │
+└─────────────────────┴──────────────────────┴──────────────────────┘
 
-HARDWARE (updated — VRAM concurrency largely solved):
-   LUCIFER: RTX 4090 (24 GB) — hosts one model node (:8080)
-   NODE2:   RTX 3090 (24 GB), Ubuntu, LM Studio — hosts second model node (:8081)
-   NODE3:   RTX 5090 (16 GB+) — GAMING PC, do not touch, WSL not set up
-   
-   Two models run truly in parallel across separate machines (network inference).
-   Third model runs on LUCIFER after first completes, or on CPU offload.
-   AsyncVectorEnv with 2 genuinely parallel + 1 sequential is acceptable for phase 1.
-   NODE2 setup needed: deploy OpenWebUI, configure llama-server or LM Studio OpenAI-compat endpoint.
+HARDWARE (updated 2026-06-03):
+   LUCIFER: RTX 4090 (24 GB) — Qwen3.6-27B-Q4_K_M production model (:8080)
+            Qwen3.6-35B-A3B runs sequentially after primary completes (:8082)
+   NODE2:   RTX 3090 (24 GB), Ubuntu native — Gemma 4 31B Q4_K_M (:8081)
+            ~20GB VRAM at Q4_K_M, fits with headroom, 30–34 t/s decode
+   NODE3:   RTX 5090, AMD 9800X3D, 64GB RAM, Win11 — WSL2 setup pending
+            Future third parallel node when WSL2 deployed
+
+MODEL ROSTER (2026-06-03 — Qwopus dropped):
+   Qwen3.6-27B-Q4_K_M  — primary LSE model, already in production, best agentic
+                           coding (SWE-bench 77.2%), 18GB VRAM, Intelligence Index 45.8
+   Gemma 4 31B Q4_K_M  — NODE2 candidate, best coding benchmark (Coding Index 38.7),
+                           GPQA 85.7%, native tool use, day-one llama.cpp support
+                           Confirmed RTX 3090 compatible at Q4_K_M
+   Qwen3.6-35B-A3B     — speed benchmark slot; 3B active params, 65 t/s, sequential
+   Qwopus              — DROPPED. Community preview distillation of Claude Opus
+                           reasoning into Qwen3.5 base. Known formatting instability,
+                           token corruption, immature evaluation scope.
+                           Not suitable for reproducible arena evaluation.
+
+   AsyncVectorEnv: LUCIFER + NODE2 run truly parallel. Third slot sequential (phase 1).
+   NODE2 setup needed: llama-server or LM Studio OpenAI-compat endpoint on Ubuntu.
 
         ↓ (convergence detected or attempt 3 exhausted)
 EscalationGate
@@ -396,7 +449,7 @@ CREATE TABLE episodes (
 
 ## 12. Open Questions
 
-- **NODE2 setup:** OpenWebUI + llama-server or LM Studio OpenAI-compat endpoint needed. What model to deploy on the 3090 (24 GB)? Gemma-27B-Q4 fits. LM Studio already installed — may just need the server endpoint enabled.
+- **NODE2 setup:** Model decided — Gemma 4 31B Q4_K_M (~20GB VRAM, confirmed RTX 3090 compatible). LM Studio installed. Enable server mode → expose OpenAI-compat endpoint on :8081. Gemma 4 31B is the strongest complement to Qwen3.6-27B: different architecture, different strength profile (Gemma leads on GPQA, Qwen leads on agentic coding).
 - **Scoring rubric grain:** Resolved — 3-point partial credit per challenge, inheriting existing eval pattern. Each challenge has 3 assertions × 1 point, × discipline multiplier.
 - **Third model (slot :8082):** With NODE3 off-limits, the third model either runs on LUCIFER after the first finishes (round-robin) or we run 2-model competition initially and expand later.
 
@@ -442,8 +495,349 @@ Before any challenge can run, these must be in place:
 
 ---
 
+## 16. Applying Claude's Course-Correction Mechanisms to Local Models
+
+> Source: analysis of Claude's Constitutional AI, extended thinking, and PRM training, 2026-06-03.
+> These are harness-level compensations — no local model retraining required.
+
+---
+
+### 16.1 What makes Claude different (and what can be transferred)
+
+Claude's course-correction capability comes from three sources: Constitutional AI training (self-critique loop baked into weights), extended thinking scratchpad (hidden reasoning before output), and Process Reward Models (good reasoning steps explicitly rewarded during training). None of these can be installed into a local model post-hoc.
+
+But the **effect** they produce — self-correction, frame-breaking, assumption-questioning — can be approximated at the **harness level** by changing what the model receives as input. The key design principle:
+
+> **Shift meta-reasoning to the harness. Don't ask local models to detect their own stagnation — the harness detects it and injects the corrective signal. The model's job is to generate; the harness's job is to evaluate, detect, and reframe.**
+
+This is tractable because local models at 27B can follow explicit instructions well — they just can't reliably generate those instructions for themselves.
+
+---
+
+### 16.2 Technique A — Thinking mode escalation (Qwen3.6-27B specific)
+
+Qwen3.6-27B supports extended thinking mode via a budget parameter. Under normal operation the harness runs with a conservative thinking budget. When stagnation is detected (cosine > 0.85), the harness **upgrades the next attempt to full thinking budget**:
+
+```python
+# Normal attempt
+response = call_model(prompt, thinking_budget=512)
+
+# Stagnation-breaking attempt — harness upgrades automatically
+if stagnation_detected:
+    response = call_model(prompt, thinking_budget=4096,
+        prefix="Before answering, reason through why your previous approaches failed.")
+```
+
+This gives the model scratchpad space to reason about its own failure history before committing to attempt N+1. It is the closest local equivalent to Claude's extended thinking. Gemma 4 31B also has configurable thinking modes — apply the same pattern.
+
+**Cost:** ~3–5× slower for the stagnation-breaking attempt. Acceptable given that stagnation means the fast path has already failed.
+
+---
+
+### 16.3 Technique B — Forced assumption naming (Constitutional AI substitute)
+
+Constitutional AI trains the model to critique its own output before finalizing it. The harness approximates this by injecting an explicit critique requirement **before** the stagnation-breaking attempt:
+
+```
+STAGNATION DETECTED — similarity between attempts {n-1} and {n}: {score:.2f}
+
+Your last {n} attempts have been semantically equivalent. Before your next attempt:
+
+1. State explicitly: what assumption have you been making in all prior attempts?
+2. State whether that assumption has been verified against the problem constraints.
+3. If unverified: attempt WITHOUT that assumption as a starting point.
+
+Prior attempts summary:
+{attempt_summary}
+
+Assertions that must pass:
+{assertion_list}
+```
+
+The key: forcing the model to **name the assumption** is itself the frame-breaking act. A model that articulates "I have been assuming the issue is the rule syntax" has already partially escaped the anchor, because naming a frame is the first step to questioning it.
+
+This works at 27B because it's instruction-following, not meta-reasoning. The model doesn't need to independently realize it's stuck — the harness tells it.
+
+---
+
+### 16.4 Technique C — Temperature modulation
+
+Semantic stagnation reflects the model converging on a probability attractor — the same high-probability token paths dominate every generation. Higher temperature forces exploration of lower-probability paths.
+
+```python
+# Standard attempts
+temperature = 0.65  # Qwen3.6-27B production default
+
+# Stagnation-breaking attempt
+temperature = 0.95  # forces token-path diversification
+```
+
+Apply only to the stagnation-breaking attempt, then return to normal temperature. Persistent high temperature degrades output quality; targeted use breaks attractors without degrading the episode overall.
+
+**Gemma 4 31B note:** Community benchmarks show Gemma 4 31B is less temperature-sensitive than Qwen3.6-27B — apply same technique but may need slightly higher values (1.0–1.1) for equivalent diversification effect.
+
+---
+
+### 16.5 Technique D — Contrastive failure injection
+
+When the harness detects functional stagnation (same assertion failure across attempts despite different surface approaches), it constructs a contrastive observation:
+
+```
+Your last {n} attempts have all failed on the same assertion:
+  "{failing_assertion}"
+
+The attempts differ in approach:
+  Attempt 1: {summary_1}
+  Attempt 2: {summary_2}
+
+But both fail on the same assertion. This means the issue is NOT the implementation path.
+The assertion "{failing_assertion}" depends on condition: {inferred_precondition}.
+
+Verify that condition before attempting again.
+```
+
+The harness can extract `inferred_precondition` from the challenge's assertion structure — each assertion is a machine-checkable condition with known dependencies defined at challenge authorship time. This is the case where the challenge authorship requirement for "documented failure modes" pays off: failure modes specify what preconditions a wrong solution violates.
+
+---
+
+### 16.6 Technique E — Stagnation-aware web search query construction
+
+When stagnation triggers the web search step, the harness modifies the search query construction prompt:
+
+```
+Normal search prompt:
+"Search for: how to [solve problem X]"
+
+Stagnation-aware search prompt:
+"Your attempts to solve this via [dominant_approach] have failed.
+Search for: why does [dominant_approach] fail when [observed_symptom]
+Focus on failure modes, not solutions. Official docs and man pages only."
+```
+
+Searching for the failure mode rather than the solution bypasses the semantic anchor. A web result that explains *why* an approach fails provides the frame-breaking information the model needs — something a solution-focused query would not surface.
+
+The harness extracts `dominant_approach` from the attempt embeddings by finding the centroid of the stagnant cluster.
+
+---
+
+### 16.7 Technique F — Stagnation pattern accumulation in lse-errors
+
+When a stagnation is broken (by any technique), the KB entry includes the stagnation pattern:
+
+```python
+record_error(
+    error_text=f"Stagnation on {challenge_class}: {dominant_concept}",
+    context=f"Wrong assumption: {named_assumption}. Breaking approach: {what_worked}",
+    resolution=f"Inject assumption-questioning prompt. Search for failure mode of {dominant_concept}."
+)
+```
+
+Future `check_error_kb()` calls at step 0 match not just error strings but stagnation patterns by challenge class. A future model hitting the same challenge class receives a pre-warning before attempt 1:
+
+```
+KB MATCH — Known stagnation pattern for challenge class {class}:
+  Models commonly get stuck assuming: {wrong_assumption}
+  Verify {precondition} before proceeding.
+  Breaking approach that worked: {summary}
+```
+
+This turns historical stagnation into proactive protection — the KB teaches future models to avoid the anchor before they enter it.
+
+---
+
+### 16.8 What cannot be transferred
+
+These Claude capabilities require retraining and cannot be approximated at the harness level:
+
+- **Constitutional AI** — the self-critique loop is weight-level behavior. The harness approximation (Technique B) is a prompt injection, not a trained behavior. It works for explicit stagnation but won't generalize to novel failure modes the way trained self-critique does.
+- **Process Reward Models** — rewarding good reasoning steps requires a trained evaluator. The harness can inject step-checkpoints but cannot score them.
+- **Scale-based meta-reasoning** — a 27B model genuinely has less representational capacity for reasoning about its own reasoning than a frontier model. Techniques A–F compensate but do not close this gap for the hardest cases. For those, escalation to Claude is the correct response.
+
+The boundary this defines: local model stagnation mitigation handles **type-1 and type-2 stagnation** (wrong syntax/path, missing precondition detectable from assertions). **Type-3 stagnation** (invisible frame, novel unknowable dependency) goes to Claude, which has the representational capacity and Constitutional AI training to identify frames that local models cannot see.
+
+---
+
 ## 13. What Must NOT Be Built Yet
 
 - No harness code before T1 challenges are authored (simulation quality is the critical dependency)
 - No production deployments before sandbox gate is implemented and tested
 - No AsyncVectorEnv before VRAM strategy is decided
+
+---
+
+## 15. Gymnasium Integration Notes
+
+> Source: gymnasium.farama.org API review, 2026-06-03.
+> These are design decisions, not aspirational — they constrain how LSEChallengeEnv must be implemented.
+
+---
+
+### 15.1 `terminated` vs `truncated` — the escalation split
+
+Gymnasium v0.26 replaced the single `done` flag with two flags that mean distinct things. The distinction is load-bearing for the arena:
+
+| Flag | Meaning in Gymnasium | LSE mapping |
+|---|---|---|
+| `terminated=True` | Agent reached a defined terminal state in the MDP | Challenge solved **OR** escalation triggered after all attempts exhausted |
+| `truncated=True` | Episode ended by an external condition (not MDP-internal) | Semantic stagnation detected mid-episode (cosine > 0.85); `TimeLimit` step ceiling hit |
+
+The current arena doc conflates these. The correct split: stagnation is an externally-imposed cutoff — it belongs in `truncated`, not `terminated`. This matters if a meta-controller RL policy is added later: algorithms like PPO bootstrap differently from truncated vs terminated states.
+
+**Concrete rule:**
+- `step()` returns `terminated=True` only when an assertion suite passes (solve) or when escalation is final (all attempts + web search exhausted, Claude called).
+- `step()` returns `truncated=True` when the `EscalationWrapper` detects convergence (cosine > 0.85) or `TimeLimit` fires.
+
+---
+
+### 15.2 Wrapper stack — the right structure for EscalationGate
+
+The `EscalationGate` should not be a standalone service — it is a `gymnasium.Wrapper`. The full stack:
+
+```python
+LSEChallengeEnv(base)
+  └─ EscalationWrapper          # step() intercept: embed attempt, cosine check, Claude API call, KB write
+      └─ TimeLimit(max_episode_steps=3)   # truncated=True on attempt ceiling
+          └─ RecordEpisodeStatistics       # auto: cumulative reward, episode length, wall time → info["episode"]
+```
+
+Each layer has exactly one responsibility. The wrapper chain means:
+
+- `EscalationWrapper.step()` calls `self.env.step(action)` → checks convergence → if stagnation: calls Claude, writes KB entry, returns `(obs, reward, truncated=True, info)`. Otherwise passes through.
+- `TimeLimit` wraps `EscalationWrapper` — if 3 steps complete without `terminated` or `truncated`, it fires `truncated=True`. The `EscalationWrapper` must call Claude on `TimeLimit` truncation too (handle in `step()` by checking `truncated` from the inner env).
+- `RecordEpisodeStatistics` is the outermost layer — it sees all terminal/truncated signals and populates `info["episode"]` automatically. This is the `LeaderboardService` data feed; no separate implementation needed.
+
+The `EscalationWrapper` is also where the KB hit detection lives: before calling `self.env.step(action)`, call `search_kb(action_embedding)` and set `kb_assisted=True` in the observation if a hit is returned.
+
+---
+
+### 15.3 Observation and action spaces
+
+LLM actions are strings, not numpy arrays. Gymnasium v0.26+ provides `spaces.Text`:
+
+```python
+import gymnasium as gym
+
+class LSEChallengeEnv(gym.Env):
+    def __init__(self, model_endpoint: str, db_path: str = "/opt/local-se/challenges.db"):
+        self.model_endpoint = model_endpoint
+        self.db_path = db_path
+
+        self.observation_space = gym.spaces.Dict({
+            "challenge":       gym.spaces.Text(max_length=4096),   # problem statement
+            "attempt_history": gym.spaces.Text(max_length=8192),   # prior attempts, newline-delimited
+            "kb_context":      gym.spaces.Text(max_length=4096),   # KB hits retrieved before step
+        })
+        self.action_space = gym.spaces.Text(min_length=1, max_length=8192)  # model response
+```
+
+The harness never calls `env.action_space.sample()` — that path is for random baselines only. But declaring the spaces lets `check_env()` validate the implementation and enables future wrapper compatibility.
+
+**`_get_obs()` helper pattern** (from Gymnasium custom env tutorial — keep observations DRY):
+
+```python
+def _get_obs(self) -> dict:
+    return {
+        "challenge":       self._current_challenge["description"],
+        "attempt_history": "\n---\n".join(self._attempt_texts),
+        "kb_context":      self._last_kb_hit or "",
+    }
+
+def _get_info(self) -> dict:
+    return {
+        "attempt_n":             len(self._attempt_texts),
+        "convergence_score":     self._last_convergence_score,
+        "kb_assisted":           self._kb_assisted,
+        "discipline_multiplier": self._current_challenge["discipline_multiplier"],
+        "challenge_id":          self._current_challenge["id"],
+        "model_id":              self._model_id,
+    }
+```
+
+`info` is never used by the agent (model doesn't see it) — it feeds `RecordEpisodeStatistics` and the leaderboard.
+
+---
+
+### 15.4 Episode parameterization via `reset(options=...)`
+
+The standard Gymnasium pattern for seeding a specific episode:
+
+```python
+obs, info = env.reset(options={"challenge_id": "pf-t1-001", "model_id": "qwen-27b"})
+```
+
+`reset()` pulls the challenge row from ChallengeDB, restores the `starting_state` JSON, clears attempt history, and returns the initial observation. No subclassing or kwargs proliferation needed.
+
+```python
+def reset(self, seed=None, options=None):
+    super().reset(seed=seed)
+    options = options or {}
+    challenge_id = options.get("challenge_id")  # if None, pick next in ladder
+    self._model_id = options.get("model_id", "unknown")
+    self._current_challenge = self._load_challenge(challenge_id)
+    self._attempt_texts = []
+    self._attempt_embeddings = []
+    self._last_convergence_score = 0.0
+    self._kb_assisted = False
+    self._last_kb_hit = None
+    return self._get_obs(), self._get_info()
+```
+
+---
+
+### 15.5 `AsyncVectorEnv` for LUCIFER + NODE2 parallel episodes
+
+Each vector env instance runs in a subprocess (true OS-level parallelism). The model HTTP call is a blocking network request inside the subprocess — fine for inference. The setup:
+
+```python
+def make_env(model_endpoint, db_path):
+    def _init():
+        env = LSEChallengeEnv(model_endpoint=model_endpoint, db_path=db_path)
+        env = EscalationWrapper(env)
+        env = TimeLimit(env, max_episode_steps=3)
+        env = RecordEpisodeStatistics(env)
+        return env
+    return _init
+
+vec_env = gym.vector.AsyncVectorEnv([
+    make_env("http://localhost:8080",         "/opt/local-se/challenges.db"),  # LUCIFER / Qwen-27B
+    make_env("http://192.168.1.NODE2:8080",   "/opt/local-se/challenges.db"),  # NODE2 / Gemma-26B
+])
+
+# Run two episodes in parallel:
+obs, info = vec_env.reset(options=[
+    {"challenge_id": "pf-t1-001", "model_id": "qwen-27b"},
+    {"challenge_id": "pf-t1-001", "model_id": "gemma-26b"},
+])
+```
+
+Both models run the same challenge simultaneously. `RecordEpisodeStatistics` in each subprocess feeds the leaderboard independently. **Prerequisite:** NODE2 model endpoint confirmed reachable from LUCIFER (see §13 infra pre-conditions).
+
+**Phase 1 (before NODE2 is ready):** Use `SyncVectorEnv` with a single env, or just call `env.step()` directly in a loop. `AsyncVectorEnv` is a drop-in upgrade once NODE2 is online.
+
+---
+
+### 15.6 Validate with `check_env()` before first real episode
+
+```python
+from gymnasium.utils.env_checker import check_env
+
+env = LSEChallengeEnv(model_endpoint="http://localhost:8080")
+check_env(env)  # raises on: wrong return shapes, missing super().reset(), space mismatches
+```
+
+Run this against a stub challenge (hardcoded observation, no real model call) before any live inference. It catches implementation bugs that would otherwise surface as cryptic errors mid-episode.
+
+---
+
+### 15.7 KB integration points in the wrapper stack
+
+The KB (RAG stack) connects to the harness at four explicit points:
+
+| Point | Where | What happens |
+|---|---|---|
+| `search_kb()` | `EscalationWrapper.step()` — before passing action to base env | Query KB with action embedding; if hit ≥ 0.72, set `kb_assisted=True`, append to observation |
+| `index_to_kb()` | `EscalationWrapper` — on `terminated=True` (solved) | Index the successful solution with `quality_score=0.9`, `source="competition_solve"` |
+| `index_to_kb()` (escalation entry) | `EscalationWrapper` — on escalation trigger | Index full layered entry: attempt texts + embeddings + failure reasons + Claude solution + diff; `quality_score=1.0`, `source="competition_escalation"` |
+| `record_outcome()` | `EscalationWrapper` — post-episode | Update `empirical_runs` / `empirical_failures` on any KB doc that was retrieved and used |
+
+The KB bonus (+2 pts) and the indexing bonus (+1 pt) are computed in `EscalationWrapper` and added to the reward before `RecordEpisodeStatistics` sees the episode total.
