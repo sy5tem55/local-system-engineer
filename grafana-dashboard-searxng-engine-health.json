@@ -3,1747 +3,210 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {
-          "type": "grafana",
-          "uid": "-- Grafana --"
-        },
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts", "type": "dashboard"
       },
       {
-        "datasource": {
-          "type": "prometheus",
-          "uid": "PBFA97CFB590B2093"
-        },
+        "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
         "enable": true,
         "expr": "changes(searxng_engines_request_count_total[1m]) > 0",
-        "hide": false,
-        "iconColor": "blue",
+        "hide": false, "iconColor": "blue",
         "name": "27-engine config deployed 2026-06-03",
-        "step": "60s",
-        "titleFormat": "Config: 27 engines deployed",
-        "type": "alert"
+        "step": "60s", "titleFormat": "Config: 27 engines deployed", "type": "alert"
       }
     ]
   },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": null,
   "links": [],
   "liveNow": false,
   "panels": [
+    {"collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":0},"id":10,"title":"Overview","type":"row"},
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
-      "id": 10,
-      "title": "Overview",
-      "type": "row"
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"yellow","value":70},{"color":"green","value":90}]}},"overrides":[]},
+      "gridPos":{"h":4,"w":6,"x":0,"y":1},"id":1,
+      "options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto","wideLayout":true},
+      "pluginVersion":"11.5.2",
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"editorMode":"code","expr":"avg(searxng_engines_reliability_total{engine_name=~\"$engine\"})","legendFormat":"Avg Reliability %","range":true,"refId":"A"}],
+      "title":"Avg Engine Reliability","type":"stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 70
-              },
-              {
-                "color": "green",
-                "value": 90
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 1
-      },
-      "id": 1,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "avg(searxng_engines_reliability_total{engine_name=~\"$engine\"})",
-          "legendFormat": "Avg Reliability %",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Avg Engine Reliability",
-      "type": "stat"
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"yellow","value":100},{"color":"red","value":500}]}},"overrides":[]},
+      "gridPos":{"h":4,"w":6,"x":6,"y":1},"id":2,
+      "options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto","wideLayout":true},
+      "pluginVersion":"11.5.2",
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"editorMode":"code","expr":"avg(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"})","legendFormat":"Avg Response Time (s)","range":true,"refId":"A"}],
+      "title":"Avg Response Time (s)","type":"stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 100
-              },
-              {
-                "color": "red",
-                "value": 500
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 1
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "avg(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"})",
-          "legendFormat": "Avg Response Time (s)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Avg Response Time (s)",
-      "type": "stat"
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"yellow","value":5},{"color":"green","value":15}]}},"overrides":[]},
+      "gridPos":{"h":4,"w":6,"x":12,"y":1},"id":3,
+      "options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto","wideLayout":true},
+      "pluginVersion":"11.5.2",
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"editorMode":"code","expr":"count(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"} > 0)","legendFormat":"Active Engines","range":true,"refId":"A"}],
+      "title":"Active Engines Count","type":"stat"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 5
-              },
-              {
-                "color": "green",
-                "value": 15
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 1
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "count(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"} > 0)",
-          "legendFormat": "Active Engines",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Active Engines Count",
-      "type": "stat"
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "fieldConfig":{"defaults":{"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"yellow","value":1},{"color":"red","value":3}]}},"overrides":[]},
+      "gridPos":{"h":4,"w":6,"x":18,"y":1},"id":4,
+      "options":{"colorMode":"value","graphMode":"area","justifyMode":"auto","orientation":"auto","reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"textMode":"auto","wideLayout":true},
+      "pluginVersion":"11.5.2",
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"editorMode":"code","expr":"count(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"} == 0 and searxng_engines_request_count_total{engine_name=~\"$engine\"} > 0) or vector(0)","legendFormat":"Failing","range":true,"refId":"A"}],
+      "title":"Failing Engines","type":"stat"
+    },
+    {"collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":5},"id":11,"title":"Engine Reliability","type":"row"},
+    {
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"custom":{"align":"auto","cellOptions":{"type":"auto"},"inspect":false},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"yellow","value":0.7},{"color":"green","value":0.9}]}},"overrides":[{"matcher":{"id":"byName","options":"arxiv"},"properties":[{"id":"displayName","value":"📚 arXiv"}]},{"matcher":{"id":"byName","options":"bing"},"properties":[{"id":"displayName","value":"📎 Bing"}]},{"matcher":{"id":"byName","options":"bing news"},"properties":[{"id":"displayName","value":"📰 Bing News"}]},{"matcher":{"id":"byName","options":"brave"},"properties":[{"id":"displayName","value":"🦁 Brave"}]},{"matcher":{"id":"byName","options":"duckduckgo"},"properties":[{"id":"displayName","value":"🦆 DuckDuckGo"}]},{"matcher":{"id":"byName","options":"google"},"properties":[{"id":"displayName","value":"🔍 Google"}]},{"matcher":{"id":"byName","options":"google scholar"},"properties":[{"id":"displayName","value":"🎓 Scholar"}]},{"matcher":{"id":"byName","options":"mojeek"},"properties":[{"id":"displayName","value":"🌿 Mojeek"}]},{"matcher":{"id":"byName","options":"qwant"},"properties":[{"id":"displayName","value":"🌐 Qwant"}]},{"matcher":{"id":"byName","options":"reddit"},"properties":[{"id":"displayName","value":"💬 Reddit"}]},{"matcher":{"id":"byName","options":"wikipedia"},"properties":[{"id":"displayName","value":"📖 Wikipedia"}]},{"matcher":{"id":"byName","options":"github"},"properties":[{"id":"displayName","value":"🐙 GitHub"}]},{"matcher":{"id":"byName","options":"stackoverflow"},"properties":[{"id":"displayName","value":"🔶 Stack Overflow"}]},{"matcher":{"id":"byName","options":"youtube"},"properties":[{"id":"displayName","value":"▶️ YouTube"}]},{"matcher":{"id":"byName","options":"startpage"},"properties":[{"id":"displayName","value":"🔒 Startpage"}]},{"matcher":{"id":"byName","options":"wikidata"},"properties":[{"id":"displayName","value":"🗂️ Wikidata"}]},{"matcher":{"id":"byName","options":"semantic scholar"},"properties":[{"id":"displayName","value":"🧠 Semantic Scholar"}]}]},
+      "gridPos":{"h":12,"w":12,"x":0,"y":6},"id":5,
+      "options":{"cellHeight":"sm","footer":{"countRows":false,"fields":"","reducer":["sum"],"show":false},"showHeader":true},
+      "pluginVersion":"11.5.2",
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"editorMode":"code","expr":"searxng_engines_reliability_total{engine_name=~\"$engine\"}","format":"table","instant":false,"legendFormat":"{{engine_name}}","range":true,"refId":"A"}],
+      "title":"Reliability by Engine (ratio 0–1)","type":"table",
+      "transformations":[{"id":"organize","options":{"excludeByName":{"__name__":true,"instance":true,"job":true},"indexByName":{},"renameByName":{"Value":"Reliability","engine_name":"Engine"}}}]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 3
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 1
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "count(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"} == 0 and searxng_engines_request_count_total{engine_name=~\"$engine\"} > 0) or vector(0)",
-          "legendFormat": "Failing",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Failing Engines",
-      "type": "stat"
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"custom":{"align":"auto","cellOptions":{"type":"auto"},"inspect":false},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"yellow","value":200},{"color":"red","value":500}]}},"overrides":[{"matcher":{"id":"byName","options":"arxiv"},"properties":[{"id":"displayName","value":"📚 arXiv"}]},{"matcher":{"id":"byName","options":"bing"},"properties":[{"id":"displayName","value":"📎 Bing"}]},{"matcher":{"id":"byName","options":"bing news"},"properties":[{"id":"displayName","value":"📰 Bing News"}]},{"matcher":{"id":"byName","options":"brave"},"properties":[{"id":"displayName","value":"🦁 Brave"}]},{"matcher":{"id":"byName","options":"duckduckgo"},"properties":[{"id":"displayName","value":"🦆 DuckDuckGo"}]},{"matcher":{"id":"byName","options":"google"},"properties":[{"id":"displayName","value":"🔍 Google"}]},{"matcher":{"id":"byName","options":"google scholar"},"properties":[{"id":"displayName","value":"🎓 Scholar"}]},{"matcher":{"id":"byName","options":"mojeek"},"properties":[{"id":"displayName","value":"🌿 Mojeek"}]},{"matcher":{"id":"byName","options":"qwant"},"properties":[{"id":"displayName","value":"🌐 Qwant"}]},{"matcher":{"id":"byName","options":"reddit"},"properties":[{"id":"displayName","value":"💬 Reddit"}]},{"matcher":{"id":"byName","options":"wikipedia"},"properties":[{"id":"displayName","value":"📖 Wikipedia"}]},{"matcher":{"id":"byName","options":"github"},"properties":[{"id":"displayName","value":"🐙 GitHub"}]},{"matcher":{"id":"byName","options":"stackoverflow"},"properties":[{"id":"displayName","value":"🔶 Stack Overflow"}]},{"matcher":{"id":"byName","options":"youtube"},"properties":[{"id":"displayName","value":"▶️ YouTube"}]},{"matcher":{"id":"byName","options":"startpage"},"properties":[{"id":"displayName","value":"🔒 Startpage"}]},{"matcher":{"id":"byName","options":"wikidata"},"properties":[{"id":"displayName","value":"🗂️ Wikidata"}]},{"matcher":{"id":"byName","options":"semantic scholar"},"properties":[{"id":"displayName","value":"🧠 Semantic Scholar"}]}]},
+      "gridPos":{"h":12,"w":12,"x":12,"y":6},"id":6,
+      "options":{"cellHeight":"sm","footer":{"countRows":false,"fields":"","reducer":["sum"],"show":false},"showHeader":true},
+      "pluginVersion":"11.5.2",
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"editorMode":"code","expr":"searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"} > 0","format":"table","instant":false,"legendFormat":"{{engine_name}}","range":true,"refId":"A"}],
+      "title":"Avg Response Time by Engine (s)","type":"table",
+      "transformations":[{"id":"organize","options":{"excludeByName":{"__name__":true,"instance":true,"job":true},"indexByName":{},"renameByName":{"Value":"Time (s)","engine_name":"Engine"}}}]
+    },
+    {"collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":26},"id":12,"title":"Request Activity","type":"row"},
+    {
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "fieldConfig":{"defaults":{"color":{"mode":"palette-classic"},"custom":{"axisBorderShow":false,"axisCenteredZero":false,"axisColorMode":"text","axisLabel":"","axisPlacement":"auto","barAlignment":0,"barWidthFactor":0.6,"drawStyle":"line","fillOpacity":10,"gradientMode":"none","hideFrom":{"legend":false,"tooltip":false,"viz":false},"insertNulls":false,"lineInterpolation":"linear","lineWidth":2,"pointSize":5,"scaleDistribution":{"type":"linear"},"showPoints":"never","spanNulls":false,"stacking":{"group":"A","mode":"none"},"thresholdsStyle":{"mode":"off"}}},"overrides":[{"matcher":{"id":"byName","options":"📚 arXiv"},"properties":[{"id":"color","value":{"fixedColor":"#e8a838","mode":"fixed"}}]},{"matcher":{"id":"byName","options":"🔍 Google"},"properties":[{"id":"color","value":{"fixedColor":"#4285F4","mode":"fixed"}}]},{"matcher":{"id":"byName","options":"🦆 DuckDuckGo"},"properties":[{"id":"color","value":{"fixedColor":"#de5833","mode":"fixed"}}]},{"matcher":{"id":"byName","options":"🦁 Brave"},"properties":[{"id":"color","value":{"fixedColor":"#fb542b","mode":"fixed"}}]},{"matcher":{"id":"byName","options":"📎 Bing"},"properties":[{"id":"color","value":{"fixedColor":"#008373","mode":"fixed"}}]},{"matcher":{"id":"byName","options":"🎓 Scholar"},"properties":[{"id":"color","value":{"fixedColor":"#4285F4","mode":"fixed"}}]},{"matcher":{"id":"byName","options":"📖 Wikipedia"},"properties":[{"id":"color","value":{"fixedColor":"#a2a9b1","mode":"fixed"}}]}]},
+      "gridPos":{"h":8,"w":12,"x":0,"y":27},"id":7,
+      "options":{"legend":{"calcs":["lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},
+      "pluginVersion":"11.5.2",
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"editorMode":"code","expr":"searxng_engines_request_count_total{engine_name=~\"$engine\"}","legendFormat":"{{engine_name}}","range":true,"refId":"A"}],
+      "title":"Total Queries per Engine (cumulative)","type":"timeseries",
+      "transformations":[{"id":"renameByRegex","options":{"regex":"arxiv","renamePattern":"📚 arXiv"}}]
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 5
-      },
-      "id": 11,
-      "title": "Engine Reliability",
-      "type": "row"
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "fieldConfig":{"defaults":{"color":{"mode":"palette-classic"},"custom":{"axisBorderShow":false,"axisCenteredZero":false,"axisColorMode":"text","axisLabel":"","axisPlacement":"auto","barAlignment":0,"barWidthFactor":0.6,"drawStyle":"line","fillOpacity":10,"gradientMode":"none","hideFrom":{"legend":false,"tooltip":false,"viz":false},"insertNulls":false,"lineInterpolation":"linear","lineWidth":2,"pointSize":5,"scaleDistribution":{"type":"linear"},"showPoints":"never","spanNulls":false,"stacking":{"group":"A","mode":"none"},"thresholdsStyle":{"mode":"off"}}},"overrides":[]},
+      "gridPos":{"h":8,"w":12,"x":12,"y":27},"id":8,
+      "options":{"legend":{"calcs":["lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},
+      "pluginVersion":"11.5.2",
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"editorMode":"code","expr":"searxng_engines_result_count_total{engine_name=~\"$engine\"}","legendFormat":"{{engine_name}}","range":true,"refId":"A"}],
+      "title":"Total Results per Engine (cumulative)","type":"timeseries"
+    },
+    {"collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":35},"id":13,"title":"Response Time Trends","type":"row"},
+    {
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "fieldConfig":{"defaults":{"color":{"mode":"palette-classic"},"custom":{"axisBorderShow":false,"axisCenteredZero":false,"axisColorMode":"text","axisLabel":"s","axisPlacement":"auto","barAlignment":0,"barWidthFactor":0.6,"drawStyle":"line","fillOpacity":10,"gradientMode":"none","hideFrom":{"legend":false,"tooltip":false,"viz":false},"insertNulls":false,"lineInterpolation":"linear","lineWidth":2,"pointSize":5,"scaleDistribution":{"type":"linear"},"showPoints":"never","spanNulls":false,"stacking":{"group":"A","mode":"none"},"thresholdsStyle":{"mode":"off"}}},"overrides":[]},
+      "gridPos":{"h":8,"w":12,"x":0,"y":36},"id":9,
+      "options":{"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom","showLegend":true},"tooltip":{"mode":"multi","sort":"desc"}},
+      "pluginVersion":"11.5.2",
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"editorMode":"code","expr":"rate(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"}[5m])","legendFormat":"{{engine_name}}","range":true,"refId":"A"}],
+      "title":"Response Time Rate (5m window)","type":"timeseries"
+    },
+    {"collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":44},"id":20,"title":"Engine Tuning Signals","type":"row"},
+    {
+      "id":21,"type":"bargauge",
+      "title":"Avg Response Time — Slowest First",
+      "description":"Average total response time per engine (pre-computed gauge from SearXNG). Engines above 5 s are prime throttle/disable candidates.",
+      "gridPos":{"h":14,"w":12,"x":0,"y":45},
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"expr":"sort_desc(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"})","instant":true,"legendFormat":"{{engine_name}}","refId":"A"}],
+      "options":{"reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"orientation":"horizontal","displayMode":"gradient","valueMode":"color","text":{},"minVizHeight":10,"minVizWidth":0},
+      "fieldConfig":{"defaults":{"unit":"s","decimals":3,"color":{"mode":"continuous-BlYlRd"},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"yellow","value":2},{"color":"red","value":5}]},"mappings":[]},"overrides":[]}
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0.7
-              },
-              {
-                "color": "green",
-                "value": 0.9
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "arxiv"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcda arXiv"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "bing"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcce Bing"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "bing news"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcf0 Bing News"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "brave"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83e\udd81 Brave"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "duckduckgo"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83e\udd86 DuckDuckGo"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "google"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udd0d Google"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "google scholar"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83c\udf93 Scholar"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "mojeek"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83c\udf3f Mojeek"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "qwant"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83c\udf10 Qwant"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "reddit"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcac Reddit"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "wikipedia"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcd6 Wikipedia"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "github"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udc19 GitHub"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "stackoverflow"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udd36 Stack Overflow"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "youtube"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\u25b6\ufe0f YouTube"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "startpage"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udd12 Startpage"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "wikidata"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\uddc2\ufe0f Wikidata"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "semantic scholar"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83e\udde0 Semantic Scholar"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 12,
-        "w": 12,
-        "x": 0,
-        "y": 6
-      },
-      "id": 5,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "searxng_engines_reliability_total{engine_name=~\"$engine\"}",
-          "format": "table",
-          "instant": false,
-          "legendFormat": "{{engine_name}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Reliability by Engine (ratio 0\u20131)",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "__name__": true,
-              "instance": true,
-              "job": true
-            },
-            "indexByName": {},
-            "renameByName": {
-              "Value": "Reliability",
-              "engine_name": "Engine"
-            }
-          }
-        }
-      ],
-      "type": "table"
+      "id":22,"type":"bargauge",
+      "title":"Result Yield — Lowest First (results/request, 1 h)",
+      "description":"Results returned per query over last hour. Below 1 result/request = poor contributor, review or disable.",
+      "gridPos":{"h":14,"w":12,"x":12,"y":45},
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"expr":"sort(\n  rate(searxng_engines_result_count_total{engine_name=~\"$engine\"}[1h])\n  / clamp_min(rate(searxng_engines_request_count_total{engine_name=~\"$engine\"}[1h]), 0.0001)\n)","instant":true,"legendFormat":"{{engine_name}}","refId":"A"}],
+      "options":{"reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"orientation":"horizontal","displayMode":"gradient","valueMode":"color","text":{},"minVizHeight":10,"minVizWidth":0},
+      "fieldConfig":{"defaults":{"unit":"short","decimals":1,"color":{"mode":"continuous-RdYlGr"},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"yellow","value":2},{"color":"green","value":6}]},"mappings":[]},"overrides":[]}
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 200
-              },
-              {
-                "color": "red",
-                "value": 500
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "arxiv"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcda arXiv"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "bing"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcce Bing"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "bing news"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcf0 Bing News"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "brave"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83e\udd81 Brave"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "duckduckgo"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83e\udd86 DuckDuckGo"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "google"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udd0d Google"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "google scholar"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83c\udf93 Scholar"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "mojeek"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83c\udf3f Mojeek"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "qwant"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83c\udf10 Qwant"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "reddit"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcac Reddit"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "wikipedia"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcd6 Wikipedia"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "github"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udc19 GitHub"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "stackoverflow"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udd36 Stack Overflow"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "youtube"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\u25b6\ufe0f YouTube"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "startpage"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udd12 Startpage"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "wikidata"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\uddc2\ufe0f Wikidata"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "semantic scholar"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83e\udde0 Semantic Scholar"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 12,
-        "w": 12,
-        "x": 12,
-        "y": 6
-      },
-      "id": 6,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"} > 0",
-          "format": "table",
-          "instant": false,
-          "legendFormat": "{{engine_name}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Avg Response Time by Engine (s)",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "__name__": true,
-              "instance": true,
-              "job": true
-            },
-            "indexByName": {},
-            "renameByName": {
-              "Value": "Time (s)",
-              "engine_name": "Engine"
-            }
-          }
-        }
-      ],
-      "type": "table"
+      "id":23,"type":"bargauge",
+      "title":"Reliability Event Rate — 24 h (highest = most active)",
+      "description":"Rate of reliability events over 24 h. Engines near zero may be broken or never selected by the router.",
+      "gridPos":{"h":10,"w":12,"x":0,"y":59},
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"expr":"sort_desc(rate(searxng_engines_reliability_total{engine_name=~\"$engine\"}[24h]))","instant":true,"legendFormat":"{{engine_name}}","refId":"A"}],
+      "options":{"reduceOptions":{"calcs":["lastNotNull"],"fields":"","values":false},"orientation":"horizontal","displayMode":"gradient","valueMode":"color","text":{},"minVizHeight":10,"minVizWidth":0},
+      "fieldConfig":{"defaults":{"unit":"ops","decimals":5,"color":{"mode":"continuous-RdYlGr"},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"yellow","value":0.0001},{"color":"green","value":0.001}]},"mappings":[]},"overrides":[]}
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 5
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "arxiv"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcda arXiv"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "bing"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcce Bing"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "bing news"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcf0 Bing News"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "brave"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83e\udd81 Brave"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "duckduckgo"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83e\udd86 DuckDuckGo"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "google"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udd0d Google"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "google scholar"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83c\udf93 Scholar"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "mojeek"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83c\udf3f Mojeek"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "qwant"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83c\udf10 Qwant"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "reddit"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcac Reddit"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "wikipedia"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udcd6 Wikipedia"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "github"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udc19 GitHub"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "stackoverflow"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udd36 Stack Overflow"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "youtube"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\u25b6\ufe0f YouTube"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "startpage"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\udd12 Startpage"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "wikidata"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83d\uddc2\ufe0f Wikidata"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "semantic scholar"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "\ud83e\udde0 Semantic Scholar"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 18
-      },
-      "id": 14,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "Errors"
-          }
-        ]
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "searxng_engine_errors_total{engine_name=~\"$engine\"}",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "{{engine_name}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Engine Errors",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "instance": true,
-              "job": true
-            },
-            "indexByName": {},
-            "renameByName": {
-              "Value": "Errors",
-              "engine_name": "Engine",
-              "error_type": "Error Type"
-            }
-          }
-        }
-      ],
-      "type": "table"
+      "id":24,"type":"table",
+      "title":"Error Rate by Engine × Error Type (5 m rate)",
+      "description":"From error-exporter. Types: timeout, read_timeout, rate_limited, access_denied, http_error. No data = no errors yet or error-exporter not running.",
+      "gridPos":{"h":10,"w":12,"x":12,"y":59},
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"expr":"sort_desc(rate(searxng_engine_errors_total{engine_name=~\"$engine\"}[5m]))","instant":true,"legendFormat":"{{engine_name}} · {{error_type}}","refId":"A"}],
+      "options":{"sortBy":[{"displayName":"Value","desc":true}],"footer":{"show":false,"reducer":["sum"],"countRows":false}},
+      "fieldConfig":{"defaults":{"unit":"ops","custom":{"displayMode":"color-background"},"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"yellow","value":0.001},{"color":"red","value":0.01}]},"mappings":[]},"overrides":[
+        {"matcher":{"id":"byName","options":"Time"},"properties":[{"id":"custom.hidden","value":true}]},
+        {"matcher":{"id":"byName","options":"instance"},"properties":[{"id":"custom.hidden","value":true}]},
+        {"matcher":{"id":"byName","options":"job"},"properties":[{"id":"custom.hidden","value":true}]},
+        {"matcher":{"id":"byName","options":"__name__"},"properties":[{"id":"custom.hidden","value":true}]},
+        {"matcher":{"id":"byName","options":"engine_name"},"properties":[{"id":"displayName","value":"Engine"}]},
+        {"matcher":{"id":"byName","options":"error_type"},"properties":[{"id":"displayName","value":"Error Type"}]},
+        {"matcher":{"id":"byName","options":"Value"},"properties":[{"id":"displayName","value":"Error Rate (ops/s)"}]}
+      ]}
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 26
-      },
-      "id": 12,
-      "title": "Request Activity",
-      "type": "row"
+      "id":25,"type":"table",
+      "title":"Dead Engines — Zero Requests in Last 1 h",
+      "description":"No queries in the past hour. No data = all engines active. Listed engines are candidates for removal from settings.yml.",
+      "gridPos":{"h":8,"w":12,"x":0,"y":69},
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"expr":"increase(searxng_engines_request_count_total{engine_name=~\"$engine\"}[1h]) < 0.5","instant":true,"legendFormat":"{{engine_name}}","refId":"A"}],
+      "options":{"footer":{"show":false,"reducer":["sum"],"countRows":false}},
+      "fieldConfig":{"defaults":{"unit":"short","custom":{"displayMode":"color-background"},"color":{"fixedColor":"dark-red","mode":"fixed"},"mappings":[]},"overrides":[
+        {"matcher":{"id":"byName","options":"Time"},"properties":[{"id":"custom.hidden","value":true}]},
+        {"matcher":{"id":"byName","options":"instance"},"properties":[{"id":"custom.hidden","value":true}]},
+        {"matcher":{"id":"byName","options":"job"},"properties":[{"id":"custom.hidden","value":true}]},
+        {"matcher":{"id":"byName","options":"__name__"},"properties":[{"id":"custom.hidden","value":true}]},
+        {"matcher":{"id":"byName","options":"engine_name"},"properties":[{"id":"displayName","value":"Engine (inactive)"}]},
+        {"matcher":{"id":"byName","options":"Value"},"properties":[{"id":"displayName","value":"Requests (1 h increase)"}]}
+      ]}
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "\ud83d\udcda arXiv"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#e8a838",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "\ud83d\udd0d Google"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#4285F4",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "\ud83e\udd86 DuckDuckGo"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#de5833",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "\ud83e\udd81 Brave"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#fb542b",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "\ud83d\udcce Bing"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#008373",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "\ud83c\udf93 Scholar"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#4285F4",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "\ud83d\udcd6 Wikipedia"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#a2a9b1",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 27
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "searxng_engines_request_count_total{engine_name=~\"$engine\"}",
-          "legendFormat": "{{engine_name}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Total Queries per Engine (cumulative)",
-      "transformations": [
-        {
-          "id": "renameByRegex",
-          "options": {
-            "regex": "arxiv",
-            "renamePattern": "\ud83d\udcda arXiv"
-          }
-        }
-      ],
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 27
-      },
-      "id": 8,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "searxng_engines_result_count_total{engine_name=~\"$engine\"}",
-          "legendFormat": "{{engine_name}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Total Results per Engine (cumulative)",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 35
-      },
-      "id": 13,
-      "title": "Response Time Trends",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "s",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 36
-      },
-      "id": 9,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "rate(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"}[5m])",
-          "legendFormat": "{{engine_name}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Response Time Rate (5m window)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "errors/s",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "bars",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 36
-      },
-      "id": 15,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "11.5.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "editorMode": "code",
-          "expr": "rate(searxng_engine_errors_total{engine_name=~\"$engine\"}[5m])",
-          "legendFormat": "{{engine_name}} \u2014 {{error_type}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Error Rate by Engine (5m window, stacked)",
-      "type": "timeseries"
+      "id":26,"type":"timeseries",
+      "title":"Response Time Trend per Engine",
+      "description":"Avg response time over time. Use the Engine variable to filter. Spot engines that degrade at specific times of day.",
+      "gridPos":{"h":8,"w":12,"x":12,"y":69},
+      "datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},
+      "targets":[{"datasource":{"type":"prometheus","uid":"PBFA97CFB590B2093"},"expr":"searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"}","legendFormat":"{{engine_name}}","refId":"A"}],
+      "options":{"tooltip":{"mode":"multi","sort":"desc"},"legend":{"displayMode":"table","placement":"bottom","calcs":["lastNotNull","max"]}},
+      "fieldConfig":{"defaults":{"unit":"s","color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":1,"fillOpacity":8,"showPoints":"auto","pointSize":4,"spanNulls":false,"axisBorderShow":false,"axisColorMode":"text","axisCenteredZero":false,"axisLabel":"","axisPlacement":"auto","barAlignment":0,"hideFrom":{"legend":false,"tooltip":false,"viz":false},"insertNulls":false,"scaleDistribution":{"type":"linear"},"thresholdsStyle":{"mode":"off"}},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"red","value":80}]},"mappings":[]},"overrides":[]}
     }
   ],
   "preload": false,
   "refresh": "1m",
   "schemaVersion": 40,
-  "tags": [
-    "searxng",
-    "engine-health"
-  ],
+  "tags": ["searxng", "engine-health"],
   "templating": {
-    "list": [
-      {
-        "current": {
-          "selected": true,
-          "text": "All",
-          "value": "$__all"
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "PBFA97CFB590B2093"
-        },
-        "definition": "label_values(searxng_engines_request_count_total, engine_name)",
-        "hide": 0,
-        "includeAll": true,
-        "label": "Engine",
-        "multi": true,
-        "name": "engine",
-        "options": [],
-        "query": {
-          "query": "label_values(searxng_engines_request_count_total, engine_name)",
-          "refId": "StandardVariableQuery"
-        },
-        "refresh": 2,
-        "regex": "",
-        "sort": 1,
-        "type": "query"
-      }
-    ]
+    "list": [{
+      "current": {"selected": true, "text": "All", "value": "$__all"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "definition": "label_values(searxng_engines_request_count_total, engine_name)",
+      "hide": 0, "includeAll": true, "label": "Engine", "multi": true, "name": "engine",
+      "options": [],
+      "query": {"query": "label_values(searxng_engines_request_count_total, engine_name)", "refId": "StandardVariableQuery"},
+      "refresh": 2, "regex": "", "sort": 1, "type": "query"
+    }]
   },
-  "time": {
-    "from": "now-6h",
-    "to": "now"
-  },
+  "time": {"from": "now-6h", "to": "now"},
   "timepicker": {},
   "timezone": "browser",
   "title": "SearXNG Engine Health",
   "uid": "searxng-engine-health",
-  "version": 4
+  "version": 15
 }
