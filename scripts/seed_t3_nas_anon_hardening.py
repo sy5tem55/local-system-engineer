@@ -22,7 +22,7 @@ CHALLENGE = dict(
     title="NAS Anonymous Access Hardening Verification",
     description=(
         "Following the T2 discovery that FTP anonymous login and SMB anonymous "
-        "enumeration were both enabled on nas.home.arpa (192.168.5.45), fixes were "
+        "enumeration were both enabled on n45.home.arpa (192.168.5.45), fixes were "
         "applied: `setcfg global 'restrict anonymous' '2'` for SMB and FTP anonymous "
         "login disabled via QNAP Control Panel. "
         "Verify both fixes are in place and effective from LUCIFER WSL2. "
@@ -41,18 +41,18 @@ CHALLENGE = dict(
     tier=3,
     mode="read_only",
     starting_state=json.dumps({
-        "target": "nas.home.arpa",
+        "target": "n45.home.arpa",
         "ip": "192.168.5.45",
         "smb_fix_applied": "setcfg global 'restrict anonymous' '2' -f /etc/config/smb.conf",
         "ftp_fix_applied": "QNAP Control Panel → FTP Service → anonymous login disabled",
         "kb_doc_id": "7ac7c02c1d118662",
         "notes": (
-            "Check SMB: execute_command('smbclient -L //nas.home.arpa -N 2>&1 | head -5'). "
+            "Check SMB: execute_command('smbclient -L //n45.home.arpa -N 2>&1 | head -5'). "
             "Expect: NT_STATUS_LOGON_FAILURE. "
             "Check FTP: execute_command('curl -v --connect-timeout 5 ftp://192.168.5.45 2>&1 | head -10'). "
             "Expect: 530 Login incorrect or 530 Not logged in. "
             "Check restrict_anonymous source value via SSH: "
-            "execute_command(\"ssh admin@nas.home.arpa 'grep -i restrict /etc/config/smb.conf'\")"
+            "execute_command(\"ssh admin@n45.home.arpa 'grep -i restrict /etc/config/smb.conf'\")"
         )
     }),
     success_criteria=json.dumps({

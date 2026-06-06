@@ -83,7 +83,7 @@ CHALLENGES = [
         tier=1,
         mode="read_only",
         starting_state=json.dumps({
-            "api_base": "https://192.168.1.50/api/v2",
+            "api_base": "https://pfsense.home.arpa/api/v2",
             "auth": "vaultwarden:PFSENSE_API_KEY",
             "api_mode": "read_only",
             "snapshot_required": False,
@@ -336,7 +336,7 @@ CHALLENGES = [
         tier=1,
         mode="read_only",
         starting_state=json.dumps({
-            "api_base": "https://192.168.1.50/api/v2",
+            "api_base": "https://pfsense.home.arpa/api/v2",
             "endpoint": "GET /api/v2/firewall/rule",
             "auth": "vaultwarden:PFSENSE_API_KEY",
             "api_mode": "read_only",
@@ -387,12 +387,12 @@ CHALLENGES = [
         tier=1,
         mode="read_only",
         starting_state=json.dumps({
-            "api_base": "https://192.168.1.50/api/v2",
+            "api_base": "https://pfsense.home.arpa/api/v2",
             "endpoints": [
                 "GET /api/v2/services/unbound/host_override",
                 "GET /api/v2/services/unbound/domain_override"
             ],
-            "ssh_fallback": "ssh admin@192.168.1.50 'cat /cf/conf/config.xml'",
+            "ssh_fallback": "ssh admin@pfsense.home.arpa 'cat /cf/conf/config.xml'",
             "known_state": "cisco.lan stale entry removed 2026-06-03 — audit should show clean state",
             "snapshot_required": False,
         }),
@@ -839,7 +839,7 @@ CHALLENGES = [
         tier=1,
         mode="read_only",
         starting_state=json.dumps({
-            "api_base": "https://192.168.1.50/api/v2",
+            "api_base": "https://pfsense.home.arpa/api/v2",
             "endpoints": [
                 "GET /api/v2/status/interface",
                 "GET /api/v2/status/logs/firewall"

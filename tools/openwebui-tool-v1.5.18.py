@@ -752,7 +752,7 @@ class Tools:
           /api/v2/system/version           — pfSense version
           /api/v2/dhcp/server/lease        — active DHCP leases (LAN device map)
           /api/v2/firewall/rule            — all firewall rules
-          /api/v2/services/unbound/host    — DNS host overrides
+          /api/v2/services/unbound/host    — DNS host overrides (⚠️ 404 on Plus 26.03.1 — use SSH: grep local-data /var/unbound/unbound.conf)
           /api/v2/status/logs/firewall     — firewall log entries
           /api/v2/status/interface         — interface traffic statistics
           Full reference: https://pfsense.home.arpa/api/v2/documentation (Swagger UI)

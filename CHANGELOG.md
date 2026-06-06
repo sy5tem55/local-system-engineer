@@ -137,7 +137,7 @@ New section **"Engine Tuning Signals"** appended (row id=20, panels 21–26, sta
 **Final T1 leaderboard:** `qwen3.6-27b-q4-64k` — 161.6 pts · 10 eps · 9 solved · 0 esc · avg 1.20 att · **10/10 KB hits**
 
 All 10 T1 challenges solved first attempt with KB assist. Notable findings:
-- NAS `192.168.5.45` (nas.home.arpa): 3 NFS exports, 4 SMB shares, 450 GB free
+- NAS `192.168.5.45` (n45.home.arpa): 3 NFS exports, 4 SMB shares, 450 GB free
 - HA: version 2024.6.3, 12 entities, **2 stale automations** flagged
 - Samsung TV 192.168.1.90: DHCP hammer confirmed across multiple challenges
 - The ha-t1-004 → ha-t1-008 KB chain fired within 4 minutes — same session

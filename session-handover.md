@@ -1,5 +1,5 @@
 # Session Handover
-> Updated: 2026-06-05 (P5 Cowork — 6 arena solves, SSH hardening, HA template fixed)
+> Updated: 2026-06-06 (P6 Cowork — SearXNG NVD diagnosis, v0.5.15, hostname fixes, topology series)
 > Next session: read ROADMAP.md → CURRENT-STATE.md → this file in that order.
 
 ---
@@ -9,26 +9,78 @@
 1. **Edit tool truncates large Python files on the NTFS mount.** Use bash heredoc or
    Python string replacement for ALL Python files >100 lines.
 2. **Git commits from Cowork sandbox fail** — commit from WSL terminal only.
-3. **NAS IP is 192.168.5.45 / nas.home.arpa** — NOT .10.
+3. **NAS IPs are 192.168.5.44 + 192.168.5.45 / n45.home.arpa** — NOT .10.
+   Two NICs in failover (switch has no LACP). Both MACs in pfSense static DHCP. DNS returns both A records.
 4. **SearXNG config requires sudo** — `/home/sy5/docker/searxng_data/` is root-owned.
    Always: validate YAML → sudo cp → docker compose restart → sleep 8 → verify with
    CATEGORY-SPECIFIC query, not "test".
-5. **pfSense read-only toggle NOT via API** — `/api/v2/system/api` returns 404.
+5. **pfSense REST API auth is `x-api-key` header** — NOT `Authorization: Bearer`.
+   Correct: `headers={"x-api-key": key, "Accept": "application/json"}`
+   Wrong:   `headers={"Authorization": f"Bearer {key}"}` → 401 AUTH_AUTHENTICATION_FAILED
+   See tool v1.5.18 `pfsense_query()` for reference implementation.
+6. **pfSense REST API base URL is `https://pfsense.home.arpa/api/v2`** — NOT the bare IP.
+   CA cert CN matches hostname only. Using `192.168.1.50` → SSL verify error.
+7. **pfSense SSH access is out of scope for LSE** — SSH admin@pfsense = root shell.
+   Bypasses the read-only API boundary entirely (can edit config.xml, change rules, restart services).
+   For DNS audit: use `dig +short @192.168.1.50 <host>` from LUCIFER — read-only, no credentials.
+   For config reads: use REST API read-only endpoints only.
+   SSH to pfSense is a human-only operation, never delegated to the model.
+8. **pfSense read-only toggle NOT via API** — `/api/v2/system/api` returns 404.
    Web UI only: System → REST API → Read Only toggle.
-6. **docker compose restart shows `0/1`** — display quirk, not an error. Check
+9. **docker compose restart shows `0/1`** — display quirk, not an error. Check
    `docker logs searxng --tail 20` for actual status.
-7. **"test" query shows only 3-4 engines** — this is correct. Use `&categories=science`
+10. **"test" query shows only 3-4 engines** — this is correct. Use `&categories=science`
    or `&categories=it` to verify category-specific engines are active.
-8. **HAOS SSH add-on regenerates sshd_config on every reboot** — `AllowUsers` and
-   `PermitRootLogin` changes do NOT survive reboot. Root SSH is not persistent on HAOS.
-   Use `ssh sy5@homeassistant.home.arpa sudo <cmd>` for all HA Pi operations.
-   Key auth for sy5 works persistently via `/etc/ssh/authorized_keys`.
-9. **HA long-lived tokens are JWTs** — `eyJ` prefix is correct. Token must be ~183 chars.
-   If token is 55 chars it was truncated on copy — use the Copy button in HA UI, not
-   manual text selection. Decode from QR code with OpenCV if needed.
-10. **HA API restart (`POST /api/services/homeassistant/restart`) is soft** — clears YAML
+11. **HAOS SSH add-on regenerates sshd_config on every reboot** — `AllowUsers` and
+    `PermitRootLogin` changes do NOT survive reboot. Root SSH is not persistent on HAOS.
+    Use `ssh sy5@homeassistant.home.arpa sudo <cmd>` for all HA Pi operations.
+    Key auth for sy5 works persistently via `/etc/ssh/authorized_keys`.
+12. **HA long-lived tokens are JWTs** — `eyJ` prefix is correct. Token must be ~183 chars.
+    If token is 55 chars it was truncated on copy — use the Copy button in HA UI, not
+    manual text selection. Decode from QR code with OpenCV if needed.
+13. **HA API restart (`POST /api/services/homeassistant/restart`) is soft** — clears YAML
     errors in config but HA notification cache persists until full reboot or manual dismiss.
     Config check: Developer Tools → YAML → Check Configuration.
+
+---
+
+## Session 9 Summary (P6 Cowork)
+
+### Completed this session
+
+| Item | Status |
+|---|---|
+| SearXNG NVD diagnosis — cvedetails.com VPS 403 · removed from config · settings redeployed | ✅ |
+| ROADMAP: NVD custom engine (P1) + searxng-error-exporter (P1) — full specs written | ✅ |
+| Prompt v0.5.15 — PFSENSE LOG RULE section added · deployed | ✅ |
+| NETWORK_CONTEXT in challenge_generator.py — gateway rule + NAS hostname + TV MAC | ✅ |
+| `nas.home.arpa` → `n45.home.arpa` — corrected across 7 files | ✅ |
+| pfSense API URL: `192.168.1.50` → `pfsense.home.arpa` — all scripts + prompts | ✅ |
+| pfSense API auth: `x-api-key` header (not `Authorization: Bearer`) — confirmed + fixed | ✅ |
+| Critical rules 5+6 added: x-api-key auth + pfsense.home.arpa URL | ✅ |
+| NODE2 documented: Ubuntu 22.04 · 192.168.5.41 · NAS subnet · no static mapping yet | ✅ |
+| Network Topology Challenge Series designed — 7 challenges net-t1-013 → net-t3-004 | ✅ |
+| Local DNS Architecture added to ROADMAP — known entries + missing + work items | ✅ |
+| Samsung TV T4: confirmed firmware noise · lease 7200s normal · static mapping confirmed | ✅ |
+| CURRENT-STATE network table expanded with subnet topology detail | ✅ |
+
+### Additional completed (late session)
+
+| Item | Status |
+|---|---|
+| DNS audit via `dig` — pfsense/homeassistant/n45 confirmed · lucifer/node2 NXDOMAIN | ✅ |
+| n45 dual NIC documented — 192.168.5.44 + .45, failover, both in pfSense static DHCP | ✅ |
+| GPU-based DNS aliases planned — 4090/3090/5090.home.arpa as additive DNS entries | ✅ |
+| SSH COMMAND= PROTOCOL documented in ROADMAP — scoped read-only SSH escalation pattern | ✅ |
+| pfSense SSH boundary reinforced — critical rule 7 + ROADMAP note | ✅ |
+| openwebui-tool-v1.5.18.py — unbound host endpoint flagged as 404 on Plus 26.03.1 | ✅ |
+
+### Key findings
+- pfSense DNS host overrides: REST API endpoint 404s on Plus 26.03.1 — use `dig +short @192.168.1.50 <host>`
+- n45.home.arpa returns two A records (.44 + .45) — correct, dual NIC failover setup
+- NVD/cvedetails blocked at VPS level (403) — same as Scholar/Reddit
+- Grafana "Failing engines" panel = 0 is a known gap (error-exporter not yet built)
+- pfSense REST API auth: `x-api-key` header (not `Authorization: Bearer`)
 
 ---
 
@@ -133,28 +185,42 @@
 ## First Actions Next Session
 
 ```bash
-# 1. SearXNG quick health check
-curl -s "http://localhost:8088/search?q=CVE+critical+2026&format=json" \
-  | python3 -m json.tool | grep '"engine"' | sort -u
-# Expected: nvd in results
-
-# 2. Check for auto-generated challenge candidates from ha-t1-008 (2 stale automations found)
+# 1. Commit P6 work
 cd /mnt/c/Users/SY5/Claude/Projects/local-system-engineer
-python3 scripts/challenge_generator.py --list-pending
+git add -A && git commit -m "P6: v0.5.15, pfsense hostname+auth fixes, n45 DNS, topology series, NVD diagnosis"
 
-# 3. Commit everything from this session
-git add -A && git commit -m "P5: 6 arena solves, SSH hardening, HA template fix, tool safety patch"
+# 2. DNS audit (get key from Vaultwarden first: export PFSENSE_KEY=<key>)
+python3 -c "
+import os, requests, json, urllib3; urllib3.disable_warnings()
+key = os.getenv('PFSENSE_KEY','')
+r = requests.get('https://pfsense.home.arpa/api/v2/services/unbound/host',
+    headers={'x-api-key': key, 'Accept': 'application/json'},
+    verify='/opt/local-se/cert/pfsense-webgui-ca.crt', timeout=10)
+print(r.status_code, json.dumps(r.json(), indent=2))
+"
+
+# 3. Get NODE2 MAC for static DHCP mapping
+python3 -c "
+import os, requests, json, urllib3; urllib3.disable_warnings()
+key = os.getenv('PFSENSE_KEY','')
+r = requests.get('https://pfsense.home.arpa/api/v2/dhcp/server/lease',
+    headers={'x-api-key': key, 'Accept': 'application/json'},
+    verify='/opt/local-se/cert/pfsense-webgui-ca.crt', timeout=10)
+leases = r.json().get('data', [])
+node2 = [l for l in leases if '192.168.5.41' in str(l)]
+print(node2)
+"
 ```
 
-**Arena priority order next session:**
-1. Samsung TV T4 — DHCP hammer investigation
-2. Stale HA automation challenge (from ha-t1-008 findings — 2 automations never fired)
-3. NODE2 setup — LM Studio server mode :8081
+**Priority order next session:**
+1. **DNS audit** — confirm pfsense/homeassistant/n45 · discover any unknowns (needs PFSENSE_KEY)
+2. **NODE2 static DHCP + DNS** — get MAC from lease table · add mapping · add `node2.home.arpa`
+3. **Samsung TV T4 challenge** — author and seed challenge (firmware noise confirmed, design ready)
+4. **Net topology series** — begin seeding net-t1-013 (subnet host enumeration)
 
-**TODO next session:**
-- Index KB doc: via LSE `index_to_kb(path="docs/kb/ha-long-lived-token-format.md", tag="home-assistant/auth")`
-- Update SSH user in ha-t3-001 + infra-t3-002 starting_state: `root` → `sy5` (HAOS root not persistent across reboots)
-- Verify HA template error is fully gone after reboot (confirmed this session)
+**TODO carry-over from P5:**
+- Index KB doc: `index_to_kb(path="docs/kb/ha-long-lived-token-format.md", tag="home-assistant/auth")`
+- Update SSH user in ha-t3-001 + infra-t3-002 starting_state: `root` → `sy5`
 
 ---
 
@@ -178,8 +244,8 @@ See `prompts/claude-l2-system-prompt.md` for system prompts.
 
 | Config | Status |
 |---|---|
-| v3 applied (bing news wt3, google news wt3, NVD wt3) | ✅ live (2026-06-05) |
-| NVD engine | ✅ returns CVEs with CVSS scores |
+| v3 applied (bing news wt3, google news wt3) | ✅ live · NVD/cvedetails removed (VPS 403) |
+| NVD engine | ❌ cvedetails.com VPS 403 · custom NVD API engine pending (ROADMAP P1) |
 | Semantic Scholar | ✅ returns papers with metadata |
 | SSL fix | ✅ SSL_CERT_FILE → host CA bundle · entrypoint-wrapper.sh removed |
 | searxng-docker legacy dir | ✅ removed — only /home/sy5/docker/ remains |
@@ -221,8 +287,4 @@ See `prompts/claude-l2-system-prompt.md` for system prompts.
 | SearXNG operations guide | `docs/searxng-operations.md` |
 | Challenge DB | `/opt/local-se/challenges.db` |
 | Leaderboard DB | `/opt/local-se/leaderboard.db` |
-| RFC KB | ES index `lse-rfc-kb` (707 chunks tagged) |
-| pfSense CA cert | `/opt/local-se/cert/pfsense-webgui-ca.crt` |
-| NAS hostname | `nas.home.arpa` / `192.168.5.45` |
-| QNAP anonymous fix KB | doc_id `7ac7c02c1d118662` (quality 1.0) |
-| pfSense API endpoint doc | `docs/searxng-operations.md` (WRITE ACCESS PROTOCOL) |
+| RFC KB 

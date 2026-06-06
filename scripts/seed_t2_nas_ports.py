@@ -3,7 +3,7 @@
 Seed T2 challenge: NAS Unexpected Port Investigation.
 
 Parent finding: pf-t1-002 / net-t1-009 — ports 21, 22, 80, 139 found open
-on 192.168.5.45 (nas.home.arpa) beyond the expected NFS/SMB/QNAP-web set.
+on 192.168.5.45 (n45.home.arpa) beyond the expected NFS/SMB/QNAP-web set.
 
 Usage:
     python3 scripts/seed_t2_nas_ports.py
@@ -21,7 +21,7 @@ CHALLENGE = dict(
     title="NAS Unexpected Port Investigation",
     description=(
         "During T1 scans, ports 21 (FTP), 22 (SSH), 80 (HTTP), and 139 (NetBIOS) "
-        "were found open on 192.168.5.45 (nas.home.arpa) beyond the expected "
+        "were found open on 192.168.5.45 (n45.home.arpa) beyond the expected "
         "NFS (2049), SMB (445), and QNAP web (8080/443) services. "
         "Investigate each unexpected port: confirm the service is live, identify "
         "what is listening, classify the security risk (high/medium/low), and "
@@ -41,7 +41,7 @@ CHALLENGE = dict(
         "known_unexpected_ports": [21, 22, 80, 139],
         "expected_ports": [445, 2049, 443, 8080],
         "notes": (
-            "NAS is a QNAP TS-419P II at 192.168.5.45 / nas.home.arpa. "
+            "NAS is a QNAP TS-419P II at 192.168.5.45 / n45.home.arpa. "
             "Reachable from LUCIFER WSL2 via pfSense inter-subnet routing. "
             "Use nmap_summary() with known_services JSON to isolate unexpected ports. "
             "For FTP (21): check anonymous login with: "
