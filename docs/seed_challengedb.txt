@@ -1,0 +1,8 @@
+# First time — create the DB
+python3 /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/scripts/seed_challengedb.py
+
+# Preview without writing
+python3 scripts/seed_challengedb.py --dry-run
+
+# If you ever need to wipe and re-seed
+python3 scripts/seed_challengedb.py --reset

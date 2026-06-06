@@ -1,5 +1,28 @@
 # Prompt Version Changelog
 
+## v0.5.14 — 2026-06-04
+**Changes from v0.5.13:**
+- Fix A1: LUCIFER PORT TOPOLOGY — added Docker NAT isolation note to ENVIRONMENT section.
+  SearXNG container binds port 8080 internally; Docker NAT means it does NOT conflict with
+  llama-server's WSL2 host-level :8080 binding. Both services coexist.
+  Also clarified llama-server's binding as "WSL2 host-level, visible at 0.0.0.0:8080".
+Root cause: A1 test asked about port collision — model found llama-server on :8080 and
+  warned it was unsafe, but didn't explain Docker NAT isolation of SearXNG's internal :8080.
+  Missing fact was simply absent from the prompt topology description.
+
+## v0.5.13 — 2026-06-04
+**Changes from v0.5.12:**
+- Fix P4: SUDO PIPELINE SPLIT — when sudo appears in a pipeline, offer to split into a
+  non-sudo execute_command stage + a separate sudo_delegation_block stage.
+- Fix M3: FILE NOT FOUND — on any file/command/path not found, always propose one concrete
+  recovery action in the same response. Do NOT stop after reporting the error.
+- Fix W1: STATIC PATH VERIFICATION — do not verify well-known static Linux filesystem paths
+  (/etc/, /usr/, /proc/) with tool calls. Assume they exist.
+- Fix A3: KNOWLEDGE BASE section updated — OpenWebUI is NOT systemd-managed. Use
+  `pgrep -a open-webui` to check. Do NOT use systemctl start/stop/status for open-webui.
+- ENVIRONMENT: bumped to v0.5.13, tool v1.5.18.
+Root cause: Run 6 (58/63) gap analysis — 4 specific test failures mapped to missing rules.
+
 ## v0.5.9 — 2026-06-01
 **Changes from v0.5.8:**
 - OUTPUT RULES: added MULTI-BLOCK TASK RULE — on any 2+ block task, immediately write

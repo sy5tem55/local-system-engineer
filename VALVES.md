@@ -18,7 +18,7 @@ Secrets that unlock broader access (master passwords, write-capable API keys) mu
 
 ## Active Tools
 
-### 1. LSE System Admin Terminal — `openwebui-tool-v1.5.14.py`
+### 1. LSE System Admin Terminal — `openwebui-tool-v1.5.17.py`
 
 | Valve | Default | Sensitive | Storage | Notes |
 |---|---|---|---|---|
@@ -31,7 +31,7 @@ Secrets that unlock broader access (master passwords, write-capable API keys) mu
 | `EXTRA_WRITE_PATHS` | `` (empty) | No | Valve OK | Colon-separated extra write paths |
 | `OWUI_DB_PATH` | `/home/sy5/owui/lib/...webui.db` | No | Valve OK | OpenWebUI SQLite path for compact_context |
 | `ES_URL` | `http://127.0.0.1:9200` | No | Valve OK | Elasticsearch RAG endpoint |
-| `OLLAMA_URL` | `http://127.0.0.1:11434` | No | Valve OK | Ollama embeddings endpoint |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | No | Valve OK | Ollama endpoint — used for RAG embeddings AND pfsense_log_summary anomaly narrative (llama3.2:3b) |
 | `EMBED_MODEL` | `nomic-embed-text` | No | Valve OK | Embedding model name |
 
 All valves in this tool are non-sensitive (localhost URLs, paths, integers). No action required.
@@ -68,12 +68,15 @@ OpenWebUI stores all valve values as plaintext JSON in `webui.db` (SQLite). A ma
 
 ---
 
-### 3. LSE Routing Filter — `lse-routing-filter-v1.1.0.py`
+### 3. LSE Routing Filter — `lse-routing-filter-v1.2.0.py`
 
 | Valve | Default | Sensitive | Storage | Notes |
 |---|---|---|---|---|
 | `enabled` | `True` | No | Valve OK | Enable/disable filter entirely |
+| `target_model_pattern` | `"qwen"` | No | Valve OK | Case-insensitive substring matched against model ID. Only injects routing hints when model contains this string. Empty string = apply to all models. |
 | `debug` | `False` | No | Valve OK | Append debug tags to injected hints (eval use only) |
+
+**v1.2.0 rationale:** OpenWebUI filters are global — there is no per-model or per-preset enable toggle in the UI. Without `target_model_pattern`, the Qwen3-specific tail-routing hint fires for Claude presets too. With `target_model_pattern="qwen"` (default), `claude-opus-4-6` and `claude-sonnet-4-6` pass through the filter untouched.
 
 No sensitive data. No action required.
 

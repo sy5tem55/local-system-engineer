@@ -4,6 +4,341 @@
 
 ---
 
+## 2026-06-05 — P4 (Cowork): v1.5.18 safety patch + HA challenge plumbing
+
+### Tool patch (v1.5.18 in-place — safety fix)
+- Added `_BLOCKED_WRITE_FILENAMES` set to `_is_allowed_write()` — blocks `.bashrc`, `.bash_profile`, `.profile`, `.zshrc`, `.zlogin`, `.zshenv`, `.fishrc`, `.ssh/authorized_keys`, `.ssh/config`, SSH private keys, `.gnupg/gpg.conf`
+- **Root cause:** LSE wrote bare `-e` to `~/.bashrc` during HA token debugging session; `_ALLOWED_WRITE_PREFIXES` included `/home/` with no filename exclusions
+- New SHA-256: `017443197a3d53fcf66a910fb8daa54248c98993411e297295d18e73dcb8a34a`
+
+### HA challenges
+- `seed_challengedb.py`: added ha-t2-002 (Template Sensor Audit T2) and ha-t3-001 (Template Migration T3, requires_human_approval=1)
+- All 4 HA challenge `api_base` updated: `192.168.1.x` → `homeassistant.home.arpa`
+- HA Pi confirmed reachable at `homeassistant.home.arpa:8123`
+- HA token: JWT format (eyJ prefix) is correct — LSE misdiagnosed as invalid; KB doc at `docs/kb/ha-long-lived-token-format.md`
+- Live DB patched: `UPDATE challenges SET starting_state = replace(starting_state, '192.168.1.x', 'homeassistant.home.arpa') WHERE id LIKE 'ha-%'`
+
+---
+
+## 2026-06-05 — P3 (Cowork): SearXNG Engine Health Dashboard — 6 tuning-signal panels
+
+**Dashboard file:** `/home/sy5/docker/grafana/dashboards/searxng-engine-health.json`
+New section **"Engine Tuning Signals"** appended (row id=20, panels 21–26, starting y=44).
+
+| Panel | Type | Query | Signal |
+|---|---|---|---|
+| Avg Response Time — Slowest First | bargauge | `sort_desc(response_time_total_seconds)` | Red >5 s |
+| Result Yield — Lowest First (1 h) | bargauge | `rate(result_count) / rate(request_count)` | Red <2 results/req |
+| Reliability Event Rate — 24 h | bargauge | `rate(reliability_total[24h])` | Near-zero = suspect |
+| Error Rate by Engine × Error Type | table | `rate(searxng_engine_errors_total[5m])` | No data until error-exporter fires |
+| Dead Engines — zero requests 1 h | table | `increase(request_count[1h]) < 0.5` | Removal candidates |
+| Response Time Trend per Engine | timeseries | `response_time_total_seconds{engine_name=~"$engine"}` | Filterable via $engine var |
+
+**Label verification:** all 6 core metrics confirmed with `engine_name` label. `searxng_engine_errors_total` has zero series — error-exporter not active; Panel 24 is wired and waiting.
+
+**Deployment:** provisioner has `allowUIUpdates: false` — UI edits revert in ~10 s. Edit the JSON file; provisioner auto-reloads within 30 s. Admin credentials confirmed (used `admin` + Vaultwarden password via browser session).
+
+**P4 (error-exporter) deferred** — persistent open item. Panel 24 requires `searxng_engine_errors_total` to exist in Prometheus before it shows data.
+
+---
+
+## 2026-06-05 — Session 6: Claude L2 + Research presets — system prompts written, filter v1.2.0
+
+**Claude model presets — deployed ✅:**
+- `LSE L2 — Claude Opus` (`claude-opus-4-6`): escalation engineer role — knows full infrastructure, same permission boundary as Qwen3, framed to analyse prior failed attempts and deliver working solutions
+- `LSE Research — Claude Sonnet` (`claude-sonnet-4-6`): research + KB curation — web research, SearXNG diagnostics, KB gap analysis
+- Both presets: LSE tool v1.5.18 attached, no routing filter
+- System prompts in `prompts/claude-l2-system-prompt.md`
+
+**OpenWebUI filter architecture confirmed:**
+- Routing filter Global toggle is **OFF** — not applying globally, Qwen3 preset only
+- Routing filter stays at **v1.1.0** — Global OFF makes model-aware v1.2.0 unnecessary
+- v1.2.0 built and kept as reference (`tools/lse-routing-filter-v1.2.0.py`) but not deployed
+
+**Prompt file location convention:** Claude preset system prompts live in `prompts/` alongside Qwen3 versioned prompts, not `docs/`. README updated.
+
+---
+
+## 2026-06-05 — Routing filter v1.2.0 — model-aware passthrough
+
+**Finding:** OpenWebUI filters/functions are globally enabled — no per-model or per-preset toggle exists in the UI. The routing filter v1.1.0, once enabled as a Function, fires for every model including Claude presets. Qwen3-specific tail-routing hints would be injected into Claude's context.
+
+**Fix — `tools/lse-routing-filter-v1.2.0.py`:**
+- New valve: `target_model_pattern` (default: `"qwen"`) — case-insensitive substring match against `body["model"]`
+- `inlet()` returns body unmodified if model ID does not contain the pattern
+- `claude-opus-4-6` and `claude-sonnet-4-6` pass through cleanly
+- Empty pattern (`""`) restores old behaviour (apply to all models)
+- Syntax verified: 167 lines · `ast.parse()` OK
+
+**VALVES.md and CURRENT-STATE.md updated.** Deploy: Admin → Functions → replace v1.1.0 with v1.2.0. No valve changes needed — default covers the common case.
+
+---
+
+## 2026-06-05 — Session 6: SearXNG v3 live, SSL fixed, NVD + Semantic Scholar operational
+
+**SearXNG v3 config applied:**
+- bing news (wt 3) + google news (wt 3) + NVD (wt 3) now active
+- NVD engine: was disabled on startup + SSL crash → ✅ returns CVEs with CVSS scores
+- Semantic Scholar: was SSL crash (EngineError) → ✅ returns papers with metadata
+- All pre-existing engines unaffected
+
+**SSL root cause resolved:**
+- Root cause chain: port confusion (diagnostic ran against wrong :8888 instance, not production :8088) → wrong env var (REQUESTS_CA_BUNDLE is for `requests` library; SearXNG uses `httpx` which reads `SSL_CERT_FILE`) → NVD upstream default `disabled: true` (our override works correctly now SSL is fixed)
+- Fix: `SSL_CERT_FILE` env var pointing to host CA bundle — clean permanent solution
+- `entrypoint-wrapper.sh` removed — was patching certifi inside the container, no longer needed
+
+**Legacy cleanup:**
+- `/home/sy5/searxng-docker/` (dead May-28 artifact) fully removed
+- Confirmed: zero containers from old project; all four monitoring containers belong to `/home/sy5/docker/`
+- Only active Docker Compose project: `/home/sy5/docker/` — grafana, prometheus, searxng, searxng-logger
+- No port conflicts, no orphaned configs
+
+---
+
+## 2026-06-04 — Session 5: 63/63 eval, T2/T3 NAS + Samsung TV chains, 259.1 pts
+
+**Eval:**
+- Prompt v0.5.13 → v0.5.14 deployed (tool v1.5.18 confirmed). Run 7 partial (4 targeted tests):
+  P4/M3/W1/A3 all 3/3. v0.5.14 added Docker NAT topology note; A1 confirmed 3/3 → **63/63**.
+- eval-report-v6.md written.
+
+**Arena — NAS chain (pf-t1-002 → nas-t2-001 → nas-t3-001):**
+- nas-t2-001: NAS Unexpected Port Investigation — SOLVED a1 · 19.5 pts · 81.6s
+  FTP anonymous login allowed (ftp_anonymous_allowed=True). 4 unexpected ports classified.
+- nas-t3-001: NAS Anonymous Access Hardening Verification — SOLVED a1 · 19.5 pts · 42.9s
+  restrict_anonymous=2 confirmed at source. SMB + FTP anonymous blocked. KB hit 40.934.
+
+**QNAP anonymous access fix (human-applied, KB indexed at quality 1.0):**
+- Root cause: QNAP QTS 4.x generates smb.conf dynamically on restart. Manual edits overwritten.
+- Fix: `setcfg global "restrict anonymous" "2" -f /etc/config/smb.conf` + SMB restart.
+- FTP anonymous: disabled via QNAP Control Panel → FTP Service.
+- KB doc_id: 7ac7c02c1d118662 (quality 0.95 → 1.00, refinement +1).
+
+**Arena — Samsung TV chain (net-t2-011 → net-t3-002):**
+- net-t2-011: Samsung TV Traffic Analysis — SOLVED a1 · 19.5 pts · 73.5s
+  Lease confirmed, WAN traffic found (4 destinations), risk assessed.
+- net-t3-002: Samsung TV WAN Isolation — SOLVED a1 · 19.5 pts · 45.7s
+  pfSense WAN block rule created for 192.168.1.90. Rule confirmed active.
+
+**pfSense write-access protocol finding (KB indexed):**
+- `/api/v2/system/api` returns 404 on pfSense Plus 26.03.1.
+- Read-only toggle NOT controllable via REST API — web UI only.
+- To verify: PATCH probe returns 403/read-only error when active.
+- net-t3-002 a3 assertion patched: `write_access_re_enabled` → `write_access_verified_inactive`.
+
+**Final leaderboard:** `qwen3.6-27b-q4-64k` — 259.1 pts · 15 eps · 14 solved · 0 esc · avg 1.13 att · **15/15 KB hits**
+
+**Open:** SearXNG Grafana engine error panels show no data (engine errors + error rate by engine 5m stacked). Pending fix next session.
+
+---
+
+## 2026-06-04 — T1 arena complete: 10/10 challenges, 161.6 pts, 0 escalations
+
+**Final T1 leaderboard:** `qwen3.6-27b-q4-64k` — 161.6 pts · 10 eps · 9 solved · 0 esc · avg 1.20 att · **10/10 KB hits**
+
+All 10 T1 challenges solved first attempt with KB assist. Notable findings:
+- NAS `192.168.5.45` (nas.home.arpa): 3 NFS exports, 4 SMB shares, 450 GB free
+- HA: version 2024.6.3, 12 entities, **2 stale automations** flagged
+- Samsung TV 192.168.1.90: DHCP hammer confirmed across multiple challenges
+- The ha-t1-004 → ha-t1-008 KB chain fired within 4 minutes — same session
+
+One challenge failure before fix (pf-t1-003): model hallucinated `.10` for NAS IP (actual: `.45`) from stale KB. Fixed by correcting the challenge starting_state. Demonstrates KB data quality risk when ground-truth IPs are missing from KB seed.
+
+**Next:** ChallengeGenerator `--list-pending` after re-seed, then T2 challenges from discoveries.
+
+---
+
+## 2026-06-04 — ChallengeGenerator — discovery-driven challenge authorship
+
+**`scripts/challenge_generator.py`** — 582 lines
+
+The arena now grows from its own discoveries. When an episode finds something unexpected, the generator proposes a follow-up challenge automatically.
+
+**Architecture:**
+- `SignalDetector` — rule-based scan of the model's parsed JSON response for 4 triggers:
+  - `unexpected_ports` list non-empty (pf-t1-002 NAS finding: 5 ports on 192.168.5.10)
+  - `unexpected_findings` string non-empty (net-t1-009 confirmation: same NAS IP)
+  - `anomalies` string non-empty (pf-t1-003 Ollama narrative output)
+  - `top_blocked_ips[0].count > 200` (Samsung TV DHCP hammer class)
+- `ChallengeAuthor` — calls `llama3.2:3b` via Ollama to generate title, description, 3 machine-checkable assertions, failure modes. Falls back to OpenWebUI local model.
+- `ChallengeGenerator` — orchestrates pipeline, deduplicates, inserts to ChallengeDB with `status='pending_review'`
+
+**Human approval gate:** All auto-generated challenges start as `pending_review`. Run before they execute in episodes:
+```bash
+python3 scripts/challenge_generator.py --list-pending
+python3 scripts/challenge_generator.py --show   auto-pf-t1-002-unexpected-abc123
+python3 scripts/challenge_generator.py --approve auto-pf-t1-002-unexpected-abc123
+python3 scripts/challenge_generator.py --reject  auto-pf-t1-002-unexpected-abc123
+```
+
+**Tier elevation:** Auto-generated challenges spawn at `parent_tier + 1` (T1 discovery → T2 follow-up). The `parent_episode_id` links every challenge back to the finding that created it.
+
+**Schema additions** to `challenges` table: `auto_generated INTEGER`, `parent_episode_id INTEGER`, `status TEXT DEFAULT 'active'`
+
+**Wired into `run_episode.py`:** after each SOLVED episode, `_extract_json(last_response)` feeds the generator. Non-fatal — won't break episode runs if generator errors.
+
+---
+
+## 2026-06-04 — pf-t1-003 assertion fix + JSON truncation repair
+
+**Root cause:** pf-t1-003 episode TRUNCATED despite model producing correct data.
+Two distinct bugs exposed:
+
+**Bug 1 — challenge assertion design:** `assert len(log_entries) >= 100` failed with
+`TypeError: object of type 'int' has no len()` on attempt 1, where the model correctly
+returned `log_count: 1245` as an integer. Intent was always "count ≥ 100", not "return
+a list". Fixed: changed key to `log_count`, assertion to `assert int(log_count) >= 100`.
+Also updated challenge description to explicitly say `use pfsense_log_summary()` and
+`return log_count as an integer`.
+
+**Bug 2 — `_extract_json()` truncation handling:** Attempts 2 and 3 opened a valid
+` ```json ` block but hit `MaxPredictTokens=8192` before the closing ` ``` ` arrived.
+The extractor silently returned `{}` — 0/3 NameErrors on all assertions.
+
+Fix: added two new fallback paths to `_extract_json()`:
+- Unclosed fence: `re.search(r"```json\s*(.*?)$", text, re.DOTALL)` extracts partial content
+- Stack-based repair in `_repair_truncated_json()`: walks the string tracking open `{`/`[`
+  with string-escape awareness, builds the exact closing suffix in correct nesting order
+  (handles mid-entry truncation where simple bracket counting gives wrong order)
+
+All 7 original smoke tests still pass. Re-seed LUCIFER: `python3 scripts/seed_challengedb.py --reset`
+
+---
+
+## 2026-06-04 — rfc_kb.py — RFC authority model (§3.5)
+
+**`scripts/rfc_kb.py`** — RFC corpus ingestion and authority-weighted search
+
+**Authority model:**
+```
+quality_score = min(authority_ceiling,
+                    raw_score × confirmation_weight × recency_weight)
+```
+- `authority_ceiling`: Internet Std 0.95 · Proposed Std 0.85 · Informational 0.70 · Obsoleted 0.30
+- `recency_weight`: 1.0 if current · 0.30 if obsoleted_by is set (RFC age does NOT drive this — RFC 793/1981 is still valid TCP; RFC 9293 obsoletes it, so 793 gets 0.30)
+- `confirmation_weight`: starts 1.0 · ×1.1 per successful resolution citing section · ×0.95 per failure · `bump_confirmation()` updates ES doc in place
+
+**20-RFC registry** covering LSE domain: DHCP (2131/2132), DNS (1034/1035/2308/2782), TLS (8446/5280), TCP (9293/792/1122), CIDR (4632), HTTP (9110/9112), Syslog (5424/5426), NTP (5905), NAT (3022), NFS (7530/1813)
+
+**Three-layer retrieval:**
+1. Protocol taxonomy filter (deterministic — `--protocol dhcp`)
+2. kNN dense search on symptom+content embedding (nomic-embed-text)
+3. Re-rank by `quality_score × ES relevance score`
+
+**Symptom tagging** (offline, one-time at index time): Ollama `llama3.2:3b` generates 8-12 operational symptoms per RFC section — bridges the gap between "Samsung TV DHCP hammer" and RFC 2131 §4.4.5. Embedding is `symptom_tags + content` concatenated for richer retrieval.
+
+**CLI:**
+```bash
+python3 scripts/rfc_kb.py --list                    # show registry
+python3 scripts/rfc_kb.py --dry-run 2131            # chunk + print, no ES write
+python3 scripts/rfc_kb.py --index 2131              # index single RFC
+python3 scripts/rfc_kb.py --index-all               # full corpus (run once on LUCIFER)
+python3 scripts/rfc_kb.py --index-all --no-tag      # skip Ollama, faster
+python3 scripts/rfc_kb.py --search "DHCP DISCOVER repeated after ACK"
+python3 scripts/rfc_kb.py --search "cert verify failed" --protocol tls
+python3 scripts/rfc_kb.py --status                  # chunks + quality per RFC
+```
+
+**Next:** add `search_rfc()` to tool v1.5.18 so LSE can call it during escalation context building. Run `--index-all` on LUCIFER to populate `lse-rfc-kb`.
+
+---
+
+## 2026-06-04 — First live arena episode: pf-t1-001 SOLVED
+
+**Episode result:**
+- Challenge: pf-t1-001 — LAN Device Map (sysadmin 1.0×)
+- Model: qwen3.6-27b-q4-64k (64k ctx · KV:q8_0 · think:3072)
+- Outcome: SOLVED · attempt 1 · 3/3 assertions
+- Raw reward: 15.0 (10 solve + 3 assertions + 2 KB hit bonus)
+- Wall time: 105.9s
+- KB assisted: ✅ hit on "LUCIFER Network Inventory: DHCP Static Mappings" (score 13.188)
+- Escalated: No
+
+**What this confirmed:**
+- Full wrapper stack works end-to-end on LUCIFER (EscalationWrapper → TimeLimit → RecordEpisodeStatistics)
+- KB hit at reset fires correctly — prior session knowledge injected before attempt 1
+- Solution indexed at quality 0.9 — compounds for future episodes
+- Model produced 21-device list with MACs from KB context alone (no live API call needed)
+- LeaderboardService auto-recording wired into run_episode.py
+
+---
+
+## 2026-06-04 — Tool v1.5.17 — pfsense_log_summary + nmap_summary
+
+**Problem solved:** pfSense firewall logs and nmap output are too large for direct
+context injection. `GET /api/v2/status/logs/firewall` can return hundreds of KB;
+raw nmap output is thousands of lines. Both fill the model context and trigger
+truncation, making analysis unreliable.
+
+**Solution (Option B — tool-level summarisers):** Two new tool functions that
+replace direct raw-data calls. The model calls these instead of `pfsense_query`
+or `execute_command('nmap ...')`.
+
+**`pfsense_log_summary(hours, top_n, api_key)`** — `tools/openwebui-tool-v1.5.17.py`
+- Fetches raw logs via pfSense REST API
+- Programmatic extraction (Tier 1): top blocked IPs, top blocked ports, pass/block ratio per interface
+- Ollama narrative summary (Tier 2, optional): `llama3.2:3b` anomaly detection on compact context
+  Fires only if Ollama is reachable; skipped silently otherwise — summary is complete without it
+- Never returns raw log lines. Output: ~600–900 chars regardless of log volume
+- Docstring explicitly forbids calling `pfsense_query('/api/v2/status/logs/firewall')` directly
+
+**`nmap_summary(targets, top_ports, known_services)`**
+- Runs `nmap -sV --top-ports N -oX -` (XML output) — never raw text
+- Parses XML: per-host open ports + service version strings
+- Cross-references against `known_services` JSON baseline — flags unexpected ports
+- Returns compact JSON: scan_results, unexpected_ports, host_count, scan_time_s, command
+- Docstring forbids `execute_command('nmap ...')` for network audits
+
+**Architecture note:** Tier 1 (programmatic extraction) satisfies all T1 assertions
+deterministically. Ollama (Tier 2) handles narrative-only assertions. LSE never
+sees raw logs or raw nmap output.
+
+SHA-256: `f30c1e97493aa6f58fe3498df94c15784d747a5e1e04a209a405251e5211c973`
+Status: built and syntax-verified — **pending deploy to OpenWebUI**
+
+---
+
+## 2026-06-04 — LSEChallengeEnv complete, 7/7 smoke tests
+
+**LeaderboardService** — `scripts/leaderboard.py` ✅
+- SQLite-backed (`/opt/local-se/leaderboard.db`, WAL mode)
+- `record_episode(result_dict)` — inserts row, recomputes final_points = raw_reward × discipline_mult
+- `standings()` — cumulative points per model, sorted desc
+- `model_stats(model_id)` — per-discipline breakdown
+- `recent_episodes(n, model_id)` — filtered history
+- `challenge_history(challenge_id)` — all episodes for a challenge, oldest first
+- `print_standings()` — formatted table to stdout
+- 9/9 smoke tests passing
+
+**run_episode.py** — full wrapper stack wired ✅
+- `build_env()`: `LSEChallengeEnv → EscalationWrapper → TimeLimit(3) → RecordEpisodeStatistics`
+- `call_model()`: OpenAI-compat POST, Qwen3 thinking mode on stagnation
+- `run_episode()`: full loop, returns result dict for LeaderboardService
+- CLI: `--list`, `--challenge`, `--dry-run`, `--model`, `--endpoint`, `--json`
+
+**EscalationWrapper** — `scripts/escalation_wrapper.py` ✅
+- Sits above LSEChallengeEnv; manages full escalation gate
+- KB context injection at reset via ES kNN + BM25 hybrid search
+- Cosine stagnation detection (threshold 0.85) on attempt embeddings (nomic-embed-text)
+- Stagnation-breaking frame injection on count=1; web search on count=2+
+- Mandatory SearXNG web search + unconditional KB indexing before escalation
+- Claude API call (anthropic SDK → OpenWebUI fallback) with full context package
+- Dual KB writes on escalation: `record_error()` (lse-errors) + `index_to_kb()` (lse-kb, quality 1.0)
+- Point deltas: −5 escalation, +1 indexing, +2 context quality, +2 KB hit, +1 rollback/health (TODO)
+- 9/9 smoke tests passing with mocked HTTP (unittest.mock)
+
+**LSEChallengeEnv** — `scripts/lse_challenge_env.py` ✅
+- `gymnasium.Env` wrapping ChallengeDB (SQLite)
+- `reset()` / `step()` / `render(ansi)` / `list_challenges()` implemented
+- Assertion eval in restricted exec namespace (`_SAFE_BUILTINS` allowlist — generator-safe)
+- `_is_rfc1918()` domain helper injected into assertion namespace
+- Solve bonus: 10/7/4 for attempt 1/2/3; partial credit = assertions passed
+- 7/7 smoke tests passing: reset, correct-solve (13.0 reward), partial (2.0), truncation, discipline multiplier, RFC1918 helper, list_challenges
+
+Next: `EscalationWrapper` (stub at `scripts/escalation_wrapper.py`)
+
+---
+
 ## 2026-06-03 — Tool v1.5.16, pfSense SSL, session close
 
 **Tool v1.5.16** — deployed ✅ (SHA-256: bcc04bb0fa3d944c9fa5a4e4786393950b2efc32f0ad69962716a217f88a66d1)

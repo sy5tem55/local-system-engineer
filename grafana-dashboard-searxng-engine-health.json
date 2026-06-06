@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -11,7 +14,10 @@
         "type": "dashboard"
       },
       {
-        "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "PBFA97CFB590B2093"
+        },
         "enable": true,
         "expr": "changes(searxng_engines_request_count_total[1m]) > 0",
         "hide": false,
@@ -32,43 +38,74 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "id": 10,
       "title": "Overview",
       "type": "row"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 70},
-              {"color": "green", "value": 90}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
       "id": 1,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
         "wideLayout": true
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "avg(searxng_engines_reliability_total{engine_name=~\"$engine\"} * 100)",
+          "expr": "avg(searxng_engines_reliability_total{engine_name=~\"$engine\"})",
           "legendFormat": "Avg Reliability %",
           "range": true,
           "refId": "A"
@@ -78,35 +115,61 @@
       "type": "stat"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 100},
-              {"color": "red", "value": 500}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
       "id": 2,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
         "wideLayout": true
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
           "expr": "avg(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"})",
           "legendFormat": "Avg Response Time (s)",
@@ -118,35 +181,61 @@
       "type": "stat"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 5},
-              {"color": "green", "value": 15}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "green",
+                "value": 15
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
       "id": 3,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
         "wideLayout": true
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
           "expr": "count(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"} > 0)",
           "legendFormat": "Active Engines",
@@ -158,35 +247,61 @@
       "type": "stat"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 1},
-              {"color": "red", "value": 3}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
       "id": 4,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "textMode": "auto",
         "wideLayout": true
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
           "expr": "count(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"} == 0 and searxng_engines_request_count_total{engine_name=~\"$engine\"} > 0) or vector(0)",
           "legendFormat": "Failing",
@@ -199,61 +314,284 @@
     },
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
       "id": 11,
       "title": "Engine Reliability",
       "type": "row"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "custom": {
             "align": "auto",
-            "cellOptions": {"type": "auto"},
+            "cellOptions": {
+              "type": "auto"
+            },
             "inspect": false
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "yellow", "value": 0.7},
-              {"color": "green", "value": 0.9}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.7
+              },
+              {
+                "color": "green",
+                "value": 0.9
+              }
             ]
           }
         },
         "overrides": [
-          {"matcher": {"id": "byName", "options": "arxiv"}, "properties": [{"id": "displayName", "value": "📚 arXiv"}]},
-          {"matcher": {"id": "byName", "options": "bing"}, "properties": [{"id": "displayName", "value": "📎 Bing"}]},
-          {"matcher": {"id": "byName", "options": "bing news"}, "properties": [{"id": "displayName", "value": "📰 Bing News"}]},
-          {"matcher": {"id": "byName", "options": "brave"}, "properties": [{"id": "displayName", "value": "🦁 Brave"}]},
-          {"matcher": {"id": "byName", "options": "duckduckgo"}, "properties": [{"id": "displayName", "value": "🦆 DuckDuckGo"}]},
-          {"matcher": {"id": "byName", "options": "google"}, "properties": [{"id": "displayName", "value": "🔍 Google"}]},
-          {"matcher": {"id": "byName", "options": "google scholar"}, "properties": [{"id": "displayName", "value": "🎓 Scholar"}]},
-          {"matcher": {"id": "byName", "options": "mojeek"}, "properties": [{"id": "displayName", "value": "🌿 Mojeek"}]},
-          {"matcher": {"id": "byName", "options": "qwant"}, "properties": [{"id": "displayName", "value": "🌐 Qwant"}]},
-          {"matcher": {"id": "byName", "options": "reddit"}, "properties": [{"id": "displayName", "value": "💬 Reddit"}]},
-          {"matcher": {"id": "byName", "options": "wikipedia"}, "properties": [{"id": "displayName", "value": "📖 Wikipedia"}]},
-          {"matcher": {"id": "byName", "options": "github"}, "properties": [{"id": "displayName", "value": "🐙 GitHub"}]},
-          {"matcher": {"id": "byName", "options": "stackoverflow"}, "properties": [{"id": "displayName", "value": "🔶 Stack Overflow"}]},
-          {"matcher": {"id": "byName", "options": "youtube"}, "properties": [{"id": "displayName", "value": "▶️ YouTube"}]},
-          {"matcher": {"id": "byName", "options": "startpage"}, "properties": [{"id": "displayName", "value": "🔒 Startpage"}]},
-          {"matcher": {"id": "byName", "options": "wikidata"}, "properties": [{"id": "displayName", "value": "🗂️ Wikidata"}]},
-          {"matcher": {"id": "byName", "options": "semantic scholar"}, "properties": [{"id": "displayName", "value": "🧠 Semantic Scholar"}]}
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "arxiv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcda arXiv"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bing"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcce Bing"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bing news"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcf0 Bing News"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "brave"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83e\udd81 Brave"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "duckduckgo"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83e\udd86 DuckDuckGo"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "google"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udd0d Google"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "google scholar"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83c\udf93 Scholar"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mojeek"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83c\udf3f Mojeek"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "qwant"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83c\udf10 Qwant"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reddit"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcac Reddit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "wikipedia"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcd6 Wikipedia"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "github"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udc19 GitHub"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "stackoverflow"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udd36 Stack Overflow"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "youtube"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\u25b6\ufe0f YouTube"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "startpage"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udd12 Startpage"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "wikidata"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\uddc2\ufe0f Wikidata"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "semantic scholar"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83e\udde0 Semantic Scholar"
+              }
+            ]
+          }
         ]
       },
-      "gridPos": {"h": 12, "w": 12, "x": 0, "y": 6},
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
       "id": 5,
       "options": {
         "cellHeight": "sm",
-        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
         "showHeader": true
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
           "expr": "searxng_engines_reliability_total{engine_name=~\"$engine\"}",
           "format": "table",
@@ -263,69 +601,294 @@
           "refId": "A"
         }
       ],
-      "title": "Reliability by Engine (ratio 0–1)",
+      "title": "Reliability by Engine (ratio 0\u20131)",
       "transformations": [
         {
           "id": "organize",
           "options": {
-            "excludeByName": {"__name__": true, "instance": true, "job": true},
+            "excludeByName": {
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
             "indexByName": {},
-            "renameByName": {"Value": "Reliability", "engine_name": "Engine"}
+            "renameByName": {
+              "Value": "Reliability",
+              "engine_name": "Engine"
+            }
           }
         }
       ],
       "type": "table"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "custom": {
             "align": "auto",
-            "cellOptions": {"type": "auto"},
+            "cellOptions": {
+              "type": "auto"
+            },
             "inspect": false
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 200},
-              {"color": "red", "value": 500}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 200
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
             ]
           }
         },
         "overrides": [
-          {"matcher": {"id": "byName", "options": "arxiv"}, "properties": [{"id": "displayName", "value": "📚 arXiv"}]},
-          {"matcher": {"id": "byName", "options": "bing"}, "properties": [{"id": "displayName", "value": "📎 Bing"}]},
-          {"matcher": {"id": "byName", "options": "bing news"}, "properties": [{"id": "displayName", "value": "📰 Bing News"}]},
-          {"matcher": {"id": "byName", "options": "brave"}, "properties": [{"id": "displayName", "value": "🦁 Brave"}]},
-          {"matcher": {"id": "byName", "options": "duckduckgo"}, "properties": [{"id": "displayName", "value": "🦆 DuckDuckGo"}]},
-          {"matcher": {"id": "byName", "options": "google"}, "properties": [{"id": "displayName", "value": "🔍 Google"}]},
-          {"matcher": {"id": "byName", "options": "google scholar"}, "properties": [{"id": "displayName", "value": "🎓 Scholar"}]},
-          {"matcher": {"id": "byName", "options": "mojeek"}, "properties": [{"id": "displayName", "value": "🌿 Mojeek"}]},
-          {"matcher": {"id": "byName", "options": "qwant"}, "properties": [{"id": "displayName", "value": "🌐 Qwant"}]},
-          {"matcher": {"id": "byName", "options": "reddit"}, "properties": [{"id": "displayName", "value": "💬 Reddit"}]},
-          {"matcher": {"id": "byName", "options": "wikipedia"}, "properties": [{"id": "displayName", "value": "📖 Wikipedia"}]},
-          {"matcher": {"id": "byName", "options": "github"}, "properties": [{"id": "displayName", "value": "🐙 GitHub"}]},
-          {"matcher": {"id": "byName", "options": "stackoverflow"}, "properties": [{"id": "displayName", "value": "🔶 Stack Overflow"}]},
-          {"matcher": {"id": "byName", "options": "youtube"}, "properties": [{"id": "displayName", "value": "▶️ YouTube"}]},
-          {"matcher": {"id": "byName", "options": "startpage"}, "properties": [{"id": "displayName", "value": "🔒 Startpage"}]},
-          {"matcher": {"id": "byName", "options": "wikidata"}, "properties": [{"id": "displayName", "value": "🗂️ Wikidata"}]},
-          {"matcher": {"id": "byName", "options": "semantic scholar"}, "properties": [{"id": "displayName", "value": "🧠 Semantic Scholar"}]}
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "arxiv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcda arXiv"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bing"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcce Bing"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bing news"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcf0 Bing News"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "brave"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83e\udd81 Brave"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "duckduckgo"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83e\udd86 DuckDuckGo"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "google"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udd0d Google"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "google scholar"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83c\udf93 Scholar"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mojeek"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83c\udf3f Mojeek"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "qwant"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83c\udf10 Qwant"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reddit"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcac Reddit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "wikipedia"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcd6 Wikipedia"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "github"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udc19 GitHub"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "stackoverflow"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udd36 Stack Overflow"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "youtube"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\u25b6\ufe0f YouTube"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "startpage"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udd12 Startpage"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "wikidata"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\uddc2\ufe0f Wikidata"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "semantic scholar"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83e\udde0 Semantic Scholar"
+              }
+            ]
+          }
         ]
       },
-      "gridPos": {"h": 12, "w": 12, "x": 12, "y": 6},
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
       "id": 6,
       "options": {
         "cellHeight": "sm",
-        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
         "showHeader": true
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
           "expr": "searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"} > 0",
           "format": "table",
@@ -340,67 +903,297 @@
         {
           "id": "organize",
           "options": {
-            "excludeByName": {"__name__": true, "instance": true, "job": true},
+            "excludeByName": {
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
             "indexByName": {},
-            "renameByName": {"Value": "Time (s)", "engine_name": "Engine"}
+            "renameByName": {
+              "Value": "Time (s)",
+              "engine_name": "Engine"
+            }
           }
         }
       ],
       "type": "table"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "custom": {
             "align": "auto",
-            "cellOptions": {"type": "auto"},
+            "cellOptions": {
+              "type": "auto"
+            },
             "inspect": false
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 1},
-              {"color": "red", "value": 5}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
             ]
           }
         },
         "overrides": [
-          {"matcher": {"id": "byName", "options": "arxiv"}, "properties": [{"id": "displayName", "value": "📚 arXiv"}]},
-          {"matcher": {"id": "byName", "options": "bing"}, "properties": [{"id": "displayName", "value": "📎 Bing"}]},
-          {"matcher": {"id": "byName", "options": "bing news"}, "properties": [{"id": "displayName", "value": "📰 Bing News"}]},
-          {"matcher": {"id": "byName", "options": "brave"}, "properties": [{"id": "displayName", "value": "🦁 Brave"}]},
-          {"matcher": {"id": "byName", "options": "duckduckgo"}, "properties": [{"id": "displayName", "value": "🦆 DuckDuckGo"}]},
-          {"matcher": {"id": "byName", "options": "google"}, "properties": [{"id": "displayName", "value": "🔍 Google"}]},
-          {"matcher": {"id": "byName", "options": "google scholar"}, "properties": [{"id": "displayName", "value": "🎓 Scholar"}]},
-          {"matcher": {"id": "byName", "options": "mojeek"}, "properties": [{"id": "displayName", "value": "🌿 Mojeek"}]},
-          {"matcher": {"id": "byName", "options": "qwant"}, "properties": [{"id": "displayName", "value": "🌐 Qwant"}]},
-          {"matcher": {"id": "byName", "options": "reddit"}, "properties": [{"id": "displayName", "value": "💬 Reddit"}]},
-          {"matcher": {"id": "byName", "options": "wikipedia"}, "properties": [{"id": "displayName", "value": "📖 Wikipedia"}]},
-          {"matcher": {"id": "byName", "options": "github"}, "properties": [{"id": "displayName", "value": "🐙 GitHub"}]},
-          {"matcher": {"id": "byName", "options": "stackoverflow"}, "properties": [{"id": "displayName", "value": "🔶 Stack Overflow"}]},
-          {"matcher": {"id": "byName", "options": "youtube"}, "properties": [{"id": "displayName", "value": "▶️ YouTube"}]},
-          {"matcher": {"id": "byName", "options": "startpage"}, "properties": [{"id": "displayName", "value": "🔒 Startpage"}]},
-          {"matcher": {"id": "byName", "options": "wikidata"}, "properties": [{"id": "displayName", "value": "🗂️ Wikidata"}]},
-          {"matcher": {"id": "byName", "options": "semantic scholar"}, "properties": [{"id": "displayName", "value": "🧠 Semantic Scholar"}]}
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "arxiv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcda arXiv"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bing"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcce Bing"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bing news"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcf0 Bing News"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "brave"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83e\udd81 Brave"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "duckduckgo"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83e\udd86 DuckDuckGo"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "google"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udd0d Google"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "google scholar"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83c\udf93 Scholar"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mojeek"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83c\udf3f Mojeek"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "qwant"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83c\udf10 Qwant"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reddit"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcac Reddit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "wikipedia"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udcd6 Wikipedia"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "github"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udc19 GitHub"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "stackoverflow"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udd36 Stack Overflow"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "youtube"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\u25b6\ufe0f YouTube"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "startpage"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\udd12 Startpage"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "wikidata"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83d\uddc2\ufe0f Wikidata"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "semantic scholar"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "\ud83e\udde0 Semantic Scholar"
+              }
+            ]
+          }
         ]
       },
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 18},
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
       "id": 14,
       "options": {
         "cellHeight": "sm",
-        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
         "showHeader": true,
-        "sortBy": [{"desc": true, "displayName": "Errors"}]
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Errors"
+          }
+        ]
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "searxng_engines_error_count_total{engine_name=~\"$engine\"} > 0",
+          "expr": "searxng_engine_errors_total{engine_name=~\"$engine\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "{{engine_name}}",
@@ -412,9 +1205,18 @@
         {
           "id": "organize",
           "options": {
-            "excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true},
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
             "indexByName": {},
-            "renameByName": {"Value": "Errors", "engine_name": "Engine", "error_type": "Error Type"}
+            "renameByName": {
+              "Value": "Errors",
+              "engine_name": "Engine",
+              "error_type": "Error Type"
+            }
           }
         }
       ],
@@ -422,16 +1224,26 @@
     },
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 26},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
       "id": 12,
       "title": "Request Activity",
       "type": "row"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -443,43 +1255,165 @@
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
-            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": {"type": "linear"},
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": {"group": "A", "mode": "none"},
-            "thresholdsStyle": {"mode": "off"}
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           }
         },
         "overrides": [
-          {"matcher": {"id": "byName", "options": "📚 arXiv"}, "properties": [{"id": "color", "value": {"fixedColor": "#e8a838", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "🔍 Google"}, "properties": [{"id": "color", "value": {"fixedColor": "#4285F4", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "🦆 DuckDuckGo"}, "properties": [{"id": "color", "value": {"fixedColor": "#de5833", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "🦁 Brave"}, "properties": [{"id": "color", "value": {"fixedColor": "#fb542b", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "📎 Bing"}, "properties": [{"id": "color", "value": {"fixedColor": "#008373", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "🎓 Scholar"}, "properties": [{"id": "color", "value": {"fixedColor": "#4285F4", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "📖 Wikipedia"}, "properties": [{"id": "color", "value": {"fixedColor": "#a2a9b1", "mode": "fixed"}}]}
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\ud83d\udcda arXiv"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#e8a838",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\ud83d\udd0d Google"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#4285F4",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\ud83e\udd86 DuckDuckGo"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#de5833",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\ud83e\udd81 Brave"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#fb542b",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\ud83d\udcce Bing"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#008373",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\ud83c\udf93 Scholar"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#4285F4",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "\ud83d\udcd6 Wikipedia"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#a2a9b1",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 27},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
       "id": 7,
       "options": {
         "legend": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
           "expr": "searxng_engines_request_count_total{engine_name=~\"$engine\"}",
           "legendFormat": "{{engine_name}}",
@@ -493,17 +1427,22 @@
           "id": "renameByRegex",
           "options": {
             "regex": "arxiv",
-            "renamePattern": "📚 arXiv"
+            "renamePattern": "\ud83d\udcda arXiv"
           }
         }
       ],
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -515,35 +1454,59 @@
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
-            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": {"type": "linear"},
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": {"group": "A", "mode": "none"},
-            "thresholdsStyle": {"mode": "off"}
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           }
         },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 27},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
       "id": 8,
       "options": {
         "legend": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
           "expr": "searxng_engines_result_count_total{engine_name=~\"$engine\"}",
           "legendFormat": "{{engine_name}}",
@@ -556,16 +1519,26 @@
     },
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 35},
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
       "id": 13,
       "title": "Response Time Trends",
       "type": "row"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -577,35 +1550,60 @@
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
-            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": {"type": "linear"},
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": {"group": "A", "mode": "none"},
-            "thresholdsStyle": {"mode": "off"}
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           }
         },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
       "id": 9,
       "options": {
         "legend": {
-          "calcs": ["lastNotNull", "max"],
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
           "expr": "rate(searxng_engines_response_time_total_seconds{engine_name=~\"$engine\"}[5m])",
           "legendFormat": "{{engine_name}}",
@@ -617,10 +1615,15 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -632,38 +1635,63 @@
             "drawStyle": "bars",
             "fillOpacity": 80,
             "gradientMode": "none",
-            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
-            "scaleDistribution": {"type": "linear"},
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": {"group": "A", "mode": "normal"},
-            "thresholdsStyle": {"mode": "off"}
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           }
         },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
       "id": 15,
       "options": {
         "legend": {
-          "calcs": ["lastNotNull", "sum"],
+          "calcs": [
+            "lastNotNull",
+            "sum"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "editorMode": "code",
-          "expr": "rate(searxng_engines_error_count_total{engine_name=~\"$engine\"}[5m])",
-          "legendFormat": "{{engine_name}} / {{error_type}}",
+          "expr": "rate(searxng_engine_errors_total{engine_name=~\"$engine\"}[5m])",
+          "legendFormat": "{{engine_name}} \u2014 {{error_type}}",
           "range": true,
           "refId": "A"
         }
@@ -675,12 +1703,22 @@
   "preload": false,
   "refresh": "1m",
   "schemaVersion": 40,
-  "tags": ["searxng", "engine-health"],
+  "tags": [
+    "searxng",
+    "engine-health"
+  ],
   "templating": {
     "list": [
       {
-        "current": {"selected": true, "text": "All", "value": "$__all"},
-        "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "PBFA97CFB590B2093"
+        },
         "definition": "label_values(searxng_engines_request_count_total, engine_name)",
         "hide": 0,
         "includeAll": true,
@@ -699,10 +1737,13 @@
       }
     ]
   },
-  "time": {"from": "now-6h", "to": "now"},
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
   "title": "SearXNG Engine Health",
   "uid": "searxng-engine-health",
-  "version": 3
+  "version": 4
 }

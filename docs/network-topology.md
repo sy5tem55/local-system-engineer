@@ -176,19 +176,30 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 **Goal:** Enumerate all active devices on 192.168.1.0/24 with hostname, MAC, vendor.
 
-**Method:** pfSense DHCP lease table (API or UI export) + ARP scan from LUCIFER.
+**Discipline:** System administration (1.0×)
 
-**Assertions:**
-- pfSense found at 192.168.1.1
-- LUCIFER Windows host found
-- HA Pi found
-- At least one entry per known device class (workstation, SBC, IoT)
+**Method:** pfSense DHCP lease table (`GET /api/v2/dhcp/server/lease`) + ARP scan from LUCIFER WSL2.
+
+**Starting state:** Live pfSense REST API (read-only, v2.8). No snapshot required — read-only production queries.
+
+**Assertions (machine-checkable):**
+```python
+assert "192.168.1.50" in [d["ip"] for d in devices]           # pfSense found
+assert "192.168.1.57" in [d["ip"] for d in devices]           # LUCIFER found
+assert len([d for d in devices if d.get("mac")]) >= 5         # ≥5 devices with MAC resolved
+```
+
+**Failure modes:**
+- 0/3: Model fails to query pfSense DHCP API or ARP table; returns no device list.
+- 1/3: DHCP lease table retrieved, pfSense + LUCIFER found; no ARP scan run, MAC vendor not resolved; third assertion fails.
+- 2/3: pfSense and LUCIFER confirmed, MACs listed, but fewer than 5 entries (ARP scan incomplete or nmap not run).
+- 3/3: Full inventory — all known devices, hostnames, MACs, vendors; all 3 assertions pass.
 
 **KB target:** `network-topology/lan-device-inventory` (quality 0.9 — live data)
 
-**Sandbox:** Not applicable (read-only ARP scan). Direct production run safe.
+**Sandbox:** Not applicable (read-only). Direct production run safe.
 
-**Escalation candidate:** If pfSense API not reachable from WSL2, this is the first test of the WSL2 networking solution.
+**Escalation candidate:** If pfSense API not reachable from WSL2, this is the first test of mirrored networking.
 
 ---
 
@@ -196,16 +207,28 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 **Goal:** Enumerate 192.168.5.0/24. Confirm TS-419P II presence, identify any unexpected devices.
 
-**Method:** nmap or ping sweep from LUCIFER (requires routing via pfSense).
+**Discipline:** Security analysis (1.3×)
 
-**Assertions:**
-- TS-419P II found at known IP
-- No unexpected open ports beyond NFS (2049), SMB (445), QNAP web (8080/443)
-- Subnet reachable from LUCIFER WSL2
+**Method:** nmap top-1000 port scan from LUCIFER WSL2 across 192.168.5.0/24.
+
+**Starting state:** Live network, WSL2 mirrored mode confirmed. No snapshot required.
+
+**Assertions (machine-checkable):**
+```python
+assert nas_subnet_reachable is True                            # 192.168.5.0/24 reachable from WSL2
+assert any(2049 in h.get("ports", []) for h in hosts)         # NFS port found on at least one host
+assert unexpected_ports == [] or unexpected_ports is not None  # unexpected port analysis performed
+```
+
+**Failure modes:**
+- 0/3: WSL2 → 192.168.5.0/24 routing fails; subnet unreachable; no results.
+- 1/3: Subnet reachable (ping sweep only), NAS found, but no port scan; NFS assertion fails.
+- 2/3: NFS confirmed, NAS identified; unexpected port analysis not performed or missing.
+- 3/3: Full scan — NAS found, all ports listed, unexpected findings analysed, all 3 assertions pass.
 
 **KB target:** `network-topology/nas-subnet-inventory`
 
-**Blocker:** Requires WSL2 → 192.168.5.0/24 routing to work (pfSense must allow it). Tests Option A/B WSL2 networking.
+**Blocker:** Requires WSL2 → 192.168.5.0/24 routing (pfSense inter-subnet allow rule). Tests mirrored networking reach.
 
 ---
 
@@ -213,16 +236,28 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 **Goal:** Parse the last 24h of pfSense firewall logs. Produce: top 10 blocked source IPs, top blocked destination ports, pass/block ratio per interface.
 
-**Method:** pfSense syslog → LUCIFER collector → parse.
+**Discipline:** Security analysis (1.3×)
 
-**Assertions:**
-- At least 100 log entries parsed
-- Block events present
-- Source IPs are parseable (not all private — some external traffic expected)
+**Method:** pfSense syslog stream on LUCIFER:514 UDP (live) or `GET /api/v2/status/logs/firewall` (API). Parse and aggregate.
+
+**Starting state:** Live syslog stream flowing (confirmed ✅). At least 24h of logs accumulated. Syslog collector container running (infra pre-req).
+
+**Assertions (machine-checkable):**
+```python
+assert len(log_entries) >= 100                                 # sufficient log volume parsed
+assert len(top_blocked_ips) >= 5                               # top blocked source IPs ranked
+assert "block_ratio" in summary and summary["block_ratio"] > 0 # pass/block ratio computed
+```
+
+**Failure modes:**
+- 0/3: Model can't reach syslog or pfSense log API; returns no data.
+- 1/3: Logs parsed, count ≥100 confirmed, but no ranking of blocked IPs; second assertion fails.
+- 2/3: Top blocked IPs produced; pass/block ratio missing or not broken down per interface.
+- 3/3: Top 10 blocked IPs, top blocked destination ports, pass/block ratio per interface; all 3 assertions pass.
 
 **KB target:** `pfsense/log-baseline-YYYY-MM-DD`
 
-**Sandbox:** Syslog collector container must be running first (infrastructure pre-req, not part of challenge).
+**Sandbox:** Syslog collector container must be running (infrastructure pre-req, not part of the challenge).
 
 ---
 
@@ -230,13 +265,24 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 **Goal:** Enumerate HA entities, devices, integrations, and add-ons. Identify Pi model and available RAM.
 
-**Method:** HA REST API (`/api/states`, `/api/config`, Supervisor API for add-ons and system info).
+**Discipline:** System administration (1.0×)
 
-**Assertions:**
-- At least 10 entities found
-- HA version retrieved
-- Pi model and memory identified
-- Add-on list retrieved
+**Method:** HA REST API (`GET /api/states`, `GET /api/config`) + Supervisor API (`GET /api/hassio/host/info`, `GET /api/hassio/addons`).
+
+**Starting state:** Live HA instance on Pi 4. Long-lived access token required (pre-condition; see §Pre-conditions).
+
+**Assertions (machine-checkable):**
+```python
+assert len(entities) >= 10                                     # entity inventory retrieved
+assert ha_version is not None                                  # HA version string present
+assert system_info.get("board") is not None or system_info.get("total_ram_mb") is not None  # hardware identified
+```
+
+**Failure modes:**
+- 0/3: No HA token; authentication fails; no data returned.
+- 1/3: Entities listed (≥10), HA version retrieved; Supervisor API not called; hardware info missing.
+- 2/3: Entities + version + add-on list retrieved; Pi hardware model/RAM not identified.
+- 3/3: Full inventory — entities, devices, integrations, add-ons, Pi model, memory; all 3 assertions pass.
 
 **KB target:** `home-assistant/entity-inventory`, `home-assistant/system-baseline`
 
@@ -246,13 +292,24 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 **Goal:** Enumerate running QTS services and NFS/SMB shares on TS-419P II.
 
-**Method:** QNAP QTS API or nmap service scan + manual NFS showmount.
+**Discipline:** System administration (1.0×)
 
-**Assertions:**
-- At least one NFS export found
-- SMB shares listed
-- Available disk space retrieved
-- Confirm no Container Station (expected given ARMv5)
+**Method:** QNAP QTS API (if credentials available) or nmap service scan + `showmount -e <nas-ip>` from LUCIFER WSL2.
+
+**Starting state:** Live NAS on 192.168.5.x. QNAP admin credentials required (pre-condition — status unknown). Fallback: nmap + showmount (no credentials needed).
+
+**Assertions (machine-checkable):**
+```python
+assert len(nfs_exports) >= 1                                   # at least one NFS export found
+assert len(smb_shares) >= 1                                    # at least one SMB share found
+assert disk_free_gb > 0                                        # available disk space retrieved
+```
+
+**Failure modes:**
+- 0/3: 192.168.5.x unreachable from WSL2; no results (routing issue).
+- 1/3: NAS reached via nmap, ports confirmed (2049/445 open), but showmount blocked or credentials absent; NFS exports not enumerated.
+- 2/3: NFS exports found; SMB shares or disk space not retrieved.
+- 3/3: NFS exports, SMB shares, disk space all retrieved; no Container Station confirmed; all 3 assertions pass.
 
 **KB target:** `nas/service-inventory`, `nas/storage-baseline`
 
@@ -262,12 +319,24 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 **Goal:** Retrieve all firewall rules. Map rules governing 192.168.1.0/24 ↔ 192.168.5.0/24 routing. Identify any rules with `any/any` source/destination (security risk).
 
-**Method:** pfSense API (`/api/v1/firewall/rule`).
+**Discipline:** Security analysis (1.3×)
 
-**Assertions:**
-- Rules retrieved for LAN and NAS interfaces
-- Inter-subnet rules identified and listed
-- Any/any rules flagged
+**Method:** `GET /api/v2/firewall/rule` — returns all rules per interface. Parse for inter-subnet entries and any/any patterns.
+
+**Starting state:** Live pfSense REST API (read-only). No snapshot required.
+
+**Assertions (machine-checkable):**
+```python
+assert len(lan_rules) > 0                                      # LAN interface rules retrieved
+assert inter_subnet_rules is not None                          # rules for .1.x ↔ .5.x identified (list, may be empty)
+assert any_any_checked is True                                 # any/any analysis was performed (flag set regardless of findings)
+```
+
+**Failure modes:**
+- 0/3: API returns rules but model doesn't parse or categorize by interface; raw dump only.
+- 1/3: LAN rules listed; inter-subnet rules not specifically extracted; second assertion fails.
+- 2/3: Inter-subnet rules mapped; any/any check not performed or not explicitly flagged.
+- 3/3: All rules retrieved, inter-subnet rules listed (or confirmed absent), any/any entries flagged as security risk; all 3 assertions pass.
 
 **KB target:** `pfsense/firewall-rule-map`, `pfsense/security-findings-01`
 
@@ -277,12 +346,26 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 **Goal:** Retrieve DNS resolver configuration. List custom host overrides and domain overrides. Identify any entries pointing to unexpected IPs.
 
-**Method:** pfSense API (`/api/v1/services/unbound`).
+**Discipline:** Security analysis (1.3×)
 
-**Assertions:**
-- DNS resolver confirmed running
-- Host overrides listed
-- No entries pointing outside 192.168.1.0/24 or 192.168.5.0/24 without justification
+**Method:** `GET /api/v2/services/unbound/host_override` + `GET /api/v2/services/unbound/domain_override`. Fallback: SSH → `cat /cf/conf/config.xml | grep -A5 hosts`.
+
+**Starting state:** Live pfSense REST API (read-only). Known stale entry `cisco.lan` was removed 2026-06-03 — audit should reflect clean state.
+
+**Assertions (machine-checkable):**
+```python
+assert dns_resolver_running is True                            # Unbound service confirmed up
+assert isinstance(host_overrides, list)                        # override list retrieved (may be empty)
+assert all(is_rfc1918(o["ip"]) for o in host_overrides)       # no overrides pointing to public IPs
+```
+
+Where `is_rfc1918(ip)` returns True for 10.x, 172.16–31.x, 192.168.x addresses.
+
+**Failure modes:**
+- 0/3: DNS config not retrieved (API error or SSH not used as fallback).
+- 1/3: Resolver status confirmed running; override list not retrieved.
+- 2/3: Overrides listed (list may be empty); IP analysis not performed.
+- 3/3: Resolver confirmed, all overrides listed with IP analysis, public IP entries flagged or confirmed absent; all 3 assertions pass.
 
 **KB target:** `pfsense/dns-resolver-config`
 
@@ -292,11 +375,24 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 **Goal:** List all automations. For each: trigger type, last triggered timestamp, enabled/disabled status. Flag automations that haven't fired in 30 days (stale candidates).
 
-**Method:** HA REST API (`/api/states` filtering `automation.*`).
+**Discipline:** System administration (1.0×)
 
-**Assertions:**
-- All automations listed with last_triggered
-- Stale automations (>30 days) identified and listed separately
+**Method:** `GET /api/states` filtered to `automation.*` entities. Parse `attributes.last_triggered` and `state` (on/off = enabled/disabled).
+
+**Starting state:** Live HA instance. Long-lived access token required. `last_triggered` is null for automations that have never fired — treat as stale.
+
+**Assertions (machine-checkable):**
+```python
+assert len(automations) >= 1                                   # at least one automation exists
+assert all("last_triggered" in a["attributes"] for a in automations)  # timestamps present for all
+assert stale_automations is not None                           # stale list produced (list, may be empty)
+```
+
+**Failure modes:**
+- 0/3: No HA access (token missing/invalid).
+- 1/3: Automations listed (count ≥1), but `last_triggered` not extracted from attributes.
+- 2/3: Timestamps present; stale filter (30-day or never-triggered) not applied; third assertion fails.
+- 3/3: All automations listed with trigger type, enabled status, last_triggered; stale candidates flagged separately; all 3 assertions pass.
 
 **KB target:** `home-assistant/automation-audit`
 
@@ -306,12 +402,24 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 **Goal:** Identify all listening services across 192.168.1.0/24 and 192.168.5.0/24. Flag any unexpected open ports (non-standard, or standard ports on unexpected hosts).
 
-**Method:** nmap top-1000 ports across both subnets from LUCIFER.
+**Discipline:** Security analysis (1.3×)
 
-**Assertions:**
-- Scan completes on both subnets
-- Known services confirmed (pfSense 80/443/514, HA 8123, NAS 2049/445/80)
-- Any unexpected findings flagged
+**Method:** `nmap -sV --top-ports 1000 192.168.1.0/24 192.168.5.0/24` from LUCIFER WSL2.
+
+**Starting state:** Live network. Both subnets reachable from WSL2 mirrored mode. Expected known services: pfSense (80/443/514/22), HA (8123), NAS (2049/445/80/443), LUCIFER (3000/8080/9200/9090/3002).
+
+**Assertions (machine-checkable):**
+```python
+assert "192.168.1.50" in scan_results                          # pfSense scanned and responded
+assert any(8123 in r.get("ports", []) for r in scan_results.values())  # HA port found
+assert unexpected_findings is not None                         # unexpected port analysis performed
+```
+
+**Failure modes:**
+- 0/3: nmap fails or not available in WSL2; no results.
+- 1/3: 192.168.1.0/24 scanned, pfSense found; 192.168.5.0/24 not scanned (routing not verified); HA assertion passes but unexpected analysis absent.
+- 2/3: Both subnets scanned, known services confirmed; unexpected port analysis not performed.
+- 3/3: Both subnets fully scanned, all known services confirmed, unexpected findings flagged with host and port; all 3 assertions pass.
 
 **KB target:** `network-topology/open-port-audit`, `network-topology/security-findings`
 
@@ -319,14 +427,26 @@ Each challenge has a machine-checkable assertion and a KB index target.
 
 ### T1-Ch.10 — Inter-Subnet Traffic Baseline
 
-**Goal:** Using pfSense logs and interface stats, determine the traffic volume between 192.168.1.0/24 and 192.168.5.0/24. Identify top talkers in each direction.
+**Goal:** Using pfSense interface stats and firewall logs, determine traffic volume between 192.168.1.0/24 and 192.168.5.0/24. Identify top talkers in each direction.
 
-**Method:** pfSense API interface stats + firewall log analysis.
+**Discipline:** Performance optimization (1.1×)
 
-**Assertions:**
-- Bytes in/out per interface over last 24h retrieved
-- Top source IPs for inter-subnet traffic identified
-- Traffic pattern is consistent with expected use (NAS file access, not anomalous)
+**Method:** `GET /api/v2/status/interface` for bytes in/out per interface. Cross-reference with firewall log (`GET /api/v2/status/logs/firewall`) filtered to inter-subnet source/dest pairs.
+
+**Starting state:** Live pfSense REST API (read-only). Interface counters are cumulative since last reboot — report as-is with timestamp; do not require 24h window if uptime is shorter.
+
+**Assertions (machine-checkable):**
+```python
+assert interface_stats["LAN"]["bytes_in"] > 0                 # LAN bytes_in counter retrieved
+assert interface_stats["LAN"]["bytes_out"] > 0                # LAN bytes_out counter retrieved
+assert len(top_talkers) >= 1                                   # at least one inter-subnet top talker identified
+```
+
+**Failure modes:**
+- 0/3: Interface stats not retrieved (API error); no data.
+- 1/3: Bytes in/out retrieved for LAN interface; no per-IP breakdown; top talkers not identified.
+- 2/3: Interface stats retrieved, top talkers identified; traffic consistency assessment (NAS vs anomalous) not performed.
+- 3/3: Interface bytes in/out, top talkers per direction, traffic pattern assessment (expected NAS file access or anomaly flag); all 3 assertions pass.
 
 **KB target:** `network-topology/inter-subnet-traffic-baseline`
 
