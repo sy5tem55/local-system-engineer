@@ -8,8 +8,8 @@
 |---|---|---|---|
 | Tool | v1.5.18 | `tools/openwebui-tool-v1.5.18.py` | search_rfc() · deployed ✅ |
 | Tool (prev) | v1.5.17 | `tools/openwebui-tool-v1.5.17.py` | pfsense_log_summary() + nmap_summary() |
-| Prompt | v0.5.14 | `prompts/v0.5.14.md` | Docker NAT topology fix · deployed ✅ |
-| Prompt (prev) | v0.5.13 | `prompts/v0.5.13.md` | 4 Run-6 fixes · deployed ✅ |
+| Prompt | v0.5.15 | `prompts/v0.5.15.md` | PFSENSE LOG RULE section added · deployed ✅ |
+| Prompt (prev) | v0.5.14 | `prompts/v0.5.14.md` | Docker NAT topology fix · deployed ✅ |
 | RAG Tools | v2 | (embedded in tool) | search_kb, index_to_kb, record_error, check_error_kb |
 | Vaultwarden tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | env var wins over valve · deployed ✅ |
 | Routing filter | v1.1.0 | `tools/lse-routing-filter-v1.1.0.py` | deployed ✅ · Global OFF · Qwen3 preset only |
@@ -72,7 +72,7 @@
 | Node | CPU | RAM | GPU | OS | Role |
 |---|---|---|---|---|---|
 | LUCIFER | Intel 9900K | ? | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | Primary LSE stack · active: Qwen3.6 27B Q4_K_M 64k q8_0 think:3072 → :8080 |
-| NODE2 | Intel 9900K | 32GB | RTX 3090 24GB | Ubuntu (native) | LM Studio installed · parallel LSE candidate · **setup pending** |
+| NODE2 | Intel 9900K | 32GB | RTX 3090 24GB | Ubuntu 22.04 (native) | 192.168.5.41 · NAS subnet · Netgear switch · LM Studio installed · no static DHCP mapping yet · setup pending |
 | NODE3 | AMD 9800X3D | 64GB | RTX 5090 | Win11 (no WSL yet) | Gaming PC — WSL2 setup pending |
 | HA Pi | ARM Cortex-A72 | 4GB | — | HA OS | Home Assistant hub |
 | Pi 4 (spare) | ARM Cortex-A72 | 4GB | — | undeployed | Future ARM64 Docker node |
@@ -82,7 +82,7 @@
 
 | Service | Port | Notes |
 |---|---|---|
-| SearXNG | 8088 | lse-net · v3 config · NVD + Semantic Scholar + bing/google news live · SSL_CERT_FILE fix applied |
+| SearXNG | 8088 | lse-net · v3 config · Semantic Scholar + bing/google news live · SSL_CERT_FILE fix applied · NVD/cvedetails blocked (VPS 403) |
 | Elasticsearch | 9200/9300 | lse-net · mem_limit=2g · indexes: lse-kb, lse-rfc-kb |
 | Prometheus | 9090 | lse-net |
 | Node Exporter | 9100 | lse-net |
@@ -107,21 +107,25 @@
 
 | Node | IP | Status |
 |---|---|---|
-| pfSense Plus 26.03.1 | 192.168.1.50 | ✅ SSH + REST API |
+| pfSense Plus 26.03.1 | 192.168.1.50 · pfsense.home.arpa | ✅ SSH + REST API |
 | LUCIFER (WSL2) | 192.168.1.57 | ✅ Static DHCP |
-| HA Pi 4 | homeassistant.home.arpa:8123 · 192.168.1.80 | ✅ Token live · SSH key auth (sy5) · template YAML fixed |
-| TS-419P II NAS | 192.168.5.45 (nas.home.arpa) | ⚠️ Unexpected ports found |
-| Samsung S90C TV | 192.168.1.90 | ⚠️ DHCP hammer + WAN unblocked |
-| Solar inverter | 192.168.10.3 | ✅ In HA |
+| HA Pi 4 | homeassistant.home.arpa · 192.168.1.80 | ✅ Token live · SSH key auth (sy5) · template YAML fixed |
+| Samsung S90C TV | 192.168.1.90 · MAC 1c:af:4a:04:5f:b6 | ✅ WAN blocked · DHCP hammer = firmware noise (lease 7200s normal) |
+| TS-419P II NAS | 192.168.5.44 + 192.168.5.45 · n45.home.arpa | ⚠️ Unexpected ports found · 2 NICs failover (no LACP on switch) · NAS subnet |
+| NODE2 | 192.168.5.41 (dynamic) · no DNS yet | ⚠️ No static mapping · NAS subnet · Ubuntu 22.04 |
+| Solar inverter | 192.168.10.3 | ✅ In HA · IoT subnet |
 
-**Subnets:** 192.168.1.0/24 (LAN) · 192.168.5.0/24 (NAS) · 192.168.10.0/24 (IoT)
+**Subnets:**
+- `192.168.1.0/24` LAN — pfSense em0/igb0, LUCIFER, HA Pi, Samsung TV + general LAN devices
+- `192.168.5.0/24` NAS/Server — pfSense interface → Netgear switch → NAS (n45), NODE2
+- `192.168.10.0/24` IoT — solar inverter, HA-managed devices
 **pfSense REST API:** v2.8 · read-only · access list: 192.168.1.57/32 · CA cert: `/opt/local-se/cert/pfsense-webgui-ca.crt`
 
 ## Open Issues
 
 | Issue | Status |
 |---|---|
-| NAS 192.168.5.45 (nas.home.arpa) unexpected ports | ✅ nas-t2-001 + nas-t3-001 SOLVED |
+| NAS 192.168.5.45 (n45.home.arpa) unexpected ports | ✅ nas-t2-001 + nas-t3-001 SOLVED |
 | Samsung TV DHCP hammer + WAN unblocked | ✅ WAN blocked (net-t2/t3 SOLVED) · DHCP rate still high — T4 open |
 | HA long-lived access token | ✅ Live · JWT format · 183 chars · Vaultwarden: HomeAssistant_API_Token |
 | HA template sensor misconfiguration | ✅ Fixed (2026-06-05) · migrated to `template:` key · confirmed post-reboot |

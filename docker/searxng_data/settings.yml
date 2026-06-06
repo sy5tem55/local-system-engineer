@@ -121,7 +121,7 @@ use_default_settings:
       # Scientific / security
       - pubmed
       - semantic scholar
-      - national vulnerability database
+      # cvedetails: REMOVED — VPS IP blocked (403), same as Scholar/Reddit
       # Reference
       - wikipedia
       # google scholar: REMOVED — 0% reliability, silently failing
@@ -184,9 +184,9 @@ engines:
     weight: 3          # NEW — article-level news results (distinct from google web engine)
     categories: [news]
 
-  - name: cvedetails
-    weight: 3          # security CVE source — verified working in SearXNG 2025.5.13
-    categories: [it]   # national vulnerability database module doesn't exist — use cvedetails
+  # cvedetails: REMOVED — VPS IP blocked (HTTP 403). Workaround: Google/DDG with site:nvd.nist.gov
+  # Future: write custom engine using NVD REST API (services.nvd.nist.gov/rest/json/cves/2.0)
+  # NVD API is IP-unrestricted, returns CVSS scores, no auth needed (5 req/30s limit)
 
   # google scholar: REMOVED from engines block (disabled in keep_only above)
 outgoing:

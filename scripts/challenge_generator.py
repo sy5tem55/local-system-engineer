@@ -180,9 +180,13 @@ NETWORK_CONTEXT = (
     "Network: 192.168.1.0/24 (LAN), 192.168.5.0/24 (NAS subnet), "
     "192.168.10.0/24 (IoT/solar). "
     "Known hosts: pfSense 192.168.1.50, LUCIFER 192.168.1.57, "
-    "Samsung TV 192.168.1.90, NAS 192.168.5.10. "
-    "pfSense REST API: https://192.168.1.50/api/v2 (read-only). "
-    "Tools available: pfsense_query(), nmap_summary(), pfsense_log_summary(), execute_command()."
+    "Samsung TV 192.168.1.90 (MAC 1c:af:4a:04:5f:b6, WAN blocked), NAS 192.168.5.45. "
+    "pfSense REST API: https://pfsense.home.arpa/api/v2 (read-only). "
+    "Tools available: pfsense_query(), nmap_summary(), pfsense_log_summary(), execute_command(). "
+    "CRITICAL: NEVER call pfsense_query('/api/v2/status/logs/firewall') or any raw log endpoint. "
+    "For firewall logs always use: execute_command('bash /opt/local-se/pfsense-gateway-tools.sh summary 24 10'). "
+    "Gateway auto-starts. Token cost 200 vs 10,000+ raw. "
+    "Exemption: non-log endpoints (DHCP leases, DNS config, system version) may use pfsense_query directly."
 )
 
 
