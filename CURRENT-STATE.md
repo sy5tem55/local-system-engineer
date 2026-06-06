@@ -113,12 +113,16 @@
 | Samsung S90C TV | 192.168.1.90 · MAC 1c:af:4a:04:5f:b6 | ✅ WAN blocked · DHCP hammer = firmware noise (lease 7200s normal) |
 | TS-419P II NAS | 192.168.5.44 + 192.168.5.45 · n45.home.arpa | ⚠️ Unexpected ports found · 2 NICs failover (no LACP on switch) · NAS subnet |
 | NODE2 | 192.168.5.41 (dynamic) · no DNS yet | ⚠️ No static mapping · NAS subnet · Ubuntu 22.04 |
-| Solar inverter | 192.168.10.3 | ✅ In HA · IoT subnet |
+| Solar inverter | 192.168.10.3 | ✅ In HA · OPT2 isolated segment |
+| Kostal Smart Energy Meter | 192.168.10.x TBD | ⏳ Disconnected · pending HA integration |
 
 **Subnets:**
-- `192.168.1.0/24` LAN — pfSense em0/igb0, LUCIFER, HA Pi, Samsung TV + general LAN devices
-- `192.168.5.0/24` NAS/Server — pfSense interface → Netgear switch → NAS (n45), NODE2
-- `192.168.10.0/24` IoT — solar inverter, HA-managed devices
+- `192.168.1.0/24` LAN + WiFi — pfSense, LUCIFER, HA Pi, Samsung TV + all WiFi AP devices
+  AP at 192.168.1.1 bridges WiFi into LAN — IoT WiFi devices get 192.168.1.x IPs from pfSense DHCP
+- `192.168.5.0/24` NAS/Server — pfSense interface → Netgear switch → NAS (n45 .44+.45), NODE2 (.41)
+- `192.168.10.0/24` Energy/IoT isolated — pfSense OPT2 interface · isolated segment
+  Active: solar inverter 192.168.10.3
+  Pending: Kostal Smart Energy Meter (disconnected — future HA integration)
 **pfSense REST API:** v2.8 · read-only · access list: 192.168.1.57/32 · CA cert: `/opt/local-se/cert/pfsense-webgui-ca.crt`
 
 ## Open Issues
