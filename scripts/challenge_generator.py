@@ -177,8 +177,9 @@ Rules for assertions:
 Return only the JSON object, no markdown fences, no explanation."""
 
 NETWORK_CONTEXT = (
-    "Network: 192.168.1.0/24 (LAN), 192.168.5.0/24 (NAS subnet), "
-    "192.168.10.0/24 (IoT/solar). "
+    "Network: 192.168.1.0/24 (LAN + WiFi AP 192.168.1.1 — WiFi/IoT devices get 192.168.1.x IPs), "
+    "192.168.5.0/24 (NAS/server subnet via Netgear switch), "
+    "192.168.10.0/24 (energy/IoT isolated — pfSense OPT2 — solar inverter 192.168.10.3 + Kostal Smart Energy Meter pending). "
     "Known hosts: pfSense 192.168.1.50, LUCIFER 192.168.1.57, "
     "Samsung TV 192.168.1.90 (MAC 1c:af:4a:04:5f:b6, WAN blocked), NAS 192.168.5.45. "
     "pfSense REST API: https://pfsense.home.arpa/api/v2 (read-only). "

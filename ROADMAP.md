@@ -94,6 +94,8 @@
 
 ### T1 — Discovery Layer
 - [ ] **net-t1-013 Subnet Host Enumeration** — nmap sweep of all three subnets (1.x, 5.x, 10.x).
+  Note: 192.168.1.x includes ALL WiFi devices (AP at 192.168.1.1 bridges WiFi into LAN).
+  192.168.10.x is dedicated wired IoT only (solar inverter). Expect most IoT on 1.x, not 10.x.
   Produce: JSON list of `{ip, mac, hostname, open_ports[], vendor}` for each live host.
   Assertions: a1=hosts found on each subnet, a2=MAC vendors resolved, a3=JSON written to KB.
 
@@ -191,6 +193,9 @@
 - [ ] NODE2 — LM Studio server mode on RTX 3090, expose :8081, add to pfSense API access list
 - [ ] NODE3 — WSL2 install, llama-server deploy, test `wsl-gaming-teardown.ps1`
 - [x] HA long-lived token — ✅ created (2026-06-05) · stored in Vaultwarden as HA_TOKEN
+- [ ] **Kostal Smart Energy Meter** — disconnected, pending integration on 192.168.10.x (OPT2)
+  When connected: add static DHCP mapping, add `kostal.home.arpa` DNS entry, integrate with HA
+  Design as arena challenge: `ha-t2-003` Energy Meter Integration
 
 ---
 
