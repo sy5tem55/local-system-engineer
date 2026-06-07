@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Network Topology — LSE</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0d1117; color: #e6edf3;
+  font-family: 'SF Mono', Consolas, monospace; font-size: 13px;
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+}
+
+/* ── Header ── */
+#header {
+  display: flex; align-items: center; gap: 14px; padding: 7px 16px;
+  background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0;
+}
+#title { font-weight: 700; font-size: 14px; color: #58a6ff; letter-spacing: .5px; }
+.stat { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.led { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.led-up    { background: #3fb950; box-shadow: 0 0 5px #3fb950; }
+.led-down  { background: #f85149; box-shadow: 0 0 5px #f85149; }
+.led-gray  { background: #8b949e; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+.led-blink { animation: blink 2s infinite; }
+#ts { color: #8b949e; font-size: 11px; margin-left: auto; }
+#btn-reload {
+  background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+  padding: 3px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+#btn-reload:hover { background: #30363d; }
+
+/* ── Main layout ── */
+#main { display: flex; flex: 1; overflow: hidden; position: relative; }
+#cy   { flex: 1; }
+
+/* ── Detail panel ── */
+#panel {
+  width: 296px; background: #161b22; border-left: 1px solid #30363d;
+  padding: 14px; overflow-y: auto; flex-shrink: 0; font-size: 12px;
+}
+#panel.hidden { display: none; }
+#panel-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+#panel-name { font-size: 13px; font-weight: 700; word-break: break-all; }
+#panel-x { cursor: pointer; color: #8b949e; font-size: 18px; line-height: 1; flex-shrink: 0; margin-left: 8px; }
+#panel-x:hover { color: #e6edf3; }
+.sec { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: #58a6ff; border-bottom: 1px solid #21262d; padding-bottom: 3px; margin: 10px 0 6px; }
+.kv { margin-bottom: 5px; }
+.kk { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: .4px; }
+.vv { word-break: break-all; }
+.badge { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 11px; font-weight: 700; margin-bottom: 8px; }
+.b-up      { background: #1a4731; color: #3fb950; }
+.b-down    { background: #3d1a1a; color: #f85149; }
+.b-unknown { background: #2a2a2a; color: #8b949e; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.tag { background: #21262d; border: 1px solid #30363d; padding: 1px 6px; border-radius: 3px; font-size: 10px; color: #8b949e; }
+
+/* ── Legend ── */
+#legend {
+  position: absolute; bottom: 14px; left: 14px;
+  background: rgba(22,27,34,.93); border: 1px solid #30363d; border-radius: 8px;
+  padding: 10px 14px; backdrop-filter: blur(4px); pointer-events: none; z-index: 10;
+}
+.leg-ttl { font-size: 10px; text-transform: uppercase; color: #8b949e; margin-bottom: 6px; letter-spacing: .5px; }
+.leg-row { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; font-size: 11px; color: #8b949e; }
+.leg-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+.leg-line { width: 18px; height: 2px; flex-shrink: 0; border-radius: 1px; }
+
+/* ── Empty state ── */
+#empty {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  text-align: center; pointer-events: none;
+}
+#empty h2 { font-size: 18px; color: #30363d; margin-bottom: 8px; }
+#empty p  { font-size: 12px; color: #484f58; line-height: 1.7; }
+#empty code { background: #21262d; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div id="title">◈ NET TOPOLOGY</div>
+  <div class="stat"><span class="led led-up"></span><span id="s-up">0</span>&nbsp;up</div>
+  <div class="stat"><span class="led led-down"></span><span id="s-down">0</span>&nbsp;down</div>
+  <div class="stat"><span class="led led-gray"></span><span id="s-total">0</span>&nbsp;total</div>
+  <div class="stat" id="ws-row" style="display:none">
+    <span class="led led-gray led-blink" id="ws-led"></span>
+    <span id="ws-lbl" style="font-size:11px;color:#8b949e">ws</span>
+  </div>
+  <div id="ts">—</div>
+  <button id="btn-reload" onclick="loadAndRender()">↺ Reload</button>
+</div>
+
+<div id="main">
+  <div id="cy">
+    <div id="empty">
+      <h2>No snapshot data</h2>
+      <p>
+        Generate data: <code>python3 discovery_engine.py</code><br>
+        Serve this directory: <code>python3 -m http.server 8080</code><br>
+        Then open: <code>http://localhost:8080</code>
+      </p>
+    </div>
+  </div>
+  <div id="panel" class="hidden">
+    <div id="panel-hdr">
+      <span id="panel-name">Device</span>
+      <span id="panel-x" onclick="closePanel()">✕</span>
+    </div>
+    <div id="panel-body"></div>
+  </div>
+</div>
+
+<div id="legend">
+  <div class="leg-ttl">Status</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#3fb950"></div>Up</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#f85149"></div>Down</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#8b949e"></div>Unknown</div>
+  <div class="leg-ttl" style="margin-top:8px">Type</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#e3b341;border-radius:2px"></div>Gateway ◆</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#9b59b6;border-radius:2px"></div>AP ⬡</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#58a6ff;border-radius:3px"></div>Server ▭</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#8b949e"></div>Client ●</div>
+  <div class="leg-ttl" style="margin-top:8px">Subnet border</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#1f3a5f;border:2px solid #2d5a9e;border-radius:50%"></div>LAN</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#3d2f6e;border:2px solid #7c5fc8;border-radius:50%"></div>OPT1</div>
+  <div class="leg-row"><div class="leg-dot" style="background:#1f4a30;border:2px solid #3a9a60;border-radius:50%"></div>OPT2</div>
+</div>
+
+<script>
+'use strict';
+
+// ── Config ────────────────────────────────────────────────────────────────────
+const SNAPSHOT_URL = 'snapshot.json';
+const WS_URL       = 'ws://localhost:8765';
+const POLL_MS      = 30000;
+
+const STATUS_COLOR = { up: '#3fb950', down: '#f85149', unknown: '#8b949e' };
+const SUBNET_BORDER = {
+  lan:     '#2d5a9e',
+  opt1:    '#7c5fc8',
+  opt2:    '#3a9a60',
+  unknown: '#444d56',
+};
+const SUBNET_BG = {
+  lan:     '#0f1e38',
+  opt1:    '#1a1238',
+  opt2:    '#0f2a1a',
+  unknown: '#161b22',
+};
+
+// Known IPs — override classification and label
+const KNOWN_IPS = {
+  '192.168.1.1': { type: 'ap',      label: 'ASUS GT-BE19000' },
+  '192.168.5.3': { type: 'ap',      label: 'Teltonika RUTX50' },
+};
+
+let cy = null, pollTimer = null;
+
+// ── Classification ────────────────────────────────────────────────────────────
+
+function classifyType(dev) {
+  const ip = dev.ip || '';
+  if (KNOWN_IPS[ip]) return KNOWN_IPS[ip].type;
+  if (/\.\d+\.1$/.test(ip)) return 'gateway';
+  if (dev.subnet === '192.168.5.0/24' && dev.dhcp && dev.dhcp.binding_type === 'static')
+    return 'server';
+  if (dev.wifi && (dev.wifi.ssid || dev.wifi.rssi_dbm != null)) return 'wifi_client';
+  return 'wired_client';
+}
+
+function shapeFor(type) {
+  const m = { gateway: 'diamond', ap: 'hexagon', server: 'roundrectangle',
+               wifi_client: 'ellipse', wired_client: 'ellipse' };
+  return m[type] || 'ellipse';
+}
+
+function subnetKey(cidr) {
+  const m = { '192.168.1.0/24': 'lan', '192.168.5.0/24': 'opt1', '192.168.10.0/24': 'opt2' };
+  return m[cidr] || 'unknown';
+}
+
+function nodeBg(type, status) {
+  if (type === 'gateway') return '#5a3f00';
+  if (type === 'ap')      return '#2a1a4a';
+  if (type === 'server')  return '#0d2550';
+  return STATUS_COLOR[status] || '#8b949e';
+}
+
+// ── Snapshot → Cytoscape elements ────────────────────────────────────────────
+
+function toElements(snap) {
+  const els = [];
+  const devices = snap.devices || {};
+  const seen = new Set(Object.keys(devices));
+
+  for (const [id, dev] of Object.entries(devices)) {
+    const type   = classifyType(dev);
+    const subnet = subnetKey(dev.subnet);
+    const status = dev.status || 'unknown';
+    let label = KNOWN_IPS[dev.ip]?.label || dev.hostname || dev.ip || id;
+    if (label.length > 22) label = label.slice(0, 20) + '…';
+    els.push({ group: 'nodes', data: {
+      id, label, type, status, subnet,
+      bg:     nodeBg(type, status),
+      border: SUBNET_BORDER[subnet] || SUBNET_BORDER.unknown,
+      shape:  shapeFor(type),
+      _dev:   dev,
+    }});
+  }
+
+  const edgeSeen = new Set();
+  for (const edge of (snap.edges || [])) {
+    const src = edge.src_mac, dst = edge.dst_mac;
+    if (!seen.has(src) || !seen.has(dst)) continue;
+    const eid = 'e__' + src + '__' + dst;
+    if (edgeSeen.has(eid)) continue;
+    edgeSeen.add(eid);
+    els.push({ group: 'edges', data: {
+      id: eid, source: src, target: dst, etype: edge.type || 'unknown',
+    }});
+  }
+  return els;
+}
+
+// ── Cytoscape init / patch ────────────────────────────────────────────────────
+
+const CY_STYLE = [
+  { selector: 'node', style: {
+    shape:                'data(shape)',
+    'background-color':   'data(bg)',
+    'border-color':       'data(border)',
+    'border-width':       2,
+    label:                'data(label)',
+    color:                '#c9d1d9',
+    'font-size':          10,
+    'font-family':        'SF Mono, Consolas, monospace',
+    'text-valign':        'bottom',
+    'text-halign':        'center',
+    'text-margin-y':      4,
+    'text-outline-color': '#0d1117',
+    'text-outline-width': 2,
+    width: 28, height: 28,
+    'min-zoomed-font-size': 8,
+  }},
+  { selector: 'node[type="gateway"]', style: { width: 44, height: 44, 'border-width': 3, 'font-size': 11 }},
+  { selector: 'node[type="ap"]',      style: { width: 38, height: 38, 'border-width': 3 }},
+  { selector: 'node[type="server"]',  style: { width: 40, height: 30, 'border-width': 3 }},
+  { selector: 'node[status="down"]',  style: { opacity: 0.65 }},
+  { selector: 'node:selected', style: {
+    'border-color': '#f0f6fc', 'border-width': 3,
+    'overlay-color': '#58a6ff', 'overlay-opacity': 0.12, 'overlay-padding': 6,
+  }},
+  { selector: 'edge', style: { 'line-color': '#30363d', width: 1.5, 'curve-style': 'bezier', opacity: 0.5 }},
+  { selector: 'edge[etype="gateway"]',    style: { 'line-color': '#e3b341', opacity: 0.2, width: 1 }},
+  { selector: 'edge[etype="wifi_assoc"]', style: { 'line-color': '#3fb950', 'line-style': 'dashed', opacity: 0.55, width: 1.5 }},
+];
+
+const LAYOUT_CFG = {
+  name: 'cose',
+  idealEdgeLength: 130, nodeRepulsion: 12000,
+  gravity: 0.3, numIter: 600, animate: false, randomize: true,
+};
+
+function initCy(elements) {
+  if (cy) cy.destroy();
+  document.getElementById('empty').style.display = 'none';
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements, style: CY_STYLE, layout: LAYOUT_CFG, wheelSensitivity: 0.3,
+  });
+  cy.on('tap', 'node', e => showPanel(e.target.data('_dev'), e.target.data('label')));
+  cy.on('tap', e => { if (e.target === cy) closePanel(); });
+}
+
+function patchCy(snap) {
+  const newEls = toElements(snap);
+  const newIds = new Set(newEls.map(e => e.data.id));
+  cy.elements().filter(e => !newIds.has(e.id())).remove();
+  for (const el of newEls) {
+    const ex = cy.getElementById(el.data.id);
+    if (ex.length) { ex.data(el.data); }
+    else           { cy.add(el); }
+  }
+}
+
+// ── Detail panel ─────────────────────────────────────────────────────────────
+
+function kv(k, v) {
+  if (v == null || v === '') return '';
+  return '<div class="kv"><div class="kk">' + k + '</div><div class="vv">' + String(v) + '</div></div>';
+}
+
+function showPanel(dev, label) {
+  if (!dev) return;
+  const wifi = dev.wifi || {}, dhcp = dev.dhcp || {}, icmp = dev.icmp || {};
+  const sc = dev.status || 'unknown';
+  let h = '<span class="badge b-' + sc + '">' + sc.toUpperCase() + '</span>';
+  h += '<div class="sec">Identity</div>';
+  h += kv('IP', dev.ip) + kv('MAC', dev.mac) + kv('Hostname', dev.hostname) + kv('Vendor', dev.vendor);
+  h += kv('Interface', dev.interface) + kv('Subnet', dev.subnet);
+  if (wifi.ssid || wifi.band || wifi.rssi_dbm != null) {
+    h += '<div class="sec">WiFi</div>';
+    h += kv('SSID', wifi.ssid) + kv('Band', wifi.band);
+    h += kv('RSSI', wifi.rssi_dbm != null ? wifi.rssi_dbm + ' dBm' : null);
+    h += kv('TX / RX', (wifi.tx_rate || wifi.rx_rate)
+      ? (wifi.tx_rate || '?') + ' / ' + (wifi.rx_rate || '?') + ' Mbps' : null);
+    h += kv('AP', wifi.router);
+  }
+  if (icmp.rtt_ms != null || icmp.last_seen) {
+    h += '<div class="sec">ICMP</div>';
+    h += kv('RTT', icmp.rtt_ms != null ? icmp.rtt_ms + ' ms' : null);
+    h += kv('Last seen', icmp.last_seen ? new Date(icmp.last_seen).toLocaleString() : null);
+  }
+  if (dhcp.binding_type) {
+    h += '<div class="sec">DHCP</div>';
+    h += kv('Type', dhcp.binding_type);
+    h += kv('Expires', dhcp.lease_end ? new Date(dhcp.lease_end).toLocaleString() : null);
+  }
+  if (dev.source && dev.source.length) {
+    h += '<div class="sec">Sources</div><div class="tags">';
+    dev.source.forEach(s => { h += '<span class="tag">' + s + '</span>'; });
+    h += '</div>';
+  }
+  if (dev.note) {
+    h += '<div class="sec">Note</div><div class="vv">' + dev.note + '</div>';
+  }
+  document.getElementById('panel-name').textContent = (label || '').slice(0, 24);
+  document.getElementById('panel-body').innerHTML   = h;
+  document.getElementById('panel').classList.remove('hidden');
+}
+
+function closePanel() {
+  document.getElementById('panel').classList.add('hidden');
+  if (cy) cy.$(':selected').unselect();
+}
+
+// ── Stats bar ─────────────────────────────────────────────────────────────────
+
+function updateStats(snap) {
+  const m = snap.meta || {};
+  document.getElementById('s-up').textContent    = m.up_count    ?? '?';
+  document.getElementById('s-down').textContent  = m.down_count  ?? '?';
+  document.getElementById('s-total').textContent = m.device_count ?? '?';
+  if (m.timestamp) {
+    const age = Math.round((Date.now() - new Date(m.timestamp)) / 1000);
+    const warn = age > 300 ? ' ⚠ stale (' + Math.round(age/60) + 'm)' : '';
+    document.getElementById('ts').textContent = new Date(m.timestamp).toLocaleTimeString() + warn;
+  }
+  document.getElementById('empty').style.display = 'none';
+}
+
+// ── Load ──────────────────────────────────────────────────────────────────────
+
+async function loadAndRender() {
+  try {
+    const res  = await fetch(SNAPSHOT_URL + '?_=' + Date.now());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const snap = await res.json();
+    if (cy) patchCy(snap); else initCy(toElements(snap));
+    updateStats(snap);
+  } catch (e) {
+    document.getElementById('ts').textContent = '⚠ ' + e.message;
+  }
+}
+
+// ── WebSocket (live updates) ──────────────────────────────────────────────────
+
+function connectWS() {
+  const row = document.getElementById('ws-row');
+  const led = document.getElementById('ws-led');
+  const lbl = document.getElementById('ws-lbl');
+  row.style.display = 'flex';
+  let ws;
+  function tryConnect() {
+    try { ws = new WebSocket(WS_URL); } catch(e) { row.style.display = 'none'; return; }
+    ws.onopen = () => {
+      led.style.background = '#3fb950'; led.style.boxShadow = '0 0 5px #3fb950';
+      lbl.textContent = 'live';
+      clearInterval(pollTimer);
+    };
+    ws.onmessage = evt => {
+      try {
+        const snap = JSON.parse(evt.data);
+        if (cy) patchCy(snap); else initCy(toElements(snap));
+        updateStats(snap);
+      } catch(e) { console.warn('WS parse:', e); }
+    };
+    ws.onclose = () => {
+      led.style.background = '#e3b341'; lbl.textContent = 'reconnect…';
+      startPoll(); setTimeout(tryConnect, 12000);
+    };
+    ws.onerror = () => { row.style.display = 'none'; };
+  }
+  tryConnect();
+}
+
+function startPoll() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(loadAndRender, POLL_MS);
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadAndRender().then(() => { startPoll(); connectWS(); });
+</script>
+</body>
+</html>

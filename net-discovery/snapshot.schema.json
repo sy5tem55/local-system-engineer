@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Network Topology Snapshot",
+  "description": "Standardized output contract for the LSE network discovery engine. All probes write into this structure. The visualization layer reads only this file.",
+  "type": "object",
+  "required": ["meta", "devices", "edges"],
+  "properties": {
+
+    "meta": {
+      "type": "object",
+      "description": "Snapshot metadata — when it was taken, which probes ran, overall health.",
+      "required": ["timestamp", "duration_s", "probes_run", "device_count"],
+      "properties": {
+        "timestamp":     { "type": "string", "format": "date-time", "description": "ISO 8601 UTC timestamp of snapshot start" },
+        "duration_s":    { "type": "number", "description": "Total probe run time in seconds" },
+        "probes_run":    { "type": "array", "items": { "type": "string" }, "description": "List of probe IDs that contributed e.g. ['dhcp','icmp','asus_wifi']" },
+        "probes_failed": { "type": "array", "items": { "type": "string" }, "description": "Probe IDs that errored — partial data may still be present" },
+        "device_count":  { "type": "integer" },
+        "up_count":      { "type": "integer" },
+        "down_count":    { "type": "integer" }
+      }
+    },
+
+    "devices": {
+      "type": "object",
+      "description": "Keyed by MAC address (lowercase colon-separated). MAC is the stable identity; IP may change.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["mac", "status"],
+        "properties": {
+          "mac":        { "type": "string", "pattern": "^([0-9a-f]{2}:){5}[0-9a-f]{2}$" },
+          "ip":         { "type": ["string", "null"], "description": "Current IPv4 address" },
+          "hostname":   { "type": ["string", "null"], "description": "DNS hostname or DHCP-supplied name" },
+          "vendor":     { "type": ["string", "null"], "description": "OUI vendor lookup result e.g. 'Apple Inc.'" },
+          "status":     { "type": "string", "enum": ["up", "down", "unknown"] },
+
+          "interface":  { "type": ["string", "null"], "description": "pfSense interface name: lan, opt1, opt2" },
+          "subnet":     { "type": ["string", "null"], "description": "CIDR e.g. 192.168.1.0/24" },
+          "vlan":       { "type": ["integer", "null"], "description": "VLAN ID if applicable, null for untagged" },
+
+          "source":     {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Which probes provided data for this device e.g. ['dhcp','icmp','asus_wifi']"
+          },
+
+          "dhcp": {
+            "type": ["object", "null"],
+            "description": "Data from pfSense DHCP probe",
+            "properties": {
+              "lease_start":  { "type": ["string", "null"], "format": "date-time" },
+              "lease_end":    { "type": ["string", "null"], "format": "date-time" },
+              "binding_type": { "type": ["string", "null"], "description": "static or dynamic" }
+            }
+          },
+
+          "wifi": {
+            "type": ["object", "null"],
+            "description": "Data from WiFi router probe (ASUS or Teltonika)",
+            "properties": {
+              "ssid":      { "type": ["string", "null"] },
+              "band":      { "type": ["string", "null"], "enum": ["2.4GHz", "5GHz", "6GHz", null] },
+              "rssi_dbm":  { "type": ["number", "null"], "description": "Signal strength in dBm e.g. -65" },
+              "tx_rate":   { "type": ["number", "null"], "description": "TX rate in Mbps" },
+              "rx_rate":   { "type": ["number", "null"], "description": "RX rate in Mbps" },
+              "router":    { "type": ["string", "null"], "description": "Which AP reported this: 'asus_gt-be19000' or 'teltonika_rutx50'" }
+            }
+          },
+
+          "icmp": {
+            "type": ["object", "null"],
+            "description": "Data from ICMP/nmap probe",
+            "properties": {
+              "rtt_ms":       { "type": ["number", "null"], "description": "Last ping round-trip time in ms" },
+              "last_seen":    { "type": ["string", "null"], "format": "date-time" },
+              "last_up":      { "type": ["string", "null"], "format": "date-time" },
+              "open_ports":   { "type": "array", "items": { "type": "integer" }, "description": "TCP ports found open" }
+            }
+          },
+
+          "mdns": {
+            "type": ["object", "null"],
+            "description": "Data from mDNS/Avahi probe",
+            "properties": {
+              "services": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Advertised mDNS service types e.g. ['_http._tcp','_hap._tcp']"
+              },
+              "friendly_name": { "type": ["string", "null"] }
+            }
+          },
+
+          "labels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Human-assigned tags e.g. ['server','iot','printer','camera']"
+          },
+
+          "note": { "type": ["string", "null"], "description": "Free-text note from config or operator" }
+        }
+      }
+    },
+
+    "edges": {
+      "type": "array",
+      "description": "L2/L3 adjacency relationships between devices for graph rendering.",
+      "items": {
+        "type": "object",
+        "required": ["src_mac", "dst_mac", "type"],
+        "properties": {
+          "src_mac":    { "type": "string" },
+          "dst_mac":    { "type": "string" },
+          "type":       { "type": "string", "enum": ["gateway", "wifi_assoc", "arp_neighbor", "lldp", "manual"] },
+          "bandwidth":  { "type": ["number", "null"], "description": "Link bandwidth in Mbps if known" },
+          "interface":  { "type": ["string", "null"] }
+        }
+      }
+    }
+
+  }
+}

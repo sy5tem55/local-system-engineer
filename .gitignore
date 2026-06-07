@@ -9,3 +9,7 @@ viewer.html
 viewer-dark.html
 tools/__pycache__/
 tools/*.BKP
+net-discovery/logs/
+net-discovery/db/
+net-discovery/history/
+net-discovery/snapshot.json

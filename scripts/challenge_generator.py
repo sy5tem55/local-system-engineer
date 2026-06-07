@@ -181,7 +181,7 @@ NETWORK_CONTEXT = (
     "192.168.5.0/24 (NAS/server subnet via Netgear switch), "
     "192.168.10.0/24 (energy/IoT isolated — pfSense OPT2 — solar inverter 192.168.10.3 + Kostal Smart Energy Meter pending). "
     "Known hosts: pfSense 192.168.1.50, LUCIFER 192.168.1.57, "
-    "Samsung TV 192.168.1.90 (MAC 1c:af:4a:04:5f:b6, WAN blocked), NAS 192.168.5.45. "
+    "Samsung TV 192.168.1.90 (MAC 1c:af:4a:04:5f:b6 WAN blocked), NAS n45.home.arpa (192.168.5.44+.45 2-NIC), 3090.home.arpa/NODE2 (192.168.5.41 MAC 0c:9d:92:84:6e:6a Ubuntu 22.04 RTX 3090). "
     "pfSense REST API: https://pfsense.home.arpa/api/v2 (read-only). "
     "Tools available: pfsense_query(), nmap_summary(), pfsense_log_summary(), execute_command(). "
     "CRITICAL: NEVER call pfsense_query('/api/v2/status/logs/firewall') or any raw log endpoint. "

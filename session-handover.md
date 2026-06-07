@@ -16,8 +16,9 @@ cat CURRENT-STATE.md          # deployed versions + pending items
 bash scripts/sync-docker-config.sh --reload
 ```
 
-**Last deployed tool: v1.5.26** — search_web hang fix.
-**Net-discovery project: written, not yet live-tested.** First run: see CURRENT-STATE.md → Network Observability → First-Run Commands.
+**Last deployed tool: v1.5.27** — date-sensitive query rule.
+**DHCP backend: Kea** (migrated from ISC DHCP, 2026-06-07 P18). 32 static mappings intact. API key rotated post-migration.
+**Net-discovery probe_dhcp.py: ready.** Static mapping endpoint confirmed: `/services/dhcp_server/static_mapping?parent_id=<id>&id=<n>`.
 
 ---
 
@@ -45,6 +46,7 @@ bash scripts/sync-docker-config.sh --reload
 17. **Only one tool file in OpenWebUI at a time** — duplicate tool functions = OpenWebUI warning.
 18. **Elasticsearch is a CORE LSE service** — powers SearxNG result indexing AND KB RAG pipeline. `DO NOT stop or remove`. Container: `elasticsearch:8.17.0`, ports :9200/:9300.
 19. **PRE-INSTALL RULE (net-discovery):** Before any `pip install`, ALWAYS run `pip show <package>` first. Many packages are already installed in the owui venv (`/home/sy5/owui/bin/python3`). Avoid Docker duplicates.
+19b. **net-discovery Vaultwarden secrets:** pfSense API key → item `LSE-pfsense_API_key`, password field → `PFSENSE_API_KEY` env var. ASUS + RUTX50 passwords NOT in Vaultwarden — manual export only.
 20. **`.pyc` files on NTFS mount cannot be deleted from the Cowork sandbox** (Operation not permitted). When testing Python edits in sandbox, use `importlib.util.spec_from_file_location()` to force load from source and bypass cached bytecode.
 21. **ws_server.py requires `websockets` library** — wsproto (installed) is a codec only, not a server. Check: `pip show websockets`. Install if missing: `pip install websockets --break-system-packages`.
 22. **net-discovery `db/` directory** — auto-created by `schema.py __init__`. No manual `mkdir` needed. Do NOT `mkdir` from `~` (wrong location).
@@ -53,7 +55,9 @@ bash scripts/sync-docker-config.sh --reload
     - LAN is `br-lan` bridge, bridged to pfSense OPT1 — Z WiFi clients visible on 192.168.5.0/24
     - WAN: mob1s1a1 Vodafone 5G (100.85.214.85, active) — eth1 OPT2 (192.168.10.3) physically disconnected
     - WoL relay available on `br-lan` for OPT1 hosts
-    - `probe_wifi.py` Teltonika stub: `enabled: false` — enable after RutOS API endpoint confirmed
+    - `probe_wifi.py` Teltonika: RutOS JSON-RPC /ubus implemented. `enabled: false` until first live test.
+      Prerequisite (fw≥07.18): install 'JSON-RPC support' via Package Manager on RUTX50.
+      Enable: set `wifi_routers[teltonika_rutx50].enabled=true` + export `RUTX50_PASS`.
 24. **ASUS GT-BE19000:** AP mode (192.168.1.1). `asusrouter` Python library used (wraps HTTP CGI API, used by Home Assistant core). SSH disabled due to confirmed Dropbear firmware bug on stock firmware.
 25. **FastAPI port is NOT 8000** — Three projects: IG Scraper=:8001, Portrait-3D v2=:8787 (own venv), Portrait-3D v1=:8787 (superseded). nginx.conf `/api/` block stays commented until a specific FastAPI is deployed.
 26. **Repo config ≠ live host config — always sync after editing.** The repo (`C:\Users\SY5\Claude\Projects\local-system-engineer\`) is on NTFS. The live Docker stack runs from `/home/sy5/docker/` in WSL2. They are two separate file trees. Editing `prometheus/prometheus.yml` or `docker/grafana/...` in the repo does NOT update the running containers. After any config change, run from WSL2: `bash /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/scripts/sync-docker-config.sh --reload`. For searxng_data/settings.yml (root-owned), see Rule 4. **Forgetting this sync is what caused the Grafana "No Data" outage (2026-06-07).**
@@ -109,8 +113,8 @@ python3 prometheus_exporter.py &
 | First live test of discovery_engine.py | **HIGH** | PFSENSE_API_KEY env var |
 | Verify `websockets` installed for ws_server.py | HIGH | — |
 | Deploy Nginx container (`cd webserver && docker compose up -d`) | HIGH | First test passing |
-| Add Prometheus scrape job `netobs` targeting :9120 | MEDIUM | Nginx up |
-| Implement Teltonika RutOS API client in probe_wifi.py | MEDIUM | Confirm `GET /api/router/wireless/clients` endpoint |
+| Sync Prometheus + Grafana config to live host | MEDIUM | `bash scripts/sync-docker-config.sh --reload && docker compose restart grafana` |
+| Enable Teltonika probe (probe_wifi.py) | LOW | Install JSON-RPC pkg on RUTX50 + set RUTX50_PASS env var |
 | probe_mdns.py (L2 enrichment) | LOW | zeroconf already installed |
 | pfSense DHCP option 119 — add `home.arpa` search domain | MEDIUM | — (fixes `ssh node3090` short name) |
 | Run node-t3-001 GPU Node Lifecycle challenge | MEDIUM | pfSense Read Only toggle (human gate) |
@@ -123,23 +127,47 @@ python3 prometheus_exporter.py &
 | node5090: WoL + SSH setup | LOW | deferred |
 | ASUS GT-BE19000 SSH (asusrouter HTTP API works) | LOW | Dropbear firmware bug on stock |
 
+27. **pfSense data is KB-first.** Before any live API call for pfSense config (leases, mappings, interfaces), run `search_kb("pfsense dhcp")` first. The KB may already have the answer. Saves many wasted API probes.
+28. **pfSense interface display names ≠ REST API IDs (CONFIRMED 2026-06-07):**
+    ```
+    Display name  REST API id  Subnet
+    LAN           lan          192.168.1.0/24
+    OPT1          opt4         192.168.5.0/24  pf label: Studio_API_id_opt4_igc2
+    OPT2          opt2         192.168.10.0/24 pf label: Solar_Inverter_OPT2_API_id_opt2_igc3
+    WLAN          opt3         (no subnet in config.json yet)
+    IoT VLAN 55   opt6         192.168.55.0/24 (inactive)
+    ```
+    `?parent_id=opt1` returns 404. Must use `opt4`. DHCP static mapping endpoint: `GET /services/dhcp_server/static_mapping?parent_id=<id>&id=<n>` -- iterate n from 1 until 404. ARP: `GET /diagnostics/arp_table` (confirmed working).
+29. **3 devices are static ARP entries, NOT DHCP clients** -- exclude from Kea migration:
+    - `192.168.1.1`  GT-BE19000  (router gateway, not a DHCP client)
+    - `192.168.5.2`  netgear GS308E  (dumb switch, static ARP)
+    - `192.168.10.2` ksem Kostal meter  (static ARP)
+
 ---
 
 ## Network Topology
 
 ```
+Physical NIC  pfSense label  API id  Notes
+igc0          WAN            wan     upstream internet
+igc1          LAN            lan     192.168.1.0/24
+igc2          Studio         opt4    192.168.5.0/24  pf desc: Studio_API_id_opt4_igc2
+igc3          Solar_Inv      opt2    192.168.10.0/24 pf desc: Solar_Inverter_OPT2_API_id_opt2_igc3
+igc1.55       IoT VLAN 55    opt6    192.168.55.0/24 (inactive scaffold)
+              WLAN           opt3    (no dedicated subnet in config.json yet)
+
 Internet
   │
   ▼
 pfSense (192.168.1.50 / pfsense.home.arpa)   REST API: https://pfsense.home.arpa/api/v2
-  ├─ LAN (192.168.1.0/24, igc0)
+  ├─ LAN (192.168.1.0/24, igc1, API: lan)
   │    ├─ LUCIFER WSL2 (192.168.1.x) — probe host + Cowork + OpenWebUI
   │    ├─ HA Pi (192.168.1.80, homeassistant.home.arpa)
   │    ├─ ASUS GT-BE19000 (192.168.1.1) — AP mode, asusrouter HTTP API
   │    │    └─ LAN WiFi clients (2.4/5/6 GHz)
   │    └─ LAN wired clients
   │
-  ├─ OPT1 (192.168.5.0/24, igc1)
+  ├─ Studio / OPT1 (192.168.5.0/24, igc2, API: opt4)
   │    ├─ node3090 (192.168.5.41 static) — Ubuntu 24.04, RTX 3090, llama-server :8080
   │    ├─ n45 NAS (192.168.5.44 + .45, n45.home.arpa)
   │    ├─ Teltonika RUTX50 (192.168.5.3, DHCP from pfSense)
@@ -148,10 +176,10 @@ pfSense (192.168.1.50 / pfsense.home.arpa)   REST API: https://pfsense.home.arpa
   │    │    └─ WoL relay available on br-lan for OPT1 hosts
   │    └─ Z WiFi clients (192.168.5.x, discoverable via pfSense DHCP + nmap)
   │
-  └─ OPT2 (192.168.10.0/24, igc2) — failover WAN only
+  └─ Solar_Inverter / OPT2 (192.168.10.0/24, igc3, API: opt2) — failover WAN only
        └─ Teltonika eth1 (192.168.10.3, static) — cable DISCONNECTED, no active clients
 
-IoT VLAN 55 (192.168.55.0/24, igc1.55) — scaffold in config.json, interface disabled
+IoT VLAN 55 (192.168.55.0/24, igc1.55, API: opt6) — scaffold in config.json, inactive
 ```
 
 DNS: `*.home.arpa` via pfSense Unbound. All nodes reachable by hostname within the LAN.
@@ -171,5 +199,4 @@ DNS: `*.home.arpa` via pfSense Unbound. All nodes reachable by hostname within t
 | P10 (2026-06-06) | WoL root cause found. pfSense API KB seeded (264 paths). net-t1-013/014 seeded. |
 | P8 (2026-06-04) | 6 challenges solved. Leaderboard 373.1 pts / 21 eps. SSH hardening done. |
 | P6 (2026-06-03) | DNS aliases live. NODE2 renamed node3090. pfSense auth/URL corrected everywhere. |
-| P5 (2026-06-02) | 63/63 eval. 4 T2/T3 challenges solved. SearXNG v3 applied. |
-| P3 (2026-06-01) | Grafana engine health (6 panels). Claude L2 + Research presets deployed. |
+| P5 (2026-06-02) | 63/63 eval. 4 

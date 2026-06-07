@@ -1,0 +1,136 @@
+{
+  "_comment": "LSE Network Discovery Engine — environment config. Secrets are env vars, never hardcoded.",
+  "_env_audit": {
+    "_note": "PRE-INSTALL RULE: Before pip install, ALWAYS run pip show first. The packages below are ALREADY installed on LUCIFER — do NOT reinstall them. Docker/service duplicates will cause conflicts.",
+    "_python": "/home/sy5/owui/bin/python3 (v3.12.3)",
+    "_nmap": "/usr/bin/nmap (v7.94SVN)",
+    "_already_installed": [
+      "networkx==3.6.1",
+      "prometheus_client==0.25.0",
+      "requests==2.33.1",
+      "zeroconf (installed)",
+      "scapy==2.7.0",
+      "wsproto==1.3.2"
+    ],
+    "_already_running": {
+      "prometheus": {
+        "image": "prom/prometheus:latest",
+        "port_host": 9090,
+        "note": "Docker container. From WSL2: localhost:9090. From Docker: host.docker.internal:9090 or container name 'prometheus'. DO NOT start a second instance."
+      },
+      "grafana": {
+        "image": "grafana/grafana:latest",
+        "port_host": 3002,
+        "port_container": 3000,
+        "note": "Docker container. From WSL2: localhost:3002. DO NOT start a second instance."
+      },
+      "vite": {
+        "image": "node:26-alpine",
+        "container": "viteOnNodeJsv26",
+        "port_host": 5173,
+        "note": "Already running. nginx.conf upstream :5173 is correct."
+      },
+      "elasticsearch": {
+        "image": "elasticsearch:8.17.0",
+        "ports": "9200 (HTTP), 9300 (transport)",
+        "role": "Core LSE service — SearxNG search result indexing + KB RAG consolidation",
+        "note": "DO NOT stop or remove. Used by searxng, searxng-logger, and KB retrieval pipeline."
+      }
+    },
+    "_check_before_install": "pip show <package>",
+    "_install_pattern": "pip install <package> --break-system-packages",
+    "_fastapi_note": "FastAPI confirmed NOT running (ps aux grep returned nothing). Three projects found, none on port 8000: (1) IG Scraper — /home/sy5/projects/ig-scraper/backend/main.py, port 8001, standalone uvicorn; (2) Portrait-3D backend/ (v2) — /home/sy5/projects/portrait-3d/backend/main.py, port 8787, has own venv/, GLB+OBJ export; (3) Portrait-3D root (v1) — /home/sy5/projects/portrait-3d/main.py, port 8787, likely superseded. nginx.conf /api/ proxy block stays commented. Set FASTAPI_PORT in webserver/.env before enabling (8001 for ig-scraper, 8787 for portrait-3d)."
+  },
+  "_topology_notes": {
+    "teltonika_rutx50": "LAN is br-lan bridge on 192.168.5.0/24, IP 192.168.5.3 via pfSense DHCP. Z WiFi clients bridge into OPT1 — visible to pfSense DHCP as 192.168.5.x hosts. No separate subnet. Mobile WAN mob1s1a1 (Vodafone 5G, 100.85.214.85) is active. Wired WAN eth1 (192.168.10.3) = OPT2 failover path, physically disconnected. WoL relay available on br-lan for node3090.",
+    "opt2": "192.168.10.0/24 currently contains only Teltonika eth1 failover WAN port (192.168.10.3, static). No active clients. Cable physically disconnected.",
+    "asus_gt_be19000": "AP mode on LAN. SSH key auth deferred (Dropbear firmware bug). HTTP API via asusrouter lib."
+  },
+  "gateway": {
+    "type": "pfsense",
+    "base_url": "https://pfsense.home.arpa/api/v2",
+    "api_key_env": "PFSENSE_API_KEY",
+    "tls_verify": false,
+    "_vault_item": "LSE-pfsense_API_key",
+    "_vault_note": "Vaultwarden item name for PFSENSE_API_KEY. Use get_vaultwarden_item(\"LSE-pfsense_API_key\") → password field."
+  },
+  "subnets": [
+    {
+      "name": "lan",
+      "cidr": "192.168.1.0/24",
+      "interface": "lan",
+      "description": "Main LAN — LUCIFER, HA Pi, ASUS WiFi clients",
+      "active": true
+    },
+    {
+      "name": "opt1",
+      "cidr": "192.168.5.0/24",
+      "interface": "opt1",
+      "description": "Studio (pf: Studio_API_id_opt4_igc2) — node3090 (.41), n45 NAS (.44/.45), Teltonika RUTX50 (.3), Z WiFi clients",
+      "active": true
+    },
+    {
+      "name": "opt2",
+      "cidr": "192.168.10.0/24",
+      "interface": "opt2",
+      "description": "Solar_Inverter (pf: Solar_Inverter_OPT2_API_id_opt2_igc3) — failover WAN only, cable disconnected",
+      "active": true
+    },
+    {
+      "name": "iot_vlan",
+      "cidr": "192.168.55.0/24",
+      "interface": "igc1.55",
+      "vlan_id": 55,
+      "description": "IoT VLAN scaffold — disabled. Set active:true when VLAN 55 is live.",
+      "active": false
+    }
+  ],
+  "wifi_routers": [
+    {
+      "id": "asus_gt-be19000",
+      "type": "asus_stock",
+      "host": "192.168.1.1",
+      "username": "admin",
+      "password_env": "ASUS_PASS",
+      "use_ssl": false,
+      "enabled": true,
+      "description": "ASUS GT-BE19000 in AP mode on LAN. SSH deferred (Dropbear firmware bug). HTTP API via asusrouter lib.",
+      "serves_subnet": "lan"
+    },
+    {
+      "id": "teltonika_rutx50",
+      "type": "teltonika",
+      "host": "192.168.5.3",
+      "username_env": "RUTX50_USER",
+      "password_env": "RUTX50_PASS",
+      "enabled": false,
+      "description": "Teltonika RUTX50. LAN bridged to pfSense OPT1 (br-lan, 192.168.5.3/24, DHCP from pfSense). Z WiFi clients visible to pfSense on OPT1. Mobile WAN mob1s1a1 = Vodafone 5G primary. WoL relay available on br-lan. RutOS JSON-RPC API IMPLEMENTED — set enabled=true to activate. Prerequisite (fw>=07.18): install 'JSON-RPC support' package via Package Manager. Export RUTX50_PASS (and optionally RUTX50_USER=admin) before first run.",
+      "serves_subnet": "opt1",
+      "wol_relay": {
+        "enabled": true,
+        "interface": "br-lan",
+        "note": "Can wake node3090 and other OPT1 hosts via RutOS WoL relay"
+      }
+    }
+  ],
+  "probe_config": {
+    "icmp_timeout_s": 2,
+    "icmp_parallel": 50,
+    "dhcp_timeout_s": 10,
+    "arp_timeout_s": 10,
+    "nmap_args": "-sn --unprivileged",
+    "oui_cache_file": "oui_cache.json",
+    "oui_cache_ttl_days": 30,
+    "mdns_timeout_s": 4
+  },
+  "output": {
+    "snapshot_file": "snapshot.json",
+    "history_dir": "history/",
+    "history_keep_days": 7
+  },
+  "services": {
+    "_note": "Ports for components written in this project, distinct from already-running services above.",
+    "prometheus_exporter_port": 9120,
+    "ws_port": 8765
+  }
+}

@@ -86,7 +86,7 @@ DNS: `*.home.arpa` via pfSense Unbound. Active aliases: lucifer, node3090, node5
 | `snapshot.schema.json` | — | ✅ Written — JSON Schema for snapshot.json contract |
 | `probe_dhcp.py` | — | ✅ Written — pfSense DHCP leases + ARP via REST API |
 | `probe_icmp.py` | — | ✅ Written — nmap -sn --unprivileged ping sweep |
-| `probe_wifi.py` | 291 | ✅ Written — asusrouter HTTP API client; Teltonika stub disabled |
+| `probe_wifi.py` | 499 | ✅ Written — asusrouter HTTP API (ASUS); RutOS JSON-RPC /ubus (Teltonika, implemented, enabled=false) |
 | `discovery_engine.py` | 511 | ✅ Written — orchestrator, normalisation, SQLite persistence wiring, --loop mode |
 | `schema.py` | 469 | ✅ Written + tested — 7-table SQLite (hosts, ip_assignments, ping_history, mdns_records, wifi_clients, events) |
 | `graph.py` | 408 | ✅ Written + tested — NetworkX DiGraph → Cytoscape.js JSON |
@@ -94,6 +94,19 @@ DNS: `*.home.arpa` via pfSense Unbound. Active aliases: lucifer, node3090, node5
 | `prometheus_exporter.py` | 300 | ✅ Written — /metrics on :9120, scrape-time snapshot reads |
 | `index.html` | 410 | ✅ Written — single-file Cytoscape.js topology visualization |
 | `db/` | — | ⏳ Empty dir — auto-created by schema.py on first run |
+
+### Grafana Dashboard (`docker/grafana/dashboards/netobs.json`)
+
+Provisioned dashboard — 18 panels across 6 rows:
+- **Snapshot Health**: age (threshold 120s/300s), readable flag, total/up/down/% stats
+- **By Subnet**: bargauge total + up per subnet
+- **Device Status**: instant table with ip/hostname/mac/subnet/type/status
+- **ICMP RTT**: time series per device (filters `> 0` to hide down devices)
+- **WiFi RSSI**: time series per client with ssid/band labels
+- **Snapshot Age History**: step-before line with threshold bands
+
+Deploy: `docker compose restart grafana` after running `sync-docker-config.sh`
+Import manually: Grafana → Dashboards → Import → upload `grafana-dashboard-netobs.json`
 
 ### Webserver (in `webserver/`)
 
@@ -123,6 +136,14 @@ Three projects exist, none currently deployed:
 
 nginx.conf `/api/` block stays commented until a FastAPI service is confirmed deployed.
 
+### Credentials (Vaultwarden)
+
+| Secret | Vaultwarden item | Field | Used by |
+|---|---|---|---|
+| pfSense API key | `LSE-pfsense_API_key` | password | probe_dhcp.py (`PFSENSE_API_KEY` env var) |
+| ASUS admin pass | not in vault — manual export only | — | probe_wifi.py (`ASUS_PASS`), deferred |
+| RUTX50 pass | not in vault — manual export only | — | probe_wifi.py (`RUTX50_PASS`), not yet enabled |
+
 ### First-Run Commands (from net-discovery/)
 ```bash
 # 1. Check websockets library (needed for ws_server.py)
@@ -131,7 +152,7 @@ pip show websockets
 
 # 2. Single discovery run (verbose)
 cd /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/net-discovery
-export PFSENSE_API_KEY=<key>  # or ASUS_PASS for wifi probe
+export PFSENSE_API_KEY=<key>  # from Vaultwarden: LSE-pfsense_API_key → password field
 python3 discovery_engine.py --verbose
 
 # 3. Serve index.html for testing (before Nginx is up)
@@ -151,9 +172,11 @@ docker compose up -d
 - [ ] First live test run of discovery_engine.py against real pfSense
 - [ ] Verify `websockets` installed (ws_server.py dependency)
 - [ ] Deploy Nginx container (`cd webserver && docker compose up -d`)
-- [ ] Add Prometheus scrape job for netobs (:9120) in prometheus/prometheus.yml
-- [ ] Implement Teltonika RutOS API client in probe_wifi.py stub
-- [ ] probe_mdns.py (optional L2 enrichment, zeroconf installed)
+- [x] Add Prometheus scrape job for netobs (:9120) — done, in prometheus/prometheus.yml
+- [x] Grafana dashboard — done: `docker/grafana/dashboards/netobs.json` + volume in docker-compose.yml
+- [ ] Sync + reload: `bash scripts/sync-docker-config.sh --reload && docker compose restart grafana`
+- [x] Teltonika RutOS API client implemented in probe_wifi.py (JSON-RPC /ubus, iwinfo assoclist per radio)
+- [ ] probe_mdns.py ✅ written, probe_mdns.py committed
 - [ ] pfSense DHCP option 119 (`home.arpa` search domain) — fixes `ssh node3090` short name
 
 ---
