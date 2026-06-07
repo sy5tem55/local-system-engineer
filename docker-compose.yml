@@ -77,6 +77,7 @@ services:
       - ./grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - ./grafana/dashboards/searxng-engine-health.json:/etc/grafana/provisioning/dashboards/searxng-engine-health.json:ro
       - ./grafana/dashboards/llamacpp-dashboard.json:/etc/grafana/provisioning/dashboards/llamacpp-dashboard.json:ro
+      - ./grafana/dashboards/netobs.json:/etc/grafana/provisioning/dashboards/netobs.json:ro
     env_file:
       - .env
     environment:

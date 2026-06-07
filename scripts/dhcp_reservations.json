@@ -1,0 +1,216 @@
+{
+  "exported_at": "2026-06-07",
+  "source": "pfSense REST API live export (P17 Cowork session)",
+  "interfaces": {
+    "LAN": {
+      "subnet": "192.168.1.0/24",
+      "pfsense_interface": "lan",
+      "reservations": [
+        {
+          "mac": "d8:3a:dd:0e:1c:38",
+          "ip": "192.168.1.5",
+          "hostname": "sy5berry",
+          "descr": "PiHole DNS server"
+        },
+        {
+          "mac": "a0:ad:9f:84:d5:bf",
+          "ip": "192.168.1.55",
+          "hostname": "1BL15",
+          "descr": "NODE1 / node5090"
+        },
+        {
+          "mac": "58:11:22:bf:80:02",
+          "ip": "192.168.1.57",
+          "hostname": "LUCIFER",
+          "descr": "ROG MAXIMUS Z790 APEX 14900K 64GB 4090"
+        },
+        {
+          "mac": "00:17:88:62:58:bc",
+          "ip": "192.168.1.65",
+          "hostname": "philipshue",
+          "descr": "Philips Hue"
+        },
+        {
+          "mac": "b0:4a:39:4f:c8:39",
+          "ip": "192.168.1.70",
+          "hostname": "roborock-vacuum-a70",
+          "descr": "Roborock Vacuum"
+        },
+        {
+          "mac": "cc:44:63:e8:00:3d",
+          "ip": "192.168.1.75",
+          "hostname": "ipad",
+          "descr": "iPad Pro 12.9 inch"
+        },
+        {
+          "mac": "36:89:34:c5:0e:57",
+          "ip": "192.168.1.76",
+          "hostname": "fedeiphone",
+          "descr": "Fede iPhone"
+        },
+        {
+          "mac": "d8:3a:dd:2e:fc:1b",
+          "ip": "192.168.1.80",
+          "hostname": "homeassistant",
+          "descr": "Home Assistant Supervised OS"
+        },
+        {
+          "mac": "b8:13:32:8e:07:aa",
+          "ip": "192.168.1.88",
+          "hostname": "x1",
+          "descr": "Bambu Lab X1 Carbon (WiFi X)"
+        },
+        {
+          "mac": "1c:af:4a:04:5f:b6",
+          "ip": "192.168.1.90",
+          "hostname": "samsungtv",
+          "descr": "Samsung S90C"
+        },
+        {
+          "mac": "f8:b9:5a:ec:e1:d0",
+          "ip": "192.168.1.95",
+          "hostname": "lgtv",
+          "descr": "LG OLED55CX"
+        },
+        {
+          "mac": "d8:3a:dd:2e:fc:1c",
+          "ip": "192.168.1.115",
+          "hostname": "spider",
+          "descr": "Spider Robot"
+        },
+        {
+          "mac": "02:42:c0:a8:01:7d",
+          "ip": "192.168.1.125",
+          "hostname": "homebridge",
+          "descr": "Homebridge docker"
+        },
+        {
+          "mac": "00:09:b0:13:ae:ab",
+          "ip": "192.168.1.210",
+          "hostname": "p10w",
+          "descr": "Pioneer AV receiver (WiFi)"
+        },
+        {
+          "mac": "00:09:b0:4f:69:8d",
+          "ip": "192.168.1.211",
+          "hostname": "p10",
+          "descr": "Pioneer AV receiver (Ethernet)"
+        },
+        {
+          "mac": "d8:44:89:4b:ef:34",
+          "ip": "192.168.1.220",
+          "hostname": "P100",
+          "descr": "JVC Subwoofer Smart Plug"
+        },
+        {
+          "mac": "d8:44:89:4b:ef:32",
+          "ip": "192.168.1.221",
+          "hostname": "P100tvsam",
+          "descr": "Samsung TV plug"
+        },
+        {
+          "mac": "d4:ad:fc:93:52:9c",
+          "ip": "192.168.1.222",
+          "hostname": "goveeledstrip01",
+          "descr": "Govee LED strip"
+        }
+      ]
+    },
+    "OPT1": {
+      "subnet": "192.168.5.0/24",
+      "pfsense_interface": "opt4",
+      "reservations": [
+        {
+          "mac": "00:1e:42:61:75:c0",
+          "ip": "192.168.5.3",
+          "hostname": "teltonika",
+          "descr": "Teltonika RUTX50"
+        },
+        {
+          "mac": "b8:13:32:8e:07:aa",
+          "ip": "192.168.5.6",
+          "hostname": "x1Carbon",
+          "descr": "Bambu Lab X1 Carbon (WiFi Z)"
+        },
+        {
+          "mac": "0c:9d:92:84:6e:6a",
+          "ip": "192.168.5.41",
+          "hostname": "node3090",
+          "descr": "NODE3 Ubuntu 22.04 3090"
+        },
+        {
+          "mac": "00:08:9b:cd:1c:43",
+          "ip": "192.168.5.44",
+          "hostname": "n45",
+          "descr": "QNAP TS-419P II (NIC 1)"
+        },
+        {
+          "mac": "00:08:9b:cd:1c:42",
+          "ip": "192.168.5.45",
+          "hostname": "n45",
+          "descr": "QNAP TS-419P II (NIC 2)"
+        },
+        {
+          "mac": "64:e2:20:1f:d4:80",
+          "ip": "192.168.5.55",
+          "hostname": "mercedes",
+          "descr": "Mercedes C Class W206"
+        },
+        {
+          "mac": "da:41:bd:bd:d4:34",
+          "ip": "192.168.5.75",
+          "hostname": "ipad",
+          "descr": "iPad Pro 12.9 inch (Z WiFi)"
+        },
+        {
+          "mac": "10:2c:b1:13:8d:22",
+          "ip": "192.168.5.88",
+          "hostname": "roofTop",
+          "descr": "Eufy security camera"
+        },
+        {
+          "mac": "d8:44:89:4b:f0:76",
+          "ip": "192.168.5.95",
+          "hostname": "x1plug",
+          "descr": "Smart Plug (X1 Carbon)"
+        },
+        {
+          "mac": "c4:5b:be:81:33:c4",
+          "ip": "192.168.5.100",
+          "hostname": "goechargerhouse",
+          "descr": "go-eCharger HOUSE"
+        },
+        {
+          "mac": "e0:e2:e6:7e:a0:64",
+          "ip": "192.168.5.101",
+          "hostname": "goechargershed",
+          "descr": "go-eCharger SHED"
+        },
+        {
+          "mac": "c8:60:00:02:13:ed",
+          "ip": "192.168.5.155",
+          "hostname": "developer",
+          "descr": "1080Ti dev machine"
+        },
+        {
+          "mac": "84:2a:fd:a5:46:e9",
+          "ip": "192.168.5.205",
+          "hostname": "hp",
+          "descr": "HP Laserjet M118"
+        }
+      ]
+    },
+    "OPT2": {
+      "subnet": "192.168.10.0/24",
+      "pfsense_interface": "opt2",
+      "reservations": [
+        {
+          "mac": "a4:06:e9:25:ae:3a",
+          "ip": "192.168.10.3",
+          "hostname": "helios",
+          "descr": "Kostal Solar Power Inverter"
+        }
+      ]
+    }
+  }
+}

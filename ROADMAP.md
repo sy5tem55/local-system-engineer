@@ -145,6 +145,32 @@
 
 ## Backlog — Arena
 
+- [ ] **[P0] Ground-truth assertion verifier** — node-t3-002 hallucination incident (2026-06-06):
+  LSE reported `gpu_detected=True`, `cuda_major=13`, `cuda_verified=True` but `nvidia-smi` was not
+  installed (`nvidia-compute-utils-595` removed during Ubuntu upgrade) and CUDA was 12.0 not 13.x.
+  The assertion framework trusted the model's self-reported JSON — there is no independent verification.
+
+  **Design**: Add an optional `verify_ssh` field to challenge assertions. After the model completes
+  and reports its JSON, `lse_challenge_env.py` SSHes to the target node and runs the verify command
+  independently. The actual stdout/exit code overrides the model's self-reported variable for that
+  assertion. Model cannot pass a verify_ssh assertion by hallucination.
+
+  Example assertion with ground-truth probe:
+  ```python
+  {
+    "id": "a3", "points": 1,
+    "code": "assert gpu_detected == True and 'RTX 3090' in gpu_name",
+    "verify_ssh": {
+      "host_key": "node3090",           # resolved via _NODE_REGISTRY
+      "cmd": "nvidia-smi --query-gpu=name --format=csv,noheader",
+      "parse": "gpu_name = stdout.strip(); gpu_detected = (exit_code == 0)"
+    }
+  }
+  ```
+
+  Priority: P0 — any challenge that touches real infrastructure can be gamed by hallucination.
+  Affects: node-t3-001, node-t3-002, and any future infra challenges with measurable state.
+
 - [ ] **Samsung TV T4** — DHCP hammer confirmed firmware noise (lease 7200s normal).
   Design challenge: measure DHCP rate from MAC 1c:af:4a:04:5f:b6 via DHCP logs,
   confirm lease time is not the cause, document remediation options (rate-limit UDP 67/68).
@@ -178,7 +204,7 @@
   Missing (to add in pfSense DNS Resolver → Host Overrides):
   - `lucifer.home.arpa` → 192.168.1.57
   - `4090.home.arpa` → 192.168.1.57 (LUCIFER GPU alias — additive, no hostname change)
-  - `3090.home.arpa` → 192.168.5.41 (NODE2 GPU alias — after static DHCP mapping)
+  - `3090.home.arpa` → 192.168.5.41 ✅ (NODE2/3090 · MAC 0c:9d:92:84:6e:6a · hostname set to 3090)
   - `5090.home.arpa` → NODE3 IP TBD (NODE3 GPU alias — after NODE3 setup)
   GPU naming strategy: DNS aliases only — machine hostnames (LUCIFER/NODE2/NODE3) unchanged.
   No script/prompt migration needed. Aliases coexist with existing names.

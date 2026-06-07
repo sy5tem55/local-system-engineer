@@ -50,3 +50,13 @@ scrape_configs:
     static_configs:
       - targets: ["searxng-error-exporter:9837"]
     scrape_interval: 15s
+
+  - job_name: "netobs"
+    static_configs:
+      - targets: ["172.17.0.1:9120"]
+    metrics_path: "/metrics"
+    scrape_interval: 30s
+    # Metrics: netobs_device_up, netobs_device_icmp_rtt_ms, netobs_device_wifi_rssi_dbm,
+    #          netobs_snapshot_age_seconds, netobs_devices_total, netobs_devices_up_total
+    # Exporter: net-discovery/prometheus_exporter.py — start with:
+    #   python3 prometheus_exporter.py  (reads snapshot.json on every scrape)

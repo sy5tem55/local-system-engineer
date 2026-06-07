@@ -876,6 +876,442 @@ CHALLENGES = [
         rollback_defined=0, requires_human_approval=0,
         discipline_multiplier=1.1, max_attempts=3, claude_only_override=0,
     ),
+    dict(
+        id="net-t1-013",
+        title="Subnet Host Enumeration",
+        description=(
+            "Run nmap -sn (ping sweep) followed by nmap -sV --top-ports 100 across all three "
+            "subnets: 192.168.1.0/24, 192.168.5.0/24, and 192.168.10.0/24 from LUCIFER WSL2. "
+            "Note: 192.168.1.0/24 includes ALL WiFi devices (AP at 192.168.1.1 bridges WiFi into LAN) — "
+            "expect IoT and mobile devices here, not on 192.168.10.x (dedicated wired: solar inverter only). "
+            "Produce a JSON inventory: list of {ip, mac, hostname, open_ports[], vendor} for each live host. "
+            "Write the inventory to the KB at network-topology/host-enumeration."
+        ),
+        domain="sysadmin",
+        discipline="sysadmin",
+        tier=1,
+        mode="read_only",
+        starting_state=json.dumps({
+            "tool": "nmap -sn + nmap -sV --top-ports 100",
+            "from": "lucifer-wsl2",
+            "targets": ["192.168.1.0/24", "192.168.5.0/24", "192.168.10.0/24"],
+            "snapshot_required": False,
+            "notes": (
+                "192.168.1.x: LAN + WiFi (AP 192.168.1.1 bridges WiFi). Most IoT on this subnet. "
+                "192.168.5.x: NAS/server subnet via Netgear switch. "
+                "192.168.10.x: dedicated IoT/energy (solar inverter 192.168.10.3, Kostal meter pending). "
+                "WSL2 mirrored networking required for all three subnets."
+            ),
+        }),
+        success_criteria=json.dumps({
+            "assertions": [
+                {
+                    "id": "a1", "points": 1,
+                    "code": "assert len(hosts_192_168_1) >= 1 and len(hosts_192_168_5) >= 1 and len(hosts_192_168_10) >= 1",
+                    "description": "At least one live host found on each of the three subnets"
+                },
+                {
+                    "id": "a2", "points": 1,
+                    "code": "assert len([h for h in host_inventory if h.get('vendor')]) >= 5",
+                    "description": "MAC vendor resolved for at least 5 hosts"
+                },
+                {
+                    "id": "a3", "points": 1,
+                    "code": "assert isinstance(host_inventory, list) and len(host_inventory) >= 5",
+                    "description": "Structured JSON inventory produced with at least 5 hosts"
+                }
+            ]
+        }),
+        failure_modes=json.dumps({
+            "0/3": "nmap not available in WSL2 or subnets unreachable; no results.",
+            "1/3": "All three subnets scanned, hosts found on each; MAC vendor resolution not performed; a2 fails.",
+            "2/3": "Hosts found and vendors resolved; structured JSON inventory not produced; a3 fails.",
+            "3/3": "Full inventory — all three subnets, live hosts with MACs, vendors, open ports, JSON produced."
+        }),
+        kb_target="network-topology/host-enumeration",
+        rollback_defined=0, requires_human_approval=0,
+        discipline_multiplier=1.0, max_attempts=3, claude_only_override=0,
+    ),
+
+    dict(
+        id="net-t1-014",
+        title="pfSense Interface Inventory",
+        description=(
+            "Enumerate all pfSense network interfaces, their IP addresses, assigned subnets, and descriptions "
+            "via pfsense_query('/api/v2/network/interface'). "
+            "For each interface produce: {interface, description, ip, subnet, connected_to}. "
+            "Map each known subnet (192.168.1.0/24 LAN, 192.168.5.0/24 NAS, 192.168.10.0/24 IoT/energy) "
+            "to its pfSense interface name (igc0/igc1/igc2/igc3 or equivalent). "
+            "Index the complete interface map to the KB at network-topology/pfsense-interface-inventory."
+        ),
+        domain="pfsense",
+        discipline="sysadmin",
+        tier=1,
+        mode="read_only",
+        starting_state=json.dumps({
+            "api_base": "https://pfsense.home.arpa/api/v2",
+            "endpoint": "GET /api/v2/network/interface",
+            "auth": "vaultwarden:PFSENSE_API_KEY",
+            "api_mode": "read_only",
+            "snapshot_required": False,
+            "notes": (
+                "Expected interfaces: WAN (igc0), LAN/192.168.1.x (igc1 or similar), "
+                "OPT1/192.168.5.x (igc2), OPT2/192.168.10.x (igc3). "
+                "Exact interface names unconfirmed — retrieve from API. "
+                "Auth header: x-api-key (NOT Authorization: Bearer)."
+            ),
+        }),
+        success_criteria=json.dumps({
+            "assertions": [
+                {
+                    "id": "a1", "points": 1,
+                    "code": "assert len(interfaces) >= 3",
+                    "description": "At least 3 interfaces found (WAN + LAN + at least one OPT)"
+                },
+                {
+                    "id": "a2", "points": 1,
+                    "code": "assert any('192.168.5' in str(i) for i in interfaces) and any('192.168.10' in str(i) for i in interfaces)",
+                    "description": "OPT1 (192.168.5.x) and OPT2 (192.168.10.x) subnets both identified in interface list"
+                },
+                {
+                    "id": "a3", "points": 1,
+                    "code": "assert isinstance(interface_map, list) and all('interface' in i and 'ip' in i for i in interface_map)",
+                    "description": "Structured interface map produced with interface name and IP for each entry"
+                }
+            ]
+        }),
+        failure_modes=json.dumps({
+            "0/3": "pfSense API unreachable or endpoint returns error; no interface data.",
+            "1/3": "Interfaces listed (>=3) but OPT1/OPT2 subnet identification not performed; a2 fails.",
+            "2/3": "All subnets mapped to interfaces; structured interface_map not produced; a3 fails.",
+            "3/3": "All interfaces enumerated, all subnets mapped by name, structured JSON map produced and KB indexed."
+        }),
+        kb_target="network-topology/pfsense-interface-inventory",
+        rollback_defined=0, requires_human_approval=0,
+        discipline_multiplier=1.0, max_attempts=3, claude_only_override=0,
+    ),
+
+    dict(
+        id="node-t3-001",
+        title="GPU Node Lifecycle — Wake, Serve, Query, Shutdown",
+        description=(
+            "Execute the complete GPU inference node lifecycle on node3090 without human assistance "
+            "beyond the mandatory pfSense Read Only toggle. Starting state: node3090 is powered off, "
+            "pfSense Read Only mode is enabled. You must: (1) wake node3090 via the pfSense WoL API "
+            "(POST /api/v2/services/wake_on_lan/send, x-api-key auth) without triggering the 120-second "
+            "poll timeout — i.e., detect an API error and abort rather than polling fruitlessly; "
+            "(2) confirm the node is reachable via ping or SSH before proceeding; "
+            "(3) start the llama.cpp server on node3090 port 8080 (llama-server binary, load a Gemma model "
+            "already present at /opt/models/); "
+            "(4) query the running model via query_node_agent and confirm a valid completion response; "
+            "(5) shut down node3090 cleanly via shutdown_node; "
+            "(6) confirm node3090 is offline (ping fails) within 3 minutes of shutdown command. "
+            "\n\nConstraints: "
+            "pfSense Read Only toggle is a human operation — you must request approval and wait; "
+            "do NOT SSH to pfSense (root shell, out of scope); "
+            "pfSense auth is x-api-key header, NOT Authorization Bearer; "
+            "the /send suffix on the WoL endpoint is REQUIRED (bare endpoint returns 404); "
+            "llama-server must be started via SSH to node3090.home.arpa as lse-admin; "
+            "PFSENSE_API_KEY and node3090 SSH key are in Vaultwarden."
+        ),
+        domain="infrastructure",
+        discipline="infra",
+        tier=3,
+        mode="read_write",
+        starting_state=json.dumps({
+            "node3090_state": "powered_off",
+            "pfsense_readonly": True,
+            "pfsense_api_key_location": "Vaultwarden (PFSENSE_API_KEY valve in OpenWebUI)",
+            "node3090_ssh_user": "lse-admin",
+            "node3090_hostname": "node3090.home.arpa",
+            "node3090_mac": "0c:9d:92:84:6e:6a",
+            "node3090_interface": "opt1",
+            "llama_server_port": 8080,
+            "models_path": "/opt/models/",
+            "available_models": ["gemma-27b (GGUF)", "gemma-31b (GGUF)"],
+            "llama_server_binary": "/usr/local/bin/llama-server or ~/llama.cpp/llama-server",
+            "pfsense_wol_endpoint": "POST /api/v2/services/wake_on_lan/send",
+            "known_boot_time_seconds": 55,
+            "node3090_agent_port": 8080,
+            "node3090_agent_type": "llama-cpp"
+        }),
+        success_criteria=json.dumps({
+            "assertions": [
+                {
+                    "id": "a1", "points": 2,
+                    "code": (
+                        "assert wol_result is not None and "
+                        "not wol_result.startswith('WAKE ABORTED') and "
+                        "not wol_result.startswith('ERROR')"
+                    ),
+                    "description": (
+                        "WoL sent successfully via pfSense API on first attempt — "
+                        "no error abort, no 120-second fruitless poll triggered. "
+                        "Fast-fail guard correctly invoked if pfSense returns an error."
+                    )
+                },
+                {
+                    "id": "a2", "points": 1,
+                    "code": "assert node3090_reachable == True",
+                    "description": (
+                        "node3090 confirmed reachable (ping or SSH succeeds) before "
+                        "attempting to start llama-server. No premature service start."
+                    )
+                },
+                {
+                    "id": "a3", "points": 2,
+                    "code": (
+                        "assert llama_server_listening == True and "
+                        "llama_server_port == 8080"
+                    ),
+                    "description": (
+                        "llama-server process running on node3090 and listening on port 8080. "
+                        "Port 1234 (LM Studio) is wrong — must be 8080 (llama.cpp default)."
+                    )
+                },
+                {
+                    "id": "a4", "points": 2,
+                    "code": (
+                        "assert query_response is not None and "
+                        "len(query_response.strip()) > 0 and "
+                        "'error' not in query_response.lower()[:50]"
+                    ),
+                    "description": (
+                        "query_node_agent returns a non-empty completion with no error prefix. "
+                        "Model is actually serving inference, not just the process being up."
+                    )
+                },
+                {
+                    "id": "a5", "points": 1,
+                    "code": "assert node3090_offline == True",
+                    "description": (
+                        "node3090 is unreachable (ping fails) within 3 minutes of shutdown_node call. "
+                        "Clean OS shutdown confirmed — not just network drop."
+                    )
+                },
+                {
+                    "id": "a6", "points": 1,
+                    "code": "assert pfsense_readonly_restored == True",
+                    "description": (
+                        "pfSense Read Only mode re-enabled after WoL call. "
+                        "Human confirmation required — this is a human-gated step."
+                    )
+                }
+            ]
+        }),
+        failure_modes=json.dumps({
+            "0/9": (
+                "WoL call fails (wrong endpoint, missing /send suffix, API key not set, "
+                "or Read Only mode not disabled before call). Node never wakes."
+            ),
+            "2/9": (
+                "WoL sent but node reachability check skipped — llama-server start attempted "
+                "before node3090 is up. SSH fails, no recovery."
+            ),
+            "3/9": (
+                "Node up, llama-server start attempted on wrong port (1234 instead of 8080) "
+                "or wrong binary path. Server does not listen, a3 fails."
+            ),
+            "5/9": (
+                "llama-server running but query_node_agent returns error or empty response. "
+                "Model may not be loaded (missing --model flag or wrong path)."
+            ),
+            "7/9": (
+                "All inference steps succeed but shutdown_node not called or node remains "
+                "reachable after 3 minutes. Node left running, power not recovered."
+            ),
+            "8/9": (
+                "Full lifecycle complete but pfSense Read Only mode not restored. "
+                "Security boundary left open — a6 fails."
+            ),
+            "9/9": (
+                "Complete lifecycle executed: WoL on first attempt with fast-fail guard active, "
+                "node reachability confirmed, llama-server on port 8080, valid model query, "
+                "clean shutdown confirmed, pfSense Read Only restored."
+            )
+        }),
+        kb_target="nodes/node3090-gpu-inference-lifecycle",
+        rollback_defined=1, requires_human_approval=1,
+        discipline_multiplier=1.5, max_attempts=2, claude_only_override=0,
+    ),
+
+    dict(
+        id="node-t3-002",
+        title="node3090 GPU Node Janitor — Post-Upgrade Audit, CUDA, llama.cpp",
+        description=(
+            "Run a full environment audit and repair pass on node3090 following the Ubuntu 22.04→24.04 "
+            "upgrade. The node is powered on and reachable. You must autonomously: "
+            "(1) Verify the OS is Ubuntu 24.04 LTS — if not, report and abort; "
+            "(2) Audit the upgrade journal for critical errors or held-back packages — "
+            "resolve any that block GPU or CUDA operation; "
+            "(3) Verify the RTX 3090 is detected by the kernel (nvidia-smi shows GPU, VRAM, driver); "
+            "(4) Check installed CUDA version — if below target (13.x), install the latest CUDA 13.x "
+            "toolkit from the NVIDIA apt repository matching Ubuntu 24.04 (x86_64); "
+            "(5) Verify CUDA install: `nvcc --version` shows 13.x and a CUDA sample compiles cleanly; "
+            "(6) Check whether `llama-server` binary exists on node3090 — if absent or stale, "
+            "clone and compile llama.cpp from source (or copy binary from LUCIFER if reachable), "
+            "install to `/usr/local/bin/llama-server`; "
+            "(7) Start `llama-server` on port 8080 with a Gemma model from `/opt/models/` "
+            "and verify it responds to a `/health` probe; "
+            "(8) Run one inference query via `query_node_agent` — confirm valid completion; "
+            "(9) Index a structured audit report to KB covering: OS version, kernel, driver version, "
+            "CUDA version, GPU VRAM, llama-server binary path and model loaded, any issues found and "
+            "remediation taken. "
+            "\n\nThis challenge is designed to be re-run after any major OS or driver event. "
+            "It is idempotent: running it on a fully configured node should pass all assertions "
+            "without making changes."
+        ),
+        domain="infrastructure",
+        discipline="infra",
+        tier=3,
+        mode="read_write",
+        starting_state=json.dumps({
+            "node3090_state": "powered_on",
+            "node3090_hostname": "node3090.home.arpa",
+            "node3090_ssh_user": "lse-admin",
+            "node3090_ip": "192.168.5.41",
+            "expected_os": "Ubuntu 24.04 LTS",
+            "expected_gpu": "RTX 3090",
+            "expected_vram_gb": 24,
+            "target_cuda_major": 13,
+            "cuda_apt_keyring": "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb",
+            "models_path": "/opt/models/",
+            "available_models": ["gemma-27b (GGUF)", "gemma-31b (GGUF)"],
+            "llama_server_target_path": "/usr/local/bin/llama-server",
+            "llama_server_port": 8080,
+            "lucifer_llama_server": "lucifer.home.arpa — llama-server binary available if compile fails",
+            "kb_tag": "nodes/node3090-environment-audit",
+            "idempotent": True,
+            "rerun_trigger": "After any major OS upgrade, driver update, or kernel change on node3090"
+        }),
+        success_criteria=json.dumps({
+            "assertions": [
+                {
+                    "id": "a1", "points": 1,
+                    "code": "assert os_version == 'Ubuntu 24.04'",
+                    "description": (
+                        "node3090 reports Ubuntu 24.04 LTS via lsb_release -rs. "
+                        "If not 24.04, abort with clear error — do not attempt CUDA install on wrong OS."
+                    )
+                },
+                {
+                    "id": "a2", "points": 1,
+                    "code": (
+                        "assert upgrade_errors == [] or all(e['severity'] != 'critical' for e in upgrade_errors)"
+                    ),
+                    "description": (
+                        "journalctl -b --priority=err (since upgrade) shows no critical errors "
+                        "related to GPU, kernel modules, or package conflicts. "
+                        "Minor warnings acceptable; failed service restarts must be investigated."
+                    )
+                },
+                {
+                    "id": "a3", "points": 1,
+                    "code": (
+                        "assert gpu_detected == True and 'RTX 3090' in gpu_name and gpu_vram_gb >= 24"
+                    ),
+                    "description": (
+                        "nvidia-smi returns without error: RTX 3090 detected, 24GB VRAM visible, "
+                        "NVIDIA driver loaded. If nvidia-smi fails, DKMS module rebuild attempted."
+                    )
+                },
+                {
+                    "id": "a4", "points": 2,
+                    "code": (
+                        "assert cuda_major >= 13 and cuda_verified == True"
+                    ),
+                    "description": (
+                        "`nvcc --version` shows CUDA 13.x. If CUDA absent or < 13.0: "
+                        "NVIDIA apt repo added for ubuntu2404, cuda-13-x package installed, "
+                        "PATH updated. Verification: `nvcc --version` parses to major >= 13."
+                    )
+                },
+                {
+                    "id": "a5", "points": 2,
+                    "code": (
+                        "assert llama_server_path == '/usr/local/bin/llama-server' and "
+                        "llama_server_executable == True"
+                    ),
+                    "description": (
+                        "`/usr/local/bin/llama-server --version` exits 0. "
+                        "If absent: clone llama.cpp, build with CUDA backend (`cmake -DGGML_CUDA=ON`), "
+                        "install binary. Fallback: scp from lucifer.home.arpa if compile time > 30 min."
+                    )
+                },
+                {
+                    "id": "a6", "points": 1,
+                    "code": (
+                        "assert llama_server_health == 'ok' and llama_server_port == 8080"
+                    ),
+                    "description": (
+                        "llama-server started with a Gemma model from /opt/models/. "
+                        "GET http://localhost:8080/health returns {'status': 'ok'}."
+                    )
+                },
+                {
+                    "id": "a7", "points": 1,
+                    "code": (
+                        "assert query_response is not None and len(query_response.strip()) > 0"
+                    ),
+                    "description": (
+                        "query_node_agent('node3090', 'What is 2+2?') returns a non-empty "
+                        "completion. Model is serving inference, not just the process being up."
+                    )
+                },
+                {
+                    "id": "a8", "points": 1,
+                    "code": "assert kb_indexed == True",
+                    "description": (
+                        "Structured audit report indexed to KB (tag: nodes/node3090-environment-audit) "
+                        "covering: OS, kernel, driver, CUDA version, GPU VRAM, llama-server path+model, "
+                        "issues found, remediation taken, timestamp."
+                    )
+                }
+            ]
+        }),
+        failure_modes=json.dumps({
+            "0/10": (
+                "SSH to node3090 fails (node down, key issue) or OS is not Ubuntu 24.04. "
+                "Challenge aborts at a1."
+            ),
+            "1/10": (
+                "OS confirmed 24.04 but upgrade journal shows critical errors (e.g. kernel module "
+                "failures, held packages). a2 fails — must resolve before proceeding."
+            ),
+            "2/10": (
+                "nvidia-smi fails — NVIDIA DKMS module not built for new kernel. "
+                "a3 fails. Fix: `dkms autoinstall` or reinstall nvidia driver."
+            ),
+            "4/10": (
+                "GPU confirmed but CUDA not installed or < 13.0. LSE fails to add apt repo or "
+                "install cuda-13-x correctly. a4 fails."
+            ),
+            "6/10": (
+                "CUDA 13.x confirmed but llama-server absent. Compile attempt fails or not attempted. "
+                "a5 fails."
+            ),
+            "7/10": (
+                "llama-server binary present but fails to start (wrong CUDA libs, model path wrong, "
+                "port already in use). a6 fails."
+            ),
+            "8/10": (
+                "llama-server starts but query_node_agent returns error (model load OOM, wrong endpoint, "
+                "context too large). a7 fails."
+            ),
+            "9/10": (
+                "Full environment verified and working but audit report not indexed to KB. a8 fails."
+            ),
+            "10/10": (
+                "Complete: Ubuntu 24.04 confirmed, no critical upgrade errors, RTX 3090 detected, "
+                "CUDA 13.x installed and verified, llama-server compiled and running on port 8080, "
+                "inference confirmed, audit report in KB."
+            )
+        }),
+        kb_target="nodes/node3090-environment-audit",
+        rollback_defined=0, requires_human_approval=0,
+        discipline_multiplier=1.5, max_attempts=2, claude_only_override=0,
+    ),
+
 ]
 
 # ── Main ──────────────────────────────────────────────────────────────────────

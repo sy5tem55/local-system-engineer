@@ -1,0 +1,40 @@
+# webserver/docker-compose.yml
+# Lightweight Nginx reverse proxy — bring up when needed only.
+#
+# Start:  docker compose up -d
+# Stop:   docker compose down
+# Logs:   docker compose logs -f
+# Reload: docker compose exec webserver nginx -s reload
+#
+# Copy .env.example → .env and set FASTAPI_PORT / VITE_PORT if different from defaults.
+
+services:
+  webserver:
+    image: nginx:alpine
+    container_name: lse-webserver
+    restart: "no"         # manual bring-up only — does not start on Docker daemon restart
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    volumes:
+      # nginx config — read-only
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # Network topology map static files
+      # snapshot.json is written here by discovery_engine.py on LUCIFER
+      - ../net-discovery:/srv/netobs:ro
+      # ── Add more static site mounts here ──────────────────────────────
+      # - /path/to/your/vite/dist:/srv/vite:ro   # uncomment for prod Vite build
+    extra_hosts:
+      # Allows container to reach host services (FastAPI, Vite) via host.docker.internal
+      # Required on Linux/WSL2 with native Docker (Docker Desktop sets this automatically)
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/netobs/index.html"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
