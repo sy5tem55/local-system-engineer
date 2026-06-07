@@ -1,152 +1,235 @@
 # LSE Current State
-> Auto-reconcile at session start: read file headers, update this table.
-> Last updated: 2026-06-05 (P3 Cowork — Grafana tuning dashboard)
-
-## Deployed Versions
-
-| Component | Version | File | Notes |
-|---|---|---|---|
-| Tool | v1.5.18 | `tools/openwebui-tool-v1.5.18.py` | search_rfc() · deployed ✅ |
-| Tool (prev) | v1.5.17 | `tools/openwebui-tool-v1.5.17.py` | pfsense_log_summary() + nmap_summary() |
-| Prompt | v0.5.15 | `prompts/v0.5.15.md` | PFSENSE LOG RULE section added · deployed ✅ |
-| Prompt (prev) | v0.5.14 | `prompts/v0.5.14.md` | Docker NAT topology fix · deployed ✅ |
-| RAG Tools | v2 | (embedded in tool) | search_kb, index_to_kb, record_error, check_error_kb |
-| Vaultwarden tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | env var wins over valve · deployed ✅ |
-| Routing filter | v1.1.0 | `tools/lse-routing-filter-v1.1.0.py` | deployed ✅ · Global OFF · Qwen3 preset only |
-| Launch script (CLI) | v1.078 | `LSEStack_gui/lse-stack-launch-1.078.ps1` | tmpfs launch dir · secrets pre-flight |
-| Launch script (GUI) | v1.4 | `LSEStack_gui/lse-stack-launch-gui.ps1` | profiles from lse-profiles.xml |
-
-## Tool Checksums (SHA-256)
-
-| File | SHA-256 |
-|---|---|
-| `openwebui-tool-v1.5.18.py` | `017443197a3d53fcf66a910fb8daa54248c98993411e297295d18e73dcb8a34a` |
-| `openwebui-tool-v1.5.17.py` | `f30c1e97493aa6f58fe3498df94c15784d747a5e1e04a209a405251e5211c973` |
-| `openwebui-tool-v1.5.16.py` | `bcc04bb0fa3d944c9fa5a4e4786393950b2efc32f0ad69962716a217f88a66d1` |
-| `openwebui-tool-v1.5.15.py` | `b9d00a17ad44eda7c4630368a7a19fde9d282e7871536ae306482e619a9c9dd0` |
+> Last updated: 2026-06-07 (P16 Cowork)
+> Source of truth for deployed versions. Update this file at the end of every session.
 
 ---
 
-## LSE Challenge Arena Components
+## Deployed Versions
 
-| Component | Status | Notes |
-|---|---|---|
-| ChallengeDB | ✅ Seeded | `/opt/local-se/challenges.db` — 10 T1 · **needs --reset** for new schema columns |
-| Leaderboard DB | ✅ Live | `/opt/local-se/leaderboard.db` — 6 episodes recorded |
-| LSEChallengeEnv | ✅ Done (2026-06-04) | `scripts/lse_challenge_env.py` · 7/7 smoke tests |
-| EscalationWrapper | ✅ Done (2026-06-04) | `scripts/escalation_wrapper.py` · 9/9 smoke tests |
-| LeaderboardService | ✅ Done (2026-06-04) | `scripts/leaderboard.py` · 9/9 smoke tests |
-| run_episode.py | ✅ Done (2026-06-04) | Full stack wired · MAX_TOKENS=8192 · auto-leaderboard |
-| ChallengeGenerator | ✅ Done (2026-06-04) | `scripts/challenge_generator.py` · wired into run_episode.py |
-| rfc_kb.py | ✅ Done (2026-06-04) | 20 RFC registry · 1490 chunks · `--tag-only` running PID 188339 |
-
-## Arena Leaderboard (2026-06-04)
-
-| Model | Points | Episodes | Solved | Esc | Avg Att | KB Hits |
-|---|---|---|---|---|---|---|
-| qwen3.6-27b-q4-64k | 373.1 | 21 | 20 | 0 | 1.10 | 21 |
-
-## T1 Challenge Run Status
-
-| Challenge | Status | Points | Notes |
+| Component | Version | File | Status |
 |---|---|---|---|
-| pf-t1-001 LAN Device Map | ✅ SOLVED a1 | 15.0 | KB hit 13.188 |
-| pf-t1-002 NAS Subnet Map | ✅ SOLVED a1 | 19.5 | **5 unexpected ports on 192.168.5.10** |
-| pf-t1-003 Firewall Log Baseline | ✅ SOLVED a1 | 19.5 | KB hit 18.514 (from failed episode web search) |
-| pf-t1-006 Firewall Rule Map | ✅ SOLVED a1 | 19.5 | KB hit 27.396 |
-| pf-t1-007 DNS Resolver Audit | ✅ SOLVED a1 | 19.5 | host_overrides: 0 (clean state confirmed) |
-| net-t1-009 Open Port Audit | ✅ SOLVED a1 | 19.5 | **NAS 192.168.5.10 unexpected ports confirmed** |
-| net-t1-010 Traffic Baseline | ✅ SOLVED a1 | 16.5 | KB hit 26.227 · 3 top talkers |
-| nas-t1-005 NAS Service Inventory | ✅ SOLVED a1 | 15.0 | KB hit 16.219 · 3 NFS + 4 SMB · 450.2 GB free |
-| ha-t1-004 HA Inventory | ✅ SOLVED a1 | 15.0 | HA 2026.6.0 · 192.168.1.80 |
-| ha-t1-008 HA Automation Audit | ✅ SOLVED a1 | 15.0 | **2 stale automations found** |
-| ha-t2-002 HA Template Sensor Audit | ✅ SOLVED a1 | 19.5 | 2 sensors identified · migration YAML produced |
-| ha-t3-001 HA Template Sensor Migration | ✅ SOLVED a1 | 22.5 | YAML fixed · error confirmed gone post-reboot |
-| infra-t2-001 SSH Posture Audit HA Pi | ✅ SOLVED a1 | 19.5 | PasswordAuthentication + AllowUsers documented |
-| infra-t3-002 SSH Key Hardening LUCIFER→Pi | ✅ SOLVED a1 | 22.5 | Key auth live (sy5) · password auth disabled |
+| OpenWebUI Tool | **v1.5.26** | `tools/openwebui-tool-v1.5.26.py` | ✅ deployed — search_web hang fix (5,10) timeout + year injection rule hardened |
+| System Prompt | v0.5.15 | `prompts/v0.5.15.md` | ✅ deployed — PFSENSE LOG RULE section |
+| Routing Filter | v1.1.0 | `tools/lse-routing-filter-v1.1.0.py` | ✅ deployed — Global OFF · Qwen3 preset only |
+| Context Monitor | v1.3.0 | `tools/lse-context-monitor-v1.3.0.py` | ✅ deployed |
+| Vaultwarden Tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | ✅ deployed — env var wins over valve |
+| Launch Script (CLI) | v1.078 | `LSEStack_gui/lse-stack-launch-1.078.ps1` | ✅ |
+| Launch Script (GUI) | v1.4 | `LSEStack_gui/lse-stack-launch-gui.ps1` | ✅ |
+
+### Tool Changelog Summary (recent)
+- **v1.5.26** — search_web hang fix (5,10) timeout + year injection rule hardened
+- **v1.5.25** — `search_reddit(query, subreddit="")` — Reddit via SearxNG site: operator. No OAuth, no API footprint
+- **v1.5.24** — `start_node_agent` / `stop_node_agent` — on-demand llama-cpp lifecycle via SSH. `agent_profile` in `_NODE_REGISTRY` (96k ctx, q8_0 KV, Qwen3.6-27B)
+- **v1.5.23** — `_NODE_REGISTRY` node3090: `agent_port` 1234→**8080**, `agent_type` lmstudio→**llama-cpp**
+- **v1.5.22** — `wake_node`: WoL endpoint `/api/v2/services/wake_on_lan` → `/api/v2/services/wake_on_lan/send`. Fast-fail guard on pfSense error.
+
+---
+
+## Node Registry (v1.5.23+)
+
+| Key | mac | hostname | interface | agent_port | agent_type | os | ssh_user |
+|---|---|---|---|---|---|---|---|
+| node3090 | 0c:9d:92:84:6e:6a | node3090.home.arpa | opt1 | 8080 | llama-cpp | linux | lse-admin |
+| node5090 | a0:ad:9f:84:d5:bf | node5090.home.arpa | lan | 8081 | lmstudio | windows | sy5 |
 
 ---
 
 ## Hardware Inventory
 
-| Node | CPU | RAM | GPU | OS | Role |
-|---|---|---|---|---|---|
-| LUCIFER | Intel 9900K | ? | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | Primary LSE stack · active: Qwen3.6 27B Q4_K_M 64k q8_0 think:3072 → :8080 |
-| NODE2 | Intel 9900K | 32GB | RTX 3090 24GB | Ubuntu 22.04 (native) | 192.168.5.41 · NAS subnet · Netgear switch · LM Studio installed · no static DHCP mapping yet · setup pending |
-| NODE3 | AMD 9800X3D | 64GB | RTX 5090 | Win11 (no WSL yet) | Gaming PC — WSL2 setup pending |
-| HA Pi | ARM Cortex-A72 | 4GB | — | HA OS | Home Assistant hub |
-| Pi 4 (spare) | ARM Cortex-A72 | 4GB | — | undeployed | Future ARM64 Docker node |
-| TS-419P II | Marvell Kirkwood | — | — | QTS | NFS/SMB at 192.168.5.x |
+| Node | CPU | RAM | GPU | OS | IP | Status |
+|---|---|---|---|---|---|---|
+| LUCIFER | Intel 9900K | — | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | 192.168.1.x | Primary — Qwen3.6 27B Q4_K_M on port 8080 |
+| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — driver 595, CUDA 13.3 toolkit, llama-server built + running (19.3GB VRAM, 96k ctx) |
+| node5090 | AMD 9800X3D | 64GB | RTX 5090 | Win11 | 192.168.5.x | WoL/SSH setup deferred |
+| HA Pi | ARM Cortex-A72 | 4GB | — | HA OS 2026.6.0 | 192.168.1.80 | homeassistant.home.arpa |
+| n45 (NAS) | Marvell Kirkwood | — | — | QTS | 192.168.5.44 + .45 | n45.home.arpa — dual NIC failover |
+| ASUS GT-BE19000 | — | — | — | Stock 3.0.0.6.102_39274 | 192.168.1.1 | AP mode on LAN. HTTP API via asusrouter lib. SSH deferred (Dropbear firmware bug). |
+| Teltonika RUTX50 | — | — | — | RutOS | 192.168.5.3 | Router mode, LAN bridged to pfSense OPT1. Vodafone 5G (mob1s1a1, 100.85.214.85). WoL relay on br-lan. |
 
-## Docker Services (LUCIFER)
+---
+
+## Network Topology (Full)
+
+```
+Internet
+  │
+  ▼
+pfSense (192.168.1.50 / pfsense.home.arpa)
+  ├─ LAN (192.168.1.0/24, igc0)
+  │    ├─ LUCIFER WSL2 (192.168.1.x) — probe host + discovery engine
+  │    ├─ HA Pi (192.168.1.80, homeassistant.home.arpa)
+  │    ├─ ASUS GT-BE19000 (192.168.1.1) — AP mode, serves all LAN WiFi clients
+  │    └─ LAN wired + WiFi clients
+  │
+  ├─ OPT1 (192.168.5.0/24, igc1)
+  │    ├─ node3090 (192.168.5.41, static) — Ubuntu 24.04, RTX 3090 24GB, llama-server :8080
+  │    ├─ n45 NAS (192.168.5.44 + .45, n45.home.arpa) — dual NIC
+  │    ├─ Teltonika RUTX50 (192.168.5.3) — router mode, LAN br-lan bridged → OPT1
+  │    │    └─ Z WiFi clients visible to pfSense DHCP as 192.168.5.x hosts
+  │    └─ Primary WAN: mob1s1a1 Vodafone 5G (100.85.214.85/32, active)
+  │
+  └─ OPT2 (192.168.10.0/24, igc2) — failover WAN only, currently unused
+       └─ Teltonika eth1 (192.168.10.3, static) — physically disconnected
+```
+
+DNS: `*.home.arpa` via pfSense Unbound. Active aliases: lucifer, node3090, node5090, n45, pfsense, homeassistant.
+
+---
+
+## Network Observability Project (P15–P16 Cowork, 2026-06-07)
+
+### Files (all in `net-discovery/`)
+
+| File | Lines | Status |
+|---|---|---|
+| `config.json` | 133 | ✅ Written — env audit, port conventions, topology notes |
+| `snapshot.schema.json` | — | ✅ Written — JSON Schema for snapshot.json contract |
+| `probe_dhcp.py` | — | ✅ Written — pfSense DHCP leases + ARP via REST API |
+| `probe_icmp.py` | — | ✅ Written — nmap -sn --unprivileged ping sweep |
+| `probe_wifi.py` | 291 | ✅ Written — asusrouter HTTP API client; Teltonika stub disabled |
+| `discovery_engine.py` | 511 | ✅ Written — orchestrator, normalisation, SQLite persistence wiring, --loop mode |
+| `schema.py` | 469 | ✅ Written + tested — 7-table SQLite (hosts, ip_assignments, ping_history, mdns_records, wifi_clients, events) |
+| `graph.py` | 408 | ✅ Written + tested — NetworkX DiGraph → Cytoscape.js JSON |
+| `ws_server.py` | 243 | ✅ Written — WebSocket broadcast server :8765, mtime polling |
+| `prometheus_exporter.py` | 300 | ✅ Written — /metrics on :9120, scrape-time snapshot reads |
+| `index.html` | 410 | ✅ Written — single-file Cytoscape.js topology visualization |
+| `db/` | — | ⏳ Empty dir — auto-created by schema.py on first run |
+
+### Webserver (in `webserver/`)
+
+| File | Status | Notes |
+|---|---|---|
+| `docker-compose.yml` | ✅ | nginx:alpine, restart:no, port 8080, mounts net-discovery/ as /srv/netobs/ |
+| `nginx.conf` | ✅ | /netobs/ static, / → Vite :5173; FastAPI /api/ DISABLED (no backend) |
+| `.env.example` | ✅ | WEB_PORT=8080, FASTAPI_PORT=8001 or 8787, VITE_PORT=5173 |
+
+### Port Reference
 
 | Service | Port | Notes |
 |---|---|---|
-| SearXNG | 8088 | lse-net · v3 config · Semantic Scholar + bing/google news live · SSL_CERT_FILE fix applied · NVD/cvedetails blocked (VPS 403) |
-| Elasticsearch | 9200/9300 | lse-net · mem_limit=2g · indexes: lse-kb, lse-rfc-kb |
-| Prometheus | 9090 | lse-net |
-| Node Exporter | 9100 | lse-net |
-| Grafana | 3002 | lse-net · dashboard `searxng-engine-health` — 20 panels · 6 tuning-signal panels added P3 · provisioned (`allowUIUpdates: false`, edit JSON file) |
-| Portainer | 9000/9443 | Docker UI |
-| Vaultwarden | 3003 | lse-net |
-| Valkey (Redis) | internal 6379 | lse-net |
+| prometheus_exporter | :9120 | Prometheus scrape target: host.docker.internal:9120 (from Grafana Docker) |
+| ws_server | :8765 | WebSocket push to index.html. Direct browser connection. |
+| nginx (netobs) | :8080 | Serves index.html at /netobs/, proxies / → Vite :5173 |
+| Vite (viteOnNodeJsv26) | :5173 | Already running Docker container |
+| Grafana | :3002→3000 | Already running Docker container |
+| Prometheus | :9090 | Already running Docker container |
+| Elasticsearch | :9200/:9300 | Core LSE service — SearxNG indexing + KB RAG. DO NOT stop. |
 
-## Native WSL2 Processes (LUCIFER)
+### FastAPI (NOT running)
+Three projects exist, none currently deployed:
+- IG Scraper: `/home/sy5/projects/ig-scraper/backend/main.py`, port **8001**, standalone uvicorn
+- Portrait-3D v2: `/home/sy5/projects/portrait-3d/backend/main.py`, port **8787**, own venv/
+- Portrait-3D v1: `/home/sy5/projects/portrait-3d/main.py`, port **8787**, likely superseded
 
-| Process | Port | Notes |
+nginx.conf `/api/` block stays commented until a FastAPI service is confirmed deployed.
+
+### First-Run Commands (from net-discovery/)
+```bash
+# 1. Check websockets library (needed for ws_server.py)
+pip show websockets
+# If missing: pip install websockets --break-system-packages
+
+# 2. Single discovery run (verbose)
+cd /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/net-discovery
+export PFSENSE_API_KEY=<key>  # or ASUS_PASS for wifi probe
+python3 discovery_engine.py --verbose
+
+# 3. Serve index.html for testing (before Nginx is up)
+python3 -m http.server 8080
+
+# 4. Continuous loop
+python3 discovery_engine.py --loop --interval 60 &
+python3 ws_server.py &
+python3 prometheus_exporter.py &
+
+# 5. Nginx container (first time)
+cd ../webserver
+docker compose up -d
+```
+
+### Pending
+- [ ] First live test run of discovery_engine.py against real pfSense
+- [ ] Verify `websockets` installed (ws_server.py dependency)
+- [ ] Deploy Nginx container (`cd webserver && docker compose up -d`)
+- [ ] Add Prometheus scrape job for netobs (:9120) in prometheus/prometheus.yml
+- [ ] Implement Teltonika RutOS API client in probe_wifi.py stub
+- [ ] probe_mdns.py (optional L2 enrichment, zeroconf installed)
+- [ ] pfSense DHCP option 119 (`home.arpa` search domain) — fixes `ssh node3090` short name
+
+---
+
+## Challenge Arena
+
+### Infrastructure
+| Component | Status | Location |
 |---|---|---|
-| llama-server (Qwen3.6-27B-Q4_K_M) | 8080 | RTX 4090 · 64k · KV:q8_0 · think:3072 |
-| OpenWebUI | 3000 | venv ~/owui |
-| Ollama | 11434 | nomic-embed-text (CPU) + llama3.2:3b (CPU) |
-| grafana-owui-adapter | 9837 | systemd |
-| llama-context-exporter | 9836 | systemd |
-| llamacpp-slots-exporter | 9838 | systemd |
-| download-speed-exporter | 9839 | systemd |
+| ChallengeDB | ✅ 24 challenges seeded | `/opt/local-se/challenges.db` |
+| Leaderboard DB | ✅ Live | `/opt/local-se/leaderboard.db` |
+| run_episode.py | ✅ | `scripts/run_episode.py` |
+| seed_challengedb.py | ✅ | `scripts/seed_challengedb.py` |
 
-## Network Infrastructure
+### Challenge Inventory (24 total)
 
-| Node | IP | Status |
+| ID | Tier | Status |
 |---|---|---|
-| pfSense Plus 26.03.1 | 192.168.1.50 · pfsense.home.arpa | ✅ SSH + REST API |
-| LUCIFER (WSL2) | 192.168.1.57 | ✅ Static DHCP |
-| HA Pi 4 | homeassistant.home.arpa · 192.168.1.80 | ✅ Token live · SSH key auth (sy5) · template YAML fixed |
-| Samsung S90C TV | 192.168.1.90 · MAC 1c:af:4a:04:5f:b6 | ✅ WAN blocked · DHCP hammer = firmware noise (lease 7200s normal) |
-| TS-419P II NAS | 192.168.5.44 + 192.168.5.45 · n45.home.arpa | ⚠️ Unexpected ports found · 2 NICs failover (no LACP on switch) · NAS subnet |
-| NODE2 | 192.168.5.41 (dynamic) · no DNS yet | ⚠️ No static mapping · NAS subnet · Ubuntu 22.04 |
-| Solar inverter | 192.168.10.3 | ✅ In HA · OPT2 isolated segment |
-| Kostal Smart Energy Meter | 192.168.10.x TBD | ⏳ Disconnected · pending HA integration |
+| pf-t1-001 | T1 | ✅ SOLVED 15.0 pts |
+| pf-t1-002 | T1 | ✅ SOLVED 19.5 pts |
+| pf-t1-003 | T1 | ✅ SOLVED 19.5 pts |
+| pf-t1-006 | T1 | ✅ SOLVED 19.5 pts |
+| pf-t1-007 | T1 | ✅ SOLVED 19.5 pts |
+| nas-t1-005 | T1 | ✅ SOLVED 15.0 pts |
+| ha-t1-004 | T1 | ✅ SOLVED 15.0 pts |
+| ha-t1-008 | T1 | ✅ SOLVED 15.0 pts |
+| net-t1-009 | T1 | ✅ SOLVED 19.5 pts |
+| net-t1-010 | T1 | ✅ SOLVED 16.5 pts |
+| net-t1-013 | T1 | seeded, not run |
+| net-t1-014 | T1 | seeded, not run |
+| ha-t2-002 | T2 | ✅ SOLVED 19.5 pts |
+| infra-t2-001 | T2 | ✅ SOLVED 19.5 pts |
+| nas-t2-001 | T2 | ✅ SOLVED 19.5 pts |
+| net-t2-011 | T2 | ✅ SOLVED 19.5 pts |
+| ha-t3-001 | T3 | ✅ SOLVED 22.5 pts |
+| infra-t3-002 | T3 | ✅ SOLVED 22.5 pts |
+| nas-t3-001 | T3 | ✅ SOLVED 19.5 pts |
+| net-t3-002 | T3 | ✅ SOLVED 19.5 pts |
+| sec-t3-001 | T3 | seeded, not run |
+| node-t3-001 | T3 | seeded, not run — GPU Node Lifecycle (requires_human_approval=1) |
+| node-t3-002 | T3 | ✅ SOLVED 30.0 pts — 8/8 assertions, 91s |
 
-**Subnets:**
-- `192.168.1.0/24` LAN + WiFi — pfSense, LUCIFER, HA Pi, Samsung TV + all WiFi AP devices
-  AP at 192.168.1.1 bridges WiFi into LAN — IoT WiFi devices get 192.168.1.x IPs from pfSense DHCP
-- `192.168.5.0/24` NAS/Server — pfSense interface → Netgear switch → NAS (n45 .44+.45), NODE2 (.41)
-- `192.168.10.0/24` Energy/IoT isolated — pfSense OPT2 interface · isolated segment
-  Active: solar inverter 192.168.10.3
-  Pending: Kostal Smart Energy Meter (disconnected — future HA integration)
-**pfSense REST API:** v2.8 · read-only · access list: 192.168.1.57/32 · CA cert: `/opt/local-se/cert/pfsense-webgui-ca.crt`
+### Leaderboard (as of P13 Cowork 2026-06-06)
+| Model | Points | Episodes | Solved | Esc | Avg Att | KB Hits |
+|---|---|---|---|---|---|---|
+| qwen3.6-27b-q4-64k | 425.6 | 23 | 22 | 0 | 1.09 | 23 |
 
-## Open Issues
+---
 
-| Issue | Status |
+## Infrastructure
+
+### pfSense
+- Version: Plus 26.03.1-RELEASE (amd64)
+- REST API pkg: **v2.8.0** — already installed, no upgrade needed
+- Base URL: `https://pfsense.home.arpa/api/v2`
+- Auth: `x-api-key` header (NOT `Authorization: Bearer`)
+- Read Only mode: must be disabled via Web UI before any POST call, re-enabled after
+
+### Running Docker Containers (key services)
+| Container | Image | Port | Notes |
+|---|---|---|---|
+| prometheus | prom/prometheus:latest | :9090 | DO NOT start second instance |
+| grafana | grafana/grafana:latest | :3002→3000 | DO NOT start second instance |
+| viteOnNodeJsv26 | node:26-alpine | :5173 | Vite dev server |
+| elasticsearch | elasticsearch:8.17.0 | :9200/:9300 | Core LSE — SearxNG + KB RAG. DO NOT stop. |
+
+### SearXNG
+- Config v3 live — bing news + google news active
+- arxiv timeout: **8s** (was 5s — was timing out at 5.058s)
+- NVD/cvedetails: blocked at VPS level (403) — custom NVD API engine pending (ROADMAP P1)
+- searxng-error-exporter: ✅ live — patterns: captcha, timeout (both formats), read_timeout, rate_limited, access_denied, parse_error, http_error. Multi-word engine names fixed (`[^:]+`).
+- Grafana dashboard: 23 panels (ids 1–29) — added CAPTCHA Events, Parse Errors, Error Totals by Type (P17 Cowork)
+- **sync-docker-config.sh**: run at session start to prevent repo↔live config drift (Root cause of 2026-06-07 "No Data" outage)
+
+### Claude Presets in OpenWebUI
+| Preset | Model |
 |---|---|
-| NAS 192.168.5.45 (n45.home.arpa) unexpected ports | ✅ nas-t2-001 + nas-t3-001 SOLVED |
-| Samsung TV DHCP hammer + WAN unblocked | ✅ WAN blocked (net-t2/t3 SOLVED) · DHCP rate still high — T4 open |
-| HA long-lived access token | ✅ Live · JWT format · 183 chars · Vaultwarden: HomeAssistant_API_Token |
-| HA template sensor misconfiguration | ✅ Fixed (2026-06-05) · migrated to `template:` key · confirmed post-reboot |
-| NODE2/NODE3 setup | ❌ Pending |
-| ChallengeDB schema migration (needs --reset) | ⚠️ Do before next episode run |
-| RFC tag-only job | ⏳ Running PID 188339 (~1-2h) |
-| Syslog collector container | 🎯 Arena T2 challenge |
-
-## Eval Score Trajectory
-
-| Run | Tool | Prompt | Mode | Score |
-|---|---|---|---|---|
-| Run 1 | v1.4.0 | v0.1-baseline | thinking | unscored |
-| Run 2 | v1.5.1 | v0.4.1 | thinking | 45/57 |
-| Run 3 | v1.5.4 | v0.5.1 | thinking (3072) | **57/57** |
-| Run 4 | v1.5.5 | v0.5.2 | no-think | 49/57 |
-| Run 5 (partial) | v1.5.6 | v0.5.2 | thinking | 15/21 |
-| Run 6 | v1.5.13 | v0.5.11 | thinking (3072) | **58/63** |
-| Run 7 | v1.5.18 | v0.5.14 | thinking (3072) | **63/63** ✅ · all gaps closed |
-| Run 8 | pending | v0.5.14 | — | after SearXNG v3 + Claude L2 setup |
+| LSE L2 — Claude Opus | claude-opus-4-6 |
+| LSE Research — Claude Sonnet | claude-sonnet-4-6 |
