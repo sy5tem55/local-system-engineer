@@ -181,7 +181,7 @@ def _normalise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         sources = dev.get("sources") or dev.get("source") or []
 
         out = {
-            "ip":       dev.get("ip", ""),
+            "ip":       dev.get("ip") or "",
             "mac":      mac,
             "hostname": dev.get("hostname") or "",
             "vendor":   dev.get("vendor") or "",
@@ -197,7 +197,7 @@ def _normalise_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         device_list.append(out)
 
     # Sort for stable output: subnet then IP
-    device_list.sort(key=lambda d: (d.get("subnet", ""), d.get("ip", "")))
+    device_list.sort(key=lambda d: (d.get("subnet", ""), d.get("ip") or ""))
 
     meta = snapshot.get("meta", {})
     normalised = {

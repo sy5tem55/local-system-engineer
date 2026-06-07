@@ -1,7 +1,7 @@
 {
-  "_comment": "LSE Network Discovery Engine — environment config. Secrets are env vars, never hardcoded.",
+  "_comment": "LSE Network Discovery Engine \u2014 environment config. Secrets are env vars, never hardcoded.",
   "_env_audit": {
-    "_note": "PRE-INSTALL RULE: Before pip install, ALWAYS run pip show first. The packages below are ALREADY installed on LUCIFER — do NOT reinstall them. Docker/service duplicates will cause conflicts.",
+    "_note": "PRE-INSTALL RULE: Before pip install, ALWAYS run pip show first. The packages below are ALREADY installed on LUCIFER \u2014 do NOT reinstall them. Docker/service duplicates will cause conflicts.",
     "_python": "/home/sy5/owui/bin/python3 (v3.12.3)",
     "_nmap": "/usr/bin/nmap (v7.94SVN)",
     "_already_installed": [
@@ -33,16 +33,16 @@
       "elasticsearch": {
         "image": "elasticsearch:8.17.0",
         "ports": "9200 (HTTP), 9300 (transport)",
-        "role": "Core LSE service — SearxNG search result indexing + KB RAG consolidation",
+        "role": "Core LSE service \u2014 SearxNG search result indexing + KB RAG consolidation",
         "note": "DO NOT stop or remove. Used by searxng, searxng-logger, and KB retrieval pipeline."
       }
     },
     "_check_before_install": "pip show <package>",
     "_install_pattern": "pip install <package> --break-system-packages",
-    "_fastapi_note": "FastAPI confirmed NOT running (ps aux grep returned nothing). Three projects found, none on port 8000: (1) IG Scraper — /home/sy5/projects/ig-scraper/backend/main.py, port 8001, standalone uvicorn; (2) Portrait-3D backend/ (v2) — /home/sy5/projects/portrait-3d/backend/main.py, port 8787, has own venv/, GLB+OBJ export; (3) Portrait-3D root (v1) — /home/sy5/projects/portrait-3d/main.py, port 8787, likely superseded. nginx.conf /api/ proxy block stays commented. Set FASTAPI_PORT in webserver/.env before enabling (8001 for ig-scraper, 8787 for portrait-3d)."
+    "_fastapi_note": "FastAPI confirmed NOT running (ps aux grep returned nothing). Three projects found, none on port 8000: (1) IG Scraper \u2014 /home/sy5/projects/ig-scraper/backend/main.py, port 8001, standalone uvicorn; (2) Portrait-3D backend/ (v2) \u2014 /home/sy5/projects/portrait-3d/backend/main.py, port 8787, has own venv/, GLB+OBJ export; (3) Portrait-3D root (v1) \u2014 /home/sy5/projects/portrait-3d/main.py, port 8787, likely superseded. nginx.conf /api/ proxy block stays commented. Set FASTAPI_PORT in webserver/.env before enabling (8001 for ig-scraper, 8787 for portrait-3d)."
   },
   "_topology_notes": {
-    "teltonika_rutx50": "LAN is br-lan bridge on 192.168.5.0/24, IP 192.168.5.3 via pfSense DHCP. Z WiFi clients bridge into OPT1 — visible to pfSense DHCP as 192.168.5.x hosts. No separate subnet. Mobile WAN mob1s1a1 (Vodafone 5G, 100.85.214.85) is active. Wired WAN eth1 (192.168.10.3) = OPT2 failover path, physically disconnected. WoL relay available on br-lan for node3090.",
+    "teltonika_rutx50": "LAN is br-lan bridge on 192.168.5.0/24, IP 192.168.5.3 via pfSense DHCP. Z WiFi clients bridge into OPT1 \u2014 visible to pfSense DHCP as 192.168.5.x hosts. No separate subnet. Mobile WAN mob1s1a1 (Vodafone 5G, 100.85.214.85) is active. Wired WAN eth1 (192.168.10.3) = OPT2 failover path, physically disconnected. WoL relay available on br-lan for node3090.",
     "opt2": "192.168.10.0/24 currently contains only Teltonika eth1 failover WAN port (192.168.10.3, static). No active clients. Cable physically disconnected.",
     "asus_gt_be19000": "AP mode on LAN. SSH key auth deferred (Dropbear firmware bug). HTTP API via asusrouter lib."
   },
@@ -52,28 +52,28 @@
     "api_key_env": "PFSENSE_API_KEY",
     "tls_verify": false,
     "_vault_item": "LSE-pfsense_API_key",
-    "_vault_note": "Vaultwarden item name for PFSENSE_API_KEY. Use get_vaultwarden_item(\"LSE-pfsense_API_key\") → password field."
+    "_vault_note": "Vaultwarden item name for PFSENSE_API_KEY. Use get_vaultwarden_item(\"LSE-pfsense_API_key\") \u2192 password field."
   },
   "subnets": [
     {
       "name": "lan",
       "cidr": "192.168.1.0/24",
       "interface": "lan",
-      "description": "Main LAN — LUCIFER, HA Pi, ASUS WiFi clients",
+      "description": "Main LAN \u2014 LUCIFER, HA Pi, ASUS WiFi clients",
       "active": true
     },
     {
       "name": "opt1",
       "cidr": "192.168.5.0/24",
       "interface": "opt1",
-      "description": "Studio (pf: Studio_API_id_opt4_igc2) — node3090 (.41), n45 NAS (.44/.45), Teltonika RUTX50 (.3), Z WiFi clients",
+      "description": "Studio (pf: Studio_API_id_opt4_igc2) \u2014 node3090 (.41), n45 NAS (.44/.45), Teltonika RUTX50 (.3), Z WiFi clients",
       "active": true
     },
     {
       "name": "opt2",
       "cidr": "192.168.10.0/24",
       "interface": "opt2",
-      "description": "Solar_Inverter (pf: Solar_Inverter_OPT2_API_id_opt2_igc3) — failover WAN only, cable disconnected",
+      "description": "Solar_Inverter (pf: Solar_Inverter_OPT2_API_id_opt2_igc3) \u2014 failover WAN only, cable disconnected",
       "active": true
     },
     {
@@ -81,7 +81,7 @@
       "cidr": "192.168.55.0/24",
       "interface": "igc1.55",
       "vlan_id": 55,
-      "description": "IoT VLAN scaffold — disabled. Set active:true when VLAN 55 is live.",
+      "description": "IoT VLAN scaffold \u2014 disabled. Set active:true when VLAN 55 is live.",
       "active": false
     }
   ],
@@ -90,8 +90,10 @@
       "id": "asus_gt-be19000",
       "type": "asus_stock",
       "host": "192.168.1.1",
-      "username": "admin",
+      "username": "SY5",
       "password_env": "ASUS_PASS",
+      "_vault_item": "LSE-asus_gt-be19000",
+      "_vault_note": "Vaultwarden item for ASUS_PASS. Use get_vaultwarden_item(\"LSE-asus_gt-be19000\") → password field.",
       "use_ssl": false,
       "enabled": true,
       "description": "ASUS GT-BE19000 in AP mode on LAN. SSH deferred (Dropbear firmware bug). HTTP API via asusrouter lib.",
@@ -104,7 +106,7 @@
       "username_env": "RUTX50_USER",
       "password_env": "RUTX50_PASS",
       "enabled": false,
-      "description": "Teltonika RUTX50. LAN bridged to pfSense OPT1 (br-lan, 192.168.5.3/24, DHCP from pfSense). Z WiFi clients visible to pfSense on OPT1. Mobile WAN mob1s1a1 = Vodafone 5G primary. WoL relay available on br-lan. RutOS JSON-RPC API IMPLEMENTED — set enabled=true to activate. Prerequisite (fw>=07.18): install 'JSON-RPC support' package via Package Manager. Export RUTX50_PASS (and optionally RUTX50_USER=admin) before first run.",
+      "description": "Teltonika RUTX50. LAN bridged to pfSense OPT1 (br-lan, 192.168.5.3/24, DHCP from pfSense). Z WiFi clients visible to pfSense on OPT1. Mobile WAN mob1s1a1 = Vodafone 5G primary. WoL relay available on br-lan. RutOS JSON-RPC API IMPLEMENTED \u2014 set enabled=true to activate. Prerequisite (fw>=07.18): install 'JSON-RPC support' package via Package Manager. Export RUTX50_PASS (and optionally RUTX50_USER=admin) before first run.",
       "serves_subnet": "opt1",
       "wol_relay": {
         "enabled": true,
