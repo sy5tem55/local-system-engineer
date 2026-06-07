@@ -153,9 +153,12 @@ const SUBNET_BG = {
 };
 
 // Known IPs — override classification and label
+// 192.168.1.1 = ASUS GT-BE19000 in AP mode (management IP)
+// pfSense LAN gateway detected dynamically via type=="gateway" in snapshot
 const KNOWN_IPS = {
   '192.168.1.1': { type: 'ap',      label: 'ASUS GT-BE19000' },
-  '192.168.5.3': { type: 'ap',      label: 'Teltonika RUTX50' },
+  '192.168.5.2': { type: 'switch',  label: 'Netgear GS308E'  },
+  '192.168.5.3': { type: 'router',  label: 'Teltonika RUTX50' },
 };
 
 let cy = null, pollTimer = null;
@@ -192,17 +195,38 @@ function nodeBg(type, status) {
 
 // ── Snapshot → Cytoscape elements ────────────────────────────────────────────
 
+function deviceLabel(dev) {
+  // Priority: known-IP override → hostname → vendor+MAC suffix → IP → MAC suffix
+  const override = KNOWN_IPS[dev.ip]?.label;
+  if (override) return override;
+  if (dev.hostname && dev.hostname !== '?' && dev.hostname !== '-') return dev.hostname;
+  const mac = (dev.mac || '').replace(/:/g, '');
+  const macSuffix = mac.slice(-4).toUpperCase();
+  if (dev.vendor) {
+    // "Apple Inc." → "Apple", "ASUSTeK Computer Inc." → "ASUSTeK"
+    const short = dev.vendor.split(/[\s,]/)[0].slice(0, 12);
+    return macSuffix ? `${short}_${macSuffix}` : short;
+  }
+  if (dev.ip) return dev.ip;
+  return macSuffix || dev.mac || '?';
+}
+
 function toElements(snap) {
   const els = [];
-  const devices = snap.devices || {};
-  const seen = new Set(Object.keys(devices));
+  // snapshot.json devices is a list after _normalise_snapshot — handle both array and dict
+  const devList = Array.isArray(snap.devices)
+    ? snap.devices
+    : Object.values(snap.devices || {});
+  const seen = new Set(devList.map(d => d.mac).filter(Boolean));
 
-  for (const [id, dev] of Object.entries(devices)) {
+  for (const dev of devList) {
+    const id = dev.mac || dev.ip;   // MAC is stable primary key
+    if (!id) continue;
     const type   = classifyType(dev);
     const subnet = subnetKey(dev.subnet);
     const status = dev.status || 'unknown';
-    let label = KNOWN_IPS[dev.ip]?.label || dev.hostname || dev.ip || id;
-    if (label.length > 22) label = label.slice(0, 20) + '…';
+    let label = deviceLabel(dev);
+    if (label && label.length > 22) label = label.slice(0, 20) + '…';
     els.push({ group: 'nodes', data: {
       id, label, type, status, subnet,
       bg:     nodeBg(type, status),
