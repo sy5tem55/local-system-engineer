@@ -1,104 +1,210 @@
 #!/usr/bin/env python3
-"""Convert snapshot.json to ECharts graph topology. Serves GET /topology on port 8766."""
-import json, http.server, socketserver
+"""
+echarts_topology.py
+Convert snapshot.json → ECharts graph data and serve it on port 8766.
+
+Hierarchy (confirmed from live snapshot 2026-06-07):
+  Internet
+    └─ pfSense LAN  192.168.1.50  (tier 1)
+         ├─ ASUS GT-BE19000  192.168.1.1  (AP, tier 2) ← LAN clients
+         └─ pfSense OPT1     192.168.5.1  (tier 1 sub-interface)
+              ├─ Netgear GS308E  192.168.5.2  (switch, tier 2)
+              │    └─ Teltonika RUTX50  192.168.5.3  (router/AP, tier 2)
+              └─ pfSense OPT2  192.168.10.1  (failover)
+
+Run from WSL:
+  export SNAPSHOT=/mnt/c/Users/SY5/Claude/Projects/local-system-engineer/net-discovery/snapshot.json
+  python3 echarts_topology.py
+"""
+
+import json, http.server, socketserver, os
 from pathlib import Path
 from urllib.parse import urlparse
 
-SNAPSHOT = Path("/home/sy5/projects/net-discovery/snapshot.json")
+SNAPSHOT = Path(os.environ.get(
+    "SNAPSHOT",
+    "/mnt/c/Users/SY5/Claude/Projects/local-system-engineer/net-discovery/snapshot.json"
+))
 
-DEVICE_MAP = {
-    "192.168.1.50":  {"label": "pfSense (LAN)",    "type": "gateway", "tier": 1},
-    "192.168.5.1":   {"label": "pfSense (IoT)",    "type": "gateway", "tier": 1},
-    "192.168.10.1":  {"label": "pfSense (MGMT)",   "type": "gateway", "tier": 1},
-    "192.168.1.1":   {"label": "ASUS GT-BE19000",  "type": "ap",      "tier": 2},
-    "192.168.5.2":   {"label": "Netgear GS308E",   "type": "switch",  "tier": 2},
-    "192.168.5.3":   {"label": "Teltonika RUTX50", "type": "ap",      "tier": 2},
+# ip → (display_label, category_name, tier)
+TIER_NODES = {
+    "192.168.1.50":  ("pfSense LAN",       "gateway", 1),
+    "192.168.5.1":   ("pfSense OPT1",      "gateway", 1),
+    "192.168.10.1":  ("pfSense OPT2",      "gateway", 1),
+    "192.168.1.1":   ("ASUS GT-BE19000",   "ap",      2),
+    "192.168.5.2":   ("Netgear GS308E",    "switch",  2),
+    "192.168.5.3":   ("Teltonika RUTX50",  "router",  2),
 }
 
-TIER_COLORS = {
-    1: {"color": "#ff4757", "glow": "#ff6b81"},
-    2: {"color": "#ffa502", "glow": "#ffbe76"},
-    3: {"color": "#2ed573", "glow": "#7bed9f"},
+TIER_EDGES = [
+    ("192.168.1.50", "192.168.1.1",  "LAN"),
+    ("192.168.1.50", "192.168.5.1",  "OPT1"),
+    ("192.168.5.1",  "192.168.5.2",  "OPT1"),
+    ("192.168.5.2",  "192.168.5.3",  "uplink"),
+    ("192.168.1.50", "192.168.10.1", "OPT2"),
+]
+
+SUBNET_PARENT = {
+    "192.168.1.0/24":   "192.168.1.1",   # LAN → ASUS AP
+    "192.168.5.0/24":   "192.168.5.2",   # OPT1 → Netgear switch
+    "192.168.10.0/24":  "192.168.10.1",  # OPT2 → pfSense OPT2
 }
 
-TYPE_SYMBOLS = {
+CATEGORIES = [
+    {"name": "gateway", "itemStyle": {"color": "#ff4757"}},
+    {"name": "ap",      "itemStyle": {"color": "#ffd43b"}},
+    {"name": "switch",  "itemStyle": {"color": "#40c057"}},
+    {"name": "router",  "itemStyle": {"color": "#4dabf7"}},
+    {"name": "server",  "itemStyle": {"color": "#ff922b"}},
+    {"name": "nas",     "itemStyle": {"color": "#cc5de8"}},
+    {"name": "client",  "itemStyle": {"color": "#74c0fc"}},
+    {"name": "unknown", "itemStyle": {"color": "#868e96"}},
+]
+CAT_IDX = {c["name"]: i for i, c in enumerate(CATEGORIES)}
+
+SYMBOL_SIZE = {
+    "gateway": 55, "ap": 48, "switch": 48,
+    "router": 44, "server": 36, "nas": 36, "client": 18, "unknown": 16,
+}
+SYMBOL_SHAPE = {
     "gateway": "rect", "switch": "rect", "ap": "circle",
-    "server": "roundRect", "wired_client": "roundRect", "unknown": "emptyCircle",
+    "router": "roundRect", "server": "roundRect",
 }
+TIER_COLORS = {1: "#ff4757", 2: "#ffd43b", 3: "#74c0fc"}
 
-SUBNET_GATEWAY = {
-    "192.168.1.0/24":  "192.168.1.50",
-    "192.168.5.0/24":  "192.168.5.1",
-    "192.168.10.0/24": "192.168.10.1",
-}
 
-def load_snapshot():
+def _label(dev: dict) -> str:
+    """hostname > vendor+MAC_suffix > IP"""
+    h = (dev.get("hostname") or "").split(".")[0].strip()
+    if h and h not in ("?", "-", ""):
+        return h
+    vendor = dev.get("vendor") or ""
+    mac = (dev.get("mac") or "").replace(":", "")
+    suffix = mac[-4:].upper()
+    if vendor:
+        short = vendor.split()[0][:12]
+        return f"{short}_{suffix}" if suffix else short
+    return dev.get("ip") or suffix or "?"
+
+
+def build_topology(data: dict) -> dict:
+    nodes, links = [], []
+    all_ips = set()
+
+    snap_by_ip = {d["ip"]: d for d in data.get("devices", []) if d.get("ip")}
+
+    for ip, (label, cat, tier) in TIER_NODES.items():
+        dev = snap_by_ip.get(ip, {})
+        alive = dev.get("icmp", {}).get("alive", False) if dev else (tier <= 2)
+        mac = dev.get("mac", "")
+        color = TIER_COLORS[tier] if alive else "#495057"
+        nodes.append({
+            "id": ip, "name": label,
+            "symbol": SYMBOL_SHAPE.get(cat, "circle"),
+            "symbolSize": SYMBOL_SIZE.get(cat, 40),
+            "value": tier, "category": CAT_IDX.get(cat, 7),
+            "label": {"show": True, "fontSize": 12, "fontWeight": "bold",
+                      "color": "#ffffff", "distance": 6},
+            "itemStyle": {"color": color, "shadowBlur": 15 if alive else 0,
+                          "shadowColor": color},
+            "tooltip": {"content": f"<b>{label}</b><br>IP: {ip}<br>MAC: {mac}<br>"
+                                   f"Tier: {tier}<br>Status: {'Online' if alive else 'Offline'}"},
+        })
+        all_ips.add(ip)
+
+    for src, dst, elabel in TIER_EDGES:
+        if src in all_ips and dst in all_ips:
+            links.append({
+                "source": src, "target": dst,
+                "lineStyle": {"color": "#666", "width": 2},
+                "label": {"show": True, "formatter": elabel,
+                          "fontSize": 9, "color": "#aaa"},
+            })
+
+    tier_ips = set(TIER_NODES.keys())
+    for dev in data.get("devices", []):
+        ip = dev.get("ip")
+        if not ip or ip in tier_ips:
+            continue
+        mac = dev.get("mac", "")
+        dev_type = (dev.get("type") or "client").lower()
+        subnet = dev.get("subnet") or ""
+        alive = dev.get("icmp", {}).get("alive", False)
+        parent = SUBNET_PARENT.get(subnet, "192.168.1.50")
+        label = _label(dev)
+        show_label = bool(dev.get("hostname") and dev["hostname"] not in ("?", "-"))
+
+        nodes.append({
+            "id": ip, "name": label,
+            "symbol": SYMBOL_SHAPE.get(dev_type, "circle"),
+            "symbolSize": SYMBOL_SIZE.get(dev_type, SYMBOL_SIZE["client"]),
+            "value": 3, "category": CAT_IDX.get(dev_type, CAT_IDX["unknown"]),
+            "label": {"show": show_label, "fontSize": 10, "color": "#e9ecef",
+                      "distance": 4},
+            "itemStyle": {"color": "#74c0fc" if alive else "#495057",
+                          "shadowBlur": 8 if alive else 0, "shadowColor": "#74c0fc"},
+            "tooltip": {"content": f"<b>{label}</b><br>IP: {ip}<br>MAC: {mac}<br>"
+                                   f"Vendor: {dev.get('vendor') or '?'}<br>"
+                                   f"Type: {dev_type}<br>"
+                                   f"Status: {'Online' if alive else 'Offline'}<br>"
+                                   f"Subnet: {subnet}"},
+        })
+        if parent in all_ips:
+            links.append({
+                "source": parent, "target": ip,
+                "lineStyle": {"color": "#444", "width": 1,
+                              "type": "solid" if alive else "dashed",
+                              "curveness": 0.1},
+            })
+        all_ips.add(ip)
+
+    devices = data.get("devices", [])
+    online = sum(1 for d in devices if d.get("icmp", {}).get("alive"))
+    return {
+        "categories": CATEGORIES, "nodes": nodes, "links": links,
+        "stats": {"total": len(devices), "online": online,
+                  "tier_nodes": len(TIER_NODES),
+                  "clients": len(nodes) - len(TIER_NODES)},
+    }
+
+
+def load_snapshot() -> dict:
     with open(SNAPSHOT) as f:
         return json.load(f)
 
-def build_topology(data):
-    nodes, links = [], []
-    categories = [
-        {"name": "Gateways", "itemStyle": {"color": "#ff4757"}},
-        {"name": "Network",  "itemStyle": {"color": "#ffa502"}},
-        {"name": "Clients",  "itemStyle": {"color": "#2ed573"}},
-    ]
-    for dev in data.get("devices", []):
-        ip = dev.get("ip")
-        if not ip: continue
-        mac, hostname, dev_type, subnet = dev.get("mac",""), dev.get("hostname",""), dev.get("type","unknown"), dev.get("subnet","")
-        alive = dev.get("icmp",{}).get("alive", False)
-        override = DEVICE_MAP.get(ip)
-        if override:
-            label, tier, dev_type = override["label"], override["tier"], override["type"]
-        elif dev_type == "gateway":
-            label, tier = ip, 1
-        elif dev_type in ("ap","switch"):
-            label, tier = hostname or ip, 2
-        else:
-            label, tier = hostname or ip, 3
-        display = label if len(label)<=20 else label[:18]+"…"
-        symbol = TYPE_SYMBOLS.get(dev_type, "emptyCircle")
-        sz = 50 if tier==1 else (40 if tier==2 else 18)
-        ci = tier - 1
-        tc = TIER_COLORS[tier]
-        nodes.append({
-            "id": ip, "name": display, "symbol": symbol, "symbolSize": sz,
-            "value": tier, "category": ci,
-            "label": {"show":True, "fontSize":10 if tier==3 else 13, "fontWeight":"bold" if tier<=2 else "normal", "color":"#ffffff", "distance":5},
-            "tooltip": {"content": f"<b>{label}</b><br>IP: {ip}<br>MAC: {mac}<br>Type: {dev_type}<br>Status: {'Online' if alive else 'Offline'}<br>Subnet: {subnet}"},
-            "itemStyle": {"color": tc["color"] if alive else "#636e72", "shadowBlur": 20 if alive else 5, "shadowColor": tc["glow"] if alive else "transparent"},
-        })
-    node_ips = {n["id"] for n in nodes}
-    for dev in data.get("devices", []):
-        ip = dev.get("ip")
-        if not ip or ip in DEVICE_MAP: continue
-        subnet = dev.get("subnet","")
-        if subnet in SUBNET_GATEWAY:
-            target = SUBNET_GATEWAY[subnet]
-            if target in node_ips:
-                alive = dev.get("icmp",{}).get("alive",False)
-                links.append({"source":ip,"target":target,"lineStyle":{"color":"#636e72","width":1,"curveness":0.2,"type":"dashed" if not alive else "solid"}})
-    return {"nodes":nodes,"links":links,"categories":categories,"stats":{"total":len(nodes),"online":sum(1 for d in data.get("devices",[]) if d.get("icmp",{}).get("alive"))}}
 
 class Handler(http.server.BaseHTTPRequestHandler):
-    def log_message(self,*a): pass
+    def log_message(self, *a):
+        pass
+
     def do_GET(self):
         path = urlparse(self.path).path
-        if path=="/topology":
+        if path == "/topology":
+            try:
+                body = json.dumps(build_topology(load_snapshot())).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        elif path == "/health":
             self.send_response(200)
-            self.send_header("Content-Type","application/json")
-            self.send_header("Access-Control-Allow-Origin","*")
             self.end_headers()
-            self.wfile.write(json.dumps(build_topology(load_snapshot())).encode())
-        elif path=="/health":
-            self.send_response(200)
             self.wfile.write(b"OK")
         else:
             self.send_response(404)
+            self.end_headers()
             self.wfile.write(b"Not Found")
 
-if __name__=="__main__":
-    with socketserver.TCPServer(("",8766),Handler) as httpd:
-        print("Topology API on port 8766")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("TOPOLOGY_PORT", "8766"))
+    print(f"Topology API on :{port}  snapshot={SNAPSHOT}")
+    with socketserver.TCPServer(("", port), Handler) as httpd:
+        httpd.socket.setsockopt(1, 2, 1)
         httpd.serve_forever()
