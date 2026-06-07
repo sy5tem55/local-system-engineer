@@ -64,3 +64,27 @@ Cumulative KB entries from post-session debriefs.
 - `--flash-attn` must not be followed by another `--flag` on the next line in a multi-line SSH command — collapse to single line
 - Verified working llama-server command for node3090: `llama-server -m /opt/models/.../Qwen3.6-27B-Q4_K_M.gguf -c 96000 -ngl 129 --flash-attn --cache-type-k q8_0 --cache-type-v q8_0 --parallel 1 -t 7 -tb 7 --reasoning-budget 3072 --n-predict 8192 --jinja --metrics --port 8080 --host 0.0.0.0`
 - Edit tool + NTFS + emoji in f-strings = silent mid-character truncation (not just end-of-file)
+
+## Session 2026-06-07 — Qwen3.6 reasoning_content field + lse_task.sh double-http
+
+### What failed and why
+
+- **Attempted:** `curl -sf "http://${LLM_URL}/health"` in lse_task.sh where `LLM_URL="http://node3090.home.arpa:8080"`
+  **Failed because:** Double `http://` — `LLM_URL` already contained the scheme, so the final URL was `http://http://node3090.home.arpa:8080/health`. curl fails silently with `-sf`. Misdiagnosed as a WSL2 TCP/hostname issue for several rounds (ping and nslookup worked, only curl "failed").
+  **Fix:** `curl -sf "${LLM_URL}/health"` — no extra `http://` prefix. When `LLM_URL` already contains the scheme, never wrap it again.
+
+- **Attempted:** `reasoning_budget: 0` in chat completions payload to disable Qwen3.6 thinking
+  **Failed because:** `reasoning_budget: 0` zeroes the content-generation budget (tokens after thinking), not the thinking budget. Model thought for ~1100 tokens, then had 0 tokens to produce content → `content` field was empty.
+  **Fix:** Remove `reasoning_budget` entirely. Use `chat_template_kwargs: {"enable_thinking": False}` to disable thinking at the template level.
+
+- **Attempted:** Reading `resp["choices"][0]["message"]["content"]` for Qwen3.6 with thinking enabled
+  **Failed because:** llama.cpp with Qwen3.6 reasoning mode routes the think block to `reasoning_content` and leaves `content` as empty string. Standard OpenAI client code returns `""`.
+  **Fix:** `content = msg.get("content") or ""; content = content or msg.get("reasoning_content", "")` — fall back to `reasoning_content` when `content` is blank.
+
+### Key facts
+- Qwen3.6 + llama.cpp: thinking output → `reasoning_content`; actual answer → `content` (may be empty if model hits token limit or `reasoning_budget` is misset)
+- `reasoning_budget: 0` = 0 content tokens (counterintuitive — sounds like "no reasoning")
+- Correct way to disable thinking per-request: `"chat_template_kwargs": {"enable_thinking": False}` in the completions payload
+- `/no_think` in user message is NOT reliable with llama.cpp — model still enters thinking mode
+- `LLM_URL` pattern: if it already contains `http://`, never wrap it with `http://` again in curl
+- node3090 HTTP reachable at `192.168.5.41:8080` from WSL2 (IP). Hostname `node3090.home.arpa` also works for ping/SSH but use IP for curl to avoid any DNS edge cases.
