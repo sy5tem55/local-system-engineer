@@ -388,6 +388,8 @@ def main() -> None:
     ap.add_argument("--files",        nargs="+", required=True, help="Context files for Planner and Worker")
     ap.add_argument("--target",       default="",  help="File path to write output (omit for stdout)")
     ap.add_argument("--llm-url",      default="http://localhost:8080")
+    ap.add_argument("--planner-url",  default=None,
+                    help="LLM URL for Planner (default: same as --llm-url)")
     ap.add_argument("--model",        default=None)
     ap.add_argument("--facts",        default="/tmp/lse_facts.json", help="Where to save extracted facts JSON")
     ap.add_argument("--max-retries",  type=int, default=1)
@@ -396,9 +398,13 @@ def main() -> None:
     ap.add_argument("--no-llm-verify",action="store_true", help="Skip LLM structural check (faster)")
     args = ap.parse_args()
 
-    url = args.llm_url
-    model = args.model or detect_model(url)
-    print(f"📡  {url}  model={model or '(server default)'}")
+    url   = args.llm_url
+    p_url   = args.planner_url or url
+    model   = args.model or detect_model(url)
+    p_model = detect_model(p_url) if p_url != url else model
+    print(f"📡  Worker/Verifier: {url}  model={model or '(server default)'}")
+    if p_url != url:
+        print(f"📡  Planner: {p_url}  model={p_model or '(server default)'}")
 
     # Read input files
     file_contents: dict[str, str] = {}
@@ -420,7 +426,7 @@ def main() -> None:
         facts = json.loads(facts_path.read_text())
         print(f"📋  Loaded facts from {facts_path}")
     else:
-        facts = run_planner(file_contents, url, model)
+        facts = run_planner(file_contents, p_url, p_model)
         facts_path.write_text(json.dumps(facts, indent=2))
         print(f"   💾 Saved to {facts_path}")
 
