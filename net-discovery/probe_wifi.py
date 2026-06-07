@@ -223,7 +223,7 @@ async def _probe_asus_async(router_cfg: Dict, snapshot: Dict) -> None:
     log.info(f"probe_wifi: connecting to ASUS {host} (id={router_id}, ssl={use_ssl})")
 
     router = AsusRouter(
-        host=host,
+        hostname=host,
         username=username,
         password=password,
         use_ssl=use_ssl,
@@ -231,12 +231,16 @@ async def _probe_asus_async(router_cfg: Dict, snapshot: Dict) -> None:
 
     clients_data = None
     try:
-        await router.async_connect()
-        clients_data = await router.async_get_data(AsusData.CLIENTS)
+        await asyncio.wait_for(router.async_connect(), timeout=15)
+        clients_data = await asyncio.wait_for(
+            router.async_get_data(AsusData.CLIENTS), timeout=15
+        )
         log.info(
             f"probe_wifi: ASUS {host} returned "
             f"{len(clients_data) if clients_data else 0} clients"
         )
+    except asyncio.TimeoutError:
+        log.error(f"probe_wifi: ASUS {host} timed out after 15s — skipping")
     finally:
         try:
             await router.async_disconnect()
