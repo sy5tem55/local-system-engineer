@@ -152,7 +152,7 @@ search:
 engines:
   - name: arxiv
     weight: 2          # was: 4 — over-weighted for 15% reliability
-    timeout: 5         # was: 15 — was causing 15s tail latency on 85% of science queries
+    timeout: 8         # was: 5 → 8 (audit 2026-06-07: hitting 5.058s just over limit; 8s safe without reverting to 15s tail latency)
     categories: [science, it, technology]
 
   - name: google

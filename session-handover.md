@@ -1,290 +1,175 @@
-# Session Handover
-> Updated: 2026-06-06 (P6 Cowork — SearXNG NVD diagnosis, v0.5.15, hostname fixes, topology series)
-> Next session: read ROADMAP.md → CURRENT-STATE.md → this file in that order.
+# Session Handover — LSE
+> Updated: 2026-06-07 (P16 Cowork)
+> **Read order at session start:** CURRENT-STATE.md → this file → ROADMAP.md
 
 ---
 
-## Critical Rules (burn these in)
-
-1. **Edit tool truncates large Python files on the NTFS mount.** Use bash heredoc or
-   Python string replacement for ALL Python files >100 lines.
-2. **Git commits from Cowork sandbox fail** — commit from WSL terminal only.
-3. **NAS IPs are 192.168.5.44 + 192.168.5.45 / n45.home.arpa** — NOT .10.
-   Two NICs in failover (switch has no LACP). Both MACs in pfSense static DHCP. DNS returns both A records.
-4. **SearXNG config requires sudo** — `/home/sy5/docker/searxng_data/` is root-owned.
-   Always: validate YAML → sudo cp → docker compose restart → sleep 8 → verify with
-   CATEGORY-SPECIFIC query, not "test".
-5. **pfSense REST API auth is `x-api-key` header** — NOT `Authorization: Bearer`.
-   Correct: `headers={"x-api-key": key, "Accept": "application/json"}`
-   Wrong:   `headers={"Authorization": f"Bearer {key}"}` → 401 AUTH_AUTHENTICATION_FAILED
-   See tool v1.5.18 `pfsense_query()` for reference implementation.
-6. **pfSense REST API base URL is `https://pfsense.home.arpa/api/v2`** — NOT the bare IP.
-   CA cert CN matches hostname only. Using `192.168.1.50` → SSL verify error.
-7. **pfSense SSH access is out of scope for LSE** — SSH admin@pfsense = root shell.
-   Bypasses the read-only API boundary entirely (can edit config.xml, change rules, restart services).
-   For DNS audit: use `dig +short @192.168.1.50 <host>` from LUCIFER — read-only, no credentials.
-   For config reads: use REST API read-only endpoints only.
-   SSH to pfSense is a human-only operation, never delegated to the model.
-8. **pfSense read-only toggle NOT via API** — `/api/v2/system/api` returns 404.
-   Web UI only: System → REST API → Read Only toggle.
-9. **docker compose restart shows `0/1`** — display quirk, not an error. Check
-   `docker logs searxng --tail 20` for actual status.
-10. **"test" query shows only 3-4 engines** — this is correct. Use `&categories=science`
-   or `&categories=it` to verify category-specific engines are active.
-11. **HAOS SSH add-on regenerates sshd_config on every reboot** — `AllowUsers` and
-    `PermitRootLogin` changes do NOT survive reboot. Root SSH is not persistent on HAOS.
-    Use `ssh sy5@homeassistant.home.arpa sudo <cmd>` for all HA Pi operations.
-    Key auth for sy5 works persistently via `/etc/ssh/authorized_keys`.
-12. **HA long-lived tokens are JWTs** — `eyJ` prefix is correct. Token must be ~183 chars.
-    If token is 55 chars it was truncated on copy — use the Copy button in HA UI, not
-    manual text selection. Decode from QR code with OpenCV if needed.
-13. **HA API restart (`POST /api/services/homeassistant/restart`) is soft** — clears YAML
-    errors in config but HA notification cache persists until full reboot or manual dismiss.
-    Config check: Developer Tools → YAML → Check Configuration.
-
----
-
-## Session 9 Summary (P6 Cowork)
-
-### Completed this session
-
-| Item | Status |
-|---|---|
-| SearXNG NVD diagnosis — cvedetails.com VPS 403 · removed from config · settings redeployed | ✅ |
-| ROADMAP: NVD custom engine (P1) + searxng-error-exporter (P1) — full specs written | ✅ |
-| Prompt v0.5.15 — PFSENSE LOG RULE section added · deployed | ✅ |
-| NETWORK_CONTEXT in challenge_generator.py — gateway rule + NAS hostname + TV MAC | ✅ |
-| `nas.home.arpa` → `n45.home.arpa` — corrected across 7 files | ✅ |
-| pfSense API URL: `192.168.1.50` → `pfsense.home.arpa` — all scripts + prompts | ✅ |
-| pfSense API auth: `x-api-key` header (not `Authorization: Bearer`) — confirmed + fixed | ✅ |
-| Critical rules 5+6 added: x-api-key auth + pfsense.home.arpa URL | ✅ |
-| NODE2 documented: Ubuntu 22.04 · 192.168.5.41 · NAS subnet · no static mapping yet | ✅ |
-| Network Topology Challenge Series designed — 7 challenges net-t1-013 → net-t3-004 | ✅ |
-| Local DNS Architecture added to ROADMAP — known entries + missing + work items | ✅ |
-| Samsung TV T4: confirmed firmware noise · lease 7200s normal · static mapping confirmed | ✅ |
-| CURRENT-STATE network table expanded with subnet topology detail | ✅ |
-
-### Additional completed (late session)
-
-| Item | Status |
-|---|---|
-| DNS audit via `dig` — pfsense/homeassistant/n45 confirmed · lucifer/node2 NXDOMAIN | ✅ |
-| n45 dual NIC documented — 192.168.5.44 + .45, failover, both in pfSense static DHCP | ✅ |
-| GPU-based DNS aliases planned — 4090/3090/5090.home.arpa as additive DNS entries | ✅ |
-| SSH COMMAND= PROTOCOL documented in ROADMAP — scoped read-only SSH escalation pattern | ✅ |
-| pfSense SSH boundary reinforced — critical rule 7 + ROADMAP note | ✅ |
-| openwebui-tool-v1.5.18.py — unbound host endpoint flagged as 404 on Plus 26.03.1 | ✅ |
-
-### Key findings
-- pfSense DNS host overrides: REST API endpoint 404s on Plus 26.03.1 — use `dig +short @192.168.1.50 <host>`
-- n45.home.arpa returns two A records (.44 + .45) — correct, dual NIC failover setup
-- NVD/cvedetails blocked at VPS level (403) — same as Scholar/Reddit
-- Grafana "Failing engines" panel = 0 is a known gap (error-exporter not yet built)
-- pfSense REST API auth: `x-api-key` header (not `Authorization: Bearer`)
-
----
-
-## Session 8 Summary (P5 Cowork)
-
-### Completed this session
-
-| Item | Status |
-|---|---|
-| ha-t1-004 HA Inventory — SOLVED a1 · 15.0 pts | ✅ |
-| ha-t1-008 HA Automation Audit — SOLVED a1 · 15.0 pts · 2 stale automations found | ✅ |
-| ha-t2-002 HA Template Sensor Audit — SOLVED a1 · 19.5 pts · 2 sensors + migration YAML | ✅ |
-| infra-t2-001 SSH Posture Audit HA Pi — SOLVED a1 · 19.5 pts | ✅ |
-| infra-t3-002 SSH Key Hardening LUCIFER→Pi — SOLVED a1 · 22.5 pts | ✅ |
-| ha-t3-001 HA Template Sensor Migration — SOLVED a1 · 22.5 pts · YAML confirmed fixed | ✅ |
-| tool v1.5.18 safety patch — `_BLOCKED_WRITE_FILENAMES` blocks .bashrc + shell configs | ✅ |
-| LSE wrote `-e` to ~/.bashrc — found + removed (line 32) | ✅ |
-| HA token: JWT format confirmed correct · token was truncated (55 chars) · QR decode used | ✅ |
-| HA Pi IP resolved: homeassistant.home.arpa:8123 · Pi IP: 192.168.1.80 | ✅ |
-| SSH key auth LUCIFER→Pi (sy5) — working via /etc/ssh/authorized_keys | ✅ |
-| HAOS sshd_config quirks documented (see Critical Rules below) | ✅ |
-| model identifier standardised: qwen3.6-27b → qwen3.6-27b-q4-64k · ep 16 merged | ✅ |
-| infra-t2-001 + infra-t3-002 challenges added to seed_challengedb.py | ✅ |
-
-### Leaderboard
-`qwen3.6-27b-q4-64k` — **373.1 pts · 21 eps · 20 solved · 0 esc · avg 1.10 att · 21/21 KB hits**
-
----
-
-## Session 7 Summary (P4 Cowork)
-
-### Completed this session
-
-| Item | Status |
-|---|---|
-| Grafana P3 panels — confirmed complete (done previous session) | ✅ |
-| HA long-lived token — created in HA UI | ✅ |
-| ha-t2-002 (HA Template Sensor Audit) — designed + added to seed_challengedb.py | ✅ |
-| ha-t3-001 (HA Template Sensor Migration) — designed + added, requires_human_approval=1 | ✅ |
-| ROADMAP / CURRENT-STATE / session-handover updated | ✅ |
-
----
-
-## Session 6 Summary
-
-### Completed this session
-
-| Item | Status |
-|---|---|
-| SearXNG v3 config applied (bing/google news, NVD) | ✅ |
-| SSL fix: SSL_CERT_FILE → host CA bundle | ✅ |
-| NVD engine — CVEs with CVSS scores | ✅ |
-| Semantic Scholar — papers with metadata | ✅ |
-| searxng-docker legacy dir removed | ✅ |
-| entrypoint-wrapper.sh removed | ✅ |
-| OpenWebUI filter architecture confirmed (Global OFF, Qwen3-only) | ✅ |
-| Routing filter stays v1.1.0 — v1.2.0 built but not needed | ✅ |
-| `prompts/claude-l2-system-prompt.md` written | ✅ |
-| `LSE L2 — Claude Opus` preset deployed in OpenWebUI | ✅ |
-| `LSE Research — Claude Sonnet` preset deployed in OpenWebUI | ✅ |
-| **P3 (Cowork):** Grafana `searxng-engine-health` — 6 tuning-signal panels added | ✅ |
-| Prometheus labels verified: all metrics use `engine_name` · 18 active engines | ✅ |
-| `searxng_engine_errors_total` — zero series confirmed, Panel 24 wired+waiting | ✅ |
-| Dashboard provisioner behaviour documented (edit file, not UI) | ✅ |
-
----
-
-## Session 5 Summary
-
-### Completed this session
-
-| Item | Status |
-|---|---|
-| v0.5.13 + v1.5.18 confirmed built (prev session) | ✅ |
-| Deployed v0.5.13 + v1.5.18 to OpenWebUI | ✅ |
-| Eval Run 7 — P4, M3, W1, A3 all 3/3 | ✅ |
-| v0.5.14 — Docker NAT topology fix — A1 → 3/3 | ✅ |
-| **63/63 achieved** (eval-report-v6.md) | ✅ |
-| nas-t2-001 NAS Unexpected Port Investigation | ✅ SOLVED 19.5 pts |
-| nas-t3-001 NAS Anonymous Access Hardening | ✅ SOLVED 19.5 pts |
-| net-t2-011 Samsung TV Traffic Analysis | ✅ SOLVED 19.5 pts |
-| net-t3-002 Samsung TV WAN Isolation | ✅ SOLVED 19.5 pts |
-| net-t3-002 a3 assertion patched (write_access probe) | ✅ |
-| QNAP anonymous access fixed (human-applied) | ✅ KB indexed quality 1.0 |
-| Samsung TV WAN block rule live in pfSense | ✅ verified |
-| SearXNG diagnostic v1 (Claude Sonnet 4.6) | ✅ |
-| SearXNG settings v2 applied (arxiv fix, scholar disabled) | ✅ |
-| SearXNG settings v3 written (news gap, NVD) | ✅ pending apply |
-| docs/searxng-operations.md written | ✅ |
-| ROADMAP, CURRENT-STATE, CHANGELOG, VERSION updated | ✅ |
-
-### Leaderboard
-`qwen3.6-27b-q4-64k` — **259.1 pts · 15 eps · 14 solved · 0 esc · avg 1.13 att · 15/15 KB hits**
-
-### Challenge DB state (15 total)
-- T1: 10 active (all previously run, all solved)
-- T2: nas-t2-001 ✅, net-t2-011 ✅, auto-pf-t1-002 (rejected)
-- T3: nas-t3-001 ✅, net-t3-002 ✅
-
----
-
-## First Actions Next Session
+## Session Start Checklist
 
 ```bash
-# 1. Commit P6 work
+# Run from WSL on LUCIFER before anything else
 cd /mnt/c/Users/SY5/Claude/Projects/local-system-engineer
-git add -A && git commit -m "P6: v0.5.15, pfsense hostname+auth fixes, n45 DNS, topology series, NVD diagnosis"
+git log --oneline -5          # confirm on main, see last commits
+cat CURRENT-STATE.md          # deployed versions + pending items
 
-# 2. DNS audit (get key from Vaultwarden first: export PFSENSE_KEY=<key>)
-python3 -c "
-import os, requests, json, urllib3; urllib3.disable_warnings()
-key = os.getenv('PFSENSE_KEY','')
-r = requests.get('https://pfsense.home.arpa/api/v2/services/unbound/host',
-    headers={'x-api-key': key, 'Accept': 'application/json'},
-    verify='/opt/local-se/cert/pfsense-webgui-ca.crt', timeout=10)
-print(r.status_code, json.dumps(r.json(), indent=2))
-"
-
-# 3. Get NODE2 MAC for static DHCP mapping
-python3 -c "
-import os, requests, json, urllib3; urllib3.disable_warnings()
-key = os.getenv('PFSENSE_KEY','')
-r = requests.get('https://pfsense.home.arpa/api/v2/dhcp/server/lease',
-    headers={'x-api-key': key, 'Accept': 'application/json'},
-    verify='/opt/local-se/cert/pfsense-webgui-ca.crt', timeout=10)
-leases = r.json().get('data', [])
-node2 = [l for l in leases if '192.168.5.41' in str(l)]
-print(node2)
-"
+# Sync repo config → live Docker host (prevents Grafana "No Data" drift — Rule 26)
+bash scripts/sync-docker-config.sh --reload
 ```
 
-**Priority order next session:**
-1. **DNS audit** — confirm pfsense/homeassistant/n45 · discover any unknowns (needs PFSENSE_KEY)
-2. **NODE2 static DHCP + DNS** — get MAC from lease table · add mapping · add `node2.home.arpa`
-3. **Samsung TV T4 challenge** — author and seed challenge (firmware noise confirmed, design ready)
-4. **Net topology series** — begin seeding net-t1-013 (subnet host enumeration)
-
-**TODO carry-over from P5:**
-- Index KB doc: `index_to_kb(path="docs/kb/ha-long-lived-token-format.md", tag="home-assistant/auth")`
-- Update SSH user in ha-t3-001 + infra-t3-002 starting_state: `root` → `sy5`
+**Last deployed tool: v1.5.26** — search_web hang fix.
+**Net-discovery project: written, not yet live-tested.** First run: see CURRENT-STATE.md → Network Observability → First-Run Commands.
 
 ---
 
-## OpenWebUI Setup In Progress
+## Critical Rules
 
-### Routing Filter — v1.1.0 · FINAL
-- Global toggle **OFF** — filter applies to Qwen3 preset only ✅
-- v1.2.0 built as reference (`tools/lse-routing-filter-v1.2.0.py`) but not deployed — not needed given Global OFF architecture
+1. **Edit tool truncates large Python files on NTFS.** Use bash `cat << 'PYEOF'` heredoc for ALL `.py` files > 100 lines and all JSON files. Never use the Write or Edit tool for these.
+2. **Git commits from Cowork sandbox fail** — commit from WSL terminal only.
+3. **NAS is `n45.home.arpa`** — IPs 192.168.5.44 + .45 (dual NIC failover). DNS returns both A records.
+4. **SearXNG config requires sudo** — `/home/sy5/docker/searxng_data/` is root-owned. Workflow: validate YAML → `sudo cp` → `docker compose restart` → `sleep 8` → verify with category-specific query (not "test").
+5. **pfSense auth: `x-api-key` header** — NOT `Authorization: Bearer`. Wrong header → 401.
+6. **pfSense base URL: `https://pfsense.home.arpa/api/v2`** — NOT bare IP. CA cert CN matches hostname only.
+7. **pfSense SSH is out of scope for LSE** — SSH to pfSense = root shell, bypasses all API boundaries. Human-only.
+8. **pfSense Read Only toggle is Web UI only** — `System → REST API → Read Only`. Must disable before any POST, re-enable immediately after.
+9. **`docker compose restart` shows `0/1`** — display quirk, not an error. Check `docker logs searxng --tail 20`.
+10. **HAOS `sshd_config` regenerates on reboot** — `AllowUsers`/`PermitRootLogin` don't survive. Use `ssh sy5@homeassistant.home.arpa sudo <cmd>`.
+11. **HA long-lived tokens are ~183-char JWTs** — `eyJ` prefix. 55-char = truncated. Use Copy button in HA UI.
+12. **WoL for node3090 goes via pfSense OPT1:**
+    - API: `POST /api/v2/services/wake_on_lan/send` with `{"interface": "opt1", "mac": "0c:9d:92:84:6e:6a"}`
+    - ⚠️ `/send` suffix is REQUIRED — bare endpoint returns 404
+    - pfSense sends on UDP port 40000 (not 7 or 9). Boot time: ~55s.
+13. **node3090 llama.cpp server is on port 8080** — port 1234 = LM Studio (different app).
+14. **node3090 SSH always use FQDN** — `ssh lse-admin@node3090.home.arpa`. Short name fails (DHCP option 119 not configured yet).
+15. **node3090 models path** — `/opt/models` is a symlink → `/home/sy5/.lmstudio/models/`.
+16. **`index_to_kb` is capped at 4000 chars** — call at most once per task. Do NOT call `search_kb()` after to verify.
+17. **Only one tool file in OpenWebUI at a time** — duplicate tool functions = OpenWebUI warning.
+18. **Elasticsearch is a CORE LSE service** — powers SearxNG result indexing AND KB RAG pipeline. `DO NOT stop or remove`. Container: `elasticsearch:8.17.0`, ports :9200/:9300.
+19. **PRE-INSTALL RULE (net-discovery):** Before any `pip install`, ALWAYS run `pip show <package>` first. Many packages are already installed in the owui venv (`/home/sy5/owui/bin/python3`). Avoid Docker duplicates.
+20. **`.pyc` files on NTFS mount cannot be deleted from the Cowork sandbox** (Operation not permitted). When testing Python edits in sandbox, use `importlib.util.spec_from_file_location()` to force load from source and bypass cached bytecode.
+21. **ws_server.py requires `websockets` library** — wsproto (installed) is a codec only, not a server. Check: `pip show websockets`. Install if missing: `pip install websockets --break-system-packages`.
+22. **net-discovery `db/` directory** — auto-created by `schema.py __init__`. No manual `mkdir` needed. Do NOT `mkdir` from `~` (wrong location).
+23. **Teltonika RUTX50 topology confirmed:**
+    - IP: `192.168.5.3` (managed from pfSense OPT1, DHCP lease)
+    - LAN is `br-lan` bridge, bridged to pfSense OPT1 — Z WiFi clients visible on 192.168.5.0/24
+    - WAN: mob1s1a1 Vodafone 5G (100.85.214.85, active) — eth1 OPT2 (192.168.10.3) physically disconnected
+    - WoL relay available on `br-lan` for OPT1 hosts
+    - `probe_wifi.py` Teltonika stub: `enabled: false` — enable after RutOS API endpoint confirmed
+24. **ASUS GT-BE19000:** AP mode (192.168.1.1). `asusrouter` Python library used (wraps HTTP CGI API, used by Home Assistant core). SSH disabled due to confirmed Dropbear firmware bug on stock firmware.
+25. **FastAPI port is NOT 8000** — Three projects: IG Scraper=:8001, Portrait-3D v2=:8787 (own venv), Portrait-3D v1=:8787 (superseded). nginx.conf `/api/` block stays commented until a specific FastAPI is deployed.
+26. **Repo config ≠ live host config — always sync after editing.** The repo (`C:\Users\SY5\Claude\Projects\local-system-engineer\`) is on NTFS. The live Docker stack runs from `/home/sy5/docker/` in WSL2. They are two separate file trees. Editing `prometheus/prometheus.yml` or `docker/grafana/...` in the repo does NOT update the running containers. After any config change, run from WSL2: `bash /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/scripts/sync-docker-config.sh --reload`. For searxng_data/settings.yml (root-owned), see Rule 4. **Forgetting this sync is what caused the Grafana "No Data" outage (2026-06-07).**
 
-### Claude Presets — DEPLOYED ✅
-See `prompts/claude-l2-system-prompt.md` for system prompts.
+---
 
-| Preset | Base Model | Status |
+## Active Work (2026-06-07, P15–P16)
+
+### Network Observability — Written, Awaiting First Live Test
+
+All core net-discovery files are written and unit-tested in isolation. The system has never been run against live pfSense. First run will exercise the full pipeline: pfSense API → probes → snapshot.json → index.html visualization.
+
+**What works (tested):**
+- `schema.py` — all CRUD methods, event detection, duplicate-free `get_current_devices()` ✅
+- `graph.py` — type classification, edge inference, Cytoscape.js serialisation ✅
+- `discovery_engine.py` — `_normalise_snapshot()` tested with synthetic data: type classification, icmp.alive, sources, dhcp.expires all correct ✅
+
+**Not yet tested against live infrastructure:**
+- pfSense REST API calls (probe_dhcp.py) — needs `PFSENSE_API_KEY` env var
+- nmap sweep (probe_icmp.py) — needs nmap + appropriate privileges
+- asusrouter WiFi probe (probe_wifi.py) — needs `ASUS_PASS` env var
+- ws_server.py — needs `websockets` library installed
+- Nginx container — first-time deploy, never started
+
+**Run order for first test:**
+```bash
+cd /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/net-discovery
+
+# 1. Set env vars
+export PFSENSE_API_KEY=<key>
+
+# 2. Single verbose run
+python3 discovery_engine.py --verbose
+
+# 3. If snapshot.json is written, open index.html in browser
+# (or python3 -m http.server 8080 → http://localhost:8080/netobs/)
+
+# 4. If that works, check websockets and start ws_server
+pip show websockets || pip install websockets --break-system-packages
+python3 ws_server.py &
+
+# 5. Continuous loop with persistence
+python3 discovery_engine.py --loop --interval 60 &
+python3 prometheus_exporter.py &
+```
+
+---
+
+## Pending Items
+
+| Item | Priority | Blocked on |
 |---|---|---|
-| `LSE L2 — Claude Opus` | `claude-opus-4-6` | ✅ deployed |
-| `LSE Research — Claude Sonnet` | `claude-sonnet-4-6` | ✅ deployed |
+| First live test of discovery_engine.py | **HIGH** | PFSENSE_API_KEY env var |
+| Verify `websockets` installed for ws_server.py | HIGH | — |
+| Deploy Nginx container (`cd webserver && docker compose up -d`) | HIGH | First test passing |
+| Add Prometheus scrape job `netobs` targeting :9120 | MEDIUM | Nginx up |
+| Implement Teltonika RutOS API client in probe_wifi.py | MEDIUM | Confirm `GET /api/router/wireless/clients` endpoint |
+| probe_mdns.py (L2 enrichment) | LOW | zeroconf already installed |
+| pfSense DHCP option 119 — add `home.arpa` search domain | MEDIUM | — (fixes `ssh node3090` short name) |
+| Run node-t3-001 GPU Node Lifecycle challenge | MEDIUM | pfSense Read Only toggle (human gate) |
+| Run net-t1-013, net-t1-014 challenges | MEDIUM | — |
+| Run sec-t3-001 challenge | MEDIUM | — |
+| Deploy v1.5.27 (date-sensitive query rule) | MEDIUM | — |
+| searxng-error-exporter (P1 ROADMAP) | LOW | — |
+| P0 ROADMAP: ground-truth assertion verifier (verify_ssh) | LOW | design doc in ROADMAP.md |
+| node3090: add RTX 2080Ti | LOW | watercooling loop prep (human) |
+| node5090: WoL + SSH setup | LOW | deferred |
+| ASUS GT-BE19000 SSH (asusrouter HTTP API works) | LOW | Dropbear firmware bug on stock |
 
 ---
 
-## SearXNG State
+## Network Topology
 
-| Config | Status |
+```
+Internet
+  │
+  ▼
+pfSense (192.168.1.50 / pfsense.home.arpa)   REST API: https://pfsense.home.arpa/api/v2
+  ├─ LAN (192.168.1.0/24, igc0)
+  │    ├─ LUCIFER WSL2 (192.168.1.x) — probe host + Cowork + OpenWebUI
+  │    ├─ HA Pi (192.168.1.80, homeassistant.home.arpa)
+  │    ├─ ASUS GT-BE19000 (192.168.1.1) — AP mode, asusrouter HTTP API
+  │    │    └─ LAN WiFi clients (2.4/5/6 GHz)
+  │    └─ LAN wired clients
+  │
+  ├─ OPT1 (192.168.5.0/24, igc1)
+  │    ├─ node3090 (192.168.5.41 static) — Ubuntu 24.04, RTX 3090, llama-server :8080
+  │    ├─ n45 NAS (192.168.5.44 + .45, n45.home.arpa)
+  │    ├─ Teltonika RUTX50 (192.168.5.3, DHCP from pfSense)
+  │    │    ├─ br-lan bridges Z WiFi clients → OPT1 (visible to pfSense DHCP)
+  │    │    ├─ WAN: mob1s1a1 Vodafone 5G (100.85.214.85, active)
+  │    │    └─ WoL relay available on br-lan for OPT1 hosts
+  │    └─ Z WiFi clients (192.168.5.x, discoverable via pfSense DHCP + nmap)
+  │
+  └─ OPT2 (192.168.10.0/24, igc2) — failover WAN only
+       └─ Teltonika eth1 (192.168.10.3, static) — cable DISCONNECTED, no active clients
+
+IoT VLAN 55 (192.168.55.0/24, igc1.55) — scaffold in config.json, interface disabled
+```
+
+DNS: `*.home.arpa` via pfSense Unbound. All nodes reachable by hostname within the LAN.
+
+---
+
+## Session History
+
+| Session | Key outcome |
 |---|---|
-| v3 applied (bing news wt3, google news wt3) | ✅ live · NVD/cvedetails removed (VPS 403) |
-| NVD engine | ❌ cvedetails.com VPS 403 · custom NVD API engine pending (ROADMAP P1) |
-| Semantic Scholar | ✅ returns papers with metadata |
-| SSL fix | ✅ SSL_CERT_FILE → host CA bundle · entrypoint-wrapper.sh removed |
-| searxng-docker legacy dir | ✅ removed — only /home/sy5/docker/ remains |
-| URL redirect leak (google.com/search?q= in results) | ⚠️ known bug, needs SearXNG version update |
-| Google Scholar | disabled (0% reliability, VPS blocked) |
-| Brave | active but auto-suspended on rate limits (expected) |
-| Reddit | excluded (VPS blocked) — workaround: site:reddit.com via Google |
-
-### Key metrics passwords (rotate later)
-- Metrics auth: `metrics-admin-2025:<SEARXNG_METRICS_PASSWORD>` (in Vaultwarden)
-- Metrics endpoint: `http://localhost:8088/metrics`
-
----
-
-## Sanity Check Findings
-
-### Stale files to clean up (do in next session)
-- `docs/searxng-settings-patch-v2.yml` — superseded by `docker/searxng_data/settings.yml`
-- `docs/searxng-config.md` — superseded by `docs/searxng-operations.md`
-- `mesh_builder.py` + `portrait_3d_pifuhd.py` in root — WAN2.1 artifacts, move to tools/ or delete
-- `claude-handover.md` — old 2026-06-02 handover, historical only
-
-### Missing tool version
-- `openwebui-tool-v1.5.10.py` — intentionally missing. It was saved as v1.5.11 due to filename mismatch (documented in CHANGELOG 2026-06-01). Not a problem.
-
-### Everything else
-- All 9 arena scripts present ✅
-- All eval reports v1-v6 present ✅
-- All prompt versions v0.1–v0.5.14 present ✅
-- Tool versions v1.4.0–v1.5.18 present (minus explained v1.5.10) ✅
-
----
-
-## Key Paths
-
-| Purpose | Path |
-|---|---|
-| SearXNG config (source of truth) | `docker/searxng_data/settings.yml` |
-| SearXNG operations guide | `docs/searxng-operations.md` |
-| Challenge DB | `/opt/local-se/challenges.db` |
-| Leaderboard DB | `/opt/local-se/leaderboard.db` |
-| RFC KB 
+| P16 (2026-06-07) | Net-discovery integration complete: discovery_engine.py rewrite with --loop mode, normalisation, SQLite wiring. schema.py, graph.py, ws_server.py, prometheus_exporter.py all written + tested. nginx.conf FastAPI blocks commented (no backend). FastAPI audit: 3 projects (ports 8001/8787), none running. |
+| P15 (2026-06-07) | Net-discovery project started. Compared LSE v3 vs P14 code — P14 wins. config.json, probe_dhcp.py, probe_icmp.py, probe_wifi.py (asusrouter), discovery_engine.py, index.html (Cytoscape.js) written. Teltonika topology confirmed (router mode, OPT1 bridge). Nginx Alpine webserver created. Docker audit: Prometheus/Grafana are containers not PIDs; FastAPI not running; Elasticsearch is core LSE. |
+| P14 (2026-06-07) | node3090 fully commissioned. CUDA 13.3, llama.cpp built, Qwen3.6-27B running 96k ctx 19.3GB. v1.5.24 deployed (start/stop_node_agent). Reddit via site: operator confirmed working. |
+| P13 (2026-06-06) | node-t3-002 janitor challenge added (24 total). Post-upgrade CUDA+llama.cpp design. |
+| P12 (2026-06-06) | node-t3-001 challenge added (23 total). node3090 Ubuntu upgrade started. |
+| P11 (2026-06-06) | v1.5.22 WoL fix. v1.5.23 registry fix. WoL tested end-to-end (55s boot). |
+| P10 (2026-06-06) | WoL root cause found. pfSense API KB seeded (264 paths). net-t1-013/014 seeded. |
+| P8 (2026-06-04) | 6 challenges solved. Leaderboard 373.1 pts / 21 eps. SSH hardening done. |
+| P6 (2026-06-03) | DNS aliases live. NODE2 renamed node3090. pfSense auth/URL corrected everywhere. |
+| P5 (2026-06-02) | 63/63 eval. 4 T2/T3 challenges solved. SearXNG v3 applied. |
+| P3 (2026-06-01) | Grafana engine health (6 panels). Claude L2 + Research presets deployed. |
