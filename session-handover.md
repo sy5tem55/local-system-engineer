@@ -20,6 +20,11 @@ bash scripts/sync-docker-config.sh --reload
 **DHCP backend: Kea** (migrated from ISC DHCP, 2026-06-07 P18). 32 static mappings intact. API key rotated post-migration.
 **Net-discovery probe_dhcp.py: ready.** Static mapping endpoint confirmed: `/services/dhcp_server/static_mapping?parent_id=<id>&id=<n>`.
 
+**Grafana admin password:** rotated 2026-06-07. Stored in Vaultwarden as `Grafana_ADMIN_PASSWORD`. New password has no special characters — safe for shell scripts.
+**Prometheus:** was `restart: unless-stopped`, now `restart: always` — will auto-recover after any stop event.
+**Topology API:** `python3 net-discovery/echarts_topology.py` (port 8766) — must be running for Grafana net-topology dashboard. Not daemonized; start from WSL with nohup.
+**pfSense LAN IP: 192.168.1.50** (NOT .1). ASUS GT-BE19000 management IP: 192.168.1.1.
+
 ---
 
 ## Critical Rules
