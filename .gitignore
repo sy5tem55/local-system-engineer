@@ -13,3 +13,6 @@ net-discovery/logs/
 net-discovery/db/
 net-discovery/history/
 net-discovery/snapshot.json
+
+# Local secrets — never commit
+.env
