@@ -31,17 +31,24 @@ EXPORTER_PORT  = int(os.getenv("EXPORTER_PORT", "9837"))
 # ── Error patterns — order matters: more specific first ───────────────────────
 # Each tuple: (compiled regex, error_type label value)
 # Only ERROR-level log lines are matched to avoid double-counting WARNING dupes.
+# NOTE: engine names can contain spaces (e.g. "semantic scholar") — use [^:]+ not \w+
 PATTERNS = [
-    # Timeout: engine contacted but exceeded timeout ceiling
-    (re.compile(r"ERROR:searx\.engines\.(\w+):.*TimeoutException"),          "timeout"),
+    # CAPTCHA: SearXNG detected bot challenge (engine suspended automatically)
+    (re.compile(r"ERROR:searx\.engines\.([^:]+):.*(?:CAPTCHA|SearxEngineCaptcha)"),   "captcha"),
+    # Timeout (exception class): engine contacted but exceeded timeout ceiling
+    (re.compile(r"ERROR:searx\.engines\.([^:]+):.*TimeoutException"),                 "timeout"),
+    # Timeout (log message): "HTTP requests timeout (search duration: Xs, timeout: Ys)"
+    (re.compile(r"ERROR:searx\.engines\.([^:]+):.*HTTP requests timeout"),            "timeout"),
     # Read timeout: connected, zero/minimal data returned — classic throttle signal
-    (re.compile(r"ERROR:searx\.engines\.(\w+):.*ReadTimeout"),               "read_timeout"),
+    (re.compile(r"ERROR:searx\.engines\.([^:]+):.*ReadTimeout"),                      "read_timeout"),
     # Rate limited: explicit HTTP 429 or SearXNG exception name
-    (re.compile(r"ERROR:searx\.engines\.(\w+):.*(?:429|TooManyRequests)"),   "rate_limited"),
+    (re.compile(r"ERROR:searx\.engines\.([^:]+):.*(?:429|TooManyRequests)"),          "rate_limited"),
     # Access denied: HTTP 403 or SearXNG exception name
-    (re.compile(r"ERROR:searx\.engines\.(\w+):.*(?:403|AccessDenied)"),      "access_denied"),
+    (re.compile(r"ERROR:searx\.engines\.([^:]+):.*(?:403|AccessDenied)"),             "access_denied"),
+    # Parse error: JSON decode failure or Python parsing exception (e.g. google, semantic scholar)
+    (re.compile(r"ERROR:searx\.engines\.([^:]+):.*(?:Expecting value|JSONDecodeError|list index out of range|IndexError)"), "parse_error"),
     # Generic HTTP error — catch-all for other 4xx/5xx
-    (re.compile(r"ERROR:searx\.engines\.(\w+):.*HTTP \d+ error"),            "http_error"),
+    (re.compile(r"ERROR:searx\.engines\.([^:]+):.*HTTP \d+ error"),                  "http_error"),
 ]
 
 # ── Prometheus counter ─────────────────────────────────────────────────────────
