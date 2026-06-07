@@ -129,15 +129,19 @@ def _node_color(dev: Dict[str, Any]) -> str:
 
 
 def _node_label(dev: Dict[str, Any]) -> str:
-    """Best human-readable label: hostname > vendor truncated > IP."""
-    hostname = dev.get("hostname", "")
-    if hostname and hostname not in ("-", "?", ""):
+    """Best human-readable label: hostname > vendor+MAC_suffix > IP > MAC_suffix."""
+    hostname = dev.get("hostname") or ""
+    if hostname and hostname not in ("-", "?"):
         return hostname
-    vendor = dev.get("vendor", "")
+    vendor = dev.get("vendor") or ""
+    mac = (dev.get("mac") or "").replace(":", "")
+    mac_suffix = mac[-4:].upper() if mac else ""
     if vendor:
-        # Truncate "ASUSTeK Computer Inc." → "ASUSTeK"
-        return vendor.split()[0][:16]
-    return dev.get("ip", "unknown")
+        short = vendor.split()[0][:12]  # "Apple Inc." → "Apple"
+        return f"{short}_{mac_suffix}" if mac_suffix else short
+    if mac_suffix:
+        return f"?_{mac_suffix}"
+    return dev.get("ip") or "unknown"
 
 
 def _node_border_color(dev: Dict[str, Any]) -> str:
