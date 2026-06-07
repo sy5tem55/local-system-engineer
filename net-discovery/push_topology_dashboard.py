@@ -26,9 +26,11 @@ GET_OPTION = r"""
 // ── Network Topology ─ fetches directly from topology API ───────────────────
 let topo;
 try {
-  const r = await fetch('http://localhost:8766/topology');
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  topo = await r.json();
+  const xhr = new XMLHttpRequest();
+  xhr.open('GET', 'http://localhost:8766/topology', false);
+  xhr.send();
+  if (xhr.status !== 200) throw new Error('HTTP ' + xhr.status);
+  topo = JSON.parse(xhr.responseText);
 } catch(e) {
   return {
     backgroundColor: 'transparent',

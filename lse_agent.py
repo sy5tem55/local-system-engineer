@@ -177,7 +177,7 @@ def run_planner(file_contents: dict, url: str, model: str | None) -> dict:
         {"role": "system", "content": PLANNER_SYSTEM},
         {"role": "user", "content": f"Extract cross-file invariants:\n\n{files_text}\n\n/no_think"},
     ]
-    raw = llm_chat(messages, url=url, model=model, temperature=0.05, max_tokens=4096, enable_thinking=False)
+    raw = llm_chat(messages, url=url, model=model, temperature=0.05, max_tokens=2048)
     raw = _strip_fences(raw)
     try:
         facts = json.loads(raw)
