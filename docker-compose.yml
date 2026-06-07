@@ -44,7 +44,7 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=90d'
-    restart: unless-stopped
+    restart: always
 
   searxng-logger:
     container_name: searxng-logger
@@ -67,6 +67,7 @@ services:
   grafana:
     container_name: grafana
     image: grafana/grafana:latest
+    restart: always
     ports:
       - "3002:3000"
     networks:
@@ -83,7 +84,6 @@ services:
     environment:
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=http://localhost:3000
-    restart: unless-stopped
 
   searxng-error-exporter:
     container_name: searxng-error-exporter
