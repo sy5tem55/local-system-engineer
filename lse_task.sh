@@ -24,7 +24,7 @@ LSE_AGENT="${SCRIPT_DIR}/lse_agent.py"
 LLM_URL="http://localhost:8080"
 
 # Planner: Gemma on node3090, port 8080 — set to "" to use same node as Worker
-PLANNER_URL="http://192.168.5.41:8080"
+PLANNER_URL="http://192.168.5.41:1234"
 
 # node3090 SSH (for start/stop/status commands)
 NODE_HOST="node3090"   # bare name works now (search home.arpa set in resolv.conf)
@@ -32,7 +32,7 @@ NODE_IP="192.168.5.41"
 LLM_PORT=8080
 # ─────────────────────────────────────────────────────────────────────────────
 
-SHUTDOWN_AFTER=true
+SHUTDOWN_AFTER=false   # LM Studio manages its own lifecycle — don't auto-kill
 AGENT_ARGS=()
 
 # Parse args — split lse_task flags from lse_agent flags
