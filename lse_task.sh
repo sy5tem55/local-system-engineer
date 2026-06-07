@@ -20,10 +20,16 @@ NODE_SCRIPT="${SCRIPT_DIR}/scripts/node3090_start_llm.sh"
 LSE_AGENT="${SCRIPT_DIR}/lse_agent.py"
 
 # ── Configurable ─────────────────────────────────────────────────────────────
-NODE_HOST="node3090.home.arpa"   # FQDN required for SSH (bare "node3090" fails; DHCP option 119 pending)
-NODE_IP="192.168.5.41"           # Use IP for HTTP — WSL2 TCP to FQDN fails despite DNS resolving
+# Worker + Verifier: Qwen3.6 on LUCIFER (node4090), port 8080
+LLM_URL="http://localhost:8080"
+
+# Planner: Gemma on node3090, port 8080 — set to "" to use same node as Worker
+PLANNER_URL="http://192.168.5.41:8080"
+
+# node3090 SSH (for start/stop/status commands)
+NODE_HOST="node3090"   # bare name works now (search home.arpa set in resolv.conf)
+NODE_IP="192.168.5.41"
 LLM_PORT=8080
-LLM_URL="http://${NODE_IP}:${LLM_PORT}"  # IP avoids WSL2 hostname TCP bug
 # ─────────────────────────────────────────────────────────────────────────────
 
 SHUTDOWN_AFTER=true
@@ -48,13 +54,15 @@ echo " LSE Agent Pipeline"
 echo " Task: $(echo "${AGENT_ARGS[@]}" | grep -oP '(?<=--task ).*?(?= --|$)' || true)"
 echo "════════════════════════════════════════════════════════════"
 
-# ── 1. Check node3090 is reachable (WoL is handled by LSE) ──────────────────
-if ! ping -c1 -W2 "${NODE_IP}" >/dev/null 2>&1; then
-    echo "❌  node3090 is offline." >&2
-    echo "    Ask LSE to start it, wait for it to boot, then re-run." >&2
-    exit 1
+# ── 1. Check node3090 reachable only if Planner is running there ────────────
+if [[ -n "${PLANNER_URL}" && "${PLANNER_URL}" == *"${NODE_IP}"* ]]; then
+    if ! ping -c1 -W2 "${NODE_IP}" >/dev/null 2>&1; then
+        echo "❌  node3090 is offline (needed for Planner)." >&2
+        echo "    Ask LSE to start it, then re-run." >&2
+        exit 1
+    fi
+    echo "✓  node3090 reachable (Planner)"
 fi
-echo "✓  node3090 is reachable"
 
 # ── 2. Verify llama-server is ready (LSE handles start via start_node_agent) ──
 if ! curl -sf "${LLM_URL}/health" >/dev/null 2>&1; then
@@ -68,9 +76,12 @@ echo "  Model: ${MODEL}"
 
 # ── 3. Run the agent pipeline ────────────────────────────────────────────────
 echo ""
-python3 "${LSE_AGENT}" \
-    --llm-url "${LLM_URL}" \
-    "${AGENT_ARGS[@]}"
+AGENT_CMD=(python3 "${LSE_AGENT}" --llm-url "${LLM_URL}")
+if [[ -n "${PLANNER_URL}" && "${PLANNER_URL}" != "${LLM_URL}" ]]; then
+    AGENT_CMD+=(--planner-url "${PLANNER_URL}")
+fi
+AGENT_CMD+=("${AGENT_ARGS[@]}")
+"${AGENT_CMD[@]}"
 AGENT_EXIT=$?
 
 # ── 4. Shutdown (optional) ───────────────────────────────────────────────────
