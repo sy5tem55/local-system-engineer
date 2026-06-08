@@ -50,7 +50,7 @@ mkdir -p "$LOG_DIR"
 # Install silently if missing — safe to re-run if already installed.
 if ! python3 -c "import prometheus_client" 2>/dev/null; then
     echo "[exporters] Installing prometheus_client..."
-    pip install prometheus_client==0.25.0 --break-system-packages -q
+    pip install prometheus_client==0.25.0 --break-system-packages --no-cache-dir -q
 fi
 
 # ── Colours ──────────────────────────────────────────────────────────────────
