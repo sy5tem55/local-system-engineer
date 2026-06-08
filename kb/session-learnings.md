@@ -88,3 +88,92 @@ Cumulative KB entries from post-session debriefs.
 - `/no_think` in user message is NOT reliable with llama.cpp — model still enters thinking mode
 - `LLM_URL` pattern: if it already contains `http://`, never wrap it with `http://` again in curl
 - node3090 HTTP reachable at `192.168.5.41:8080` from WSL2 (IP). Hostname `node3090.home.arpa` also works for ping/SSH but use IP for curl to avoid any DNS edge cases.
+
+## Session 2026-06-08 — WSL2 unclean shutdown → Docker overlay2 corruption
+
+### What failed and why
+
+- **Attempted:** `docker start <containers>` after WSL2 restarted
+  **Failed because:** dockerd was killed ungracefully (Windows sleep/hibernate while WSL2 running). Docker overlay2 content store left in inconsistent state. All containers show `RWLayer is unexpectedly nil`. Custom-built images show `parent snapshot does not exist`.
+  **Fix sequence:**
+  ```bash
+  sudo dockerd > /tmp/dockerd.log 2>&1 &   # start daemon first
+  sleep 5
+  docker container prune -f                 # remove all dead containers
+  docker system prune -f                    # clear corrupted build cache
+  cd /home/sy5/docker && docker compose up -d  # recreate everything
+  ```
+  Internet required for any missing image pulls. All persistent data is bind-mounted to host — container removal is safe.
+
+- **Attempted:** `sudo dockerd &` then immediate `docker ps`
+  **Failed because:** daemon needs ~3-5 seconds to create `/var/run/docker.sock` before clients can connect. Always `sleep 5` after starting.
+
+- **Attempted:** `sudo nohup dockerd > /var/log/dockerd.log 2>&1 &` as non-root
+  **Failed because:** `/var/log/` is root-only. Use `/tmp/dockerd.log` or run from a root shell.
+
+- **Attempted:** `docker compose up -d --pull never` on corrupted storage
+  **Failed because:** `--pull never` prevents registry pulls but does NOT prevent rebuilding custom images from Dockerfiles. Custom image builds still fail if overlay2 snapshots are corrupted. Use `docker container prune -f` + `docker system prune -f` first, then `docker compose up -d`.
+
+- **resolv.conf reset on WSL2 restart**
+  **Cause:** Windows hibernate/reboot causes WSL2 to fully restart. If `/etc/wsl.conf` has `generateResolvConf = false` but the wsl.conf itself was not persisted (NTFS write issue), WSL2 regenerates resolv.conf with just `nameserver [::1]` (broken for Docker and bare hostnames).
+  **Fix:** Restore resolv.conf manually:
+  ```bash
+  echo -e "nameserver 10.255.255.254\nnameserver 192.168.1.50\nsearch home.arpa" | tee /etc/resolv.conf
+  ```
+  Then verify wsl.conf is intact: `cat /etc/wsl.conf` — should contain `generateResolvConf = false`.
+
+### Key facts
+- Docker overlay2 corruption = unclean dockerd kill. Signature: `RWLayer unexpectedly nil` on `docker start`.
+- Recovery order: start dockerd → prune containers → prune system → compose up.
+- Never `docker start` after overlay2 corruption — always prune first or you'll get cascading errors.
+- `docker ps` failing with socket error = dockerd not running, not a permissions issue.
+- Data safety: grafana, vaultwarden, elasticsearch, prometheus all bind-mount data to host dirs — `docker container prune` never touches data.
+- `/tmp/dockerd.log` is always writable; `/var/log/dockerd.log` requires root and correct permissions.
+
+## Session 2026-06-08 — WSL2 restart kills host-side exporters / Grafana "no data"
+
+### What failed and why
+
+- **Observed:** Grafana dashboards showed "No data" after Docker full reset + WSL2 restart.
+  **Root cause:** "No data" had TWO unrelated causes confused into one: (1) host-side Prometheus
+  exporters were killed by WSL2 restart; (2) the topology API (echarts_topology.py) was also
+  killed. Docker data itself was fine — Prometheus TSDB and Grafana SQLite are both bind-mounted.
+  **Fix:** `bash scripts/restart_exporters.sh` for the host exporters; then `nohup python3
+  net-discovery/echarts_topology.py &` for the topology API. Historical metrics reappear in
+  Grafana once Prometheus scrapes the restarted exporters (~30s).
+  **Lesson:** Always run the Prometheus targets check FIRST before assuming data loss:
+  ```bash
+  curl -s http://localhost:9090/api/v1/targets | python3 -c "
+  import json,sys
+  for t in json.load(sys.stdin)['data']['activeTargets']:
+      print(t['labels']['job'].ljust(28), t['health'], t.get('lastError','')[:60])
+  "
+  ```
+  `connection refused on 172.17.0.1:983x` = host exporter down (WSL2 killed it).
+  `connection refused on <docker-service>:port` = container down (Docker issue).
+
+- **Attempted:** `curl -s http://localhost:9101/metrics` to check netobs exporter
+  **Hung:** The netobs exporter is on port **9120**, not 9101. Port 9101 had a half-open TCP
+  connection from a previous session. `curl -s` without `--max-time` blocks forever.
+  **Fix:** Always use `curl -s --max-time 3` for health checks. Know the correct ports (see KB
+  port map below).
+
+### What is safe across a full Docker reset
+
+| Data | Storage | Safe after `docker rm`? | Safe after `/var/lib/docker` delete? |
+|---|---|---|---|
+| Grafana dashboards + users | `./grafana/data/grafana.db` (bind) | YES | YES |
+| Prometheus TSDB (metrics history) | `./prometheus/data/` (bind) | YES | YES |
+| Elasticsearch indices | `es-data` (named Docker volume) | YES | **NO — recreate volume** |
+| Vaultwarden vault | `./vaultwarden/data/` (bind) | YES | YES |
+
+### Key facts
+- Host-side exporter ports: topology API 8766, netobs 9120, nvidia_gpu 9835, llama-context 9836,
+  download-speed 9838, llamacpp-slots 9839. All killed by WSL2 restart.
+- Recovery: `bash scripts/restart_exporters.sh` — starts all host exporters and topology API.
+- The Prometheus curl check above uses `172.17.0.1` (Docker bridge → host). If the error says
+  "connection refused" on that IP, the process is not running on the host. If it says "timeout",
+  the process is running but not responding (check the exporter log).
+- Grafana topology dashboard (`uid: net-topology`) fetches directly from port 8766 via sync XHR
+  in the panel's getOption function — no Prometheus or Infinity datasource needed.
+- Full troubleshooting decision tree: `docs/troubleshooting.md`
