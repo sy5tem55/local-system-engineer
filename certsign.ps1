@@ -9,7 +9,7 @@
 
 .PARAMETER Target
     The launcher filename (without path) to sign, e.g. "lse-stack-launch-1.062.ps1".
-    Pass "all" to sign every lse-stack-launch-*.ps1 in the project directory.
+    Pass "all" to sign every *.ps1 in the project directory.
     Defaults to "lse-stack-launch-1.062.ps1" (current production version).
 
 .EXAMPLE
@@ -22,7 +22,7 @@
 
 .EXAMPLE
     .\certsign.ps1 -Target all
-    Signs every lse-stack-launch-*.ps1 found in the project directory.
+    Signs every *.ps1 found in the project directory.
 
 .NOTES
     The signing certificate must be in Cert:\CurrentUser\My with Subject
@@ -54,11 +54,11 @@ Write-Host "Certificate : $($Cert.Thumbprint)  ($($Cert.Subject))" -ForegroundCo
 
 # --- Resolve target file list ---
 if ($Target -eq 'all') {
-    $Files = Get-ChildItem -Path $ProjectDir -Filter 'lse-stack-launch-*.ps1' |
+    $Files = Get-ChildItem -Path $ProjectDir -Filter '*.ps1' |
              Where-Object { $_.Name -notmatch '\.signed\.ps1$' } |
              Sort-Object Name
     if ($Files.Count -eq 0) {
-        Write-Warning "No lse-stack-launch-*.ps1 files found in $ProjectDir"
+        Write-Warning "No .ps1 files found in $ProjectDir"
         exit 0
     }
 } else {
