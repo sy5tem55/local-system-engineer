@@ -45,6 +45,14 @@ done
 
 mkdir -p "$LOG_DIR"
 
+# ── Dependencies ─────────────────────────────────────────────────────────────
+# prometheus_client is required by netobs and other exporters.
+# Install silently if missing — safe to re-run if already installed.
+if ! python3 -c "import prometheus_client" 2>/dev/null; then
+    echo "[exporters] Installing prometheus_client..."
+    pip install prometheus_client==0.25.0 --break-system-packages -q
+fi
+
 # ── Colours ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; NC='\033[0m'
