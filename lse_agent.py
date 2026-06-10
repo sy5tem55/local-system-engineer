@@ -147,35 +147,90 @@ def _strip_fences(text: str) -> str:
 # ─── Phase 1: Planner ─────────────────────────────────────────────────────────
 
 PLANNER_SYSTEM = """\
-You are a code auditor specialising in cross-file invariants.
-Read the provided source files and output a SINGLE JSON object — no markdown fences,
-no explanation, no preamble — containing every value that must remain consistent
-across files:
+You are the Planner in a three-stage AI pipeline (Planner -> Worker -> Verifier).
+Your job: read the task and files, classify the task type, then output a structured
+JSON brief that the Worker can execute WITHOUT re-reading the raw files.
 
+Output ONLY valid JSON - no markdown fences, no prose, no preamble.
+
+## Task types and schemas
+
+### "code_repair" - file broken, truncated, crashing, missing sections
 {
-  "ips":           { "<role>": "<ip>", ... },
-  "ports":         { "<service>": <port>, ... },
-  "paths":         { "<role>": "<path>", ... },
-  "tier_nodes":    { "<ip>": ["<label>", "<category>", <tier>], ... },
-  "tier_edges":    [["<src_ip>", "<dst_ip>", "<label>"], ...],
-  "subnet_parents": { "<cidr>": "<parent_ip>", ... },
-  "top_level_dicts": ["<NAME>", ...],
-  "other":         { "<key>": "<value>", ... }
+  "type": "code_repair",
+  "target_file": "<path>",
+  "language": "<python|bash|js|...>",
+  "broken_section": "<what is missing or wrong>",
+  "expected_behaviour": "<what it should do when fixed>",
+  "constraints": ["<must preserve X>", "<must not use Y>"],
+  "key_constants": { "<NAME>": "<value>" },
+  "write_method": "heredoc"
 }
 
-Include only keys that are relevant (omit empty sections).
-Output ONLY valid JSON."""
+### "code_feature" - adding new functionality to a working file
+{
+  "type": "code_feature",
+  "target_file": "<path>",
+  "language": "<python|bash|js|...>",
+  "feature": "<what to add>",
+  "insertion_point": "<after function X / at end of file>",
+  "constraints": ["<must preserve X>"],
+  "key_constants": { "<NAME>": "<value>" },
+  "write_method": "heredoc|string_replace"
+}
+
+### "network_query" - questions about devices, IPs, hostnames, topology
+{
+  "type": "network_query",
+  "question": "<normalized question>",
+  "ips": ["<ip>"],
+  "hostnames": { "<ip>": "<hostname>" },
+  "subnets": ["<cidr>"],
+  "ports": { "<ip>": [<port>] },
+  "topology": { "<child_ip>": "<parent_ip>" }
+}
+
+### "config_change" - modifying yaml, toml, ini, json, bash config files
+{
+  "type": "config_change",
+  "target_file": "<path>",
+  "format": "<yaml|toml|ini|json|bash>",
+  "changes": [
+    { "key": "<key>", "old": "<current>", "new": "<desired>", "reason": "<why>" }
+  ],
+  "constraints": ["<do not restart X>", "<backup first>"]
+}
+
+### "shell_task" - operational: start/stop services, copy files, check status
+{
+  "type": "shell_task",
+  "steps": [
+    { "action": "<description>", "command": "<exact bash or null>" }
+  ],
+  "success_check": "<verification command>"
+}
+
+## Rules
+- Output ONLY valid JSON. Nothing else.
+- Pick the PRIMARY type if the task spans multiple.
+- Extract ALL constants (IPs, ports, paths) from files - the Worker must not guess them.
+- If a file is truncated, set broken_section to "FILE TRUNCATED - last readable line: <N>".
+- If task type is unclear: {"type": "unknown", "reason": "<why>"}"""
 
 
-def run_planner(file_contents: dict, url: str, model: str | None) -> dict:
-    print("🔍  Planner: extracting canonical facts …")
+def run_planner(file_contents: dict, url: str, model: str | None, task: str = "") -> dict:
+    print("🔍  Planner: classifying task and extracting brief …")
     files_text = "\n\n".join(
         f"=== {name} ===\n{content[:10_000]}"
         for name, content in file_contents.items()
     )
     messages = [
         {"role": "system", "content": PLANNER_SYSTEM},
-        {"role": "user", "content": f"Extract cross-file invariants:\n\n{files_text}\n\n/no_think"},
+        {"role": "user", "content": (
+            f"Task: {task}\n\n"
+            f"Files:\n\n{files_text}\n\n"
+            "Classify the task type and output the JSON brief. /no_think"
+        )},
     ]
     raw = llm_chat(messages, url=url, model=model, temperature=0.05, max_tokens=2048)
     raw = _strip_fences(raw)
@@ -426,7 +481,7 @@ def main() -> None:
         facts = json.loads(facts_path.read_text())
         print(f"📋  Loaded facts from {facts_path}")
     else:
-        facts = run_planner(file_contents, p_url, p_model)
+        facts = run_planner(file_contents, p_url, p_model, task=args.task)
         facts_path.write_text(json.dumps(facts, indent=2))
         print(f"   💾 Saved to {facts_path}")
 
