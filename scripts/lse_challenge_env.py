@@ -27,6 +27,7 @@ import ipaddress
 import json
 import re
 import sqlite3
+import subprocess
 from typing import Any, Optional
 
 import gymnasium as gym
@@ -283,6 +284,29 @@ class LSEChallengeEnv(gym.Env):
         results = []
 
         for a in assertions:
+            # ── Ground-truth SSH verification ────────────────────────────────
+            # If the assertion defines verify_ssh, SSH to the target and
+            # inject the real values into the namespace, overriding anything
+            # the model self-reported. This prevents hallucination passes.
+            if "verify_ssh" in a:
+                v = a["verify_ssh"]
+                ssh_vars = _run_ssh_verification(
+                    host=v["host"],
+                    user=v.get("user", "lse-admin"),
+                    cmd=v["cmd"],
+                    parse=v["parse"],
+                )
+                if "_ssh_error" in ssh_vars:
+                    results.append({
+                        "id":          a["id"],
+                        "passed":      False,
+                        "description": a.get("description", ""),
+                        "error":       f"SSH verification failed: {ssh_vars['_ssh_error']}",
+                    })
+                    continue
+                # Override model self-report with ground-truth SSH values
+                namespace.update(ssh_vars)
+
             try:
                 exec(a["code"], {"__builtins__": _SAFE_BUILTINS, **namespace})  # noqa: S102
                 results.append({
@@ -453,6 +477,56 @@ def _is_rfc1918(ip: str) -> bool:
         return False
 
 
+def _run_ssh_verification(host: str, user: str, cmd: str, parse: str) -> dict:
+    """
+    SSH ground-truth verifier — runs cmd on host, then exec()s parse code
+    against {stdout, stderr, exit_code} to extract verified variable values.
+
+    On success: returns dict of variables extracted by parse code (merged
+    into the assertion namespace, OVERRIDING model self-report).
+    On failure: returns {"_ssh_error": "<reason>"}.
+
+    Security: parse code runs in a restricted namespace (no builtins).
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ConnectTimeout=8",
+                "-o", "BatchMode=yes",      # never prompt for password
+                "-o", "LogLevel=ERROR",
+                f"{user}@{host}",
+                cmd,
+            ],
+            capture_output=True, text=True, timeout=20,
+        )
+        stdout   = result.stdout.strip()
+        stderr   = result.stderr.strip()
+        exit_code = result.returncode
+    except subprocess.TimeoutExpired:
+        return {"_ssh_error": f"SSH timeout (>20s) to {user}@{host}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"_ssh_error": f"SSH failed: {exc}"}
+
+    # Provide re (regex) in parse namespace — safe and commonly needed for
+    # extracting version strings from command output. import is blocked.
+    local_vars: dict = {"stdout": stdout, "stderr": stderr, "exit_code": exit_code}
+    parse_ns = {"__builtins__": {}, "re": re, "True": True, "False": False, "None": None,
+                "int": int, "float": float, "str": str, "bool": bool, "len": len,
+                "any": any, "all": all}
+    try:
+        exec(parse, parse_ns, local_vars)  # noqa: S102
+    except Exception as exc:  # noqa: BLE001
+        return {"_ssh_error": f"parse() failed: {exc}", "stdout": stdout}
+
+    # Return only the new variables set by parse (not the input helpers)
+    return {
+        k: v for k, v in local_vars.items()
+        if k not in ("stdout", "stderr", "exit_code") and not k.startswith("_")
+    }
+
+
 def _build_assertion_namespace(model_response: str) -> dict:
     """
     Build the namespace for assertion exec():
@@ -460,6 +534,17 @@ def _build_assertion_namespace(model_response: str) -> dict:
       - Inject safe built-ins and domain helpers
     """
     data = _extract_json(model_response)
+
+    # Coerce string booleans — models occasionally emit "True"/"False" as JSON
+    # strings rather than JSON true/false. Silently convert so `is True` checks
+    # don't NameError on legitimate responses, but still fail on bad JSON schema.
+    for k, v in list(data.items()):
+        if isinstance(v, str):
+            if v.lower() == "true":
+                data[k] = True
+            elif v.lower() == "false":
+                data[k] = False
+
     namespace: dict[str, Any] = {
         # Domain helpers
         "is_rfc1918": _is_rfc1918,
