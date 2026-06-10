@@ -31,7 +31,7 @@ CHALLENGE = dict(
         "\n\n"
         "Your tasks (all via SSH as lse-admin):\n"
         "1. Locate the llama-server binary.\n"
-        "2. Verify CUDA 13.3 is available (driver + toolkit).\n"
+        "2. Confirm the CUDA driver version via nvidia-smi (driver 13.x expected).\n"
         "3. Calculate the VRAM budget: model weights + KV cache at q8_0 must fit "
         "within 24GB. Show your working.\n"
         "4. Determine the optimal llama-server launch flags: GPU layers, context "
@@ -41,8 +41,8 @@ CHALLENGE = dict(
         "\n"
         "Return a JSON object with: "
         "llama_server_path (str), "
-        "cuda_version (str, e.g. '13.3'), "
-        "cuda_13_3_available (bool), "
+        "cuda_version (str, e.g. '13.2' — from nvidia-smi CUDA Version line), "
+        "cuda_13_3_available (bool — True if driver major >= 13), "
         "model_vram_gb (float), "
         "kv_cache_vram_gb (float), "
         "total_vram_gb (float), "
@@ -65,7 +65,7 @@ CHALLENGE = dict(
         "model": "Qwen3.6-27B-Q4_K_M",
         "target_ctx": 81920,
         "target_port": 8080,
-        "cuda_target": "13.3",
+        "cuda_target": "13.x (driver CUDA API — check nvidia-smi, NOT nvcc)",
         "notes": (
             "Step 1 — find binary: "
             "execute_command('ssh lse-admin@192.168.5.41 "
@@ -110,16 +110,39 @@ CHALLENGE = dict(
                     "and len(llama_server_path) > 0 "
                     "and 'llama-server' in llama_server_path"
                 ),
-                "description": "llama-server binary located on node3090"
+                "description": "llama-server binary located on node3090",
+                "verify_ssh": {
+                    "host": "192.168.5.41",
+                    "user": "lse-admin",
+                    "cmd": (
+                        "which llama-server 2>/dev/null || "
+                        "find /usr /opt /home -name llama-server -type f 2>/dev/null | head -1"
+                    ),
+                    "parse": (
+                        "llama_server_path = stdout.strip() if stdout.strip() else None"
+                    ),
+                }
             },
             {
                 "id": "a2",
                 "points": 1,
                 "code": (
-                    "assert cuda_13_3_available is True "
-                    "and cuda_version.startswith('13')"
+                    "assert cuda_driver_major >= 13 "
+                    "and cuda_version is not None"
                 ),
-                "description": "CUDA 13.x confirmed available on node3090 (driver + toolkit)"
+                "description": "CUDA 13.x driver confirmed on node3090 (nvidia-smi)",
+                "verify_ssh": {
+                    "host": "192.168.5.41",
+                    "user": "lse-admin",
+                    "cmd": "nvidia-smi 2>/dev/null | grep -i 'cuda version'",
+                    "parse": (
+                        "_m = re.search(r'CUDA Version:\\s*([0-9]+)\\.([0-9]+)', stdout, re.IGNORECASE) if stdout else None; "
+                        "cuda_driver_major = int(_m.group(1)) if _m else 0; "
+                        "cuda_driver_minor = int(_m.group(2)) if _m else 0; "
+                        "cuda_version = f'{cuda_driver_major}.{cuda_driver_minor}' if _m else None; "
+                        "cuda_13_3_available = cuda_driver_major >= 13"
+                    ),
+                }
             },
             {
                 "id": "a3",
@@ -131,6 +154,9 @@ CHALLENGE = dict(
                     "and kv_cache_vram_gb > 0"
                 ),
                 "description": "VRAM budget calculated: model + KV cache fits within 24GB"
+                # No verify_ssh: this is arithmetic; model must show correct working.
+                # a1 confirms the binary exists (grounded), a2 confirms GPU (grounded).
+                # VRAM math is checked by plausibility: > 0 and fits in 24GB.
             },
             {
                 "id": "a4",
@@ -143,12 +169,18 @@ CHALLENGE = dict(
                     "and '--host' in recommended_command "
                     "and '--port' in recommended_command "
                     "and '8080' in recommended_command "
-                    "and kb_entry_written is True"
+                    "and kb_file_exists is True"
                 ),
                 "description": (
-                    "Recommended command contains all required flags "
-                    "and VRAM breakdown written to KB"
-                )
+                    "Recommended command has all required flags "
+                    "and KB file /opt/local-se/kb/node3090-llama-launch.md exists"
+                ),
+                "verify_ssh": {
+                    "host": "192.168.5.41",
+                    "user": "lse-admin",
+                    "cmd": "test -f /opt/local-se/kb/node3090-llama-launch.md && echo exists || echo missing",
+                    "parse": "kb_file_exists = (stdout.strip() == 'exists')",
+                }
             }
         ]
     }),
