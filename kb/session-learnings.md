@@ -472,3 +472,58 @@ Cumulative KB entries from post-session debriefs.
   under their own user and are invisible to other admins' pkill.
 - node-t3-005 retired (false premise). Successor: node-t3-006 Model Store Reconciliation —
   real /opt/models everywhere, no symlinks, chattr +i on model files, sha256 in launch KB.
+
+## Session 2026-06-12 — P22: Hermes skills inert, Goethe spiral, attention is not a control plane
+
+### What worked
+- Ground-truthing a peer agent's feature from its own host beats its docs: ls ~/.hermes/skills/
+  + .skills_prompt_snapshot.json + config.yaml (skills:/curator:) + .curator_state fully
+  characterized hermes-agent v0.16.0 skill learning in 3 SSH commands.
+- Code-level enforcement for termination decisions (sudo-blocker philosophy): _budget_gate()
+  rolling-window counter on search_web/search_reddit/fetch_url — banner at ≤2 remaining,
+  in-code refusal at 0 with checkpoint+surface instructions. Unit-tested before deploy.
+- Tool-build discipline held: copy → python splice with asserted-unique anchors → ast.parse
+  → sha256 → registry. Three releases (v1.7.0/1/2) in one session, zero syntax casualties.
+
+### What failed and why
+- **Attempted:** v1.7.0 first live test — "verify this Goethe quote" research task
+  **Failed because:** every search miss spawned a reformulation (34 searches, ~78K tokens, no
+  surfaced output on turn 2). Termination was left to model attention, which is fully absorbed
+  by the task — get_context_status was never called; the context-monitor filter can watch but
+  not intervene. Bonus failure: turn 1 surfaced a FABRICATED German quote with confident framing.
+  **Fix:** v1.7.1 three-layer containment — (1) code-enforced search budget, (2) task_checkpoint/
+  task_resume blocks in /opt/local-se/tasks.db with mandatory findings-vs-UNVERIFIED separation,
+  (3) planner-orchestrator pre-flight on Hermes (docs/planner-orchestrator-design.md, 1.7.2).
+- **Attempted:** 8-call budget on a 30-min rolling window (v1.7.1 default)
+  **Failed because:** window leaked across task_resume sessions — resumed task hit
+  "BUDGET EXHAUSTED" on its first search; LSE stalled ~7 min mid-conversation and fell back to
+  unverified training-knowledge answers for a router-flash procedure.
+  **Fix:** SEARCH_BUDGET_WINDOW_MIN 30→2 (v1.7.2, or live valve edit in OWUI). Rate-limit
+  windows for interactive agents must be shorter than a conversation turn.
+- **Attempted:** trusting LSE's infra diagnosis ("Teltonika domain unreachable — DNS issue")
+  **Failed because:** fbidownload.teltonika-networks.com never existed (zero web references) —
+  LSE fabricated the hostname when retrieval was blocked, then narrated the NXDOMAIN as a
+  network outage and gave the user the fake URL. Second fabrication-under-pressure
+  (Goethe quote was the first). Pattern: blocked retrieval → confident invention + diagnostic story.
+  **Fix:** real source is wiki.teltonika-networks.com/view/RUTX50_Firmware_Downloads. Rule:
+  NEVER present a URL/hostname that did not come out of a tool result; an NXDOMAIN on a
+  self-generated hostname is evidence about the hostname, not the network. Enforced in v1.7.3
+  (budget-refusal text + fetch_url docstring).
+- **Attempted:** find Hermes' skill modules with find -path "*hermes*" -iname "*skill*"
+  **Failed because:** openai/fastapi SDK files match "*skill*" and flooded head -15; hermes
+  package dirs sorted later in traversal order.
+  **Fix:** ls site-packages | grep -i herm first, then find inside the confirmed package dirs.
+
+### Key facts
+- Hermes skill learning (v0.16.0): SKILL.md files in ~/.hermes/skills/, FULL-manifest prompt
+  injection at session start, weekly idle-time curator (prune 30d/archive 90d/pin/umbrella),
+  optional skills_hub downloads. Observed: 0 skills in 44h, curator run_count=0 — wired but inert.
+- LSE surpass design: retrieval (top-2 kNN+BM25) beats prompt injection; evidence-gated quality
+  beats age-based pruning; provenance mandatory. Adopted from Hermes: pinned, archived, snapshot.
+- v1.6.4 search_kb was ALREADY hybrid kNN(0.7)+BM25(0.3) — 1.7.0-design §3.5.2 "kNN-only" claim
+  was wrong; the real S2 question is RRF vs weighted-boost.
+- Cogitator v1.7.2: sha256 eca3b518…, 3356 lines. Budget gate state: <TASKS_DB dir>/.search_budget.json.
+  tasks.db schema auto-creates. Banner fires at remaining 2,1,0; refusal from call 9.
+- SearxNG returning arxiv hits for ALL queries = general engines suspended/failing, science
+  category answering alone — engine-health issue, not a query problem.
+- hermes CLI traceback under sudo bash is a root-env artifact — run as sudo -u hermes-admin.

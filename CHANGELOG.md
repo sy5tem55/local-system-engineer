@@ -3,6 +3,15 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-12 — P22 (Cowork) final: Cogitator v1.7.2 — budget window 30→2 min
+
+- **RUTX50 incident** (first v1.7.1 live test): rolling 30-min window leaked across `task_resume` sessions — budget exhausted on the resume's first search; LSE stalled ~7 min mid-conversation and started answering firmware-downgrade questions from unverified training knowledge. Window default now **2 min** (`SEARCH_BUDGET_WINDOW_MIN`); 8 calls/2 min still forces surface points in a spiral, but blocked budgets self-heal within the conversation. Live mitigation available without redeploy: valve edit in OWUI.
+- One real infra issue surfaced by the same transcript: SearxNG returning arxiv results for all queries — engine-health problem, check searxng-engine-health dashboard / suspended engines.
+- One FABRICATION initially misread as an infra issue: `fbidownload.teltonika-networks.com` does not exist (zero web references, NXDOMAIN everywhere) — LSE invented the hostname, diagnosed the NXDOMAIN as a "DNS path issue", and presented the fake URL to the user. Real firmware source: wiki.teltonika-networks.com/view/RUTX50_Firmware_Downloads. Second fabrication-under-pressure (after the Goethe quote); pattern: retrieval blocked → confident invention wrapped in diagnostic narrative. Counter-measure belongs in the planner's abort criteria + an UNVERIFIED-URL rule (never present a URL to the user that was not retrieved from a tool result).
+- `tools/cogitator-v1.7.2.py`: 3356 lines, ast clean, sha256 `eca3b518…`.
+- **v1.7.3 (same session)**: UNVERIFIED-URL RULE added to budget-refusal text + `fetch_url` docstring — only fetch/present URLs received from tool results; a DNS failure on a self-generated hostname is evidence about the hostname, not the network. 3371 lines, ast clean, sha256 `849de276…`. P22 debrief written to `kb/session-learnings.md`.
+
+---
 ## 2026-06-12 — P22 (Cowork) continued: Goethe-spiral fix — Cogitator v1.7.1 anti-spiral gate + task blocks
 
 - **Incident**: first v1.7.0 live test — Goethe quote verification spiraled into 34 web searches / ~78K tokens; turn 2 produced no surfaced output; turn 1 surfaced a fabricated German quote ("Es ist schon alles gedacht…" is not Goethe; real source is *Wilhelm Meisters Wanderjahre*, not an opera). Root cause: termination decisions left to model attention, which is fully absorbed by the task (get_context_status never called; context-monitor filter cannot intervene).
