@@ -50,10 +50,28 @@ execute_command(
   " && curl -s -o /dev/null -w 'webui:%{http_code}\n' http://localhost:3000"
   " && curl -s -o /dev/null -w 'searxng:%{http_code}\n' http://localhost:8088/"
   " && curl -s -o /dev/null -w 'elasticsearch:%{http_code}\n' http://localhost:9200/_cluster/health"
+  " && curl -s 'http://localhost:9200/lse-kb,lse-errors,lse-rfc-kb,lse-search-cache,lse-skills/_count' | head -c 200; echo"
+  " && (curl -s localhost:9090/api/v1/targets | python3 -c \"import json,sys; ts=json.load(sys.stdin)['data']['activeTargets']; print('prom-targets: ' + ', '.join(t['labels']['job']+'='+t['health'] for t in ts))\" 2>/dev/null || echo 'prom-targets:unreachable')"
   " && (curl -s -o /dev/null -w 'playwright:%{http_code}\n' http://localhost:3001 2>/dev/null || echo 'playwright:000')"
   " && nvidia-smi --query-gpu=name,memory.used,memory.free,temperature.gpu --format=csv,noheader"
 )
 ```
+
+### ES index probe (P21 addition)
+The `_count` line must list ALL FIVE indices. An index that was lost (e.g. the
+2026-06-08 es-data volume cascade) returns a 404 `index_not_found_exception` in
+that line — report it as ❌ and point to `rag/02-es-setup.py` (core indices) /
+`rag/06-skills-index-setup.py` (lse-skills) / `kb/kb-reseed-procedure.md`.
+
+### Prometheus scrape-target probe (P22 addition)
+Every job must show `=up`. `searxng=down` or `searxng` absent → run the
+single-source-of-truth repair (idempotent, verifies end-to-end):
+```bash
+bash /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/observability/deploy-observability.sh
+```
+NEVER hand-edit prometheus.yml or settings.yml tokens from memory — the
+canonical token/paths live in `observability/observability.env` (P22 lesson:
+three stale token variants in old docs caused a 401 hunt).
 
 Issuing separate tool calls is a protocol violation.
 
