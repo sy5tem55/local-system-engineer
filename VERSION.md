@@ -7,7 +7,7 @@
 
 | Component | Version | Shipped | Status |
 |---|---|---|---|
-| Tool | **Cogitator v1.7.4** | 2026-06-12 | built ✅ — compact_context KV-erase fix (?action=erase query param); import to OWUI |
+| Tool | **Cogitator v1.7.5** | 2026-06-12 | built ✅ — CONFIG GROUND-TRUTH RULE + KB hit age display (+ v1.7.4 KV-erase fix); import to OWUI |
 | Prompt | v0.5.15 | 2026-06-09 | deployed ✅ |
 | Filter | **v1.2.0** | 2026-06-11 | deployed ✅ |
 | Vaultwarden tool | v1.3.0 | 2026-06-03 | deployed ✅ |
@@ -30,6 +30,7 @@
 
 | File | SHA-256 |
 |---|---|
+| `cogitator-v1.7.5.py` | `94a428a936d37722f2fcba8e0ae1d80ca20c2593e899dafc6f0c1aa45b104b7f` |
 | `cogitator-v1.7.4.py` | `2d3a97034049460f30b2703a42dd4d2df61908632896bde7fe6d70cb9bd4946b` |
 | `cogitator-v1.7.3.py` | `849de2767350b478a0994c7d0e0ee26ca989e89a5e4d18144a4164175bc00de9` |
 | `cogitator-v1.7.2.py` | `eca3b5186c8cc2b23f9a1d39eb660e660970d38a85761a50ba62c682c7898de5` |
@@ -89,6 +90,7 @@ Active profile: `Qwen3.6 27B Q4_K_M · 64k · KV:q8_0 · think:3072 → :8080`
 | **Cogitator v1.7.2** | 2026-06-12 | SEARCH_BUDGET_WINDOW_MIN 30→2 min — window leaked across task_resume sessions and stalled live conversations (RUTX50 incident); 8/2min still forces surface points (sha256 eca3b518…) |
 | **Cogitator v1.7.3** | 2026-06-12 | UNVERIFIED-URL RULE in budget-refusal text + fetch_url docstring — never present a URL/hostname not received from a tool result (fabricated fbidownload.* hostname incident) (sha256 849de276…) |
 | **Cogitator v1.7.4** | 2026-06-12 | compact_context KV erase fixed: POST /slots/0?action=erase (query param, empty body, n_erased reported) — JSON-body form was never valid; "slots API removed in v9577" diagnosis was false (sha256 2d3a9703…) |
+| **Cogitator v1.7.5** | 2026-06-12 | CONFIG GROUND-TRUTH RULE in execute_command + search_kb (values from same-session tool results only, never recall); search_kb hits show age (updated Xd ago) with staleness caveat for config values (sha256 94a428a9…) |
 
 ---
 
