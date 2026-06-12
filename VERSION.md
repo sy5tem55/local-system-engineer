@@ -7,7 +7,7 @@
 
 | Component | Version | Shipped | Status |
 |---|---|---|---|
-| Tool | **Cogitator v1.7.1** | 2026-06-12 | built ✅ — deploy pending (OWUI import + lse-skills index); v1.7.0 superseded before deploy (Goethe spiral) |
+| Tool | **Cogitator v1.7.3** | 2026-06-12 | built ✅ — v1.7.2 window fix + UNVERIFIED-URL rule (fabricated-hostname incident); import to OWUI |
 | Prompt | v0.5.15 | 2026-06-09 | deployed ✅ |
 | Filter | **v1.2.0** | 2026-06-11 | deployed ✅ |
 | Vaultwarden tool | v1.3.0 | 2026-06-03 | deployed ✅ |
@@ -30,6 +30,8 @@
 
 | File | SHA-256 |
 |---|---|
+| `cogitator-v1.7.3.py` | `849de2767350b478a0994c7d0e0ee26ca989e89a5e4d18144a4164175bc00de9` |
+| `cogitator-v1.7.2.py` | `eca3b5186c8cc2b23f9a1d39eb660e660970d38a85761a50ba62c682c7898de5` |
 | `cogitator-v1.7.1.py` | `c89945553320ded2918b0afda7190d13f39c098f38c517077a6049f8c5557bb9` |
 | `cogitator-v1.7.0.py` | `642067d99b094bf03a3cb26968bd5f05c40596764952f52e46c681f27626c24a` |
 | `openwebui-tool-v1.5.18.py` | `6532afd72fffa531ed02d8e18d31e5f03ffe0c9bc29bd726d281d1e3211b7cd1` |
@@ -83,6 +85,8 @@ Active profile: `Qwen3.6 27B Q4_K_M · 64k · KV:q8_0 · think:3072 → :8080`
 | v1.6.2–v1.6.4 | 2026-06-10/11 | call_hermes + KB-FIRST pfsense rule + two-boss architecture (see tool changelog; never registered here — registry gap closed in P22) |
 | **Cogitator v1.7.0** | 2026-06-12 | RENAMED cogitator-v1.7.0.py; skills layer: skill_search/skill_record/skill_outcome + lse-skills index (3104 lines · ast.parse OK · sha256 642067d9…) |
 | **Cogitator v1.7.1** | 2026-06-12 | Anti-spiral budget gate (search/fetch, code-enforced, 8/30min default) + task blocks (task_checkpoint/task_resume, SQLite) — Goethe-spiral fix; planner spec docs/planner-orchestrator-design.md (3346 lines · ast OK · unit-tested · sha256 c8994555…) |
+| **Cogitator v1.7.2** | 2026-06-12 | SEARCH_BUDGET_WINDOW_MIN 30→2 min — window leaked across task_resume sessions and stalled live conversations (RUTX50 incident); 8/2min still forces surface points (sha256 eca3b518…) |
+| **Cogitator v1.7.3** | 2026-06-12 | UNVERIFIED-URL RULE in budget-refusal text + fetch_url docstring — never present a URL/hostname not received from a tool result (fabricated fbidownload.* hostname incident) (sha256 849de276…) |
 
 ---
 
