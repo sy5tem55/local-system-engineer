@@ -527,3 +527,27 @@ Cumulative KB entries from post-session debriefs.
 - SearxNG returning arxiv hits for ALL queries = general engines suspended/failing, science
   category answering alone — engine-health issue, not a query problem.
 - hermes CLI traceback under sudo bash is a root-env artifact — run as sudo -u hermes-admin.
+
+## Session 2026-06-12 — P24: OWUI black-formats tools; "after responding" is unreachable
+
+### What worked
+- Deploy verification by normalization: `python3 -c "import black,hashlib; print(hashlib.sha256(black.format_str(open('tools/cogitator-vX.Y.Z.py').read(), mode=black.Mode()).encode()).hexdigest())"` — compare THIS to the installed tool's sha, never the raw file sha
+- Ground-truthing agent claims via Hermes agent.log: tool calls + char counts reveal what the model actually did (read_file 6871 chars = contract v2.1; then cronjob + skills_list = hunting for a missing board tool)
+
+### What failed and why
+- **Attempted:** Verifying v1.7.8 deploy by comparing repo file sha256 to OWUI-installed tool content
+  **Failed because:** OWUI runs black on tool code at save time — installed copy is 188,582 B / sha a7fc986e…, repo is 183,103 B / sha fd65fea6…, same code
+  **Fix:** black-normalize the repo file before hashing (command above)
+- **Attempted:** Contract v2 rule "After producing a plan envelope, create ONE card"
+  **Failed because:** Emitting the response ENDS the agent's turn — any "after responding, do X" instruction is unreachable. Same dead-path class as v1.7.3 call_hermes error returns
+  **Fix:** Contract v2.1 — card creation is step 1, BEFORE the envelope; "ONLY JSON" clarified to refer to final message content, not tool actions
+- **Attempted:** Getting Hermes to create the kanban card via contract v2.1 wording
+  **Failed because:** Planner session toolset has NO kanban-write tool (proved by tool-hunting in agent.log: cronjob -> skills_list -> gave up). Capability gap, not prompt bug
+  **Fix:** Pending v1.7.9 — hermes_plan creates the card itself (enforcement in code). Pre-check kanban_db.py VALID_INITIAL_STATUSES before direct INSERT
+
+### Key facts
+- OWUI webui.db: /home/sy5/owui/lib/python3.12/site-packages/open_webui/data/webui.db (memory + chat tables live here)
+- call_hermes prepends "CONTEXT:" — grep agent.log for correlation ids, not 'PLAN REQUEST'
+- Hermes memory pointer (MEMORY.md line 3) WORKS — contract is read on every PLAN REQUEST turn
+- Playwright run-server is WebSocket-only: plain GET = error page, that's healthy; EADDRINUSE on "restart" means it was already up
+- "Message Hermes" via the LSE can land in the WRONG memory store (LSE's own OWUI memory) — always verify on node3090: sudo grep PLANNER /home/hermes-admin/.hermes/memories/MEMORY.md
