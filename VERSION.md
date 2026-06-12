@@ -1,5 +1,5 @@
 # LSE Version Registry
-> Last updated: 2026-06-12 (P23 Cowork)
+> Last updated: 2026-06-12 (P24 Cowork)
 
 ---
 
@@ -7,7 +7,7 @@
 
 | Component | Version | Shipped | Status |
 |---|---|---|---|
-| Tool | **Cogitator v1.7.8** | 2026-06-12 | built ✅ NOT deployed — search_web categories general,it,science→general (arxiv category fix); + v1.7.7 fetch_url guard + v1.7.6 hermes_plan + call_hermes fix; import to OWUI (sha256 fd65fea6…) |
+| Tool | **Cogitator v1.7.8** | 2026-06-12 | deployed ✅ (P24, verified in OWUI 14:37 UTC) — search_web categories general,it,science→general (arxiv category fix); + v1.7.7 fetch_url guard + v1.7.6 hermes_plan + call_hermes fix. NOTE: OWUI black-formats on save — installed sha is `a7fc986e…` (188,582 B) = black(repo `fd65fea6…`, 183,103 B). Verify deploys by black-normalizing, not raw sha. hermes_plan smoke-tested P24: plan envelope → KB-first → checkpoints → clean render. pdfminer.six already in OWUI venv (20260107) |
 | Prompt | v0.5.15 | 2026-06-09 | deployed ✅ |
 | Filter | **v1.2.0** | 2026-06-11 | deployed ✅ |
 | Vaultwarden tool | v1.3.0 | 2026-06-03 | deployed ✅ |
