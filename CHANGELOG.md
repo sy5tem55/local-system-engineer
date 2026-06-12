@@ -3,6 +3,15 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-12 — P22 (Cowork): Hermes skill-learning analysis + Cogitator v1.7.0 skills layer
+
+- **Hermes skill learning analyzed from ground truth** (node3090, hermes-agent v0.16.0): file-based SKILL.md store in `~/.hermes/skills/`, full-manifest prompt injection (`.skills_prompt_snapshot.json`), weekly idle-time curator (prune 30d / archive 90d / pin / umbrella merge), optional skills_hub downloads. **Observed: 0 skills created in 44h, curator run_count=0** — feature is wired but inert. Full analysis + surpass criteria: `docs/hermes-skill-learning-analysis.md`.
+- **Tool renamed: `openwebui-tool-v1.6.4.py` → `tools/cogitator-v1.7.0.py`** (title "LSE Cogitator", sha256 `642067d9…`, 3104 lines, ast.parse clean, 35 tool functions).
+- **Skills layer shipped (1.7.0-c pulled forward)**: `skill_search` (SKILLS-FIRST RULE, max 2 injected, usage stats on retrieval), `skill_record` (EVIDENCE GATE, <2-step procedures rejected as facts, verification required, dedup @0.92, initial quality cap 0.7), `skill_outcome` (+0.10/−0.15 on evidence only, floor 0.2 → auto-archive, evidence_log). Adopted from Hermes curator: `pinned`, `archived`, inspectable snapshot (audit log). All docstrings through lse-docstring-optimizer 8-dimension audit (P6).
+- **`rag/06-skills-index-setup.py`** — idempotent `lse-skills` index creation (768-dim cosine kNN + keyword fields). Not yet run; deploy steps in handover.
+- Design correction: v1.6.4 `search_kb` was already hybrid kNN(0.7)+BM25(0.3) — 1.7.0-design §3.5.2's "kNN-only" claim amended; S2 question is RRF-vs-weighted-boost, settled by the gold set.
+
+---
 ## 2026-06-12 — P21 (Cowork) final: flag bench, ES index recovery, KB consolidation
 
 - **Flag bench** (`scripts/node3090-flag-bench.sh`): ubatch 512→2048 = +5% pp (1323→1391 t/s @9k tok uncached), tg flat 38.1 t/s, +508MB VRAM → canonical stays 512/2048. Stack auto-restored by the script.
