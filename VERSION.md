@@ -1,5 +1,5 @@
 # LSE Version Registry
-> Last updated: 2026-06-11 (P20 Cowork)
+> Last updated: 2026-06-12 (P22 Cowork)
 
 ---
 
@@ -7,7 +7,7 @@
 
 | Component | Version | Shipped | Status |
 |---|---|---|---|
-| Tool | **v1.6.1** | 2026-06-09 | deployed ✅ |
+| Tool | **Cogitator v1.7.0** | 2026-06-12 | built ✅ — deploy pending (OWUI import + lse-skills index) |
 | Prompt | v0.5.15 | 2026-06-09 | deployed ✅ |
 | Filter | **v1.2.0** | 2026-06-11 | deployed ✅ |
 | Vaultwarden tool | v1.3.0 | 2026-06-03 | deployed ✅ |
@@ -30,6 +30,7 @@
 
 | File | SHA-256 |
 |---|---|
+| `cogitator-v1.7.0.py` | `642067d99b094bf03a3cb26968bd5f05c40596764952f52e46c681f27626c24a` |
 | `openwebui-tool-v1.5.18.py` | `6532afd72fffa531ed02d8e18d31e5f03ffe0c9bc29bd726d281d1e3211b7cd1` |
 | `openwebui-tool-v1.5.17.py` | `f30c1e97493aa6f58fe3498df94c15784d747a5e1e04a209a405251e5211c973` |
 | `openwebui-tool-v1.5.16.py` | `bcc04bb0fa3d944c9fa5a4e4786393950b2efc32f0ad69962716a217f88a66d1` |
@@ -78,6 +79,8 @@ Active profile: `Qwen3.6 27B Q4_K_M · 64k · KV:q8_0 · think:3072 → :8080`
 | v1.5.18 | 2026-06-04 | search_rfc() — RFC authority KB query (2042 lines · syntax OK) |
 | **v1.6.0** | 2026-06-08 | pfsense_graphql() three-tool architecture; pfsense_query writes-only; pfsense_log_summary logs-only |
 | **v1.6.1** | 2026-06-09 | schema introspection prohibition (DO NOT __schema/__type) in pfsense_graphql docstring |
+| v1.6.2–v1.6.4 | 2026-06-10/11 | call_hermes + KB-FIRST pfsense rule + two-boss architecture (see tool changelog; never registered here — registry gap closed in P22) |
+| **Cogitator v1.7.0** | 2026-06-12 | RENAMED cogitator-v1.7.0.py; skills layer: skill_search/skill_record/skill_outcome + lse-skills index (3104 lines · ast.parse OK · sha256 642067d9…) |
 
 ---
 
