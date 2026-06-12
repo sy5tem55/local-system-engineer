@@ -80,10 +80,30 @@
 - [ ] **1.7.0** — 35B-A3B delegation after model shootout Runs 3–4 (Qwopus 35B vs Qwen3-Coder 30B);
   serving on node3090 LM Studio with Hermes maintenance-window coordination until NODE3 exists
 - [ ] **Reconcile VERSION.md** — registry says tool v1.6.1; `tools/` has v1.6.4. Fix before 1.7.0-a.
+- [ ] **v1.7.6 candidate — WATERFALL PROVENANCE RULE** (added P23 2026-06-12, SY5 observation):
+  the source-of-truth hierarchy (KB → vendor docs/master README → github → web) exists as
+  *available tools* but not as a *mandatory path for claims* — so "slots API removed in v9577"
+  could be invented and persisted without ever touching the waterfall it contradicts.
+  Enforce at the WRITE path (attention is not a control plane): `record_error`/`index_to_kb`
+  reject resolutions/content containing external-software behavior claims ("removed/changed/added
+  in version X") unless provenance from the waterfall is attached (kb doc id, fetched URL, RFC ref);
+  otherwise persist tagged UNVERIFIED at quality ≤0.3. Companion docstring rule: version/behavior
+  claims about vendor components require a waterfall lookup BEFORE diagnosis, same shape as the
+  1.7.5 CONFIG GROUND-TRUTH rule.
 
 ---
 
 ## Immediate — GUI & Stack
+
+- [ ] **Launcher docker container visibility** (added P23 2026-06-12) — show ALL running docker
+  containers and their resource usage in the LSE Stack launcher GUI (next launcher version, ≥1.078).
+  Launcher repo: `C:\Users\SY5\Claude\Projects\LSEStack_gui` (edit there, sign SY5TEM5Cert — see
+  `docs/08-launcher-edit-workflow.md`).
+  Source: `docker stats --no-stream --format json` (or `{{json .}}` per line) from WSL — gives
+  name, CPU%, mem usage/limit, net/block IO per container. Display: container list panel with
+  per-container CPU/MEM, refreshed on a DispatcherTimer tick (reuse the PS7 scope-fixed pattern
+  from GUI v1.5). Covers searxng, elasticsearch, prometheus, grafana, exporters, dify (when up) —
+  today only the compose-managed core services are visible/launchable, untracked containers are invisible.
 
 - [x] **GUI v1.5 PS7 DispatcherTimer scope fix** ✅ — launch cycle + kill buttons fully working (2026-06-08)
 - [x] **pfsense-agent.py v1.0** ✅ — Qwen3.6 → LSE orchestrator; `--think/--no-think/--prompt-only/--auto`; tool_ids pass-through; `_extract_prompt` DO NOT block anchor + contiguous step sequence extraction (2026-06-09)
@@ -158,6 +178,17 @@
 ---
 
 ## Backlog — SearXNG
+
+- [x] **[P1] arXiv pollutes general-purpose queries** ✅ ROOT CAUSE WAS TOOL-SIDE (P23 2026-06-12,
+  surfaced during a multi-step research task). search_web requested `categories="general,it,science"`
+  on every call; arxiv is in `[science,it,technology]` (settings.yml line 156) so it fired on all
+  queries incl. general-domain/product ones, returning 4-5 off-domain physics/ML hits and burning the web budget.
+  FIXED in cogitator v1.7.8: categories → `general` only. NOT a SearxNG misconfiguration.
+- [ ] **Defense-in-depth: tighten arxiv to science-only in settings.yml** (optional follow-up) —
+  even though the tool now requests `general` only, arxiv's `categories: [science, it, technology]`
+  means any future `it`/`technology` query would re-pull it. Consider `categories: [science]` so
+  arxiv only ever answers deliberate science searches. Low priority now that the tool no longer
+  requests those categories. Verify canonical settings path via docker exec read before editing.
 
 - [ ] **[P1] searxng-error-exporter** — Grafana "Failing engines" panel (Panel 24) shows 0.
   Without this, silently-failing engines (e.g. cvedetails 403) are invisible until manual diagnosis.
