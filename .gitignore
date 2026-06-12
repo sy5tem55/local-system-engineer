@@ -16,3 +16,9 @@ net-discovery/snapshot.json
 
 # Local secrets — never commit
 .env
+
+__pycache__/
+*.pyc
+*.bak
+.backups/
+nohup.out
