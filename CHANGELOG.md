@@ -3,6 +3,15 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-12 — P22 (Cowork) continued: Goethe-spiral fix — Cogitator v1.7.1 anti-spiral gate + task blocks
+
+- **Incident**: first v1.7.0 live test — Goethe quote verification spiraled into 34 web searches / ~78K tokens; turn 2 produced no surfaced output; turn 1 surfaced a fabricated German quote ("Es ist schon alles gedacht…" is not Goethe; real source is *Wilhelm Meisters Wanderjahre*, not an opera). Root cause: termination decisions left to model attention, which is fully absorbed by the task (get_context_status never called; context-monitor filter cannot intervene).
+- **`_budget_gate()`** — search_web/search_reddit/fetch_url share a rolling-window budget (valves `SEARCH_BUDGET`=8, `SEARCH_BUDGET_WINDOW_MIN`=30). Remaining ≤2 → surface-NOW banner on every result; 0 → call refused in code with checkpoint+surface instructions. Sudo-blocker philosophy: enforcement in code, never docstring. Unit-tested: clean 1–5, banner 6–8, refused 9+.
+- **Task blocks** — `task_checkpoint`/`task_resume` (SQLite, valve `TASKS_DB`=/opt/local-se/tasks.db): goal/plan/done/findings/**UNVERIFIED**/next_prompt, status open→done. findings/unverified separation is mandatory (fabricated-quote lesson: unverified claims poison the next session). Checkpoint triggers: step completion, budget banner, task end. Both docstrings through the 8-dimension audit. Roundtrip unit-tested.
+- **Planner-orchestrator spec** (`docs/planner-orchestrator-design.md`, → 1.7.2): Hermes pre-flight triage — packaged_prompt + sessions_estimate + per-step budgets + abort criteria; kanban.db as board, tasks.db as execution ground truth (one-way sync); calibration from leaderboard actuals after ~20 plans. Layers interlock: planner estimates, budgets enforce, blocks carry over — no layer trusts model attention.
+- `tools/cogitator-v1.7.1.py`: 3346 lines, ast.parse clean, sha256 `c8994555…`. v1.7.0 superseded before deployment.
+
+---
 ## 2026-06-12 — P22 (Cowork): Hermes skill-learning analysis + Cogitator v1.7.0 skills layer
 
 - **Hermes skill learning analyzed from ground truth** (node3090, hermes-agent v0.16.0): file-based SKILL.md store in `~/.hermes/skills/`, full-manifest prompt injection (`.skills_prompt_snapshot.json`), weekly idle-time curator (prune 30d / archive 90d / pin / umbrella merge), optional skills_hub downloads. **Observed: 0 skills created in 44h, curator run_count=0** — feature is wired but inert. Full analysis + surpass criteria: `docs/hermes-skill-learning-analysis.md`.
