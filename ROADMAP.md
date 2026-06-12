@@ -1,6 +1,113 @@
 # LSE Roadmap — Open Items Only
 > Completed work lives in `CHANGELOG.md`. Current versions in `CURRENT-STATE.md`.
-> Last updated: 2026-06-06 (P6 Cowork)
+> Last updated: 2026-06-11 (P20 Cowork)
+
+---
+
+## Immediate — P20 Active (2026-06-11)
+
+- [ ] **node-t3-005 Duplicate Model Cleanup** — 3 runs TRUNCATED 2/4, ROOT CAUSE FOUND (P20):
+  **the episode harness has no actuation path.** `run_episode.py` calls llama-server directly
+  (bare chat completion, no tools); `lse_challenge_env.step()` only parses the JSON and runs
+  `verify_ssh` ground truth — model-emitted commands are NEVER executed. verify_ssh overrides
+  self-report, so write challenges pass only if the world is already fixed (t3-004 "solved" via
+  the interactive LSE session at 19:27/19:33, not the episode). Secondary findings still valid:
+  execute_command sudo-blocker + /opt/models perms (fixed: lse-admin in sy5 group, WRITE-OK ✅).
+  **Next:** perform the cleanup via interactive LSE chat session, then run the episode as verifier
+  (expect 4/4); long-term fix = episode actuation layer (see v1.7.0-a).
+- [x] **Hermes KB entry — LSE relationship** ✅ (2026-06-11 P21) — installed via Hermes's own
+  memory tool: LSE sent `call_hermes` task to read `/tmp/hermes-kb-lse-relationship.md` and save
+  to persistent memory (hand-editing `.hermes/memories/USER.md` rejected — agent-managed + lock).
+  Verified cross-channel via Telegram "what is LSE". Exercised the full LSE→socat 8643→gateway path.
+- [x] **hermes-gateway TimeoutStopSec fix** ✅ (2026-06-11 P21) — drop-in
+  `/etc/systemd/system/hermes-gateway.service.d/timeout.conf` with `TimeoutStopSec=210s`,
+  daemon-reloaded, verified `TimeoutStopUSec=3min 30s`, gateway active.
+- [ ] **Hermes /status "Agent Running: No"** — assessed as normal idle state (agent sessions spawn
+  per conversation; gateway holds messaging+cron). Confirm: /status during an active reply.
+- [ ] **Hermes web_search/firecrawl broken** — `externally-managed-environment` pip failure in
+  gateway log; Hermes SSH to node3090 fails (password auth). Triage later — low priority.
+- [x] **[P0] Model store reconciliation — node3090** ✅ (2026-06-12 P21):
+  `/opt/models` symlink removed, real directory created, all model files migrated via
+  same-fs `mv` (zero downtime — running server held the inode via mmap). 18 `.gguf` files
+  `chattr +i` immutable. sha256 records: `/opt/models/SHA256SUMS` (node) + `kb/node3090-model-sha256sums.md`
+  (repo). Canonical launch consolidated to `/opt/local-se/scripts/start-llama-server.sh`
+  (ctx 81920, q8_0 KV both, threads 7/7, log `/home/lse-admin/llama-server.log`) — runbook
+  step 2 now calls the script. Verification restart completed, Hermes notified pre/post.
+  Postmortem: `docs/incident-2026-06-11-model-deletion.md`.
+- [ ] **ES index loss — follow-ups** (P21): `lse-errors` + `lse-rfc-kb` were wiped 2026-06-08
+  (es-data volume lost in the WSL/Docker cascade failure; only `lse-kb` was reseeded). Missing
+  indices are SILENT until first read. Recreated 2026-06-12 via `rag/02-es-setup.py` (idempotent).
+  - Add ES index-existence probe to the stack health check:
+    `curl -s localhost:9200/lse-kb,lse-errors,lse-rfc-kb,lse-search-cache/_count`
+  - RFC KB: ZERO `search_rfc` calls in 44,637 logged commands; rfc-cache untouched since ship day
+    (2026-06-04). Index reseeded untagged; Ollama tagging DEFERRED to first real demand. Add a
+    usage log line to `search_rfc` so the next review has data. Consider wiring RFC KB into LSE
+    prompts/episodes or retiring it.
+  - `lse-kb.sqlite` (0 bytes) is vestigial — no active code references it (tool v1.6.4's only
+    sqlite is the OWUI chat DB). Delete or ignore; do NOT "reinitialize".
+  - ~~Two repo clones on LUCIFER~~ RESOLVED (P21): `/home/sy5/projects/local-system-engineer` is a
+    symlink → `/mnt/c/...` (since Jun 7). One real repo; no reconciliation needed. Repo had ~2 days
+    of uncommitted session work — committed P21.
+- [ ] **Model store reconciliation — follow-ups** (P21):
+  - LM Studio repoint: My Models → models directory → `/opt/models` (confirm it indexes)
+  - lse-errors ES index missing — LSE `record_error` failed (2026-06-12); reinitialize index
+  - Other nodes (LUCIFER, node5090 when built) get the same one-real-dir + chattr +i treatment
+  - Design challenge `node-t3-006` "Model Store Reconciliation" with inode-level assertions
+    (replaces retired node-t3-005 — premise was false: the "duplicate" was one inode behind
+    a symlink; deletion removed the only copy; recovered byte-exact via Hermes aria2c from HF)
+
+---
+
+## v1.7.0 — Hermes Core + Self-Learning Skills
+
+> **Design doc: `docs/lse-1.7.0-design.md`** · **Execution order: `docs/self-learning-trajectory.md`** (S0–S6)
+> **node5090 (NODE3): `docs/node5090-deployment-design.md`** + `scripts/node5090/` deploy/provision/teardown kit
+> (P20, DRAFT for review). Four workstreams:
+> structured Hermes peer protocol · occupational self-learning skills on RAG/ES ·
+> frozen-suite benchmark with SWE-bench-comparable metrics · Qwen3.6-35B-A3B coding delegation.
+
+- [ ] **1.7.0-a** — **episode actuation layer (NEW — P0):** env executes model-emitted command
+  blocks via SSH with the tool's safety gates ported (blocklist, no-sudo, privileged-path guard);
+  without it every write-mode challenge is a deterministic failure and the bench measures world
+  state, not the model. Plus: `verify_ssh` on all bench challenges, `--eval --no-learn` flag,
+  freeze `lse-bench-v1`, record Condition A baseline
+- [ ] **1.7.0-b** — `hermes_notify`/`hermes_ask` structured protocol (correlation ids), KB entry live
+- [ ] **1.7.0-c** — `lse-skills` ES index, episode distillation, retrieval gold set (recall@3/MRR),
+  hybrid BM25+kNN scoring, gate web-search auto-indexing (quality 0.7→0.4 + relevance check)
+- [ ] **1.7.0-d** — occupational curriculum batches, skill lifecycle jobs, learning-lift run #1 (A vs B);
+  SOUL.md curation discipline (`hermes-t4` family — proven-knowledge appends to Hermes identity
+  prompt, human-approved, ground-truth-verified; trajectory §5.4)
+- [ ] **1.7.0** — 35B-A3B delegation after model shootout Runs 3–4 (Qwopus 35B vs Qwen3-Coder 30B);
+  serving on node3090 LM Studio with Hermes maintenance-window coordination until NODE3 exists
+- [ ] **Reconcile VERSION.md** — registry says tool v1.6.1; `tools/` has v1.6.4. Fix before 1.7.0-a.
+
+---
+
+## Immediate — GUI & Stack
+
+- [x] **GUI v1.5 PS7 DispatcherTimer scope fix** ✅ — launch cycle + kill buttons fully working (2026-06-08)
+- [x] **pfsense-agent.py v1.0** ✅ — Qwen3.6 → LSE orchestrator; `--think/--no-think/--prompt-only/--auto`; tool_ids pass-through; `_extract_prompt` DO NOT block anchor + contiguous step sequence extraction (2026-06-09)
+- [x] **NoMtp flag: ps1 + XML** ✅ — `Build-LlamaServerCmd` now emits `--no-mtp` when `<NoMtp>true</NoMtp>` (2026-06-08)
+  - Affects presets 9 (Qwopus 32k), 10 (Qwopus 96k), 11 (Huihui), 12 (HauhauCS) — all 35B A3B MoE
+  - **Needs commit + re-sign from WSL** — changes not yet committed: `lse-stack-launch-gui.ps1`, `lse-profiles.xml`
+
+- [x] **Grafana :3002 server error** ✅ — resolved (2026-06-09)
+
+- [ ] **16-tool-call limit** — LSE stops after ~16 tool calls per session
+  **Investigation result (2026-06-09):**
+  - Env var `CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS` defaults to **256** — NOT the cause. Not set in launch scripts.
+  - Old name `CHAT_RESPONSE_MAX_TOOL_CALL_RETRIES` (pre-v0.9.6) defaulted to 30 — also not 16.
+  - Neither variable is set in `lse-stack-launch-1.077.ps1` → OWUI inherits default (256).
+  - **Root cause candidates:** (a) per-model UI override in Admin → Models → [Qwen3 preset] → Advanced → Max Tool Calls; (b) Qwen3 model behaviour — model self-terminates tool loop; (c) context_monitor tool yielding early on HIGH/CRITICAL context state.
+  **Next action:** Open WebUI Admin → Models → Qwen3.6 preset → Advanced → check "Max Tool Calls" field. If blank/256 → root cause is (b) or (c).
+
+- [x] **llama.cpp b9577 upgrade** ✅ — upgraded from b9553 (2026-06-09)
+
+- [x] **Confirm session-learnings.md KB entry landed** ✅ resolved 2026-06-12 (P21): confirmed the
+  entries were NEVER written (not present in either KB copy nor the pre-link backup — the prepared
+  WSL command was evidently never run). PS7 DispatcherTimer + Ollama GPU overhead learnings are
+  lost; rewrite from memory if still relevant. KB copies since merged + deduped (13 session blocks)
+  into the single real KB (repo kb/, symlinked from /opt/local-se/kb).
 
 ---
 
@@ -225,6 +332,33 @@
 
 ---
 
+## Immediate — Multi-Agent UI (Dify)
+
+> **Decision (P18 2026-06-09):** Adopt Dify for the Qwen3.6 → LSE multi-agent workflow UI.
+> Replaces ad-hoc `pfsense-agent.py` for interactive/persistent pfSense work sessions.
+> OWUI pipe function (Qwen3.6 → LSE handoff inside OpenWebUI) is **deferred** — not needed.
+
+- [x] **Dify deploy** ✅ — v1.14.2, on-demand (not in launcher), port 4000, installed at `/opt/dify` (2026-06-09)
+  `docker compose -f /opt/dify/docker/docker-compose.yaml up -d` to start; `down` to stop.
+  GP shutdown script `docker-graceful-stop.ps1` handles graceful stop on Windows shutdown — committed to LSEStack_gui, signed SY5TEM5Cert.
+
+- [ ] **Dify LM Studio connections** — add both LM Studio instances as OpenAI-compatible providers:
+  - LUCIFER llama-server: `http://192.168.1.x:8080/v1` — model `qwen/qwen3.6-27b` (orchestrator)
+  - node3090 LM Studio: `http://192.168.5.41:1234/v1` — model `qwen/qwen3.6-27b` (executor / alt)
+  Note: Dify uses display names; actual model string must match what LM Studio serves.
+
+- [ ] **Dify pfSense workflow** — visual pipeline: User message → Qwen3.6 orchestrator →
+  structured LSE prompt → LSE node (OpenWebUI API or direct tool call) → streamed output.
+  Human-in-the-loop node: show generated prompt, wait for approval before submitting to LSE.
+  Persistent chat history: Dify maintains conversation across sessions (PostgreSQL backend).
+
+- [ ] **OpenWebUI pipe function** — Qwen3.6 → LSE handoff inside OWUI.
+  **DEFERRED** — root cause: local Qwen3.6 doesn't emit OpenAI-style function-call JSON via API;
+  ReAct-style tool invocation only works in Chat UI, not `/api/chat/completions` path.
+  Revisit when: (a) Dify covers the use case, or (b) a local FC-capable model is available.
+
+---
+
 ## Deferred — Zero-Persistence Trust (ZPT) Architecture
 
 > **Definition:** A session-scoped secret architecture where no operational secret persists
@@ -299,4 +433,4 @@ pfSense REST API is read-only by default. For T3+ write challenges:
 4. Log in CHANGELOG: timestamp + what was changed
 
 Verify re-enabled: `pfsense_query('/api/v2/firewall/rule', method='PATCH', payload={})` should return 403.
-**NOTE:** `/api/v2/system/api` returns 404 — read-only toggle NOT available via REST API, web UI 
+**NOTE:** `/api/v2/system/api` returns 404 — read-only toggle NOT available via REST API, web UI only.

@@ -1,5 +1,5 @@
 # LSE Architecture — Technical Design Document
-> Version: 2026-06-07 (aligned with tool v1.5.27)
+> Version: 2026-06-09 (aligned with tool v1.6.1)
 > Audience: coder LLM (node3090 agent) proposing changes + Claude Sonnet 4.6 as senior reviewer
 > Read alongside: CURRENT-STATE.md, session-handover.md, ROADMAP.md
 
@@ -19,7 +19,7 @@ The LSE is **not** a chatbot. It is an autonomous infrastructure operator with b
 ┌─────────────────────────────────────────────────────────────┐
 │  LUCIFER (Win11 + WSL2 Ubuntu 24.04, 192.168.1.x)           │
 │                                                             │
-│  OpenWebUI (:3000)  ←→  LSE Tool Plugin (v1.5.27)          │
+│  OpenWebUI (:3000)  ←→  LSE Tool Plugin (v1.6.1)           │
 │       │                        │                           │
 │  Qwen3.6-27B-Q4_K_M            ├─ execute_command (WSL2)   │
 │  llama-server :8080            ├─ Elasticsearch :9200 (KB) │
@@ -33,8 +33,51 @@ The LSE is **not** a chatbot. It is an autonomous infrastructure operator with b
 ┌─────────────────────────────────────────────────────────────┐
 │  node3090 (Ubuntu 24.04, 192.168.5.41)                      │
 │  RTX 3090 24GB · driver 595 · CUDA 13.3                     │
-│  llama-server :8080 (Qwen3.6-27B, on-demand via LSE)        │
+│  LM Studio :1234 — Qwen3.6-27B Q4_K_M (pfsense-agent target)│
 │  SSH: lse-admin@node3090.home.arpa (FQDN required)          │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  pfsense-agent.py  (LUCIFER WSL2, /opt/local-se/)           │
+│  Qwen3.6 orchestrator → structured LSE prompt               │
+│                                                             │
+│  User NL request                                            │
+│       ↓                                                     │
+│  Qwen3.6-27B @ node3090:1234  (--think or --no-think)       │
+│       ↓  _extract_prompt() — DO NOT anchor + step sequence  │
+│  LSE prompt (numbered steps, DO NOT block)                  │
+│       ↓  [y/N confirm or --auto]                            │
+│  OpenWebUI /api/chat/completions                            │
+│       tool_ids: [lse_system_admin_terminal,                 │
+│                  lse_vaultwarden_tools]                     │
+│       ↓                                                     │
+│  LSE executes → streamed output                             │
+│                                                             │
+│  Config: /opt/local-se/pfsense-agent.conf (chmod 600)       │
+│  Note: API tool execution gap — OWUI Chat UI uses ReAct     │
+│  text-based tool invocation; API path needs native FC JSON  │
+│  that local Qwen3.6 does not emit. Dify adopted instead.    │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  OWUI Pipe Function (lse-qwen-pipe — planned)               │
+│  Runs server-side inside OpenWebUI as a pipe/model.         │
+│                                                             │
+│  User message (OWUI chat)                                   │
+│       ↓                                                     │
+│  pipe() — HTTP call to LM Studio :1234                      │
+│       Qwen3.6: reasoning streamed into chat as text         │
+│       _extract_prompt() — DO NOT anchor + step sequence     │
+│       ↓                                                     │
+│  structured LSE prompt → LSE model (OWUI internal)          │
+│       LSE ReAct tool execution fires normally               │
+│       ↓                                                     │
+│  streamed output in same chat session                       │
+│                                                             │
+│  Why pipe works: Qwen3.6 is a text generator here,          │
+│  not a tool-calling model. FC JSON gap is irrelevant.       │
+│  Status: planned — not yet deployed.                        │
+│  Dify: DEFERRED.                                            │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -401,7 +444,7 @@ These are non-obvious — don't repeat these mistakes.
 | seed_challengedb.py uses `dict(` | NOT `Challenge(` — causes NameError |
 | node3090 FQDN required | `ssh node3090` fails, `ssh node3090.home.arpa` works (DHCP option 119 pending) |
 | `nvidia-smi` CUDA Version = driver max | Not the installed toolkit version |
-| `/opt/models` is a symlink | → `/home/sy5/.lmstudio/models/`. Didn't exist before 2026-06-07 |
+| `/opt/models` is a REAL directory | Since 2026-06-11 P21 reconciliation (was a symlink → `~/.lmstudio/models/` — caused the model-deletion incident). `.gguf` files are `chattr +i` immutable; `sudo chattr -i` before any replace. sha256 records in `/opt/models/SHA256SUMS` |
 | CUDA 13.3 `cuda_fp4.hpp` warnings | Benign — Blackwell-only code paths, not relevant for RTX 3090 (Ampere SM 8.6) |
 | Build flag for RTX 3090 | `-DCMAKE_CUDA_ARCHITECTURES=86` skips Blackwell warnings |
 | reddit engine blocked on VPS IP | Use `site:reddit.com` via Google/Bing instead |

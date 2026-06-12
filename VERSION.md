@@ -1,5 +1,5 @@
 # LSE Version Registry
-> Last updated: 2026-06-04 (session 5)
+> Last updated: 2026-06-11 (P20 Cowork)
 
 ---
 
@@ -7,12 +7,13 @@
 
 | Component | Version | Shipped | Status |
 |---|---|---|---|
-| Tool | v1.5.18 | 2026-06-04 | deployed ✅ |
-| Prompt | v0.5.14 | 2026-06-04 | deployed ✅ |
-| Filter | v1.1.0 | 2026-05-23 | deployed ✅ |
+| Tool | **v1.6.1** | 2026-06-09 | deployed ✅ |
+| Prompt | v0.5.15 | 2026-06-09 | deployed ✅ |
+| Filter | **v1.2.0** | 2026-06-11 | deployed ✅ |
 | Vaultwarden tool | v1.3.0 | 2026-06-03 | deployed ✅ |
 | Launcher CLI | v1.078 | 2026-06-03 | deployed ✅ |
-| Launcher GUI | v1.4 | 2026-06-03 | deployed ✅ |
+| Launcher GUI | **v1.5** | 2026-06-08 | deployed ✅ |
+| pfsense-agent | **v1.0** | 2026-06-09 | `/opt/local-se/pfsense-agent.py` ✅ |
 | ChallengeDB | seeded ✅ | `/opt/local-se/challenges.db` — 10 T1 challenges |
 | Leaderboard DB | live ✅ | `/opt/local-se/leaderboard.db` — 6 episodes |
 | RFC KB | indexed ✅ | `lse-rfc-kb` ES index — 1490 chunks (tagging in progress) |
@@ -75,3 +76,13 @@ Active profile: `Qwen3.6 27B Q4_K_M · 64k · KV:q8_0 · think:3072 → :8080`
 | v1.5.16 | 2026-06-03 | PFSENSE_CA_CERT valve + _pfsense_verify() |
 | v1.5.17 | 2026-06-04 | pfsense_log_summary() + nmap_summary() — compact extraction |
 | v1.5.18 | 2026-06-04 | search_rfc() — RFC authority KB query (2042 lines · syntax OK) |
+| **v1.6.0** | 2026-06-08 | pfsense_graphql() three-tool architecture; pfsense_query writes-only; pfsense_log_summary logs-only |
+| **v1.6.1** | 2026-06-09 | schema introspection prohibition (DO NOT __schema/__type) in pfsense_graphql docstring |
+
+---
+
+## pfsense-agent Version History
+
+| Version | Shipped | Key change |
+|---|---|---|
+| **v1.0** | 2026-06-09 | Initial — Qwen3.6 orchestrator + LSE submit; `--think/--no-think/--prompt-only/--auto`; `_extract_prompt` DO NOT anchor + contiguous step sequence; tool_ids pass-through |

@@ -1,0 +1,68 @@
+# Automation: Meross MSL120DR — Suppress Spontaneous Turn-On
+#
+# Problem: Meross msl120dr firmware randomly turns the bulb on.
+#          Cloud is blocked (pfSense rule id=4) but the behaviour is hardcoded.
+#
+# How HA distinguishes spontaneous vs intentional events:
+#   Spontaneous (firmware-initiated):  context.user_id == null AND context.parent_id == null
+#   User-initiated:                    context.user_id is set
+#   Automation-triggered:              context.parent_id is set (points to automation run)
+#
+# This automation catches ONLY the spontaneous case and immediately turns the bulb off.
+# It avoids looping by checking that the turn-on was not triggered by this automation itself
+# (context.parent_id would be set if it were automation-triggered).
+#
+# BEFORE ADDING: confirm the correct entity_id in HA.
+#   Settings -> Devices -> Meross LAN -> <device> -> entity: usually light.msl120dr_XXXX
+#   Or: curl -s -H "Authorization: Bearer <token>" http://homeassistant.home.arpa:8123/api/states \
+#         | jq '[.[] | select(.entity_id | startswith("light.")) | .entity_id]'
+#
+# TO DEPLOY (Option A — HA UI):
+#   Settings -> Automations -> + Create Automation -> Edit as YAML -> paste below
+#
+# TO DEPLOY (Option B — via LSE ha-agent.py):
+#   python3 ha-agent.py --no-think "deploy the meross spontaneous turnon suppression automation"
+#   The LSE will scp this file and call automation.reload
+#
+# VERIFY after deploy:
+#   Wait for a spontaneous turn-on event, check HA logbook:
+#   - Before: state_changed to 'on' with no context
+#   - After: immediate state_changed back to 'off' triggered by this automation
+
+- id: meross_suppress_spontaneous_turnon
+  alias: "Meross Bulb — Suppress Spontaneous Turn-On"
+  description: >
+    Detects firmware-initiated turn-on events (no user_id, no parent_id in context)
+    and immediately turns the bulb off. Does not suppress user or automation-triggered turn-ons.
+  mode: single
+  max_exceeded: silent
+
+  trigger:
+    - platform: state
+      entity_id: light.smart_rgb_bulb_2104097726182590848948e1e96af34b
+      to: "on"
+
+  condition:
+    # Only act on spontaneous events: no user and no parent automation triggered this
+    - condition: template
+      value_template: >
+        {{ trigger.to_state.context.user_id == None
+           and trigger.to_state.context.parent_id == None }}
+
+  action:
+    - delay:
+        milliseconds: 500  # brief pause so the state is stable before we override it
+    - service: light.turn_off
+      target:
+        entity_id: light.smart_rgb_bulb_2104097726182590848948e1e96af34b
+
+  # Optional: log the suppression for debugging
+  # Remove these lines once confirmed working
+    - service: persistent_notification.create
+      data:
+        title: "Meross Suppressed"
+        message: >
+          Spontaneous turn-on suppressed at {{ now().strftime('%H:%M:%S') }}.
+          Context: user={{ trigger.to_state.context.user_id }},
+          parent={{ trigger.to_state.context.parent_id }}
+        notification_id: meross_suppressed

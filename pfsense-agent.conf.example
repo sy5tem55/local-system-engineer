@@ -1,0 +1,11 @@
+# pfsense-agent.conf — copy to /opt/local-se/pfsense-agent.conf
+# chmod 600 /opt/local-se/pfsense-agent.conf
+
+[lmstudio]
+url   = http://192.168.5.41:1234
+model = qwen/qwen3.6-27b
+
+[openwebui]
+url     = http://localhost:3000
+api_key = sk-e0d74239d854484b8756e8f2f18d9193
+model   = local-system-engineer

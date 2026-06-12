@@ -6,40 +6,11 @@ requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, read_file, write_file, sudo_delegation_block, search_web,
   get_github_release, get_context_status, compact_context, search_kb, index_to_kb,
-  record_error, check_error_kb, record_outcome, and mentor_correct. All commands are logged
+  record_error, check_error_kb, and call_hermes. All commands are logged
   to a persistent audit file. Privileged operations are blocked at the code level and
   routed through a delegation block.
 
   Changelog:
-    v1.5.13: search_web header fix + categories fix.
-              Root cause: SearXNG limiter (limiter: true) rejects requests without
-              X-Forwarded-For/X-Real-IP headers with HTTP 429. LSE was sending no
-              headers, causing silent failures mid-session.
-              Fix 1: added X-Forwarded-For and X-Real-IP headers to requests.get().
-              Fix 2: changed categories from "general,it" to "general,it,science" —
-              confirmed during SearXNG deploy that arxiv, github, google scholar,
-              stackoverflow, semantic scholar only fire on science category.
-              Verified: 11 engines active, 108 results on q=llama.cpp.
-    v1.5.12: write_file SIZE SANITY CHECK + record_outcome + mentor_correct.
-              [write_file] Added SIZE SANITY CHECK: if mode='overwrite' and new content
-              is <25% of existing file's line count, function returns an error requiring
-              explicit user confirmation before proceeding. Override with force=True
-              after user confirms intentional truncation.
-              Root cause: LSE destroyed a 323-line GUI PowerShell file by calling
-              write_file in overwrite mode with a 5-line snippet. The docstring required
-              read + confirmation but compliance was zero under recovery-loop pressure.
-              The code-level gate is the only reliable enforcement.
-              [record_outcome] New RAG function: records success/failure outcome against
-              an existing KB doc. Increments empirical_runs, success_count, failure_count.
-              Surfaces whether documented procedures actually work in production.
-              [mentor_correct] New RAG function: applies a human-authored correction to
-              a KB doc. Re-embeds corrected content, raises quality_score (never lowers),
-              increments refinement_count. Used when user identifies an error in the KB.
-              Both functions were referenced in prompt v0.5.9 TOOLS section but missing
-              from tool v1.5.11. Gap identified during 2026-06-02 tracking restructure.
-    v1.5.11: fetch_url — HTML-stripped full-page fetch for SEARCH-THEN-FETCH protocol.
-              monitor_download — Prometheus-backed download progress monitor.
-              (Note: both were added without changelog entries — reconstructed 2026-06-02.)
     v1.4.1: Added explicit routing rules to read_file docstring (tail vs read_file).
     v1.4.2: Fixed sudo check from startswith → 'in' to catch sudo embedded in pipelines
             (e.g. "ls /home | sudo tee file.txt" was previously not blocked).
@@ -78,6 +49,17 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
               delegation block for /etc/sysctl.conf without reading it first,
               losing one point. Skipping the read when file is readable is now
               explicitly a protocol violation.
+              Root cause: llama-server build ≥9307 exposes n_prompt_tokens in /slots,
+              not n_past. s.get("n_past", 0) always defaulted to 0, making every
+              context check report 0 / 32,768 tokens (0.0%) regardless of actual fill.
+              Confirmed via live curl of /slots during A1 test run — slot retained
+              n_prompt_tokens: 4264 (13.0% fill) while n_past was absent.
+              Fix: read n_prompt_tokens, n_prompt_tokens_cache, n_prompt_tokens_processed
+              from slot root; read n_decoded / n_remain / n_predict via next_token[0]
+              and params respectively.
+              Added truncation warning: flags when n_decoded >= n_predict and n_remain == 0
+              (generation hit max_tokens cap). A1 test data showed last response truncated
+              at exactly 1024 tokens — user should raise max_tokens in OpenWebUI settings.
     v1.5.5: sudo_delegation_block STOP PROTOCOL — added RETURN VALUE SEMANTICS to
               break a within-turn retry loop (29 calls observed in production).
               Root cause: model received the tool return value (the ⚠️ block string),
@@ -121,6 +103,24 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
                 remains allowed).
               - fetch_url SSRF gate: not applicable — no fetch_url function exists yet.
                 Deferred; gate must be added if fetch_url is ever introduced.
+    v1.5.13: execute_command PFSENSE PROTOCOL — mandatory KB read before pfsense API calls.
+              Root cause: LSE formulates curl command during reasoning without consulting
+              the pfsense REST API KB, then falls into trial-and-error when the endpoint
+              shape, required fields, or placement semantics are wrong.
+              Fix: added PFSENSE PROTOCOL to execute_command docstring — forces a
+              read_file("/opt/local-se/kb/pfsense-firewall-rules-api.md") call before
+              any execute_command that targets pfsense.home.arpa or /api/v2/.
+              Also adds dry_run=true requirement on first POST/PATCH attempt.
+              Skipping the KB read is explicitly a protocol violation.
+    v1.5.12: call_hermes — delegate multi-step tasks to Hermes Agent on node3090.
+              Hermes runs Qwen3.6-27B locally via llama-server and executes tasks
+              autonomously using its own tool set (shell, file, browser, image gen).
+              Gate: only when llama-server + hermes-gateway are confirmed running AND
+              the task requires multi-step autonomous execution (not a single SSH command).
+              no_think=True (default) for read-only tasks; no_think=False required for
+              write/destructive tasks — skipping is a protocol violation.
+              New valves: HERMES_API_URL (http://192.168.5.41:8642), HERMES_API_KEY.
+              Returns plain string or "ERROR: <reason>" on failure — caller must check.
     v1.5.9: RAG layer — Elasticsearch + nomic-embed-text knowledge base.
               Four new tool functions: search_kb, index_to_kb, record_error, check_error_kb.
               New valves: ES_URL, OLLAMA_URL, EMBED_MODEL.
@@ -220,6 +220,14 @@ class Tools:
         EMBED_MODEL: str = Field(
             default="nomic-embed-text",
             description="Ollama embedding model (768-dim). Must be pulled via 01-ollama-setup.sh.",
+        )
+        HERMES_API_URL: str = Field(
+            default="http://192.168.5.41:8642",
+            description="Hermes Agent gateway API URL on node3090.",
+        )
+        HERMES_API_KEY: str = Field(
+            default="7aa537e027e2efeda7cc660a959516eed414373c6e7b3df3d9a567e48fc3319e",
+            description="Hermes API server key (from /home/hermes-admin/.hermes/.env on node3090).",
         )
 
     # ── Hard-coded permission lists ───────────────────────────────────────────
@@ -340,6 +348,20 @@ class Tools:
             GOOD: execute_command("ls /tmp/lse/")   ← follow-up call after rm succeeds
             BAD:  execute_command("rm /tmp/lse/file.txt")  ← then report "Done" with no verify
           Reporting the file as deleted without a verification call is a protocol violation.
+
+        PFSENSE PROTOCOL — mandatory before any pfsense API call:
+          Before calling this function with any command targeting pfsense.home.arpa
+          or containing /api/v2/:
+            1. Call read_file("/opt/local-se/kb/pfsense-firewall-rules-api.md") to load
+               the endpoint schema, required fields, placement semantics, and error shapes.
+            2. Use dry_run=true on the FIRST POST or PATCH attempt for any new rule shape.
+          Skipping the KB read and guessing at the API shape is a protocol violation.
+
+          GOOD: read_file("/opt/local-se/kb/pfsense-firewall-rules-api.md")
+                → then execute_command("curl -X POST ... pfsense.home.arpa/api/v2/firewall/rule ...")
+          BAD:  execute_command("curl -X POST ... pfsense.home.arpa ...")
+                ← called without reading KB — wrong field names, placement off-by-one,
+                   guaranteed trial-and-error spiral
 
         Output filter examples:
           GOOD: execute_command("journalctl -u nginx -n 20 --no-pager")
@@ -471,9 +493,7 @@ class Tools:
         except Exception as e:
             return f"ERROR: {str(e)}"
 
-    def write_file(
-        self, path: str, content: str, mode: str = "overwrite", force: bool = False
-    ) -> str:
+    def write_file(self, path: str, content: str, mode: str = "overwrite") -> str:
         """
         Write content to a file within allowed write paths.
 
@@ -501,20 +521,6 @@ class Tools:
           This applies to new file creation AND edits to existing files.
           Skipping confirmation is a protocol violation.
 
-        SIZE SANITY CHECK — automatic guard on overwrite:
-          If mode='overwrite' and the new content has fewer than 25% of the lines
-          in the existing file, this function returns an error. This prevents
-          accidentally destroying a large file by writing a short snippet.
-
-          When the check fires:
-          1. Show the user the line count discrepancy.
-          2. Ask explicitly: "The new content is N lines vs M existing. Intentional?"
-          3. Wait for explicit "yes".
-          4. Call write_file again with force=True to bypass the check.
-
-          force=True ONLY after explicit user confirmation of intentional truncation.
-          Passing force=True without user confirmation is a protocol violation.
-
         For files under /etc/ or other privileged paths, use sudo_delegation_block.
         """
         if not self._is_allowed_write(path):
@@ -525,28 +531,6 @@ class Tools:
 
         resolved = os.path.realpath(os.path.expanduser(path))
         parent = os.path.dirname(resolved)
-
-        # ── SIZE SANITY CHECK (v1.5.12) ───────────────────────────────────────
-        if mode == "overwrite" and not force and os.path.isfile(resolved):
-            try:
-                with open(resolved, "r", errors="replace") as f:
-                    existing_lines = len(f.readlines())
-                new_lines = max(len(content.splitlines()), 1)
-                if existing_lines > 0 and new_lines < existing_lines * 0.25:
-                    pct = new_lines * 100 // existing_lines
-                    self._log(
-                        f"SIZE-CHECK-BLOCKED: {path} existing={existing_lines} new={new_lines}"
-                    )
-                    return (
-                        f"SIZE SANITY CHECK FAILED: '{path}' currently has {existing_lines} lines. "
-                        f"New content has {new_lines} lines ({pct}% of current size). "
-                        f"Writing this would truncate the file to less than 25% of its current size. "
-                        f"Show the user this discrepancy and ask for explicit confirmation. "
-                        f"Once the user confirms the truncation is intentional, call write_file "
-                        f"again with force=True."
-                    )
-            except Exception:
-                pass  # If comparison fails, proceed — don't block on a check error
 
         self._log(f"WRITE: {path} mode={mode} len={len(content)}")
         try:
@@ -652,8 +636,7 @@ class Tools:
         try:
             resp = requests.get(
                 self.valves.SEARXNG_URL,
-                params={"q": query, "format": "json", "categories": "general,it,science"},
-                headers={"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"},
+                params={"q": query, "format": "json", "categories": "general,it"},
                 timeout=10,
             )
             resp.raise_for_status()
@@ -805,11 +788,14 @@ class Tools:
             s = slots[0]
 
             # v1.5.4 fix: llama-server build >=9307 uses n_prompt_tokens, not n_past.
+            # n_past does not exist in the /slots response; s.get("n_past", 0) always
+            # returned 0, making every context check report 0% fill.
             n_prompt = s.get("n_prompt_tokens", 0)
             n_ctx    = s.get("n_ctx", 65536)
             n_cache  = s.get("n_prompt_tokens_cache", 0)
             n_proc   = s.get("n_prompt_tokens_processed", 0)
 
+            # n_decoded and n_remain live inside next_token[0]; n_predict in params
             next_tok  = s.get("next_token", [{}])
             nt        = next_tok[0] if next_tok else {}
             n_decoded = nt.get("n_decoded", 0)
@@ -828,6 +814,7 @@ class Tools:
             else:
                 status = "🟢 OK — normal operation."
 
+            # Flag if the last generation was cut off by the max_tokens cap.
             truncation = ""
             if n_predict > 0 and n_remain == 0 and n_decoded >= n_predict:
                 truncation = (
@@ -845,6 +832,7 @@ class Tools:
             )
         except Exception as e:
             return f"ERROR querying llama.cpp: {str(e)}"
+
 
     def monitor_download(self, file_path: str, expected_bytes: int, interface: str = "") -> str:
         """
@@ -915,7 +903,12 @@ class Tools:
           fact, file path, command outcome, decision, and pending task from this
           session that must survive the compaction. Write it in third person as if
           briefing the next agent. DO NOT omit anything the user will need to
-          reference.
+          reference. Example:
+            "Session: user is on LUCIFER (WSL2, RTX 4090, Ubuntu 24.04).
+             Rebuilt llama.cpp at b9316 with -DCMAKE_CUDA_ARCHITECTURES=89.
+             Deployed llamacpp-slots-exporter on port 9839 (systemd, running).
+             Grafana panel 9 updated to use llamacpp_slot_fill_ratio.
+             Pending: run eval suite v3.5 against tool v1.5.8 + prompt v0.5.4."
 
         WHAT THIS FUNCTION DOES:
           1. Fetches the full OpenWebUI chat history for this chat.
@@ -934,12 +927,17 @@ class Tools:
         if not __chat_id__:
             return "ERROR: __chat_id__ not injected. This tool must be called from within an OpenWebUI chat."
 
+        # ── Direct SQLite access — bypasses all HTTP deadlock issues ──────────
+        # OpenWebUI runs single-worker uvicorn; any HTTP call back to itself
+        # from within a tool deadlocks (curl rc=28). We write directly to the
+        # DB instead. The chat table stores history as a JSON column.
         import sqlite3
         import uuid as _uuid
 
         DB_PATH = self.valves.OWUI_DB_PATH
 
         try:
+            # ── 1. Fetch the chat row ─────────────────────────────────────────
             con = sqlite3.connect(DB_PATH, timeout=10)
             con.row_factory = sqlite3.Row
             cur = con.cursor()
@@ -957,6 +955,7 @@ class Tools:
             if not messages_map or not current_id:
                 return "ERROR: Chat history is empty or malformed — nothing to compact."
 
+            # ── 2. Traverse the active branch from leaf to root ───────────────
             branch = []
             node_id = current_id
             visited = set()
@@ -967,12 +966,16 @@ class Tools:
                     break
                 branch.append(msg)
                 node_id = msg.get("parentId") or ""
-            branch.reverse()
+            branch.reverse()  # now root → leaf (chronological)
 
             total_before = len(branch)
+
+            # ── 3. Keep last 4 messages ───────────────────────────────────────
             KEEP = 4
             kept = branch[-KEEP:] if len(branch) > KEEP else branch
 
+            # ── 4. Build summary node (system role, no parent) ────────────────
+            import uuid as _uuid
             summary_id = str(_uuid.uuid4())
             summary_msg = {
                 "id": summary_id,
@@ -988,10 +991,12 @@ class Tools:
                 "timestamp": int(datetime.now().timestamp()),
             }
 
+            # Patch the first kept message to point back to the summary node
             if kept:
                 kept[0] = dict(kept[0])
                 kept[0]["parentId"] = summary_id
 
+            # ── 5. Rebuild history dict ───────────────────────────────────────
             new_messages = {summary_msg["id"]: summary_msg}
             for msg in kept:
                 new_messages[msg["id"]] = msg
@@ -1001,6 +1006,7 @@ class Tools:
                 "messages": new_messages,
             }
 
+            # ── 6. Write truncated history back via SQLite ────────────────────
             chat_obj["history"] = new_history
             cur.execute(
                 "UPDATE chat SET chat = ? WHERE id = ?",
@@ -1009,6 +1015,7 @@ class Tools:
             con.commit()
             con.close()
 
+            # ── 7. Erase KV cache slot ────────────────────────────────────────
             kv_status = "KV cache erase skipped"
             try:
                 slots_url = self.valves.LLAMA_SERVER_URL.rstrip("/") + "/slots/0"
@@ -1293,117 +1300,79 @@ class Tools:
             self._log(f"CHECK-ERROR-KB ERROR: {e}")
             return f"Error KB check failed: {e}. Proceed with caution."
 
-    def record_outcome(
-        self,
-        doc_id: str,
-        success: bool,
-        notes: str = "",
-    ) -> str:
+    # ── Hermes Agent delegation ───────────────────────────────────────────────
+
+    def call_hermes(self, task: str, context: str = "", no_think: bool = True) -> str:
         """
-        Record an operational outcome against an existing KB document.
+        Delegate a task to the Hermes Agent on node3090 (http://192.168.5.41:8642).
+        Hermes runs Qwen3.6-27B locally and can autonomously execute tasks on node3090
+        using its own tool set (shell, file, browser, image generation).
 
-        WHEN TO CALL:
-          After applying a procedure documented in the KB:
-            success=True  — the documented approach worked as described.
-            success=False — it failed or needed modification. Also call record_error().
+        GATE — call only when ALL of the following are true:
+          1. The task requires autonomous multi-step execution on node3090.
+          2. A single SSH command cannot answer or complete it.
+          3. llama-server AND hermes-gateway are confirmed running on node3090.
+        Do NOT call for facts answerable with one SSH command.
+        Do NOT call if either service is down — diagnose first, then call.
 
-          Increments empirical_runs, success_count, and failure_count on the KB doc
-          so the LSE can track how many times a procedure has been tested in production
-          and whether it reliably works.
+        GOOD: call_hermes("Check disk usage on all mountpoints and alert if any > 85%")
+              ← multi-step: df + parsing + conditional logic, Hermes handles autonomously
+        BAD:  call_hermes("What is the hostname of node3090?")
+              ← single fact; use execute_command('ssh lse-admin@192.168.5.41 hostname')
 
-        Args:
-            doc_id:   The doc_id field from a search_kb or index_to_kb result.
-            success:  True if the procedure succeeded, False if it failed.
-            notes:    Optional context: variant used, environment, what differed, etc.
+        GOOD: call_hermes("Rotate the nginx logs and restart the service", no_think=False)
+              ← complex + risky; use no_think=False so Hermes reasons before acting
+        BAD:  call_hermes("Rotate the nginx logs and restart the service")
+              ← no_think=True skips reasoning on a service-affecting task
+
+        THINKING MODE:
+          no_think=True  (default) — fast, no reasoning chain. Use for read-only tasks.
+          no_think=False — Hermes reasons before acting. Use for write/destructive tasks.
+          Skipping no_think=False on destructive tasks is a protocol violation.
+
+        CONTEXT: pass relevant KB entries, prior command output, or constraints in context.
+          GOOD: call_hermes("Update pfsense firewall rule", context=read_file("/opt/local-se/kb/pfsense-firewall-rules-api.md"))
+          BAD:  call_hermes("Update pfsense firewall rule")  ← no context, Hermes will guess
+
+        AFTER CALLING: check that the returned string does not start with "ERROR:".
+        If it does, report the error and do not treat the task as complete.
+        Treating an ERROR: response as success is a protocol violation.
+
+        Returns the Hermes agent response as a plain string.
+        Returns "ERROR: <reason>" on connection failure, timeout, or API error.
         """
-        from datetime import timezone  # noqa: PLC0415
-        self._log(f"RECORD-OUTCOME: doc_id={doc_id} success={success}")
+        import json as _json
+
+        api_url = self.valves.HERMES_API_URL
+        api_key = self.valves.HERMES_API_KEY
+
+        content = task.strip()
+        if context:
+            content = f"CONTEXT:\n{context.strip()}\n\nTASK:\n{content}"
+        if no_think:
+            content += " /no_think"
+
+        payload = _json.dumps({
+            "model": "default",
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": 2048,
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{api_url}/v1/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
         try:
-            es = self._es()
-            now = datetime.now(timezone.utc).isoformat()
-            resp = es.get(
-                index="lse-kb", id=doc_id,
-                _source=["empirical_runs", "success_count", "failure_count", "title"],
-            )
-            src = resp["_source"]
-            runs          = src.get("empirical_runs", 0) + 1
-            success_count = src.get("success_count",  0) + (1 if success else 0)
-            failure_count = src.get("failure_count",  0) + (0 if success else 1)
-            update: dict = {
-                "empirical_runs": runs,
-                "success_count":  success_count,
-                "failure_count":  failure_count,
-                "last_outcome_at": now,
-            }
-            if notes:
-                update["last_outcome_notes"] = notes
-            es.update(index="lse-kb", id=doc_id, body={"doc": update})
-            outcome_str = "✅ success" if success else "❌ failure"
-            return (
-                f"Outcome recorded: {outcome_str} | "
-                f"doc='{src.get('title', doc_id)}' | "
-                f"runs={runs} ({success_count} success / {failure_count} failure)"
-            )
-        except Exception as e:
-            self._log(f"RECORD-OUTCOME ERROR: {e}")
-            return f"record_outcome failed: {e}"
-
-    def mentor_correct(
-        self,
-        doc_id: str,
-        correction: str,
-        new_quality: float,
-    ) -> str:
-        """
-        Apply a human-authored correction to an existing KB document.
-
-        WHEN TO CALL:
-          When the user identifies an error, outdated information, or an important
-          improvement in a KB entry. Replaces the document content with the corrected
-          version, re-embeds it, and raises the quality score.
-
-        QUALITY RULE:
-          This function never lowers the quality score. If new_quality is lower than
-          the existing score, the call is rejected. Use index_to_kb to add a competing
-          entry at a lower quality instead.
-
-        Args:
-            doc_id:       The doc_id of the KB entry to correct.
-            correction:   The full corrected content to replace the existing entry.
-            new_quality:  New quality score (0.0–1.0).
-                          Use 0.95–1.0 for human-verified corrections.
-        """
-        from datetime import timezone  # noqa: PLC0415
-        self._log(f"MENTOR-CORRECT: doc_id={doc_id} new_quality={new_quality}")
-        try:
-            es = self._es()
-            now = datetime.now(timezone.utc).isoformat()
-            resp = es.get(
-                index="lse-kb", id=doc_id,
-                _source=["quality_score", "refinement_count", "title"],
-            )
-            src = resp["_source"]
-            old_quality = src.get("quality_score", 0.0)
-            if new_quality < old_quality:
-                return (
-                    f"REJECTED: new_quality ({new_quality:.2f}) is lower than existing "
-                    f"({old_quality:.2f}). mentor_correct must not lower quality. "
-                    f"Use index_to_kb to add a competing entry instead."
-                )
-            embedding = self._embed(correction)
-            es.update(index="lse-kb", id=doc_id, body={"doc": {
-                "content":             correction,
-                "embedding":           embedding,
-                "quality_score":       new_quality,
-                "refinement_count":    src.get("refinement_count", 0) + 1,
-                "updated_at":          now,
-                "mentor_corrected_at": now,
-            }})
-            return (
-                f"Mentor correction applied: doc='{src.get('title', doc_id)}' | "
-                f"quality {old_quality:.2f} → {new_quality:.2f} | "
-                f"refinements={src.get('refinement_count', 0) + 1}"
-            )
-        except Exception as e:
-            self._log(f"MENTOR-CORRECT ERROR: {e}")
-            return f"mentor_correct failed: {e}"
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                data = _json.loads(resp.read().decode())
+                return data["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:200]
+            return f"ERROR: HTTP {exc.code} from Hermes — {body}"
+        except Exception as exc:
+            return f"ERROR: Hermes call failed — {exc}"

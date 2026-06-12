@@ -1,0 +1,87 @@
+{
+  "meta": {
+    "type": "db",
+    "canSave": true,
+    "canEdit": true,
+    "canAdmin": true,
+    "canStar": true,
+    "canDelete": true,
+    "slug": "network-topology",
+    "url": "/d/net-topology/network-topology",
+    "expires": "0001-01-01T00:00:00Z",
+    "created": "2026-06-07T14:55:02Z",
+    "updated": "2026-06-07T15:25:51Z",
+    "updatedBy": "Anonymous",
+    "createdBy": "Anonymous",
+    "version": 3,
+    "hasAcl": false,
+    "isFolder": false,
+    "apiVersion": "v0alpha1",
+    "folderId": 0,
+    "folderUid": "",
+    "folderTitle": "General",
+    "folderUrl": "",
+    "provisioned": false,
+    "provisionedExternalId": ".",
+    "annotationsPermissions": {
+      "dashboard": {
+        "canAdd": true,
+        "canEdit": true,
+        "canDelete": true
+      }
+    }
+  },
+  "dashboard": {
+    "id": 987225700044800,
+    "panels": [
+      {
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "${DS-INFINITY}"
+        },
+        "gridPos": {
+          "h": 30,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 1,
+        "options": {
+          "cacheTimeoutSeconds": 10,
+          "echartsEditor": {
+            "customOptions": {
+              "echartsCustom": true,
+              "echartsFunction": "const topo=$data[0].frames[0].toDataFrame().values[0];return{title:{text:'Network Topology',subtext:topo.stats?topo.stats.total+' devices \u00b7 '+topo.stats.online+' online':'',left:'center',textStyle:{color:'#ffffff',fontSize:18},subtextStyle:{color:'#aaa',fontSize:13}},tooltip:{trigger:'item',formatter:function(p){return p.data?.tooltip?.content||p.name;},backgroundColor:'rgba(30,30,30,0.95)',textStyle:{color:'#fff'}},legend:{orient:'vertical',right:20,top:'center',textStyle:{color:'#ccc'},data:topo.categories?.map(c=>c.name)},series:[{type:'graph',layout:'force',force:{repulsion:800,gravity:0.08,edgeLength:150},categories:topo.categories,data:topo.nodes.map(n=>({id:n.id,name:n.name,symbol:n.symbol,symbolSize:n.symbolSize,value:n.value,category:n.category,label:n.label,itemStyle:n.itemStyle,tooltip:n.tooltip})),links:topo.links,roam:true,draggable:true,lineStyle:{color:'source',curveness:0.2},emphasis:{focus:'adjacency'}}],backgroundColor:'rgba(0,0,0,0)'};",
+              "echartsTheme": "dark"
+            },
+            "enabled": true,
+            "schemaVersion": 1
+          }
+        },
+        "targets": [
+          {
+            "options": {
+              "editor": false,
+              "server": false,
+              "url": "http://172.18.0.1:8766/topology"
+            },
+            "refId": "A",
+            "type": 16
+          }
+        ],
+        "title": "Network Topology Map",
+        "type": "volkovlabs-echarts-panel",
+        "uid": "topology-graph"
+      }
+    ],
+    "schemaVersion": 39,
+    "tags": [
+      "netobs",
+      "topology"
+    ],
+    "timezone": "browser",
+    "title": "Network Topology",
+    "uid": "net-topology",
+    "version": 3
+  }
+}
