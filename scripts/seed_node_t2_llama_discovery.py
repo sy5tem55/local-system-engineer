@@ -2,12 +2,20 @@
 """
 Seed T2 challenge: node3090 llama.cpp Discovery & Launch Configuration.
 
-Goal: LSE finds the llama-server binary on node3090, verifies CUDA 13.3
+Goal: LSE finds the llama-server binary on node3090, verifies CUDA 13.x
 availability, calculates optimal launch flags for RTX 3090 24GB + 80K context
 window with Qwen3.6-27B-Q4_K_M, and writes the recommended start command to KB.
 
 This is a READ-ONLY analysis challenge — no service is started.
 It prepares the ground truth for node-t3-003 (server start + validation).
+
+Changes from v1:
+  - a3: plausible-range bounds (model 14-22GB, KV 3-12GB, total = sum ≤ 26GB)
+        prevents model from fabricating fits_in_24gb=True without real arithmetic.
+  - a4: added --cache-type-k as required flag.
+        added --n-gpu-layers value > 0 check (presence alone was insufficient).
+        KB verify changed from existence-only to content check (>=10 lines,
+        contains 'llama-server') — prevents trivial pass on pre-existing file.
 
 Usage:
     python3 scripts/seed_node_t2_llama_discovery.py
@@ -80,24 +88,25 @@ CHALLENGE = dict(
             "CUDA 13.3 requires driver >= 575. "
             "\n"
             "Step 3 — VRAM budget: "
-            "Qwen3.6-27B-Q4_K_M weights ≈ 17.2GB. "
+            "Qwen3.6-27B-Q4_K_M weights: compute from Q4_K_M bitrate (~4.83 bits/param). "
             "KV cache at q8_0 for 81920 ctx: use model architecture "
-            "(num_hidden_layers, num_key_value_heads, head_dim) to compute "
+            "(num_hidden_layers=46, num_key_value_heads=8, head_dim=128) to compute "
             "2 * layers * kv_heads * head_dim * ctx_len bytes. "
-            "Verify total fits within 24GB. "
+            "Report both components separately. total_vram_gb must equal their sum. "
             "\n"
             "Step 4 — flags: must include "
-            "--n-gpu-layers <N> (all layers on GPU), "
+            "--n-gpu-layers <N> (all layers on GPU, N > 0), "
             "--ctx-size 81920, "
             "--cache-type-k q8_0, "
             "--threads <cpu_threads> (recommend 8 for i9-9900K during GPU inference), "
             "--host 0.0.0.0 (accessible from LUCIFER), "
             "--port 8080, "
-            "--flash-attn (if supported by build). "
+            "--flash-attn on (if supported by build). "
             "Check llama-server --help or --version for supported flags before including. "
             "\n"
             "Step 5 — KB: write findings to "
-            "/opt/local-se/kb/node3090-llama-launch.md via write_file."
+            "/opt/local-se/kb/node3090-llama-launch.md via write_file. "
+            "File must be at least 10 lines and include the llama-server command."
         )
     }),
     success_criteria=json.dumps({
@@ -147,16 +156,23 @@ CHALLENGE = dict(
             {
                 "id": "a3",
                 "points": 1,
+                # Plausible-range check forces real VRAM math, not a bare fits_in_24gb=True claim.
+                # Qwen3-27B-Q4_K_M weights: ~14-22 GB depending on overhead.
+                # KV cache q8_0 at 81920 ctx (46 layers, 8 KV heads, 128 head_dim): ~5-12 GB.
+                # total = sum constraint catches fabricated totals that don't match components.
                 "code": (
-                    "assert fits_in_24gb is True "
-                    "and total_vram_gb <= 24.0 "
-                    "and model_vram_gb > 0 "
-                    "and kv_cache_vram_gb > 0"
+                    "assert 14.0 <= model_vram_gb <= 22.0 "
+                    "and 3.0 <= kv_cache_vram_gb <= 12.0 "
+                    "and -0.2 <= total_vram_gb - model_vram_gb - kv_cache_vram_gb <= 0.2 "
+                    "and total_vram_gb <= 26.0"
                 ),
-                "description": "VRAM budget calculated: model + KV cache fits within 24GB"
-                # No verify_ssh: this is arithmetic; model must show correct working.
-                # a1 confirms the binary exists (grounded), a2 confirms GPU (grounded).
-                # VRAM math is checked by plausibility: > 0 and fits in 24GB.
+                "description": (
+                    "VRAM budget computed with real arithmetic: model 14-22 GB, "
+                    "KV cache 3-12 GB, total within 0.2 GB of sum, total <= 26 GB. "
+                    "Prevents fabricating fits_in_24gb=True without decomposed calculation."
+                ),
+                # No verify_ssh: grounded by a1 (real GPU node) + a2 (real GPU confirmed).
+                # Bounds + sum constraint verify genuine calculation, not recitation.
             },
             {
                 "id": "a4",
@@ -166,30 +182,45 @@ CHALLENGE = dict(
                     "and '--ctx-size' in recommended_command "
                     "and '81920' in recommended_command "
                     "and '--n-gpu-layers' in recommended_command "
+                    "and '--cache-type-k' in recommended_command "
                     "and '--host' in recommended_command "
                     "and '--port' in recommended_command "
                     "and '8080' in recommended_command "
+                    "and int(recommended_command.split('--n-gpu-layers')[1].strip().split()[0]) > 0 "
                     "and kb_file_exists is True"
                 ),
                 "description": (
-                    "Recommended command has all required flags "
-                    "and KB file /opt/local-se/kb/node3090-llama-launch.md exists"
+                    "Command has all required flags (--ctx-size 81920, --n-gpu-layers N>0, "
+                    "--cache-type-k, --host, --port 8080) and KB file has >=10 lines "
+                    "containing 'llama-server' (content check, not just existence)."
                 ),
                 "verify_ssh": {
                     "host": "192.168.5.41",
                     "user": "lse-admin",
-                    "cmd": "test -f /opt/local-se/kb/node3090-llama-launch.md && echo exists || echo missing",
-                    "parse": "kb_file_exists = (stdout.strip() == 'exists')",
+                    # Line count + grep match count — two numbers on stdout
+                    "cmd": (
+                        "wc -l /opt/local-se/kb/node3090-llama-launch.md 2>/dev/null | awk '{print $1}'; "
+                        "grep -c 'llama-server' /opt/local-se/kb/node3090-llama-launch.md 2>/dev/null || echo 0"
+                    ),
+                    "parse": (
+                        "_parts = stdout.strip().split(); "
+                        "_lines = int(_parts[0]) if _parts else 0; "
+                        "_hits = int(_parts[1]) if len(_parts) > 1 else 0; "
+                        "kb_file_exists = (_lines >= 10 and _hits > 0)"
+                    ),
                 }
             }
         ]
     }),
     failure_modes=json.dumps({
         "0/4": "Binary not found or SSH access failed.",
-        "1/4": "Binary found but CUDA version not confirmed or VRAM budget not calculated.",
-        "2/4": "Binary + CUDA confirmed but recommended command incomplete or missing flags.",
-        "3/4": "All analysis complete but KB entry not written.",
-        "4/4": "Binary located, CUDA 13.x confirmed, VRAM fits, command correct, KB written."
+        "1/4": "Binary found but CUDA driver < 13.x or nvidia-smi unreachable.",
+        "2/4": "Binary + CUDA confirmed but VRAM math outside plausible bounds "
+               "(model must be 14-22 GB, KV 3-12 GB, total within 0.2 GB of sum).",
+        "3/4": "VRAM OK but command missing --cache-type-k, --n-gpu-layers <= 0, "
+               "or KB file has fewer than 10 lines or lacks llama-server reference.",
+        "4/4": "Binary located, CUDA 13.x confirmed, VRAM computed with real arithmetic, "
+               "command has all required flags with valid values, KB written with content."
     }),
     kb_target="node3090/llama-launch-config",
     rollback_defined=0,
@@ -226,7 +257,7 @@ if __name__ == "__main__":
     con.close()
     print(f"  ✅  {CHALLENGE['id']}  —  {CHALLENGE['title']}")
     print(f"       Tier: {CHALLENGE['tier']}  |  {CHALLENGE['discipline']} "
-          f"{CHALLENGE['discipline_multiplier']}×  |  read_only")
+          f"{CHALLENGE['discipline_multiplier']}x  |  read_only")
     print(f"       Assertions: {len(json.loads(CHALLENGE['success_criteria'])['assertions'])}")
     print(f"       Max points: "
           f"{len(json.loads(CHALLENGE['success_criteria'])['assertions']) * 5 * CHALLENGE['discipline_multiplier']:.1f}")

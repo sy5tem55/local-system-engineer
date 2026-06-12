@@ -3,6 +3,43 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-12 — P21 (Cowork) final: flag bench, ES index recovery, KB consolidation
+
+- **Flag bench** (`scripts/node3090-flag-bench.sh`): ubatch 512→2048 = +5% pp (1323→1391 t/s @9k tok uncached), tg flat 38.1 t/s, +508MB VRAM → canonical stays 512/2048. Stack auto-restored by the script.
+- **ES index loss root-caused**: es-data volume died in the 2026-06-08 WSL cascade; only lse-kb was reseeded; missing indices silent until first read (record_error 404 tonight). Recreated via `rag/02-es-setup.py`. lse-rfc-kb reseeded: 628 chunks / 13 RFCs / fully tagged.
+- **RFC KB usage**: 0 `search_rfc` calls in 44,637 logged commands despite being wired since v1.5.18 — tagging investment deferred; docstring/prompt triggering review queued.
+- **KB consolidation**: ONE real KB — repo `kb/` (git, Cowork-editable); `/opt/local-se/kb` → symlink. Old copy backed up (`kb.pre-link.bak`), 6 missing session blocks merged back, deduped to 13. Cowork cannot mount WSL UNC paths (product limit) — inverted-alias is the standing pattern.
+- **lse-kb reseed** with `--reindex` delegated to LSE (doc count 53 → TBD).
+
+---
+## 2026-06-12 — P21 (Cowork) continued: P0 model store reconciliation + Hermes KB entry
+
+### Hermes KB entry — LSE relationship (installed)
+- Installed via Hermes's own memory tool: LSE `call_hermes` task → Hermes read `/tmp/hermes-kb-lse-relationship.md`, saved to persistent memory. Hand-editing `.hermes/memories/USER.md` rejected (agent-managed, lock-protected, injected every turn).
+- Verified cross-channel via Telegram "what is LSE".
+
+### P0 model store reconciliation — node3090 (SY5 directive, post-incident)
+- `/opt/models` was a single root-owned symlink → `~/.lmstudio/models` (the incident's root cause). Removed; real `/opt/models` created; all models migrated via same-fs `mv` — zero downtime, running server kept serving off the mmap'd inode.
+- 18 `.gguf` files `chattr +i` immutable. sha256: `/opt/models/SHA256SUMS` + `kb/node3090-model-sha256sums.md`. Qwen3.6-27B hash `33625d8d…` matches the byte-exact HF recovery.
+- Canonical launch consolidated: `/opt/local-se/scripts/start-llama-server.sh` rewritten (was missing `--cache-type-v q8_0`, `--parallel 1`; had `--threads 8` vs 7/7; logged to `/tmp`). ctx-size canonized at 81920 (SY5 decision). Runbook step 2 now calls the script — edit the script, not the runbook.
+- Verification restart: brief full outage caused by a two-operator race (LSE ran its own restart sequence concurrently with the WSL one-liner; pkill killed LSE's fresh server, script child died with the SSH session). Recovered via the new script: PID 44564 READY, gateway + socat active, Hermes notified pre/post.
+- Lesson (also logged by LSE): agent self-reports ≠ ground truth — Hermes echoed LSE's stale PID 43871 instead of verifying. And: ONE operator at a time on the stack.
+- Follow-ups in ROADMAP: LM Studio repoint to `/opt/models`, lse-errors ES index reinit, other nodes, node-t3-006 design.
+
+---
+
+## 2026-06-11 — P21 (Cowork): node3090 stack recovery + gateway TimeoutStopSec fix
+
+### Stack recovery (per Restart _Hermes.md)
+- llama-server relaunched with canonical command (PID 41557, READY), hermes-gateway + hermes-socat active
+- Root cause of "silent" step-1 failures: `pkill -f llama-server` self-matched the SSH shell's command line — killed the session (and a likely-healthy backend) before printing. Log showed graceful "cleaning up before exit", not OOM.
+- `Restart _Hermes.md` step 1 patched to `pkill -f "[l]lama-server"`; KB entry appended to `kb/session-learnings.md`
+
+### hermes-gateway TimeoutStopSec fix
+- Drop-in `/etc/systemd/system/hermes-gateway.service.d/timeout.conf`: `TimeoutStopSec=210s` (> drain_timeout 180s)
+- Verified: `TimeoutStopUSec=3min 30s`, gateway active. Ends the SIGKILL-mid-drain / exit-code-1-on-stop pattern.
+
+---
 
 ## 2026-06-05 — P4 (Cowork): v1.5.18 safety patch + HA challenge plumbing
 
@@ -589,3 +626,38 @@ Next: `EscalationWrapper` (stub at `scripts/escalation_wrapper.py`)
 - Eval Run 1: unscored baseline
 - Skills: `lse:eval-runner`, `lse:docstring-optimizer`, `lse:stack-health-check`, `lse:session-debrief`, `lse:version-manager`
 - Docs: 01–06 written
+
+---
+
+## 2026-06-09 — P18 Cowork — pfsense-agent.py + OpenWebUI tool v1.6.1
+
+### pfsense-agent.py — Option C orchestrator CLI
+- Built `pfsense-agent.py`: natural language → Qwen3.6-27B (LM Studio node3090) → structured LSE prompt → LSE
+- `--think` / `--no-think` / `--prompt-only` / `--auto` flags
+- Streaming with live char/timing display
+- Assistant prefill (`"Step 1: "`) for `--no-think` mode — forces clean output start
+- `_extract_prompt` — DO NOT block anchor + contiguous ascending step sequence detection
+  - `rfind(FIRST_DO_NOT)` → last DO NOT block; walk backwards through step matches to find sequence start
+  - CRITICAL: use `^[ \t]*` not `^\s*` in multiline regex — `^\s*` swallows preceding `\n`, landing `match.start()` on newline instead of first space
+  - Restores `Step 1: vault_unlock()...` when model correctly starts at Step 2
+- Config: `/opt/local-se/pfsense-agent.conf` (chmod 600), `[lmstudio]` + `[openwebui]` sections
+- `tool_ids: ["lse_system_admin_terminal", "lse_vaultwarden_tools"]` added to `submit_to_lse` payload
+
+### OpenWebUI tool v1.6.1 deployed (lse_system_admin_terminal)
+- Updated from v1.5.26 → v1.6.1 (pfSense three-tool architecture + schema introspection prohibition)
+- Deployed via Admin → Tools → edit → paste → Save
+
+### OpenWebUI API tool execution gap — confirmed
+- `/api/chat/completions` with `tool_ids` injects tool definitions but local LM (Qwen3.6) generates
+  reasoning text, not structured function-call JSON → agentic loop never fires
+- Chat UI works because OWUI uses text-based tool invocation format (ReAct-style), not native FC
+- Resolution: Dify multi-agent UI (see ROADMAP). OWUI pipe function deferred.
+
+### Architecture decision — Dify for multi-agent UI
+- Qwen3.6 (orchestrator/reasoning) + LSE (executor/tools) pipeline
+- Deployed on-demand, not persistent always-on service
+- OWUI pipe function for Qwen3.6 → LSE handoff: deferred
+
+### pfSense security constraints confirmed
+- SSH admin@pfsense = root shell, bypasses read-only API boundary — human-only, never LSE
+- pfSense auth: `X-API-Key` header (NOT `Authorization: Bearer`)

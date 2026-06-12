@@ -1,5 +1,5 @@
 # LSE Current State
-> Last updated: 2026-06-07 (P16 Cowork)
+> Last updated: 2026-06-11 (P20 Cowork)
 > Source of truth for deployed versions. Update this file at the end of every session.
 
 ---
@@ -8,15 +8,20 @@
 
 | Component | Version | File | Status |
 |---|---|---|---|
-| OpenWebUI Tool | **v1.5.26** | `tools/openwebui-tool-v1.5.26.py` | ✅ deployed — search_web hang fix (5,10) timeout + year injection rule hardened |
+| OpenWebUI Tool | **v1.6.1** | `tools/openwebui-tool-v1.6.1.py` | ✅ deployed — pfSense three-tool architecture + schema introspection prohibition |
 | System Prompt | v0.5.15 | `prompts/v0.5.15.md` | ✅ deployed — PFSENSE LOG RULE section |
-| Routing Filter | v1.1.0 | `tools/lse-routing-filter-v1.1.0.py` | ✅ deployed — Global OFF · Qwen3 preset only |
-| Context Monitor | v1.3.0 | `tools/lse-context-monitor-v1.3.0.py` | ✅ deployed |
+| Routing Filter | **v1.2.0** | `tools/lse-routing-filter-v1.2.0.py` | ✅ deployed — model-aware passthrough; Qwen3 preset only |
+| Context Monitor | v1.3.0 | `tools/lse-context-monitor-v1.3.0.py` | 🚫 retired (2026-05-29) — wrong metric prefix; replaced by Grafana alert pipeline (now also removed) |
 | Vaultwarden Tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | ✅ deployed — env var wins over valve |
 | Launch Script (CLI) | v1.078 | `LSEStack_gui/lse-stack-launch-1.078.ps1` | ✅ |
-| Launch Script (GUI) | v1.4 | `LSEStack_gui/lse-stack-launch-gui.ps1` | ✅ |
+| Launch Script (GUI) | **v1.5** | `LSEStack_gui/lse-stack-launch-gui.ps1` | ✅ — PS7 DispatcherTimer scope fix; launch cycle + kill buttons fully working |
+| pfsense-agent | **v1.0** | `pfsense-agent.py` + `/opt/local-se/pfsense-agent.conf` | ✅ — Qwen3.6 orchestrator → LSE; `--think/--no-think/--prompt-only/--auto`; tool_ids pass-through |
+| llama.cpp | **b9577** | `/usr/local/bin/llama-server` (WSL) | ✅ — upgraded from b9553 (2026-06-09) |
+| Dify | **v1.14.2** | `/opt/dify/docker/docker-compose.yaml` | ✅ — on-demand only; port 4000; `docker compose up -d` to start (2026-06-09) |
+| GP Shutdown Script | — | `LSEStack_gui/docker-graceful-stop.ps1` | ✅ — graceful Docker stop on Windows shutdown; Dify conditional; signed SY5TEM5Cert (2026-06-09) |
 
 ### Tool Changelog Summary (recent)
+- **v1.6.1** — pfSense three-tool arch: pfsense_graphql/pfsense_query/pfsense_log_summary; schema introspection prohibition
 - **v1.5.26** — search_web hang fix (5,10) timeout + year injection rule hardened
 - **v1.5.25** — `search_reddit(query, subreddit="")` — Reddit via SearxNG site: operator. No OAuth, no API footprint
 - **v1.5.24** — `start_node_agent` / `stop_node_agent` — on-demand llama-cpp lifecycle via SSH. `agent_profile` in `_NODE_REGISTRY` (96k ctx, q8_0 KV, Qwen3.6-27B)
@@ -38,8 +43,8 @@
 
 | Node | CPU | RAM | GPU | OS | IP | Status |
 |---|---|---|---|---|---|---|
-| LUCIFER | Intel 9900K | — | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | 192.168.1.x | Primary — Qwen3.6 27B Q4_K_M on port 8080 |
-| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — driver 595, CUDA 13.3 toolkit, llama-server built + running (19.3GB VRAM, 96k ctx) |
+| LUCIFER | Intel 9900K | — | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | 192.168.1.x | Primary — Qwen3.6 27B Q4_K_M on port 8080; pfsense-agent.py orchestrator |
+| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — LM Studio running Qwen3.6-27B Q4_K_M (:1234); pfsense-agent orchestrator target |
 | node5090 | AMD 9800X3D | 64GB | RTX 5090 | Win11 | 192.168.5.x | WoL/SSH setup deferred |
 | HA Pi | ARM Cortex-A72 | 4GB | — | HA OS 2026.6.0 | 192.168.1.80 | homeassistant.home.arpa |
 | n45 (NAS) | Marvell Kirkwood | — | — | QTS | 192.168.5.44 + .45 | n45.home.arpa — dual NIC failover |
@@ -69,7 +74,7 @@ pfSense (192.168.1.50 / pfsense.home.arpa)
   │    └─ Primary WAN: mob1s1a1 Vodafone 5G (100.85.214.85/32, active)
   │
   └─ OPT2 (192.168.10.0/24, igc2) — failover WAN only, currently unused
-       └─ Teltonika eth1 (192.168.10.3, static) — physically disconnected
+       └─ helios (192.168.10.3, static) — Kostal solar inverter (MAC a4:06:e9:25:ae:3a, OUI confirmed Kostal Solar Electric GmbH); alive on OPT2; pending HA integration (ROADMAP backlog)
 ```
 
 DNS: `*.home.arpa` via pfSense Unbound. Active aliases: lucifer, node3090, node5090, n45, pfsense, homeassistant.
@@ -141,7 +146,7 @@ nginx.conf `/api/` block stays commented until a FastAPI service is confirmed de
 | Secret | Vaultwarden item | Field | Used by |
 |---|---|---|---|
 | pfSense API key | `LSE-pfsense_API_key` | password | probe_dhcp.py (`PFSENSE_API_KEY` env var) |
-| ASUS admin pass | not in vault — manual export only | — | probe_wifi.py (`ASUS_PASS`), deferred |
+| ASUS admin pass | not in vault — manual export only | — | probe_wifi.py (`ASUS_PASS`); `export ASUS_PASS=<password>` before running discovery |
 | RUTX50 pass | not in vault — manual export only | — | probe_wifi.py (`RUTX50_PASS`), not yet enabled |
 
 ### First-Run Commands (from net-discovery/)
@@ -169,9 +174,9 @@ docker compose up -d
 ```
 
 ### Pending
-- [ ] First live test run of discovery_engine.py against real pfSense
-- [ ] Verify `websockets` installed (ws_server.py dependency)
-- [ ] Deploy Nginx container (`cd webserver && docker compose up -d`)
+- [x] First live test run of discovery_engine.py against real pfSense ✅
+- [x] Verify `websockets` installed (ws_server.py dependency) ✅
+- [x] Deploy Nginx container (`cd webserver && docker compose up -d`) ✅
 - [x] Add Prometheus scrape job for netobs (:9120) — done, in prometheus/prometheus.yml
 - [x] Grafana dashboard — done: `docker/grafana/dashboards/netobs.json` + volume in docker-compose.yml
 - [ ] Sync + reload: `bash scripts/sync-docker-config.sh --reload && docker compose restart grafana`
@@ -242,6 +247,20 @@ docker compose up -d
 | grafana | grafana/grafana:latest | :3002→3000 | DO NOT start second instance |
 | viteOnNodeJsv26 | node:26-alpine | :5173 | Vite dev server |
 | elasticsearch | elasticsearch:8.17.0 | :9200/:9300 | Core LSE — SearxNG + KB RAG. DO NOT stop. |
+
+### Ollama (WSL systemd service)
+- **Version**: 0.24.0 · `systemctl status ollama` · auto-starts via systemd (`/etc/wsl.conf` has `[boot] systemd=true`)
+- **GPU VRAM overhead**: `OLLAMA_GPU_OVERHEAD=20500000000` (~20.5 GB reserved from Ollama's allocation)
+  - Config: `/etc/systemd/system/ollama.service.d/override.conf`
+  - Leaves ~3.4 GB VRAM headroom alongside 27B llama-server (confirmed 2026-06-08)
+- **Models**: `nomic-embed-text` (768-dim, 137M params, 8192-ctx) — KB embeddings + OpenWebUI RAG
+  - VRAM footprint: ~417 MiB at inference time
+
+### KB Index (Elasticsearch)
+- **Index**: `lse-kb` · embedding model: `nomic-embed-text` (768-dim)
+- **Documents**: 19 docs indexed with consistent 768-dim vectors (rebuilt 2026-06-08 after WSL cascade failure)
+- **Previous state**: was indexed with `all-MiniLM-L6-v2` (384-dim) while querying with `nomic-embed-text` (768-dim) → dimension mismatch → meaningless cosine similarity scores
+- **Status**: ✅ fixed — same model for both indexing and querying
 
 ### SearXNG
 - Config v3 live — bing news + google news active

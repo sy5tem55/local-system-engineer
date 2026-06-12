@@ -16,7 +16,7 @@ NODE_USER="lse-admin"
 NODE_PORT=22
 LLM_PORT=8080
 
-# Exact model path on node3090 (/opt/models is a symlink → /home/sy5/.lmstudio/models/)
+# Exact model path on node3090 (/opt/models is a REAL directory since 2026-06-11 P21 — no symlinks; .gguf files chattr +i)
 MODEL_PATH="/opt/models/lmstudio-community/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf"
 
 # llama-server binary — confirm path with: ssh lse-admin@node3090.home.arpa which llama-server

@@ -1,0 +1,11 @@
+[lmstudio]
+url   = http://192.168.5.41:1234
+model = qwen/qwen3.6-27b
+
+[openwebui]
+url     = http://localhost:3000
+api_key = [REDACTED-HA-AGENT-API-KEY]
+model   = local-system-engineer
+
+[homeassistant]
+url     = http://homeassistant.home.arpa:8123

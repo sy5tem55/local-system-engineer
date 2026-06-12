@@ -567,9 +567,15 @@ def _extract_required_vars(assertions: list[dict]) -> set[str]:
     excluding built-ins and known helpers.
     """
     SKIP = {
-        "len", "any", "all", "sum", "min", "max", "sorted", "enumerate", "zip",
-        "True", "False", "None", "isinstance", "list", "dict", "str", "int",
-        "float", "bool", "is_rfc1918",
+        # Python builtins — must never appear in OUTPUT FORMAT as required vars
+        "len", "any", "all", "sum", "min", "max", "abs", "round", "sorted",
+        "enumerate", "zip", "range", "print", "repr", "type",
+        "isinstance", "list", "dict", "tuple", "set", "str", "int",
+        "float", "bool", "bytes",
+        # Literals / constants
+        "True", "False", "None",
+        # Domain helpers
+        "is_rfc1918",
     }
     names: set[str] = set()
     for a in assertions:

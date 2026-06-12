@@ -1,0 +1,8 @@
+Audit and spotlight all traffic from the Meross smart bulb on the network.
+Device details: IP=192.168.1.254, MAC=48:e1:e9:6a:f3:4b, hostname=meross_moon, pfSense alias=meross_moon (Chengdu Meross Technology — smart RGB bulb).
+
+Goals:
+1. Show all current firewall rules that reference this device or its alias
+2. Show recent firewall log entries for this device (last 2 hours)
+3. Identify any outbound connections to external IPs (phone-home behavior)
+4. Propose a block rule targeting the pfSense alias meross_moon that drops all WAN-bound traffic and logs it — but DO NOT apply it yet, wait for confirmation
