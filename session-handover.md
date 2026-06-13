@@ -53,9 +53,9 @@ fe18996  P27: session-handover updated (superseded — see below)
 ## Pending tasks (carry forward)
 
 ### Immediate
-- [ ] **Deploy v1.7.14 to OWUI** — paste `tools/cogitator-v1.7.14.py`, verify black-norm sha `435c319a…`
-- [ ] **Kill socat PID 8485** on node3090: `ssh lse-admin@node3090.home.arpa "sudo kill 8485"` then `ss -tlnp | grep -E '8642|8643'`
-- [x] **Deploy v1.7.13 to OWUI** ✅ (P27) — black-norm sha verified `866b0b4d…`
+- [x] **Deploy v1.7.14 to OWUI** ✅ (P27) — black-norm sha verified `435c319a…`
+- [x] **Kill socat** ✅ (P27) — hermes-socat disabled (`systemctl is-enabled hermes-socat` → disabled), port 8643 no longer listening
+- [x] **Deploy v1.7.13 to OWUI** ✅ (P27) — superseded by v1.7.14
 - [ ] **Session debrief KB entry** — Write P26/P27 learnings to `/opt/local-se/kb/session-learnings.md` (draft below; confirm + append via `>>`)
 - [ ] **System prompt update note** — user confirmed v0.5.15 already references `tool v1.7.13 · LSE Routing filter version: 1.2.0`
 
@@ -189,4 +189,4 @@ K is not a lever. V is the only knob.
 - **node3090**: llama-server :8080, Qwen3.6-27B, 96k ctx (agent_profile in _NODE_REGISTRY); Hermes gateway :8642 (0.0.0.0); socat PID 8485 still running but redundant — kill before next Hermes test
 - **Elasticsearch**: running in Docker, lse-kb (19 docs), lse-errors, lse-rfc-kb all live
 - **RUTX50 KB entry**: f3d292b0 -- source_url corrected to ground_truth (P27)
-- **Git repo**: pending commit for v1.7.14 + capital MD registry updates
+- **Git repo**: clean on master — `934e391` (cogitator v1.7.14) + `566c6f8` (capital MDs)
