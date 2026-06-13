@@ -1093,27 +1093,16 @@ class Tools:
                             _mu = _re_fp.search(r"__UNAME__\s*([^\n]+)", _fp_out)
                             if _mu:
                                 _platform = _mu.group(1).strip()
-                        # Only cache on success — unknown/error results must not
-                        # block a retry on the next SSH call with the correct key.
-                        if (
-                            _fp_proc.returncode == 0
-                            and _platform != "unknown"
-                            and not _platform.startswith("(fingerprint")
-                        ):
-                            self._device_cache[_fp_host] = {
-                                "platform": _platform, "raw": _fp_out[:500]
-                            }
-                            self._log(f"DEVICE-FP: {_fp_host} -> {_platform}")
-                        else:
-                            self._log(
-                                f"DEVICE-FP FAILED (not cached): {_fp_host} "
-                                f"rc={_fp_proc.returncode} platform={_platform}"
-                            )
-                            _platform = "unknown"  # ensure consistent state
+                        self._device_cache[_fp_host] = {
+                            "platform": _platform,
+                            "raw": _fp_out[:500],
+                        }
+                        self._log(f"DEVICE-FP: {_fp_host} -> {_platform}")
                     except Exception as _fp_e:
-                        # Do not cache — allow retry on next SSH call
-                        self._log(f"DEVICE-FP ERROR (not cached): {_fp_host}: {_fp_e}")
-                        _platform = "unknown"
+                        self._device_cache[_fp_host] = {
+                            "platform": f"(fingerprint error: {_fp_e})",
+                            "raw": "",
+                        }
                 if _fp_host in self._device_cache:
                     _cached = self._device_cache[_fp_host]
                     _fp_note = (
@@ -1122,13 +1111,6 @@ class Tools:
                         f"source=os-release/uname — ground truth. "
                         f"Use this platform for ALL CLI decisions. "
                         f"Never infer device type from IP or hostname.]"
-                    )
-                elif _platform == "unknown":
-                    _fp_note = (
-                        f"\n[DEVICE FINGERPRINT PENDING: host={_fp_host} | "
-                        f"platform=unknown — SSH auth failed or no output. "
-                        f"Fingerprint NOT cached; will retry on next SSH call. "
-                        f"Do NOT infer device type from IP or hostname.]"
                     )
 
         # ── Execute ───────────────────────────────────────────────────────────
