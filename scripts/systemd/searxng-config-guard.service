@@ -1,0 +1,9 @@
+[Unit]
+Description=SearXNG config drift self-repair (LSE)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+# Runs as root so it can write the root-owned live settings.yml and restart the container.
+ExecStart=/usr/local/bin/searxng-config-guard.sh

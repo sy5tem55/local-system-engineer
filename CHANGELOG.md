@@ -3,6 +3,30 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-13 — P28 (Cowork): actuation layer (1.7.0-a) + Hermes↔LSE channel (v1.7.15–v1.7.19) + WATERFALL rule + self-repairing SearXNG + Firecrawl
+
+**Cogitator lineage v1.7.15 → v1.7.19** (each cumulative; black-norm sha = deploy identity, raw sha for reference):
+
+- **v1.7.15** (ast OK, raw `88f2a422…`, black-norm `5058ab2a…`, **4609 lines**, +94 vs v1.7.14): `check_hermes_inbox()` + `_format_hermes_messages` + `call_hermes` inbound passthrough — the Hermes→LSE half of the bidirectional channel (1.7.0-b). Inbox correctly returns `INBOX EMPTY` until the Hermes side queues a real message.
+- **v1.7.16** (ast OK, raw `d6da1af8…`, black-norm `4e50c802…`, **4750 lines**, +141): `hermes_cooperate()` bounded conference call + `_flush_voicemail`.
+- **v1.7.17** (ast OK, raw `53f17c29…`, black-norm `0839d47f…`, **4836 lines**, +86): `allow_sudo` allowlist + `_cooperate_exec` gated executor.
+- **v1.7.18** (ast OK, raw `759c7bdc…`, black-norm `620abcc3…`, **4929 lines**, +93): **WATERFALL PROVENANCE RULE** — `_wf_version_claim`/`_wf_has_provenance`; unprovenanced external version/behavior claims persist tagged `[UNVERIFIED]` at quality ≤0.3. Closes ROADMAP 1.7.6.
+- **v1.7.19** (ast OK, raw `7c1de10e…`, black-norm `e76d28b6…`, **4970 lines**, +41): Path B content-marker parser — `_extract_content_marker`/`_strip_hermes_marker`. **DEPLOYED** ✅ (black-norm `e76d28b6…` verified against live OWUI). LSE side now supports both Path A (gateway field) and Path B (content marker).
+
+**v1.7.0-a episode actuation layer — COMPLETE & validated live:**
+- `scripts/actuation.py` (NEW) — extract ` ```bash ` block → gate (ported Cogitator gates) → SSH-execute on the challenge host. 16/16 gate self-tests pass.
+- `scripts/lse_challenge_env.py` (+63) — `_actuate()` runs before `_evaluate_assertions` so `verify_ssh` reads the world the model actually changed. Backward-compatible (read-only challenges unaffected).
+- `scripts/run_episode.py` — `--no-learn`/`--eval` flags + `--bench <name>` runner (`run_bench`).
+- `scripts/escalation_wrapper.py` (+12) — `learn` flag threaded; `_index_to_kb`/`_record_error` suppressed in eval (closes the KB-write-back leak).
+- `scripts/seed_node_t3_006.py` (NEW) — first actuation challenge; **SOLVED 3/3 live** via pure `verify_ssh` ground truth.
+- `scripts/freeze_bench.py` (NEW) + `bench/lse-bench-v1.json` — tamper-evident frozen manifest; selects only bench-valid challenges (all assertions `verify_ssh`-backed AND write-mode → has `actuation`). **Re-freeze pending** (drops invalid node-t3-003/004).
+
+**Infra:**
+- **SearXNG self-repairing** — `docker/searxng_data/settings.yml` canonical (27 engines pinned, reddit excluded, sha `1194c84a…`) + `scripts/searxng-config-guard.sh` + systemd `.service`/`.timer` (`scripts/systemd/`). Drift root cause solved (file overwrite 6/07 + `:latest` recreate 6/08). KB purged of 13 `competition_kb` entries.
+- **Firecrawl** stood up on node3090 (`firecrawl-api-1` :3002; `sear_primary` SearXNG :5580). **Hermes web_search rewired to it** — verified live. Closes ROADMAP "Hermes web_search/firecrawl broken".
+- Design docs: `docs/lse-1.7.0-a-actuation-design.md`, `docs/lse-1.7.0-b-bidirectional-design.md`, `docs/hermes-side-1.7.0-b-spec.md` (Hermes self-install pending).
+
+---
 ## 2026-06-13 — P27 (Cowork): Cogitator v1.7.14 — HERMES_API_URL direct connect (:8643→:8642)
 
 - **v1.7.14 built** (P27, ast OK, raw sha256 `ff377203…`, black-norm `435c319a…`, **4515 lines**, +7 vs v1.7.13):

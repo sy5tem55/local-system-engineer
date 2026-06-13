@@ -1,0 +1,30 @@
+{
+  "bench": "lse-bench-v1",
+  "condition": "A (baseline \u2014 learning disabled)",
+  "model_id": "qwen3.6-27b-q4-64k",
+  "run_at": "2026-06-13T20:25:48.897094+00:00",
+  "n_challenges": 3,
+  "n_solved": 1,
+  "total_points": 32.9,
+  "frozen_set_drift": [],
+  "per_challenge": [
+    {
+      "id": "node-t3-003",
+      "outcome": "TRUNCATED",
+      "attempts": 3,
+      "points": 5.2
+    },
+    {
+      "id": "node-t3-004",
+      "outcome": "TRUNCATED",
+      "attempts": 3,
+      "points": 5.2
+    },
+    {
+      "id": "node-t3-006",
+      "outcome": "SOLVED",
+      "attempts": 1,
+      "points": 22.5
+    }
+  ]
+}
