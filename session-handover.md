@@ -37,6 +37,7 @@
 78c16fb  cogitator v1.7.12: restore from OWUI backup + cache-only-on-success fix
 [P27]    cogitator v1.7.13: SSH KB-FIRST RULE
 8cb7d14  P27: sync capital MDs to Cogitator v1.7.13
+fe18996  P27: session-handover updated
 ```
 
 ---
@@ -45,13 +46,13 @@
 
 ### Immediate
 - [ ] **Deploy v1.7.13 to OWUI** — file ready; paste + verify black-norm sha256 `866b0b4d…`
-- [ ] **Session debrief KB entry** — Write P26/P27 learnings to `/opt/local-se/kb/session-learnings.md` (draft in this handover; confirm + append via `>>`)
+- [ ] **Session debrief KB entry** — Write P26/P27 learnings to `/opt/local-se/kb/session-learnings.md` (draft below; confirm + append via `>>`)
 - [ ] **System prompt update note** — user confirmed v0.5.15 already references `tool v1.7.13 · LSE Routing filter version: 1.2.0`
 
 ### From ROADMAP (open)
 - [ ] **node-t3-005 Duplicate Model Cleanup** — do via interactive LSE session, use episode as verifier
 - [ ] **ES index-existence probe** in stack health check — `curl -s localhost:9200/lse-kb,lse-errors,lse-rfc-kb,lse-search-cache/_count`
-- [ ] **Launcher docker container visibility** — show all running containers + CPU/MEM in GUI ≥v1.078
+- [ ] **Launcher docker container visibility** — show all running containers + CPU/MEM in GUI >=v1.078
 - [ ] **NoMtp flag commit** — `lse-stack-launch-1.078.ps1` + `lse-profiles.xml` changes not yet committed; re-sign from WSL
 - [ ] **16-tool-call limit** — root cause unresolved: check Admin → Models → Qwen3 preset → Advanced → Max Tool Calls
 - [ ] **searxng-error-exporter** — Grafana Panel 24 "Failing engines" still shows 0
@@ -61,62 +62,56 @@
 
 ## Session-learnings KB entry to write (P26/P27)
 
-Append to `/opt/local-se/kb/session-learnings.md` via `>>`:
+Run on LUCIFER WSL2 to append to `/opt/local-se/kb/session-learnings.md`:
 
-```
-## Session 2026-06-13 — P26/P27: Write tool truncates NTFS; OWUI backup; ES source_url; git locks
-
-### What worked
-- OWUI backup recovery: copy-paste tool code from OWUI editor → .txt → rename .py.
-  Pure CRLF on Windows clipboard — not a problem. Python normalizes CRLF→LF on write.
-  AST.parse() accepts both. Black-norm sha256 is the deploy identity check. Use stdin
-  pipe for large files: `python3 -m black --quiet - < file.py | sha256sum`
-  (--code flag hits OSError: Argument list too long on files > ~100KB)
-- Finding correct ES field names: print sorted(src.keys()) from a live hit before writing
-  any update logic — reveals actual schema without guessing
-
-### What failed and why
-- **Attempted:** Reconstructing cogitator from P26 chat transcript after Write tool truncation
-  **Failed because:** User paste was the last message before context summarization — compressed
-  into summary prose, not preserved in JSONL. Largest message in JSONL was 43KB; 213KB paste lost.
-  **Fix:** User provided OWUI copy-paste backup (backupfromOWUI1.7.12.py). OWUI stores the
-  deployed (black-formatted) version — this is the authoritative source for deployed code.
-
-- **Attempted:** fix_rutx50_kb_source.py first version used src.get("source") with URL-content match
-  **Failed because:** KB documents store URL in source_url, not source. Script returned
-  "(none)" for all docs — silent wrong-field read.
-  **Fix:** src.get("source_url"); use title match for targeting, not URL-content match.
-
-- **Attempted:** Git commit from Cowork sandbox after capital MD updates
-  **Failed because:** .git/index.lock and .git/HEAD.lock persisted from a prior crashed session.
-  Sandbox (Linux) cannot delete NTFS lock files — rm returns "Operation not permitted".
-  **Fix:** From PowerShell on LUCIFER: `Get-ChildItem ".git\*.lock" | Remove-Item -Force`
-  Run before every commit attempt when working across Cowork + Windows git.
-
-### Key facts
-- Write tool on large NTFS .py files: silently truncates. P26 incident: cogitator-v1.7.12.py
-  (4483 lines) truncated by Write tool during reconstruction. Only detectable by post-write
-  line count: `python3 -c "print(sum(1 for _ in open(path)))"`. Run after every Write on .py > 100 lines.
-- Black-norm sha256 for large files: stdin pipe only.
-  `python3 -m black --quiet - < file.py | sha256sum` (works)
-  `python3 -m black --code "$(cat large_file.py)"` → OSError: Argument list too long
-- OWUI stores black-formatted deployed code; copy-paste from OWUI editor = authoritative backup.
-  CRLF→LF normalization is automatic. AST-valid either way.
-- ES lse-kb schema fields: content, created_at, doc_id, embedding, quality_score,
-  refinement_count, source_path, source_url, tags, title, topic, updated_at, version.
-  source_tier and verified_against are dynamic (added via update scripts / index_to_kb).
-- SSH behavioral bugs fixed in v1.7.13 docstring:
-  (1) bare ssh before KB lookup — model tried ssh root@rutx50 with no key → 30s timeout;
-  (2) wrong topic_filter — searched KB with topic_filter=pfsense for RUTX50 SSH query.
-  Rule: search_kb('{hostname} SSH access') with NO topic_filter before ANY ssh command.
-```
-
-WSL2 append command:
 ```bash
 cat >> /opt/local-se/kb/session-learnings.md << 'DEBRIEF_EOF'
-<paste entry above>
+
+## Session 2026-06-13 - P26/P27: USE BASH for .py on NTFS; OWUI backup; ES source_url; git locks; K cache
+
+### What worked
+- OWUI backup recovery: copy-paste tool code from OWUI editor to txt then rename .py.
+  Pure CRLF on Windows clipboard -- not a problem. Python normalizes CRLF to LF on write.
+  Black-norm sha256 is the deploy identity: python3 -m black --quiet - < file.py | sha256sum
+  (--code flag hits OSError: Argument list too long on files > ~100KB)
+- Finding correct ES field names: print sorted(src.keys()) from a live hit before writing
+  any update logic
+
+### What failed and why
+- **Attempted:** Reconstructing cogitator from P26 transcript after truncation
+  **Failed because:** User paste was last message before context summarization, compressed
+  into summary prose, not preserved in JSONL. Largest JSONL message was 43KB; 213KB paste lost.
+  **Fix:** OWUI copy-paste backup is the authoritative source for deployed code.
+
+- **Attempted:** fix_rutx50_kb_source.py used src.get("source") with URL-content match
+  **Failed because:** KB documents store URL in source_url, not source. Returned "(none)"
+  for all docs -- silent wrong-field read.
+  **Fix:** src.get("source_url"); target by title match, not URL-content match.
+
+- **Attempted:** Git commit from Cowork sandbox
+  **Failed because:** .git/index.lock and HEAD.lock persisted from crashed session.
+  Sandbox cannot delete NTFS lock files -- rm returns "Operation not permitted".
+  **Fix:** PowerShell: Get-ChildItem ".git\*.lock" | Remove-Item -Force before every commit.
+
+- **Attempted:** Bash splice on session-handover.md via sandbox mount
+  **Failed because:** Sandbox /sessions/.../mnt/ showed stale truncated view (109 lines)
+  of a 204-line committed file. Bash splice wrote truncated version back, losing 95 lines.
+  **Fix:** For .md files use Read/Write/Edit file tools (not bash -- bash mount can be stale).
+  For .py files: ALWAYS use bash (Write/Edit silently truncate .py on NTFS). No exceptions.
+
+### Key facts
+- LARGE .py FILES ON NTFS: USE BASH. NOT Write/Edit tools. ALWAYS.
+  Splice: python3 -c "with open(p) as f: s=f.read(); s=s.replace(old,new,1); open(p,'w').write(s)"
+  Verify: python3 -c "print(sum(1 for _ in open(p)))" + python3 -c "import ast; ast.parse(open(p).read())"
+- For .md files: use Read/Write/Edit file tools. Bash mount can show stale/truncated NTFS state.
+- ES lse-kb field is source_url (not source). Full schema: content, created_at, doc_id,
+  embedding, quality_score, refinement_count, source_path, source_url, tags, title, topic,
+  updated_at, version. source_tier and verified_against are dynamic fields.
+- KV cache: K must stay Q8_0 -- lowering K breaks this model. V is the only safe knob:
+  --cache-type-v q4_0 saves ~2.6 GB at 80k context, extends comfortable range to ~120k.
+- SSH v1.7.13: search_kb('{hostname} SSH access') with NO topic_filter before any ssh command.
 DEBRIEF_EOF
-tail -30 /opt/local-se/kb/session-learnings.md  # verify
+tail -40 /opt/local-se/kb/session-learnings.md
 ```
 
 ---
@@ -127,71 +122,53 @@ tail -30 /opt/local-se/kb/session-learnings.md  # verify
 
 | Parameter | Value | Assessment |
 |---|---|---|
-| temperature | 0.6 | ✅ Qwen3 official recommendation — correct |
-| top_k | 20 | ✅ Conservative (default 40) — good for factual/tool-call tasks |
-| top_p | 0.95 | ✅ Standard — fine combined with top_k=20 |
-| min_p | 0 | ✅ Qwen3 model card spec — correct, do not change |
-| reasoning-budget | 3072 | ✅ **Biggest anti-hallucination lever** — thinking before answering beats any sampling param |
-| ctx-size | 80,000 | ✅ |
-| function_calling | native | ✅ Correct for tool-calling |
+| temperature | 0.6 | Qwen3 official recommendation -- correct |
+| top_k | 20 | Conservative (default 40) -- good for factual/tool-call tasks |
+| top_p | 0.95 | Standard -- fine combined with top_k=20 |
+| min_p | 0 | Qwen3 model card spec -- correct, do not change |
+| reasoning-budget | 3072 | Biggest anti-hallucination lever -- thinking beats sampling params |
+| ctx-size | 80,000 | OK |
+| function_calling | native | Correct for tool-calling |
 
-**Verdict: params are correct — they match Qwen3's official recommendations exactly.**
+**Verdict: params are correct -- match Qwen3 official recommendations exactly.**
 
-The primary anti-hallucination levers for LSE are not sampling params but:
-1. **reasoning-budget 3072** — model thinks before answering (chain-of-thought in hidden tokens)
-2. **Docstring-enforced rules** — KB-FIRST, source-claim verification, CONFIG GROUND-TRUTH, SSH KB-FIRST (v1.7.13)
-3. **Code-enforced gates** — budget_gate(), verify_source_claims(), _device_cache
+Primary anti-hallucination levers (not sampling params):
+1. reasoning-budget 3072 -- chain-of-thought in hidden tokens before answering
+2. Docstring-enforced rules -- KB-FIRST, source-claim verification, CONFIG GROUND-TRUTH, SSH KB-FIRST (v1.7.13)
+3. Code-enforced gates -- budget_gate(), verify_source_claims(), _device_cache
 
 No parameter changes recommended.
 
 ---
 
-## KV Cache Tradeoff: Q8/Q8 vs Q4 options
+## KV Cache: Only V is a lever
 
-**Current:** `cache_type_k=q8_0, cache_type_v=q8_0` at `ctx-size=80000`
+**Current:** cache_type_k=q8_0, cache_type_v=q8_0 at ctx-size=80000
 
-### Memory math (Qwen3-27B architecture)
+**K cache: DO NOT TOUCH. K below Q8_0 breaks the model on this architecture.**
 
-Qwen3-27B: 64 layers, 8 KV heads (GQA), head_dim=128
+V cache is safe to lower. V participates in value aggregation after softmax (less sensitive
+than K which drives attention scores). Only valid change is V to Q4_0.
 
-| Config | Bytes/token | KV at 80k ctx | KV at 120k | KV at 160k |
-|---|---|---|---|---|
-| K=Q8 V=Q8 (current) | ~144 KB | ~11 GB | ~16.9 GB | OOM |
-| K=Q8 V=Q4 | ~108 KB | ~8.4 GB | ~12.6 GB | OOM |
-| K=Q4 V=Q4 | ~72 KB | ~5.6 GB | ~8.4 GB | ~11.2 GB |
+### Memory (Qwen3-27B: 64 layers, 8 KV heads GQA, head_dim=128)
 
-RTX 4090 has 24 GB. Q4_K_M weights ≈ 15.2 GB → ~8.8 GB available for KV.
+| Config | KV at 80k | KV at 120k |
+|---|---|---|
+| K=Q8 V=Q8 (current) | ~11 GB | ~16.9 GB |
+| K=Q8 V=Q4 | ~8.4 GB | ~12.6 GB |
 
-**Current Q8/Q8 at 80k fits within 8.8 GB (barely).** Longer sessions risk OOM.
+RTX 4090 24 GB total. Q4_K_M weights ~15.2 GB -- ~8.8 GB available for KV.
 
-### Quality tradeoff
+### The only valid change
 
-- **V cache Q8→Q4**: V participates in value aggregation after softmax — less sensitive to quantization noise than K. Research (KVQuant, KIVI papers) shows < 0.5 perplexity increase. **Practically invisible on sysadmin/tool-call output.**
-- **K cache Q8→Q4**: K participates in attention score computation (query·key^T). Quantization noise affects which tokens are attended to. ~1–2% perplexity increase — noticeable in creative writing, acceptable for sysadmin reasoning.
-- **K cache Q8→Q2**: Significant quality degradation. Not recommended.
-
-### Recommendations
-
-**Drop V first (lowest risk):**
 ```bash
-# In start-llama-server.sh — change one flag:
---cache-type-v q4_0   # was q8_0
-# Saves ~2.6 GB KV at 80k; extends comfortable range to ~120k
+# /opt/local-se/scripts/start-llama-server.sh:
+--cache-type-v q4_0   # was q8_0 -- K stays q8_0 always
+# Saves ~2.6 GB at 80k; extends comfortable range to ~120k
 ```
 
-**Drop both for very long sessions:**
-```bash
---cache-type-k q4_0 --cache-type-v q4_0
-# KV at 80k: ~5.6 GB, at 160k: ~11.2 GB — still fits 4090
-# Quality acceptable for LSE tool-calling and sysadmin reasoning
-```
-
-**Decision rule:**
-- Sessions under 80k tokens and no OOM → keep Q8/Q8 (current, max quality)
-- Arena episodes or long debug sessions that hit compact_context → try K=Q8 V=Q4
-- Only need 120k+ context regularly → K=Q4 V=Q4 justified
-
-**For LSE specifically:** The model calls tools (structured JSON), reasons about infrastructure, and follows docstring rules. It is NOT doing literary generation where token-level quality matters at the margin. K=Q4/V=Q4 is safe for the use case if you need the context window.
+Decision: no OOM under 80k -- keep Q8/Q8. Long sessions hitting compact_context -- K=Q8 V=Q4.
+K is not a lever. V is the only knob.
 
 ---
 
@@ -200,5 +177,5 @@ RTX 4090 has 24 GB. Q4_K_M weights ≈ 15.2 GB → ~8.8 GB available for KV.
 - **llama-server LUCIFER**: Qwen3.6-27B-Q4_K_M, port 8080, ctx 80k, K=Q8 V=Q8, reasoning-budget 3072
 - **node3090**: llama-server :8080, Qwen3.6-27B, 96k ctx (agent_profile in _NODE_REGISTRY)
 - **Elasticsearch**: running in Docker, lse-kb (19 docs), lse-errors, lse-rfc-kb all live
-- **RUTX50 KB entry**: `f3d292b0…` — source_url corrected to ground_truth (P27)
-- **Git repo**: clean on master, last commit 8cb7d14
+- **RUTX50 KB entry**: f3d292b0 -- source_url corrected to ground_truth (P27)
+- **Git repo**: clean on master, last commit fe18996 (session-handover)
