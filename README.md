@@ -24,7 +24,7 @@ A locally-hosted AI system administrator running on a private inference stack. O
 
 | Component | Version | File |
 |---|---|---|
-| Tool | **Cogitator v1.7.13** | `tools/cogitator-v1.7.13.py` |
+| Tool | **Cogitator v1.7.14** | `tools/cogitator-v1.7.14.py` |
 | Prompt | v0.5.15 | `prompts/v0.5.15.md` |
 | Routing filter | v1.2.0 | `tools/lse-routing-filter-v1.2.0.py` |
 | Launcher CLI | v1.078 | `LSEStack_gui/lse-stack-launch-1.078.ps1` |

@@ -6,22 +6,24 @@
 
 | Component | Version | Status |
 |---|---|---|
-| Tool | **Cogitator v1.7.13** | READY FOR DEPLOY — paste into OWUI Admin → Tools → LSE Cogitator → Save |
+| Tool | **Cogitator v1.7.14** | READY FOR DEPLOY — paste into OWUI Admin → Tools → LSE Cogitator → Save |
 | System Prompt | v0.5.15 | ✅ deployed |
 | Routing Filter | v1.2.0 | ✅ deployed |
 | llama.cpp | b9577 | ✅ deployed |
 | Launcher GUI | v1.5 | ✅ deployed |
 
-### Deploy Checklist for v1.7.13
+### Deploy Checklist for v1.7.14
 
-1. Open `tools/cogitator-v1.7.13.py` (4508 lines)
+1. Open `tools/cogitator-v1.7.14.py` (4515 lines)
 2. Paste into OWUI Admin → Tools → LSE Cogitator → Save
 3. OWUI black-formats on save — verify with black-norm sha256:
    ```bash
-   python3 -m black --quiet - < tools/cogitator-v1.7.13.py | sha256sum
-   # Expected: 866b0b4d656a20753bd2bf18d159389da44f00366678f80804495349c03dc67c
+   python3 -m black --quiet - < tools/cogitator-v1.7.14.py | sha256sum
+   # Expected: 435c319aae260a8616b4eeb14751fa747b2ad919d785db33685e461e5009d2c8
    ```
-4. Confirm version in OWUI tool description shows "1.7.13"
+4. Confirm version in OWUI tool description shows "1.7.14"
+5. Kill socat on node3090: `ssh lse-admin@node3090.home.arpa "sudo kill 8485"`
+6. Verify: `ss -tlnp | grep -E '8642|8643'` → port 8642 up, 8643 gone
 
 ### What was done this session (P27)
 
@@ -29,6 +31,9 @@
 - **v1.7.13 shipped** — SSH KB-FIRST RULE in execute_command docstring: `search_kb('{hostname} SSH access')` with NO `topic_filter` before any `ssh` command; never bare ssh without `-i` key
 - **KB source fix** — `fix_rutx50_kb_source.py` corrected fabricated `source_url` on "Teltonika RUTX50 SSH Access Guide" to accurate attribution. Verified applied to doc `f3d292b0…`
 - **Capital MDs synced** — CURRENT-STATE, README, VALVES, LSE-ARCHITECTURE, ROADMAP all updated to v1.7.13 / current facts. Committed `8cb7d14`
+- **Hermes connectivity verified** — gateway confirmed `0.0.0.0:8642` (not loopback-only). socat PID 8485 redundant. HERMES_API_URL default :8643→:8642 fixed in source (v1.7.14) so future deploys don't need valve UI override.
+- **v1.7.14 built** — HERMES_API_URL valve default :8643→:8642 + docstring updates. ast OK, black-norm `435c319a…`, 4515 lines (+7). Pending: OWUI deploy + kill socat PID 8485.
+- **Hermes bidirectional gap documented** — ROADMAP v1.7.0-b: LSE pull-only, no Hermes push path yet. Three design options recorded.
 
 ### Commits this session
 
@@ -37,7 +42,10 @@
 78c16fb  cogitator v1.7.12: restore from OWUI backup + cache-only-on-success fix
 [P27]    cogitator v1.7.13: SSH KB-FIRST RULE
 8cb7d14  P27: sync capital MDs to Cogitator v1.7.13
-fe18996  P27: session-handover updated
+0211ac1  P27: Hermes bidirectional comms gap documented (ROADMAP v1.7.0-b)
+[P27]    cogitator v1.7.14: HERMES direct connect :8643→:8642
+[P27]    P27: capital MDs + registries updated to v1.7.14
+fe18996  P27: session-handover updated (superseded — see below)
 ```
 
 ---
@@ -45,6 +53,8 @@ fe18996  P27: session-handover updated
 ## Pending tasks (carry forward)
 
 ### Immediate
+- [ ] **Deploy v1.7.14 to OWUI** — paste `tools/cogitator-v1.7.14.py`, verify black-norm sha `435c319a…`
+- [ ] **Kill socat PID 8485** on node3090: `ssh lse-admin@node3090.home.arpa "sudo kill 8485"` then `ss -tlnp | grep -E '8642|8643'`
 - [x] **Deploy v1.7.13 to OWUI** ✅ (P27) — black-norm sha verified `866b0b4d…`
 - [ ] **Session debrief KB entry** — Write P26/P27 learnings to `/opt/local-se/kb/session-learnings.md` (draft below; confirm + append via `>>`)
 - [ ] **System prompt update note** — user confirmed v0.5.15 already references `tool v1.7.13 · LSE Routing filter version: 1.2.0`
@@ -176,7 +186,7 @@ K is not a lever. V is the only knob.
 ## Infrastructure state at end of P27
 
 - **llama-server LUCIFER**: Qwen3.6-27B-Q4_K_M, port 8080, ctx 80k, K=Q8 V=Q8, reasoning-budget 3072
-- **node3090**: llama-server :8080, Qwen3.6-27B, 96k ctx (agent_profile in _NODE_REGISTRY)
+- **node3090**: llama-server :8080, Qwen3.6-27B, 96k ctx (agent_profile in _NODE_REGISTRY); Hermes gateway :8642 (0.0.0.0); socat PID 8485 still running but redundant — kill before next Hermes test
 - **Elasticsearch**: running in Docker, lse-kb (19 docs), lse-errors, lse-rfc-kb all live
 - **RUTX50 KB entry**: f3d292b0 -- source_url corrected to ground_truth (P27)
-- **Git repo**: clean on master, last commit fe18996 (session-handover)
+- **Git repo**: pending commit for v1.7.14 + capital MD registry updates

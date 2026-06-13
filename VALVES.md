@@ -18,7 +18,7 @@ Secrets that unlock broader access (master passwords, write-capable API keys) mu
 
 ## Active Tools
 
-### 1. LSE Cogitator — `cogitator-v1.7.13.py`
+### 1. LSE Cogitator — `cogitator-v1.7.14.py`
 
 | Valve | Default | Sensitive | Storage | Notes |
 |---|---|---|---|---|
@@ -33,8 +33,10 @@ Secrets that unlock broader access (master passwords, write-capable API keys) mu
 | `ES_URL` | `http://127.0.0.1:9200` | No | Valve OK | Elasticsearch RAG endpoint |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | No | Valve OK | Ollama endpoint — used for RAG embeddings AND pfsense_log_summary anomaly narrative (llama3.2:3b) |
 | `EMBED_MODEL` | `nomic-embed-text` | No | Valve OK | Embedding model name |
+| `HERMES_API_URL` | `http://192.168.5.41:8642` | No | Valve OK | Hermes gateway on node3090. Binds 0.0.0.0:8642 directly (confirmed P27: `ss -tlnp` + HTTP 200 from LUCIFER). socat :8643→:8642 workaround eliminated in v1.7.14. |
+| `HERMES_API_KEY` | `7aa537e0…` (see source) | Low | Valve OK | Hermes gateway API key. Blast radius: node3090 Hermes tasks only. Key validated P27 (HTTP 200). Second key `PFIStFD_yp…` in Vaultwarden — likely stale; reconcile before retiring. |
 
-All valves in this tool are non-sensitive (localhost URLs, paths, integers). No action required.
+All valves in this tool are non-sensitive (localhost URLs, paths, integers) except HERMES_API_KEY which is low-sensitivity (node3090-scoped). No action required.
 
 **Audit log path change:** default updated from `/home/sy5/.lse/agent_commands.log` to `/opt/local-se/agent_commands.log`. The `.lse` directory is now root:sy5 710 — sy5 can traverse it to read the secrets file but cannot write new files into it. The audit log (written every tool call) must live in a sy5-writable path. Update the `LOG_FILE` valve in OpenWebUI to match if not yet redeployed.
 
