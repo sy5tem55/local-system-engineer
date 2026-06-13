@@ -45,7 +45,7 @@
 | Node | CPU | RAM | GPU | OS | IP | Status |
 |---|---|---|---|---|---|---|
 | LUCIFER | Intel 9900K | — | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | 192.168.1.x | Primary — Qwen3.6 27B Q4_K_M on port 8080; pfsense-agent.py orchestrator |
-| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — llama-server :8080 (llama-cpp, Qwen3.6-27B Q4_K_M, 96k ctx); Hermes API :8642 (127.0.0.1 only); socat :8643→:8642 (UNMANAGED — dies on reboot); pfsense-agent orchestrator target |
+| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — llama-server :8080 (llama-cpp, Qwen3.6-27B Q4_K_M, 96k ctx); Hermes API :8642 (0.0.0.0 direct — confirmed P27); socat :8643 ELIMINATED (P27 — hermes-socat disabled); pfsense-agent orchestrator target |
 | node5090 | AMD 9800X3D | 64GB | RTX 5090 | Win11 | 192.168.5.x | WoL/SSH setup deferred |
 | HA Pi | ARM Cortex-A72 | 4GB | — | HA OS 2026.6.0 | 192.168.1.80 | homeassistant.home.arpa |
 | n45 (NAS) | Marvell Kirkwood | — | — | QTS | 192.168.5.44 + .45 | n45.home.arpa — dual NIC failover |
