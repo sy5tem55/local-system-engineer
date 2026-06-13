@@ -1,7 +1,7 @@
 # LSE Valve Registry
 > Single source of truth for all OpenWebUI valve configuration across LSE tools.
 > Update this file whenever a valve is added, removed, or its security posture changes.
-> Last updated: 2026-06-03
+> Last updated: 2026-06-13 (P27 Cowork)
 
 ---
 
@@ -18,7 +18,7 @@ Secrets that unlock broader access (master passwords, write-capable API keys) mu
 
 ## Active Tools
 
-### 1. LSE System Admin Terminal — `openwebui-tool-v1.5.17.py`
+### 1. LSE Cogitator — `cogitator-v1.7.13.py`
 
 | Valve | Default | Sensitive | Storage | Notes |
 |---|---|---|---|---|
