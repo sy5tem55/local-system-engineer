@@ -3,6 +3,16 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-13 — P26 (Cowork): Cogitator v1.7.10 — source-claim verification (fabrication #5 fix in code)
+
+- **v1.7.10 built** (ast OK, raw sha256 `463e0941…`, black-norm `48e13812…`, 203,008 B):
+  - **`verify_source_claims(url, claims)`**: new tool function. Re-fetches source URL (or uses `self._fetch_cache` if within TTL) and checks each comma-separated claim for verbatim presence. Returns `FOUND` + ±300-char excerpt, `PARTIAL` (specific token found but full claim absent — excerpt shows what source ACTUALLY says), or `NOT_FOUND` (with list of version strings the source DOES contain). Does NOT count against search budget.
+  - **`fetch_url` modified**: on every successful text extraction, caches content to `self._fetch_cache[url]` and appends a code-emitted `[SOURCE-VERIFY MANDATE]` banner instructing the model to call `verify_source_claims` before asserting any version number, date, or specific value. Error/non-text returns untouched (no false mandate).
+  - **New valve**: `SOURCE_VERIFY_CACHE_TTL` (default 300s) — controls cache TTL; set to 0 to always re-fetch.
+  - **Root cause fixed**: fabrication #5 (P25) — model had 07.22.3=Stable / 07.23.4=Latest in context, emitted phantom 07.23.5 + 07.22.4. Evidence overwrite at synthesis; prompt fences proved ineffective. Fix: code does the comparison (model cannot fabricate `verify_source_claims` return value). Enforcement in code, sudo-blocker lineage.
+- READY FOR DEPLOY — paste into OWUI Admin → Tools → LSE Cogitator → Save.
+
+---
 ## 2026-06-12 — P25 (Cowork): Cogitator v1.7.9 — hermes_plan creates the kanban card (capability gap closed in code)
 
 - **v1.7.9 built**: `_kanban_create_card()` — direct `INSERT OR IGNORE` into node3090 `kanban.db` over ssh (BatchMode, 10s timeout), called by `hermes_plan` after envelope parse + checkpoint. status=`triage`, assignee=`lse`, created_by=`lse-cogitator`, goal_mode=0, `idempotency_key=hermes_plan:<task_id>`, created_at INTEGER epoch. Fail-open: card failure becomes a `card_error` line in the plan result, never blocks the envelope. Pre-check (P24 carry): tasks schema has NO CHECK on status; `VALID_INITIAL_STATUSES={running,blocked}` gates only the Python create API — not this path; `triage` is in `VALID_STATUSES`. Single-quote/control-char sanitization on all interpolated values; SQL delivered via stdin (no shell-quoting layer). ast clean.

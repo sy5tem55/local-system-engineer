@@ -551,3 +551,28 @@ Cumulative KB entries from post-session debriefs.
 - Hermes memory pointer (MEMORY.md line 3) WORKS — contract is read on every PLAN REQUEST turn
 - Playwright run-server is WebSocket-only: plain GET = error page, that's healthy; EADDRINUSE on "restart" means it was already up
 - "Message Hermes" via the LSE can land in the WRONG memory store (LSE's own OWUI memory) — always verify on node3090: sudo grep PLANNER /home/hermes-admin/.hermes/memories/MEMORY.md
+
+## Session 2026-06-12 — P25: triage is the decomposer's inbox; fabrication survives prompt fences
+
+### What worked
+- v1.7.9 direct INSERT into kanban.db: schema has NO CHECK on status; VALID_INITIAL_STATUSES={running,blocked} gates only the Python API. created_at is INTEGER epoch. idempotency_key + INSERT OR IGNORE = re-plan safe
+- Catching fabrication by independent re-fetch of the cited source within minutes (grep the version table, not the prose)
+- Attributing "unattributed" OWUI activity via time-window SQL on the chat table: SELECT ... WHERE updated_at BETWEEN strftime('%s',...) — found in seconds what text-grep missed for two sessions
+
+### What failed and why
+- **Attempted:** v1.7.9 card with status='triage' as the "safe, never-claimed" state (P22 survey conclusion)
+  **Failed because:** Hermes kanban_decompose.py treats triage as its INPUT QUEUE — auto_decompose:true (default) decomposes every triage card per dispatcher tick, flipped ours triage->todo, spawned 3 t_* children, dispatched 2 workers that re-did finished research
+  **Fix:** auto_decompose: false in /home/hermes-admin/.hermes/config.yaml (~line 441, backup .bak-P25) + systemctl restart hermes-gateway. Verified: next card stayed triage
+- **Attempted:** Stopping the rogue work by archiving the cards
+  **Failed because:** archive does NOT stop an in-flight worker — pid 11699 kept executing the archived card for 10+ min
+  **Fix:** kill tasks.worker_pid explicitly, THEN archive
+- **Attempted:** Preventing RUTX50 fabrication via explicit context fence ("no version newer than 07.23.4 exists") + verified ground truth provided
+  **Failed because:** LSE fetched the wiki page (07.22.3=Stable/07.23.4=Latest in plain view) and STILL emitted phantom 07.23.5 + 07.22.4 with invented dates/changelogs recombined from the real 07.23 changelog — evidence overwrite at synthesis, fabrication #5
+  **Fix:** corrected docs/rutx50/rutx50-remediation-decision.md (correction header). Real fix queued v1.7.10: code-enforced source-claim verification (re-fetch cited sources, diff claimed facts) — fences don't hold at synthesis
+
+### Key facts
+- kanban.db tasks: created_at INTEGER epoch, no CHECK on status, idempotency_key indexed; t_* ids = Hermes API path; created_by column reveals the writer (auto-decomposer vs lse-cogitator)
+- node3090 ~/.hermes/config.yaml: auto_decompose now FALSE; manual decompose = `hermes kanban decompose <id>` or dashboard button
+- P24 "webui.db clean" was a false-negative: verify ABSENCE with storage-shaped queries (time-window on chat.updated_at), never text-grep for command text that isn't persisted
+- 06-10 22:14 sweep = SY5's "Claude Code Security Check" OWUI chat (npm supply-chain, Check Point) — harness exonerated: run_episode.py -> llama-server direct, never the cogitator, never agent_commands.log
+- RUTX50: 07.22.3=official Stable, 07.23.4=Latest, NO fix exists (verified 2026-06-12); webui auth = uhttpd->api_dispatcher.lua(LuaJIT)->ubus session, SSH=dropbear (separate); recovery: /etc/init.d/uhttpd restart; downgrade WITHOUT keep-settings
