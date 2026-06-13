@@ -30,6 +30,19 @@ import sqlite3
 import subprocess
 from typing import Any, Optional
 
+# Actuation layer (v1.7.0-a) — optional import; env loads read-only if absent.
+try:
+    from actuation import run_actuation as _run_actuation_block
+except ImportError:  # pragma: no cover
+    import os as _os
+    import sys as _sys
+
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    try:
+        from actuation import run_actuation as _run_actuation_block
+    except ImportError:
+        _run_actuation_block = None
+
 import gymnasium as gym
 
 # Safe builtins for assertion exec — removes eval/exec/open/__import__ etc.
@@ -100,6 +113,7 @@ class LSEChallengeEnv(gym.Env):
         self._attempt_assertion_results: list[list[dict]] = []
         self._kb_context: str = ""
         self._model_id: str = "unknown"
+        self._last_actuation: Optional[dict] = None
 
     # ── Gymnasium API ─────────────────────────────────────────────────────────
 
@@ -124,6 +138,7 @@ class LSEChallengeEnv(gym.Env):
         self._current_challenge = self._load_challenge(options.get("challenge_id"))
         self._attempt_texts = []
         self._attempt_assertion_results = []
+        self._last_actuation = None
 
         return self._get_obs(), self._get_info()
 
@@ -142,7 +157,8 @@ class LSEChallengeEnv(gym.Env):
         attempt_n = len(self._attempt_texts)
         max_attempts = self._current_challenge.get("max_attempts", 3)
 
-        results = self._evaluate_assertions(action)
+        self._last_actuation = self._actuate(action)
+        results = self._evaluate_assertions(action, self._last_actuation)
         self._attempt_assertion_results.append(results)
 
         n_passed = sum(1 for r in results if r["passed"])
@@ -205,6 +221,7 @@ class LSEChallengeEnv(gym.Env):
             "assertion_results":     last_results,
             "assertions_passed":     sum(1 for r in last_results if r["passed"]),
             "assertions_total":      len(last_results),
+            "actuation":             self._last_actuation,
         }
 
     def _build_challenge_prompt(self) -> str:
@@ -242,6 +259,16 @@ class LSEChallengeEnv(gym.Env):
                 "Use the exact key names above. Values must match what the assertions check.",
             ]
 
+        if criteria.get("actuation"):
+            lines += [
+                "",
+                "ACTUATION — this is a WRITE challenge. To change the system, emit a",
+                "```bash code block with the exact commands to run on the target host.",
+                "The harness runs them over SSH (through safety gates) BEFORE checking",
+                "assertions. Do NOT use sudo unless the task says it is allowed; destructive",
+                "commands are hard-blocked. Then include your ```json findings block.",
+            ]
+
         if self._kb_context:
             lines += [
                 "",
@@ -273,14 +300,50 @@ class LSEChallengeEnv(gym.Env):
 
     # ── Assertion Evaluation ──────────────────────────────────────────────────
 
-    def _evaluate_assertions(self, model_response: str) -> list[dict]:
+    def _actuate(self, model_response: str) -> Optional[dict]:
+        """v1.7.0-a — execute the model's ```bash block on the challenge target.
+
+        No-op (returns None) unless the challenge's success_criteria carries an
+        "actuation" spec: {"host", "user", "allow_sudo", "timeout"}. Runs BEFORE
+        assertion evaluation so verify_ssh reads the world the model changed.
+        """
+        criteria = json.loads(self._current_challenge.get("success_criteria", "{}"))
+        spec = criteria.get("actuation")
+        if not spec:
+            return None
+        if _run_actuation_block is None:
+            return {
+                "ran": False, "gate_error": None, "stdout": "", "stderr": "",
+                "exit_code": None, "n_lines": 0,
+                "error": "actuation.py not importable",
+            }
+        return _run_actuation_block(
+            host=spec["host"],
+            user=spec.get("user", "lse-admin"),
+            block_text=model_response,
+            allow_sudo=spec.get("allow_sudo", []),
+            timeout=spec.get("timeout", 60),
+        )
+
+    def _evaluate_assertions(
+        self, model_response: str, actuation: Optional[dict] = None
+    ) -> list[dict]:
         """
         Parse the model's JSON block and evaluate each assertion in a
         restricted namespace. Returns a list of result dicts.
+
+        If an actuation result is supplied (v1.7.0-a), its stdout/stderr/exit
+        are injected into the namespace so assertions may reference
+        actuation_stdout / actuation_stderr / actuation_exit directly.
         """
         criteria = json.loads(self._current_challenge.get("success_criteria", "{}"))
         assertions = criteria.get("assertions", [])
         namespace = _build_assertion_namespace(model_response)
+        if actuation is not None:
+            namespace["actuation_stdout"] = actuation.get("stdout", "")
+            namespace["actuation_stderr"] = actuation.get("stderr", "")
+            namespace["actuation_exit"] = actuation.get("exit_code")
+            namespace["actuation_ran"] = bool(actuation.get("ran"))
         results = []
 
         for a in assertions:

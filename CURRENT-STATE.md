@@ -1,5 +1,5 @@
 # LSE Current State
-> Last updated: 2026-06-13 (P27 Cowork)
+> Last updated: 2026-06-13 (P28 Cowork)
 > Source of truth for deployed versions. Update this file at the end of every session.
 
 ---
@@ -8,7 +8,7 @@
 
 | Component | Version | File | Status |
 |---|---|---|---|
-| OpenWebUI Tool | **Cogitator v1.7.14** | `tools/cogitator-v1.7.14.py` | READY FOR DEPLOY (P27) — HERMES direct connect: HERMES_API_URL valve default :8643→:8642. black-norm `435c319a…`, 4515 lines (+7). Previous: v1.7.13 ✅ (black-norm `866b0b4d…`, 4508 lines) |
+| OpenWebUI Tool | **Cogitator v1.7.19** | `tools/cogitator-v1.7.19.py` | ✅ DEPLOYED (P28) — black-norm `e76d28b6…`, raw `7c1de10e…`, 4970 lines. Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) capping the Hermes↔LSE channel. P28 lineage: v1.7.15 `check_hermes_inbox` (+94) → v1.7.16 `hermes_cooperate` (+141) → v1.7.17 `allow_sudo` (+86) → v1.7.18 WATERFALL PROVENANCE RULE (+93) → v1.7.19 Path B parser (+41). Previous: v1.7.14 (P27, black-norm `435c319a…`, 4515 lines) |
 | System Prompt | v0.5.15 | `prompts/v0.5.15.md` | ✅ deployed — PFSENSE LOG RULE section |
 | Routing Filter | **v1.2.0** | `tools/lse-routing-filter-v1.2.0.py` | ✅ deployed — model-aware passthrough; Qwen3 preset only |
 | Context Monitor | v1.3.0 | `tools/lse-context-monitor-v1.3.0.py` | 🚫 retired (2026-05-29) — wrong metric prefix; replaced by Grafana alert pipeline (now also removed) |
@@ -21,6 +21,11 @@
 | GP Shutdown Script | — | `LSEStack_gui/docker-graceful-stop.ps1` | ✅ — graceful Docker stop on Windows shutdown; Dify conditional; signed SY5TEM5Cert (2026-06-09) |
 
 ### Tool Changelog Summary (recent — Cogitator)
+- **Cogitator v1.7.19** — ✅ DEPLOYED (P28). Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) — parses `[[HERMES->LSE]]` markers embedded in gateway content. LSE side now supports both Path A (gateway field) and Path B (content marker).
+- **Cogitator v1.7.18** — WATERFALL PROVENANCE RULE (`_wf_version_claim`/`_wf_has_provenance`): unprovenanced external version/behavior claims persist tagged `[UNVERIFIED]` at quality ≤0.3. Closes ROADMAP 1.7.6.
+- **Cogitator v1.7.17** — `allow_sudo` allowlist + `_cooperate_exec` gated executor (Hermes conference can run gated sudo actions).
+- **Cogitator v1.7.16** — `hermes_cooperate()` bounded conference call + `_flush_voicemail`.
+- **Cogitator v1.7.15** — `check_hermes_inbox()` + `_format_hermes_messages` + `call_hermes` inbound passthrough — Hermes→LSE channel (1.7.0-b). Returns `INBOX EMPTY` until Hermes side queues a message.
 - **Cogitator v1.7.14** — HERMES direct connect: HERMES_API_URL valve default :8643→:8642. Gateway confirmed binding 0.0.0.0:8642 (P27: ss -tlnp + HTTP 200 from LUCIFER). socat :8643 workaround eliminated. No code logic change.
 - **Cogitator v1.7.13** — SSH KB-FIRST RULE in execute_command docstring: search_kb('{hostname} SSH access') with NO topic_filter before any ssh; never bare ssh without -i key; never apply another device's topic_filter. Closes rutx50 live-test incidents (bare SSH timeout + wrong topic_filter=pfsense).
 - **Cogitator v1.7.12** — SSH DEVICE AUTO-FINGERPRINT: execute_command intercepts `ssh ` prefix, runs os-release+uname on first connection, prepends [DEVICE FINGERPRINT] banner. Failed fingerprints NOT cached. Restored from OWUI backup + cache fix.

@@ -54,9 +54,9 @@ SYSTEM_PROMPT = (
 
 # ── Stack builder ─────────────────────────────────────────────────────────────
 
-def build_env(db_path=DB_PATH, model_endpoint=MODEL_ENDPOINT, verbose=True):
+def build_env(db_path=DB_PATH, model_endpoint=MODEL_ENDPOINT, verbose=True, learn=True):
     base    = LSEChallengeEnv(db_path=db_path, model_endpoint=model_endpoint)
-    wrapped = EscalationWrapper(base, verbose=verbose)
+    wrapped = EscalationWrapper(base, verbose=verbose, learn=learn)
     wrapped = TimeLimit(wrapped, max_episode_steps=3)
     wrapped = RecordEpisodeStatistics(wrapped)
     return wrapped
@@ -98,8 +98,8 @@ def call_model(obs, model_endpoint=MODEL_ENDPOINT, temperature=TEMPERATURE, use_
 # ── Episode runner ────────────────────────────────────────────────────────────
 
 def run_episode(challenge_id, model_id=MODEL_ID, model_endpoint=MODEL_ENDPOINT,
-                db_path=DB_PATH, verbose=True, dry_run=False):
-    env = build_env(db_path=db_path, model_endpoint=model_endpoint, verbose=verbose)
+                db_path=DB_PATH, verbose=True, dry_run=False, learn=True):
+    env = build_env(db_path=db_path, model_endpoint=model_endpoint, verbose=verbose, learn=learn)
     obs, info = env.reset(options={"challenge_id": challenge_id, "model_id": model_id})
 
     if dry_run:
@@ -113,6 +113,8 @@ def run_episode(challenge_id, model_id=MODEL_ID, model_endpoint=MODEL_ENDPOINT,
     mult = info.get("discipline_multiplier", 1.0)
 
     _print_separator(f"Episode: {cid}  |  Model: {model_id}  |  {disc} {mult}×")
+    if not learn:
+        print("  [EVAL MODE] learning disabled — no leaderboard write, no challenge generation")
 
     terminated = truncated = False
     step_n     = 0
@@ -176,20 +178,24 @@ def run_episode(challenge_id, model_id=MODEL_ID, model_endpoint=MODEL_ENDPOINT,
         "wall_time_s":                round(wall, 1),
     }
 
-    # Auto-record to leaderboard
-    try:
-        lb = LeaderboardService(db_path=db_path.replace("challenges.db", "leaderboard.db"))
-        lb_episode_id = lb.record_episode(result)
-        result["leaderboard_episode_id"] = lb_episode_id
-        if verbose:
-            print(f"  Leaderboard: episode #{lb_episode_id} recorded → {lb.db_path}")
-            lb.print_standings()
-    except Exception as e:
-        if verbose:
-            print(f"  Leaderboard write failed (non-fatal): {e}")
+    # Auto-record to leaderboard (skipped in --no-learn / --eval mode)
+    if learn:
+        try:
+            lb = LeaderboardService(db_path=db_path.replace("challenges.db", "leaderboard.db"))
+            lb_episode_id = lb.record_episode(result)
+            result["leaderboard_episode_id"] = lb_episode_id
+            if verbose:
+                print(f"  Leaderboard: episode #{lb_episode_id} recorded → {lb.db_path}")
+                lb.print_standings()
+        except Exception as e:
+            if verbose:
+                print(f"  Leaderboard write failed (non-fatal): {e}")
+    elif verbose:
+        result["learning"] = "disabled"
+        print("  Leaderboard: skipped (eval mode)")
 
     # ChallengeGenerator — propose follow-up challenges from discoveries
-    if result.get("outcome") == "SOLVED" and last_response:
+    if learn and result.get("outcome") == "SOLVED" and last_response:
         try:
             last_json = _extract_json(last_response)
             if last_json:
@@ -264,6 +270,93 @@ def list_challenges(db_path=DB_PATH):
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+def run_bench(name, db_path=DB_PATH, model_id=MODEL_ID,
+              model_endpoint=MODEL_ENDPOINT, verbose=True):
+    """Run a frozen benchmark set in eval mode → write a Condition A report.
+
+    Loads bench/<name>.json (from freeze_bench.py), runs every challenge with
+    learning OFF (--eval semantics: no leaderboard, no KB writes), drift-checks
+    each challenge's success_criteria against the frozen sha256, and writes a
+    per-challenge solved/not + points report under bench/reports/. This is the
+    Condition A baseline; Condition B is the same set re-run post-learning, and
+    McNemar's paired test reads the two.
+    """
+    import hashlib  # noqa: PLC0415
+    import sqlite3  # noqa: PLC0415
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    bench_dir = Path(__file__).parent.parent / "bench"
+    manifest_path = bench_dir / f"{name}.json"
+    if not manifest_path.exists():
+        print(f"No manifest at {manifest_path} — run: python3 scripts/freeze_bench.py --name {name}")
+        return None
+
+    manifest = json.loads(manifest_path.read_text())
+    challenges = manifest.get("challenges", [])
+    _print_separator(
+        f"BENCH {name} — Condition A (eval, learning OFF) — {len(challenges)} challenge(s)"
+    )
+
+    # Drift check: frozen sha256 vs current DB
+    con = sqlite3.connect(db_path)
+    drift = []
+    try:
+        for c in challenges:
+            row = con.execute(
+                "SELECT success_criteria FROM challenges WHERE id=?", (c["id"],)
+            ).fetchone()
+            if not row:
+                drift.append(f"{c['id']}: MISSING from DB")
+            elif hashlib.sha256((row[0] or "").encode()).hexdigest() != c["success_criteria_sha256"]:
+                drift.append(f"{c['id']}: success_criteria CHANGED since freeze")
+    finally:
+        con.close()
+    if drift:
+        print("  ⚠ FROZEN-SET DRIFT — baseline only valid against the frozen criteria:")
+        for d in drift:
+            print(f"      {d}")
+        print("  Re-freeze (freeze_bench.py --force) as a NEW version if the change is intended.\n")
+
+    results = []
+    for c in challenges:
+        r = run_episode(c["id"], model_id=model_id, model_endpoint=model_endpoint,
+                        db_path=db_path, verbose=verbose, learn=False)
+        results.append(r)
+
+    solved = [r for r in results if r.get("outcome") == "SOLVED"]
+    total_points = sum(float(r.get("final_points", 0) or 0) for r in results)
+    report = {
+        "bench": name,
+        "condition": "A (baseline — learning disabled)",
+        "model_id": model_id,
+        "run_at": datetime.now(timezone.utc).isoformat(),
+        "n_challenges": len(results),
+        "n_solved": len(solved),
+        "total_points": round(total_points, 1),
+        "frozen_set_drift": drift,
+        "per_challenge": [
+            {"id": r.get("challenge_id"), "outcome": r.get("outcome"),
+             "attempts": r.get("attempts"), "points": r.get("final_points")}
+            for r in results
+        ],
+    }
+    reports_dir = bench_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    out = reports_dir / f"{name}-conditionA-{model_id}-{ts}.json"
+    out.write_text(json.dumps(report, indent=2))
+
+    _print_separator(f"BENCH RESULT — {name} Condition A")
+    print(f"  Solved: {len(solved)}/{len(results)}   Points: {total_points:.1f}"
+          + ("   [DRIFT — see above]" if drift else ""))
+    for r in results:
+        ic = "✅" if r.get("outcome") == "SOLVED" else "❌"
+        print(f"   {ic} {str(r.get('challenge_id')):18} {str(r.get('outcome')):10} "
+              f"{float(r.get('final_points', 0) or 0):.1f} pts")
+    print(f"\n  Report: {out}")
+    return report
+
+
 def main():
     p = argparse.ArgumentParser(
         description="Run one LSE Challenge Arena episode",
@@ -293,10 +386,21 @@ Examples:
                    help="Suppress EscalationWrapper verbose logs")
     p.add_argument("--json", action="store_true",
                    help="Print result as JSON (useful for scripting)")
+    p.add_argument("--no-learn", action="store_true",
+                   help="Do not record to leaderboard or generate challenges (eval-safe)")
+    p.add_argument("--eval", action="store_true",
+                   help="Evaluation mode: implies --no-learn (frozen benchmark runs)")
+    p.add_argument("--bench", default=None,
+                   help="Run a frozen set (e.g. lse-bench-v1) in eval mode → Condition A report")
     args = p.parse_args()
 
     if args.list:
         list_challenges(args.db)
+        return
+
+    if args.bench:
+        run_bench(args.bench, db_path=args.db, model_id=args.model,
+                  model_endpoint=args.endpoint, verbose=not args.quiet)
         return
 
     result = run_episode(
@@ -306,6 +410,7 @@ Examples:
         db_path        = args.db,
         verbose        = not args.quiet,
         dry_run        = args.dry_run,
+        learn          = not (args.no_learn or args.eval),
     )
 
     if args.json or result.get("dry_run"):

@@ -73,11 +73,15 @@ class EscalationWrapper(gym.Wrapper):
         stagnation_threshold: float = STAGNATION_THRESHOLD,
         kb_threshold: float = KB_THRESHOLD,
         verbose: bool = True,
+        learn: bool = True,
     ):
         super().__init__(env)
         self.stagnation_threshold = stagnation_threshold
         self.kb_threshold = kb_threshold
         self.verbose = verbose
+        # learn=False (--eval/--no-learn): suppress ALL KB writes so eval runs are
+        # side-effect-free — no self-solution contamination of future runs.
+        self.learn = learn
 
         # Per-episode state
         self._embeddings: list[list[float]] = []
@@ -218,8 +222,9 @@ class EscalationWrapper(gym.Wrapper):
         self._web_search_result = result
         self._web_search_done = True
 
-        # Always index to KB — failure to solve doesn't mean the result is worthless
-        self._log("Indexing web search result to KB (unconditional)")
+        # Index to KB unless eval (side-effect-free); _index_to_kb gates the write
+        if self.learn:
+            self._log("Indexing web search result to KB (unconditional)")
         self._index_to_kb(
             content=f"Query: {query}\n\nResult:\n{result}",
             title=f"web-search: {challenge}",
@@ -328,7 +333,8 @@ class EscalationWrapper(gym.Wrapper):
             source_url=f"competition_solve:{challenge_id}",
             quality_score=0.9,
         )
-        self._log(f"Solution indexed to KB (quality 0.9)")
+        if self.learn:
+            self._log("Solution indexed to KB (quality 0.9)")
 
     # ── Stagnation-breaking injection ─────────────────────────────────────────
 
@@ -424,6 +430,9 @@ class EscalationWrapper(gym.Wrapper):
         quality_score: float,
     ):
         """Index a document to lse-kb. Deduplicates by cosine > 0.92."""
+        if not self.learn:
+            self._log(f"KB index skipped — eval mode (side-effect-free): {title[:60]}")
+            return
         embedding = self._embed(content[:2000])
         doc = {
             "title": title,
@@ -447,6 +456,9 @@ class EscalationWrapper(gym.Wrapper):
 
     def _record_error(self, error_text: str, context: str, resolution: str):
         """Record error pattern + resolution to lse-errors index."""
+        if not self.learn:
+            self._log("record_error skipped — eval mode (side-effect-free)")
+            return
         embedding = self._embed(error_text)
         doc = {
             "error_text": error_text,
