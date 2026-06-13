@@ -8,7 +8,7 @@
 
 | Component | Version | File | Status |
 |---|---|---|---|
-| OpenWebUI Tool | **Cogitator v1.7.13** | `tools/cogitator-v1.7.13.py` | READY FOR DEPLOY (P27) — SSH KB-FIRST RULE: search_kb before any ssh command, no topic_filter, never bare ssh without key. black-norm `866b0b4d…`, 4508 lines. Previous deployed: v1.7.12 ✅ |
+| OpenWebUI Tool | **Cogitator v1.7.14** | `tools/cogitator-v1.7.14.py` | READY FOR DEPLOY (P27) — HERMES direct connect: HERMES_API_URL valve default :8643→:8642. black-norm `435c319a…`, 4515 lines (+7). Previous: v1.7.13 ✅ (black-norm `866b0b4d…`, 4508 lines) |
 | System Prompt | v0.5.15 | `prompts/v0.5.15.md` | ✅ deployed — PFSENSE LOG RULE section |
 | Routing Filter | **v1.2.0** | `tools/lse-routing-filter-v1.2.0.py` | ✅ deployed — model-aware passthrough; Qwen3 preset only |
 | Context Monitor | v1.3.0 | `tools/lse-context-monitor-v1.3.0.py` | 🚫 retired (2026-05-29) — wrong metric prefix; replaced by Grafana alert pipeline (now also removed) |
@@ -21,6 +21,7 @@
 | GP Shutdown Script | — | `LSEStack_gui/docker-graceful-stop.ps1` | ✅ — graceful Docker stop on Windows shutdown; Dify conditional; signed SY5TEM5Cert (2026-06-09) |
 
 ### Tool Changelog Summary (recent — Cogitator)
+- **Cogitator v1.7.14** — HERMES direct connect: HERMES_API_URL valve default :8643→:8642. Gateway confirmed binding 0.0.0.0:8642 (P27: ss -tlnp + HTTP 200 from LUCIFER). socat :8643 workaround eliminated. No code logic change.
 - **Cogitator v1.7.13** — SSH KB-FIRST RULE in execute_command docstring: search_kb('{hostname} SSH access') with NO topic_filter before any ssh; never bare ssh without -i key; never apply another device's topic_filter. Closes rutx50 live-test incidents (bare SSH timeout + wrong topic_filter=pfsense).
 - **Cogitator v1.7.12** — SSH DEVICE AUTO-FINGERPRINT: execute_command intercepts `ssh ` prefix, runs os-release+uname on first connection, prepends [DEVICE FINGERPRINT] banner. Failed fingerprints NOT cached. Restored from OWUI backup + cache fix.
 - **Cogitator v1.7.11** — KB source_tier quality gate on index_to_kb/skill_record/skill_outcome.
@@ -44,7 +45,7 @@
 | Node | CPU | RAM | GPU | OS | IP | Status |
 |---|---|---|---|---|---|---|
 | LUCIFER | Intel 9900K | — | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | 192.168.1.x | Primary — Qwen3.6 27B Q4_K_M on port 8080; pfsense-agent.py orchestrator |
-| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — llama-server :8080 (llama-cpp, Qwen3.6-27B Q4_K_M, 96k ctx); pfsense-agent orchestrator target |
+| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — llama-server :8080 (llama-cpp, Qwen3.6-27B Q4_K_M, 96k ctx); Hermes API :8642 (127.0.0.1 only); socat :8643→:8642 (UNMANAGED — dies on reboot); pfsense-agent orchestrator target |
 | node5090 | AMD 9800X3D | 64GB | RTX 5090 | Win11 | 192.168.5.x | WoL/SSH setup deferred |
 | HA Pi | ARM Cortex-A72 | 4GB | — | HA OS 2026.6.0 | 192.168.1.80 | homeassistant.home.arpa |
 | n45 (NAS) | Marvell Kirkwood | — | — | QTS | 192.168.5.44 + .45 | n45.home.arpa — dual NIC failover |

@@ -3,6 +3,18 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-13 — P27 (Cowork): Cogitator v1.7.14 — HERMES_API_URL direct connect (:8643→:8642)
+
+- **v1.7.14 built** (P27, ast OK, raw sha256 `ff377203…`, black-norm `435c319a…`, **4515 lines**, +7 vs v1.7.13):
+  - **Root cause**: `HERMES_API_URL` valve default was `http://192.168.5.41:8643` — the socat port — not the gateway's real bind address. `ss -tlnp` on node3090 confirmed gateway binds `0.0.0.0:8642` directly. socat PID 8485 (`0.0.0.0:8643 → 127.0.0.1:8642`) was a workaround from when the gateway was loopback-only; now redundant. HTTP 200 confirmed from LUCIFER direct to `:8642`.
+  - **Changes**: HERMES_API_URL valve default `:8643` → `:8642`; valve description updated; `call_hermes` docstring port updated; module changelog entries v1.6.2 and v1.6.4 corrected to remove socat references; v1.7.14 changelog entry added.
+  - **No code logic change** — valve default and docstrings only. No behavioral difference if socat was already running; prevents breakage once socat is killed.
+  - **VALVES.md updated**: HERMES_API_URL and HERMES_API_KEY added to active valve registry for section 1.
+  - **socat PID 8485**: to kill → `ssh lse-admin@node3090.home.arpa "sudo kill 8485"` then verify `ss -tlnp | grep -E '8642|8643'`
+  - READY FOR DEPLOY — paste into OWUI Admin → Tools → LSE Cogitator → Save.
+  - Verify: `python3 -m black --quiet - < tools/cogitator-v1.7.14.py | sha256sum` → `435c319aae260a8616b4eeb14751fa747b2ad919d785db33685e461e5009d2c8`
+
+---
 ## 2026-06-13 — P27 (Cowork): Cogitator v1.7.13 — SSH KB-FIRST rule (bare-ssh + wrong-topic-filter incidents)
 
 - **v1.7.13 built** (P27, ast OK, raw sha256 `cfc194c5…`, black-norm `866b0b4d…`, **4508 lines**, +25 vs v1.7.12):
