@@ -3,9 +3,19 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-13 — P27 (Cowork): Cogitator v1.7.12 — reconstruction + ask_id→task_id fix + line-count ground rule
+
+- **v1.7.12 rebuilt** (P27, ast OK, raw sha256 `165874ee…`, black-norm `a2faad62…`, **4043 lines**, +109 vs v1.7.11):
+  - **P26 Write-tool truncation incident**: P26 wrote cogitator-v1.7.12.py but the Write tool truncated it at 4015 lines (last character was bare `t` — middle of `task_id=tid,`). Original was 4465 lines. User pasted the full original but context ran out before it could be written. P27 rebuilt from truncated head + v1.7.11 tail. All functions present and AST-valid.
+  - **ask_id→task_id bug fixed**: tail reconstruction introduced `ask_id=tid` (invalid kwarg) at the `task_checkpoint()` call inside `hermes_plan`. Corrected to `task_id=tid` (matches the function signature). This was a silent TypeError at runtime.
+  - **New ground rule (P27)**: always verify line count delta between versions. Report delta and keep tally in VERSION.md Line Count Tally section.
+  - **Checksums updated**: old (P26 rebuild) raw `ce2de61a…` / black-norm `519a8e8e…` → new (P27 rebuild) raw `165874ee…` / black-norm `a2faad62…`.
+- READY FOR DEPLOY — paste into OWUI Admin → Tools → LSE Cogitator → Save.
+
+---
 ## 2026-06-13 — P26 (Cowork): Cogitator v1.7.12 — SSH device auto-fingerprint (device-identity hallucination fix in code)
 
-- **v1.7.12 built** (ast OK, raw sha256 `ce2de61a…`, black-norm `519a8e8e…`, 208,113 B, 4043 lines):
+- **v1.7.12 built** (P26 — SUPERSEDED by P27 rebuild; original 4465-line version lost to Write-tool truncation incident; raw sha256 `ce2de61a…` was the 4043-line P26 partial rebuild, not the full original):
   - **SSH device auto-fingerprint**: `execute_command` intercepts any `ssh ` command (excludes recursive fingerprint sub-calls via `__FP__` guard). Parses options/flags to extract `user@host`, derives `_fp_host`. On first connection to a host (not yet in `self._device_cache`), fires a sub-SSH with `BatchMode=yes -o StrictHostKeyChecking=no` running `cat /etc/os-release; uname -srm`. Parses `PRETTY_NAME` (preferred) or `uname` output into `_platform`.
   - **Cache only on success**: fingerprint result stored in `self._device_cache[host]` ONLY if `returncode == 0` and `platform != "unknown"`. Failed attempts (wrong key, auth error, empty output) are NOT cached — next SSH call with the correct key will retry. Closes the "second call hits stale unknown cache" bug found in P26 live test.
   - **Banner behaviour**: success → `[DEVICE FINGERPRINT: host=… | platform=… | source=os-release/uname — ground truth. Use this platform for ALL CLI decisions. Never infer device type from IP or hostname.]`; failed auth → `[DEVICE FINGERPRINT PENDING: host=… | platform=unknown — SSH auth failed or no output. Fingerprint NOT cached; will retry on next SSH call. Do NOT infer device type from IP or hostname.]`
@@ -633,4 +643,106 @@ Next: `EscalationWrapper` (stub at `scripts/escalation_wrapper.py`)
 **Grafana Context Alert Pipeline**
 - `lse-context-monitor-v1.3.0` inlet filter retired (used wrong metric prefix `llama_` vs `llamacpp:`)
 - `llama-context-exporter` (port 9836, systemd) computes `llama_kv_cache_usage_ratio`
-- `grafana-owui-adapter` (port 9837, systemd) converts Grafana JSON → OpenWebUI channel 
+- `grafana-owui-adapter` (port 9837, systemd) converts Grafana JSON → OpenWebUI channel webhook
+- Alert: `llama_kv_cache_usage_ratio > 0.8` for 1 min → `lse-alerts` channel
+- Docker network `lse-net` consolidating all services
+- End-to-end smoke test passed
+
+**Tool v1.5.6 / v1.5.7**
+- v1.5.6: POST-DELETE VERIFY RULE, NO YEAR INJECTION in search_web, `get_github_release` function
+- v1.5.7: DESTRUCTIVE OPERATION PROTOCOL for `execute_command` (warn → name → ask yes/no → wait)
+
+---
+
+## 2026-05-26 — Grafana metrics integration
+
+- `--metrics` flag added to launcher v1.063
+- Prometheus scrape config targeting `localhost:8080/metrics`
+- Grafana dashboard built with llama.cpp performance panels
+
+---
+
+## 2026-05-25 — Eval Run 4 (no-think), Eval Run 5 (partial)
+
+- Run 4: tool v1.5.5 / prompt v0.5.2 / no-think (budget 0) → 49/57
+  - S 15/15, P 13/15 (P3 no verify, P4 W2 regressions), M 9/9, W 7/9, A 5/9
+  - Confirms thinking budget is load-bearing for P and A categories
+- Run 5 (partial subset): tool v1.5.6 / prompt v0.5.2 / thinking → 15/21
+  - P2 3/3 ✓, W2 3/3 ✓, A3 3/3 ✓ — targeted fixes confirmed
+  - P1 0/3, P3 0/3 — execute_command lacked destructive-op gate → fixed in v1.5.7
+  - A1 0/3 — questions answerable from inference, context monitor never triggered → prompt rework
+
+---
+
+## 2026-05-24 — Eval Run 3 — 57/57
+
+- Tool v1.5.4 / prompt v0.5.1 / thinking (budget 3072) / test suite v3.2
+- All 19 categories 3/3; perfect score
+- P2 fixed (READ-FIRST RULE in sudo_delegation_block)
+- A1 fixed (get_context_status field name corrected for llama-server build ≥9307)
+
+---
+
+## 2026-05-23 — Routing filter v1.1.0, tool v1.5.1–v1.5.4
+
+- Routing filter v1.1.0 deployed
+- v1.5.1: read_file PRIVILEGED PATH note; sudo_delegation_block stop instruction hardened
+- v1.5.2: denylist hardening (shred, blkdiscard, rm -rf patterns, /mnt/ write block)
+- v1.5.3: sudo_delegation_block STOP PROTOCOL — surface command in visible text
+- v1.5.4: get_context_status field-name fix; sudo READ-FIRST RULE
+
+---
+
+## 2026-05-22 — Eval Run 2, prompt v0.4.1
+
+- Run 2: tool v1.5.1 / prompt v0.4.1 / thinking → 45/57 (corrected to 54/57 on partial rerun)
+- Baseline established for comparison
+
+---
+
+## Early sessions — Infrastructure, tool v1.4.x–v1.5.0, prompt v0.1–v0.4
+
+- llama.cpp + OpenWebUI + SearxNG + Playwright stack stood up
+- Windows Terminal launcher with three model profiles (32k, 64k, no-think)
+- Tool v1.4.0: execute_command, read_file, write_file, sudo_delegation_block, search_web, get_context_status
+- Tool v1.4.1–v1.4.3: routing rules, sudo pipeline fix, write_file protocol rewrite
+- Tool v1.5.0: COMBINE RULE and search_web announcement promoted to docstrings; port 8088 fix
+- Prompt v0.1 → v0.4.1: identity, permission boundary, live service rule, context handover
+- Eval Run 1: unscored baseline
+- Skills: `lse:eval-runner`, `lse:docstring-optimizer`, `lse:stack-health-check`, `lse:session-debrief`, `lse:version-manager`
+- Docs: 01–06 written
+
+---
+
+## 2026-06-09 — P18 Cowork — pfsense-agent.py + OpenWebUI tool v1.6.1
+
+### pfsense-agent.py — Option C orchestrator CLI
+- Built `pfsense-agent.py`: natural language → Qwen3.6-27B (LM Studio node3090) → structured LSE prompt → LSE
+- `--think` / `--no-think` / `--prompt-only` / `--auto` flags
+- Streaming with live char/timing display
+- Assistant prefill (`"Step 1: "`) for `--no-think` mode — forces clean output start
+- `_extract_prompt` — DO NOT block anchor + contiguous ascending step sequence detection
+  - `rfind(FIRST_DO_NOT)` → last DO NOT block; walk backwards through step matches to find sequence start
+  - CRITICAL: use `^[ \t]*` not `^\s*` in multiline regex — `^\s*` swallows preceding `\n`, landing `match.start()` on newline instead of first space
+  - Restores `Step 1: vault_unlock()...` when model correctly starts at Step 2
+- Config: `/opt/local-se/pfsense-agent.conf` (chmod 600), `[lmstudio]` + `[openwebui]` sections
+- `tool_ids: ["lse_system_admin_terminal", "lse_vaultwarden_tools"]` added to `submit_to_lse` payload
+
+### OpenWebUI tool v1.6.1 deployed (lse_system_admin_terminal)
+- Updated from v1.5.26 → v1.6.1 (pfSense three-tool architecture + schema introspection prohibition)
+- Deployed via Admin → Tools → edit → paste → Save
+
+### OpenWebUI API tool execution gap — confirmed
+- `/api/chat/completions` with `tool_ids` injects tool definitions but local LM (Qwen3.6) generates
+  reasoning text, not structured function-call JSON → agentic loop never fires
+- Chat UI works because OWUI uses text-based tool invocation format (ReAct-style), not native FC
+- Resolution: Dify multi-agent UI (see ROADMAP). OWUI pipe function deferred.
+
+### Architecture decision — Dify for multi-agent UI
+- Qwen3.6 (orchestrator/reasoning) + LSE (executor/tools) pipeline
+- Deployed on-demand, not persistent always-on service
+- OWUI pipe function for Qwen3.6 → LSE handoff: deferred
+
+### pfSense security constraints confirmed
+- SSH admin@pfsense = root shell, bypasses read-only API boundary — human-only, never LSE
+- pfSense auth: `X-API-Key` header (NOT `Authorization: Bearer`)
