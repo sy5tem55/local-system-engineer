@@ -79,7 +79,7 @@
   prompt, human-approved, ground-truth-verified; trajectory §5.4)
 - [ ] **1.7.0** — 35B-A3B delegation after model shootout Runs 3–4 (Qwopus 35B vs Qwen3-Coder 30B);
   serving on node3090 LM Studio with Hermes maintenance-window coordination until NODE3 exists
-- [ ] **Reconcile VERSION.md** — registry says tool v1.6.1; `tools/` has v1.6.4. Fix before 1.7.0-a.
+- [x] **Reconcile VERSION.md** ✅ (P27 2026-06-13) — registry now current through Cogitator v1.7.13 (raw + black-norm sha256, line count tally v1.7.0–v1.7.13). Gap v1.6.2–v1.6.4 noted in version history.
 - [ ] **v1.7.6 candidate — WATERFALL PROVENANCE RULE** (added P23 2026-06-12, SY5 observation):
   the source-of-truth hierarchy (KB → vendor docs/master README → github → web) exists as
   *available tools* but not as a *mandatory path for claims* — so "slots API removed in v9577"

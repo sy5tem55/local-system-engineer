@@ -1,5 +1,5 @@
 # LSE Current State
-> Last updated: 2026-06-11 (P20 Cowork)
+> Last updated: 2026-06-13 (P27 Cowork)
 > Source of truth for deployed versions. Update this file at the end of every session.
 
 ---
@@ -8,7 +8,7 @@
 
 | Component | Version | File | Status |
 |---|---|---|---|
-| OpenWebUI Tool | **v1.6.1** | `tools/openwebui-tool-v1.6.1.py` | ✅ deployed — pfSense three-tool architecture + schema introspection prohibition |
+| OpenWebUI Tool | **Cogitator v1.7.13** | `tools/cogitator-v1.7.13.py` | READY FOR DEPLOY (P27) — SSH KB-FIRST RULE: search_kb before any ssh command, no topic_filter, never bare ssh without key. black-norm `866b0b4d…`, 4508 lines. Previous deployed: v1.7.12 ✅ |
 | System Prompt | v0.5.15 | `prompts/v0.5.15.md` | ✅ deployed — PFSENSE LOG RULE section |
 | Routing Filter | **v1.2.0** | `tools/lse-routing-filter-v1.2.0.py` | ✅ deployed — model-aware passthrough; Qwen3 preset only |
 | Context Monitor | v1.3.0 | `tools/lse-context-monitor-v1.3.0.py` | 🚫 retired (2026-05-29) — wrong metric prefix; replaced by Grafana alert pipeline (now also removed) |
@@ -20,13 +20,13 @@
 | Dify | **v1.14.2** | `/opt/dify/docker/docker-compose.yaml` | ✅ — on-demand only; port 4000; `docker compose up -d` to start (2026-06-09) |
 | GP Shutdown Script | — | `LSEStack_gui/docker-graceful-stop.ps1` | ✅ — graceful Docker stop on Windows shutdown; Dify conditional; signed SY5TEM5Cert (2026-06-09) |
 
-### Tool Changelog Summary (recent)
-- **v1.6.1** — pfSense three-tool arch: pfsense_graphql/pfsense_query/pfsense_log_summary; schema introspection prohibition
-- **v1.5.26** — search_web hang fix (5,10) timeout + year injection rule hardened
-- **v1.5.25** — `search_reddit(query, subreddit="")` — Reddit via SearxNG site: operator. No OAuth, no API footprint
-- **v1.5.24** — `start_node_agent` / `stop_node_agent` — on-demand llama-cpp lifecycle via SSH. `agent_profile` in `_NODE_REGISTRY` (96k ctx, q8_0 KV, Qwen3.6-27B)
-- **v1.5.23** — `_NODE_REGISTRY` node3090: `agent_port` 1234→**8080**, `agent_type` lmstudio→**llama-cpp**
-- **v1.5.22** — `wake_node`: WoL endpoint `/api/v2/services/wake_on_lan` → `/api/v2/services/wake_on_lan/send`. Fast-fail guard on pfSense error.
+### Tool Changelog Summary (recent — Cogitator)
+- **Cogitator v1.7.13** — SSH KB-FIRST RULE in execute_command docstring: search_kb('{hostname} SSH access') with NO topic_filter before any ssh; never bare ssh without -i key; never apply another device's topic_filter. Closes rutx50 live-test incidents (bare SSH timeout + wrong topic_filter=pfsense).
+- **Cogitator v1.7.12** — SSH DEVICE AUTO-FINGERPRINT: execute_command intercepts `ssh ` prefix, runs os-release+uname on first connection, prepends [DEVICE FINGERPRINT] banner. Failed fingerprints NOT cached. Restored from OWUI backup + cache fix.
+- **Cogitator v1.7.11** — KB source_tier quality gate on index_to_kb/skill_record/skill_outcome.
+- **Cogitator v1.7.10** — verify_source_claims(): re-fetches source, FOUND/PARTIAL/NOT_FOUND per claim.
+- **Cogitator v1.7.9** — hermes_plan kanban card INSERT.
+- **v1.6.1** — pfSense three-tool arch: pfsense_graphql/pfsense_query/pfsense_log_summary; schema introspection prohibition. (See VERSION.md for full history.)
 
 ---
 
@@ -44,7 +44,7 @@
 | Node | CPU | RAM | GPU | OS | IP | Status |
 |---|---|---|---|---|---|---|
 | LUCIFER | Intel 9900K | — | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | 192.168.1.x | Primary — Qwen3.6 27B Q4_K_M on port 8080; pfsense-agent.py orchestrator |
-| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — LM Studio running Qwen3.6-27B Q4_K_M (:1234); pfsense-agent orchestrator target |
+| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — llama-server :8080 (llama-cpp, Qwen3.6-27B Q4_K_M, 96k ctx); pfsense-agent orchestrator target |
 | node5090 | AMD 9800X3D | 64GB | RTX 5090 | Win11 | 192.168.5.x | WoL/SSH setup deferred |
 | HA Pi | ARM Cortex-A72 | 4GB | — | HA OS 2026.6.0 | 192.168.1.80 | homeassistant.home.arpa |
 | n45 (NAS) | Marvell Kirkwood | — | — | QTS | 192.168.5.44 + .45 | n45.home.arpa — dual NIC failover |

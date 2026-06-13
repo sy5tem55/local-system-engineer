@@ -24,11 +24,11 @@ A locally-hosted AI system administrator running on a private inference stack. O
 
 | Component | Version | File |
 |---|---|---|
-| Tool | v1.5.17 | `tools/openwebui-tool-v1.5.17.py` |
-| Prompt | v0.5.12 | `prompts/v0.5.12.md` |
-| Routing filter | v1.1.0 | `tools/lse-routing-filter-v1.1.0.py` |
+| Tool | **Cogitator v1.7.13** | `tools/cogitator-v1.7.13.py` |
+| Prompt | v0.5.15 | `prompts/v0.5.15.md` |
+| Routing filter | v1.2.0 | `tools/lse-routing-filter-v1.2.0.py` |
 | Launcher CLI | v1.078 | `LSEStack_gui/lse-stack-launch-1.078.ps1` |
-| Launcher GUI | v1.4 | `LSEStack_gui/lse-stack-launch-gui.ps1` |
+| Launcher GUI | v1.5 | `LSEStack_gui/lse-stack-launch-gui.ps1` |
 
 ---
 
@@ -38,7 +38,7 @@ An evaluation arena where LLMs compete on real sysadmin problems drawn from live
 
 | Component | File | Description |
 |---|---|---|
-| ChallengeDB | `/opt/local-se/challenges.db` | 10 T1 challenges seeded |
+| ChallengeDB | `/opt/local-se/challenges.db` | 24 challenges seeded (T1–T3) |
 | Leaderboard | `/opt/local-se/leaderboard.db` | Episode scores by model |
 | LSEChallengeEnv | `scripts/lse_challenge_env.py` | gymnasium.Env harness |
 | EscalationWrapper | `scripts/escalation_wrapper.py` | Stagnation detection + Claude API |
@@ -140,13 +140,14 @@ local-system-engineer/
 │   └── test_*.py               ← smoke tests
 │
 ├── tools/
-│   ├── openwebui-tool-v1.5.17.py  ← current production tool
-│   └── lse-routing-filter-v1.1.0.py
+│   ├── cogitator-v1.7.13.py        ← current production tool (READY FOR DEPLOY)
+│   ├── cogitator-v1.7.12.py        ← previous deployed version
+│   └── lse-routing-filter-v1.2.0.py
 │
 ├── prompts/
 │   ├── CHANGELOG.md
-│   └── v0.5.12.md               ← current production prompt
+│   └── v0.5.15.md               ← current production prompt
 │
 └── eval/
-    └── eval-report-v5.md        ← Run 6: 58/63
+    └── eval-report-v6.md        ← Run 7: 62/63 (projected); see VERSION.md Co-test Matrix
 ```

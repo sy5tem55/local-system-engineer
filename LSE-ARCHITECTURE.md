@@ -1,5 +1,5 @@
 # LSE Architecture — Technical Design Document
-> Version: 2026-06-09 (aligned with tool v1.6.1)
+> Version: 2026-06-13 (aligned with Cogitator v1.7.13)
 > Audience: coder LLM (node3090 agent) proposing changes + Claude Sonnet 4.6 as senior reviewer
 > Read alongside: CURRENT-STATE.md, session-handover.md, ROADMAP.md
 
@@ -19,7 +19,7 @@ The LSE is **not** a chatbot. It is an autonomous infrastructure operator with b
 ┌─────────────────────────────────────────────────────────────┐
 │  LUCIFER (Win11 + WSL2 Ubuntu 24.04, 192.168.1.x)           │
 │                                                             │
-│  OpenWebUI (:3000)  ←→  LSE Tool Plugin (v1.6.1)           │
+│  OpenWebUI (:3000)  ←→  LSE Cogitator (v1.7.13)            │
 │       │                        │                           │
 │  Qwen3.6-27B-Q4_K_M            ├─ execute_command (WSL2)   │
 │  llama-server :8080            ├─ Elasticsearch :9200 (KB) │
@@ -33,7 +33,7 @@ The LSE is **not** a chatbot. It is an autonomous infrastructure operator with b
 ┌─────────────────────────────────────────────────────────────┐
 │  node3090 (Ubuntu 24.04, 192.168.5.41)                      │
 │  RTX 3090 24GB · driver 595 · CUDA 13.3                     │
-│  LM Studio :1234 — Qwen3.6-27B Q4_K_M (pfsense-agent target)│
+│  llama-server :8080 — Qwen3.6-27B Q4_K_M (96k ctx, q8_0 KV)│
 │  SSH: lse-admin@node3090.home.arpa (FQDN required)          │
 └─────────────────────────────────────────────────────────────┘
 
@@ -43,7 +43,7 @@ The LSE is **not** a chatbot. It is an autonomous infrastructure operator with b
 │                                                             │
 │  User NL request                                            │
 │       ↓                                                     │
-│  Qwen3.6-27B @ node3090:1234  (--think or --no-think)       │
+│  Qwen3.6-27B @ node3090:8080  (--think or --no-think)       │
 │       ↓  _extract_prompt() — DO NOT anchor + step sequence  │
 │  LSE prompt (numbered steps, DO NOT block)                  │
 │       ↓  [y/N confirm or --auto]                            │
@@ -107,7 +107,7 @@ DNS: `*.home.arpa` via pfSense Unbound. Always use FQDNs.
 
 ## 3. Tool Plugin Architecture
 
-**File**: `tools/openwebui-tool-vX.X.X.py`
+**File**: `tools/cogitator-vX.X.X.py`
 **Class**: `Tools` (single class, OpenWebUI convention)
 **Config**: `Tools.Valves` (Pydantic BaseModel — user-configurable in OpenWebUI UI)
 
