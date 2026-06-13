@@ -45,7 +45,7 @@ fe18996  P27: session-handover updated
 ## Pending tasks (carry forward)
 
 ### Immediate
-- [ ] **Deploy v1.7.13 to OWUI** — file ready; paste + verify black-norm sha256 `866b0b4d…`
+- [x] **Deploy v1.7.13 to OWUI** ✅ (P27) — black-norm sha verified `866b0b4d…`
 - [ ] **Session debrief KB entry** — Write P26/P27 learnings to `/opt/local-se/kb/session-learnings.md` (draft below; confirm + append via `>>`)
 - [ ] **System prompt update note** — user confirmed v0.5.15 already references `tool v1.7.13 · LSE Routing filter version: 1.2.0`
 
@@ -57,6 +57,7 @@ fe18996  P27: session-handover updated
 - [ ] **16-tool-call limit** — root cause unresolved: check Admin → Models → Qwen3 preset → Advanced → Max Tool Calls
 - [ ] **searxng-error-exporter** — Grafana Panel 24 "Failing engines" still shows 0
 - [ ] **NVD custom SearXNG engine** — cvedetails blocked, NVD REST API engine pending
+- [ ] **Hermes → LSE push channel (v1.7.0-b)** — currently one-directional: LSE can call Hermes but Hermes cannot initiate. Three design options in ROADMAP: OWUI API inject / hermes-gateway webhook / polling `check_hermes_inbox()`. Needs design decision before implementation.
 
 ---
 

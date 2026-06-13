@@ -71,7 +71,19 @@
   without it every write-mode challenge is a deterministic failure and the bench measures world
   state, not the model. Plus: `verify_ssh` on all bench challenges, `--eval --no-learn` flag,
   freeze `lse-bench-v1`, record Condition A baseline
-- [ ] **1.7.0-b** — `hermes_notify`/`hermes_ask` structured protocol (correlation ids), KB entry live
+- [ ] **1.7.0-b** — **Hermes ↔ LSE bidirectional communication** (added P27 2026-06-13):
+  Current state is ONE-DIRECTIONAL: LSE can call Hermes (`call_hermes`, `hermes_plan`) but
+  Hermes cannot initiate contact with LSE. Hermes has no path to push alerts, cron-triggered
+  tasks, or maintenance events into an LSE session unprompted.
+  Required: a Hermes → LSE push channel. Design options:
+  (a) **OWUI API inject** — Hermes POSTs to OWUI `/api/chat/completions` with a system-seeded
+      context that includes a pending task. Creates a new session; LSE wakes and executes.
+  (b) **hermes-gateway webhook** — expose a POST endpoint on LUCIFER that receives Hermes pushes
+      and injects them into the active OWUI session (requires session ID tracking).
+  (c) **Polling tool** — LSE calls `check_hermes_inbox()` at task boundaries; Hermes writes to
+      a shared queue (kanban.db or a new table). Pull-based, no push infrastructure needed.
+  Companion: `hermes_notify`/`hermes_ask` structured protocol with correlation ids so
+  LSE responses can be routed back to the originating Hermes task. KB entry live on deploy.
 - [ ] **1.7.0-c** — `lse-skills` ES index, episode distillation, retrieval gold set (recall@3/MRR),
   hybrid BM25+kNN scoring, gate web-search auto-indexing (quality 0.7→0.4 + relevance check)
 - [ ] **1.7.0-d** — occupational curriculum batches, skill lifecycle jobs, learning-lift run #1 (A vs B);
