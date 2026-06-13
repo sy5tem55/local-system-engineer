@@ -8,7 +8,7 @@
 
 | Component | Version | Shipped | Status |
 |---|---|---|---|
-| Tool | **Cogitator v1.7.11** | 2026-06-13 | READY FOR DEPLOY (P26, ast OK, black-norm `09595a23…`, raw `631d11df…`, 208,234 B) — source_tier quality gate on index_to_kb/skill_record/skill_outcome: ground_truth=1.0 (evidence required), primary=0.8, secondary=0.6, inferred=0.4 (default). quality=1.0 unreachable without source_tier=ground_truth + ≥40-char tool-result evidence. verified_against field for staleness tracking. Previous: v1.7.10 READY FOR DEPLOY (P26, ast OK, black-norm `48e13812…`, raw `463e0941…`, 203,008 B) — verify_source_claims(): re-fetches source + FOUND/PARTIAL/NOT_FOUND per claim with verbatim ±300-char excerpts; fetch_url caches content + emits SOURCE-VERIFY MANDATE banner; SOURCE_VERIFY_CACHE_TTL valve (300s). Enforcement in code (sudo-blocker lineage): the function does the comparison, model cannot fabricate return. Does NOT count against search budget. Previous: v1.7.9 deployed ✅ (P25, black-norm `2e15e467…` MATCH) — hermes_plan kanban card INSERT. NOTE: OWUI black-formats on save — verify deploys by black-normalizing, not raw sha. |
+| Tool | **Cogitator v1.7.12** | 2026-06-13 | READY FOR DEPLOY (P26, ast OK, black-norm `519a8e8e…`, raw `ce2de61a…`, 208,113 B) — SSH device auto-fingerprint: execute_command intercepts `ssh ` prefix, extracts host, runs os-release+uname on first connection, prepends `[DEVICE FINGERPRINT]` banner. Failed fingerprints NOT cached (retry on next SSH call with correct key); failed attempts emit `[DEVICE FINGERPRINT PENDING]` note. Previous: v1.7.11 deployed ✅ (P26, ast OK, black-norm `09595a23…`, raw `631d11df…`, 208,234 B) — source_tier quality gate on index_to_kb/skill_record/skill_outcome: ground_truth=1.0 (evidence required), primary=0.8, secondary=0.6, inferred=0.4 (default). quality=1.0 unreachable without source_tier=ground_truth + ≥40-char tool-result evidence. verified_against field for staleness tracking. Previous: v1.7.10 deployed ✅ (P26, ast OK, black-norm `48e13812…`, raw `463e0941…`, 203,008 B) — verify_source_claims(): re-fetches source + FOUND/PARTIAL/NOT_FOUND per claim with verbatim ±300-char excerpts; fetch_url caches content + emits SOURCE-VERIFY MANDATE banner; SOURCE_VERIFY_CACHE_TTL valve (300s). Does NOT count against search budget. Previous: v1.7.9 deployed ✅ (P25, black-norm `2e15e467…` MATCH) — hermes_plan kanban card INSERT. NOTE: OWUI black-formats on save — verify deploys by black-normalizing, not raw sha. |
 | Prompt | v0.5.15 | 2026-06-09 | deployed ✅ |
 | Filter | **v1.2.0** | 2026-06-11 | deployed ✅ |
 | Vaultwarden tool | v1.3.0 | 2026-06-03 | deployed ✅ |
@@ -31,6 +31,7 @@
 
 | File | SHA-256 |
 |---|---|
+| `cogitator-v1.7.12.py` | `ce2de61a8e29aa4e1303415bca17ebba0b5b9ff2dd0127b1acddaafe4f0d7230` |
 | `cogitator-v1.7.11.py` | `631d11dfb09ad203ff5f0e0feb759dc6d045b5febc40ee5d3c9d48c143c452d2` |
 | `cogitator-v1.7.10.py` | `463e0941dad82d8c8d4ba6738fc44de3584f81f5037f275ffb5f365ed262ae17` |
 | `cogitator-v1.7.9.py` | `36d9dcc2…` (see P25) |
@@ -98,17 +99,5 @@ Active profile: `Qwen3.6 27B Q4_K_M · 64k · KV:q8_0 · think:3072 → :8080`
 | **Cogitator v1.7.3** | 2026-06-12 | UNVERIFIED-URL RULE in budget-refusal text + fetch_url docstring — never present a URL/hostname not received from a tool result (fabricated fbidownload.* hostname incident) (sha256 849de276…) |
 | **Cogitator v1.7.4** | 2026-06-12 | compact_context KV erase fixed: POST /slots/0?action=erase (query param, empty body, n_erased reported) — JSON-body form was never valid; "slots API removed in v9577" diagnosis was false (sha256 2d3a9703…) |
 | **Cogitator v1.7.5** | 2026-06-12 | CONFIG GROUND-TRUTH RULE in execute_command + search_kb (values from same-session tool results only, never recall); search_kb hits show age (updated Xd ago) with staleness caveat for config values (sha256 94a428a9…) |
-| **Cogitator v1.7.11** | 2026-06-13 | KB SOURCE-TIER QUALITY GATE: source_tier param on index_to_kb/skill_record/skill_outcome. Ceiling map: ground_truth=1.0 (evidence≥40 chars required, else 0.7), primary=0.8, secondary=0.6, inferred=0.4 (default). quality=1.0 unreachable without ground_truth + real tool-result evidence. verified_against field stored. skill_outcome: ceiling applied to new_q; ground_truth required to push to 1.0; evidence threshold 20→50 chars for ground_truth. (raw `631d11df…`, black-norm `09595a23…`) |
-| **Cogitator v1.7.10** | 2026-06-13 | SOURCE-CLAIM VERIFICATION: verify_source_claims(url, claims) re-fetches source + FOUND/PARTIAL/NOT_FOUND per comma-separated claim with verbatim ±300-char excerpts. fetch_url caches to self._fetch_cache + emits SOURCE-VERIFY MANDATE banner (code-emitted). NOT_FOUND shows what version strings ARE in source. SOURCE_VERIFY_CACHE_TTL valve (300s). Does NOT count against search budget. Enforcement in code, sudo-blocker lineage. (raw sha256 463e0941…, black-norm 48e13812…) |
-| **Cogitator v1.7.9** | 2026-06-12 | _kanban_create_card(): hermes_plan INSERTs the triage card into node3090 kanban.db over ssh (status=triage, assignee=lse, goal_mode=0, idempotency_key=hermes_plan:<tid>, created_at epoch INT, INSERT OR IGNORE). Fail-open card_error line. Companion: planner contract v2.2 (sha256 36d9dcc2…) |
-| **Cogitator v1.7.8** | 2026-06-12 | search_web categories "general,it,science"→"general". arxiv (in [science,it,technology], weight 2, ~15% reliable) fired on every query incl. non-science → 4-5 off-domain hits, burned web budget. General engines (google/bing/ddg) cover LSE's mix. Research-task incident pt2 (sha256 fd65fea6…) |
-| **Cogitator v1.7.7** | 2026-06-12 | fetch_url CONTENT-TYPE GUARD: PDF→pdfminer/pypdf text extract (clean refusal if neither lib present), other non-text content-types refused, all output control-char sanitized. fetch_url fed resp.text to HTMLParser unconditionally → PDF dumped raw FlateDecode binary into context AND broke OWUI <details> rendering downstream. Research-task incident (sha256 fa8bd376…) |
-| **Cogitator v1.7.6** | 2026-06-12 | hermes_plan() pre-flight planner (wraps call_hermes intent=plan, parses envelope, writes initial task block, degrades to PLANNER UNAVAILABLE); FIXES call_hermes error handling truncated since v1.7.3 — HTTPError fell through to None, URLError raised uncaught (sha256 7a516246…) |
-
----
-
-## pfsense-agent Version History
-
-| Version | Shipped | Key change |
-|---|---|---|
-| **v1.0** | 2026-06-09 | Initial — Qwen3.6 orchestrator + LSE submit; `--think/--no-think/--prompt-only/--auto`; `_extract_prompt` DO NOT anchor + contiguous step sequence; tool_ids pass-through |
+| **Cogitator v1.7.12** | 2026-06-13 | SSH DEVICE AUTO-FINGERPRINT: execute_command intercepts `ssh ` prefix, extracts host, runs `cat /etc/os-release; uname -srm` on first connection per session. Prepends `[DEVICE FINGERPRINT: host=… | platform=…]` banner. Failed fingerprints (auth error, unknown) NOT cached — retry fires on next SSH call with correct key. Failed attempts show `[DEVICE FINGERPRINT PENDING]` note. `self._device_cache: dict` in `__init__`. Closes MikroTik device-identity hallucination class (infers OS from IP/hostname instead of SSH). (raw `ce2de61a…`, black-norm `519a8e8e…`, 208,113 B, 4043 lines) |
+| **Cogitator v1.7.11** | 2026-06-13 | KB SOURCE-T
