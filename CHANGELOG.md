@@ -3,6 +3,17 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-13 — P27 (Cowork): Cogitator v1.7.13 — SSH KB-FIRST rule (bare-ssh + wrong-topic-filter incidents)
+
+- **v1.7.13 built** (P27, ast OK, raw sha256 `cfc194c5…`, black-norm `866b0b4d…`, **4508 lines**, +25 vs v1.7.12):
+  - **Root cause**: rutx50 live test revealed two behavioral bugs: (1) model attempted `ssh root@rutx50 'uptime'` with no key → 30s timeout; only searched KB after user explicitly prompted. (2) KB search used `topic_filter=pfsense` for a rutx50 SSH access query → returned pfSense REST API docs, not rutx50 access params. Model eventually course-corrected but wasted 3 tool calls and one timeout.
+  - **SSH KB-FIRST RULE** added to `execute_command` docstring: mandatory `search_kb(query='{hostname} SSH access')` with NO `topic_filter` before any `ssh` command. The KB stores the correct key path, username, and IP for every managed device. Attempting SSH without the key on a key-only device is a protocol violation.
+  - **topic_filter rule**: explicitly bans applying one device's `topic_filter` to an SSH query for a different device. `topic_filter='pfsense'` on a rutx50 query returns only pfSense-tagged KB entries (wrong).
+  - **Enforcement**: docstring only (sudo-blocker lineage); no code change needed — the SSH fingerprint fires on first successful connection regardless.
+  - **Live test result** (v1.7.12, post cache-fix): `ssh -i ~/.ssh/id_ed25519_rutx50 root@192.168.5.3 'uptime'` → `[DEVICE FINGERPRINT: host=192.168.5.3 | platform=OpenWrt 21.02.0 | source=os-release/uname — ground truth.]` ✅
+- READY FOR DEPLOY — paste into OWUI Admin → Tools → LSE Cogitator → Save.
+
+---
 ## 2026-06-13 — P27 (Cowork): Cogitator v1.7.12 — reconstruction + ask_id→task_id fix + line-count ground rule
 
 - **v1.7.12 rebuilt** (P27, ast OK, raw sha256 `165874ee…`, black-norm `a2faad62…`, **4043 lines**, +109 vs v1.7.11):
