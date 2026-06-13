@@ -3,6 +3,17 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-13 — P26 (Cowork): Cogitator v1.7.11 — KB source-tier quality gate
+
+- **v1.7.11 built** (ast OK, raw sha256 `631d11df…`, black-norm `09595a23…`, 208,234 B):
+  - **`index_to_kb` new params**: `source_tier` (ground_truth|primary|secondary|inferred, default=inferred), `evidence` (required for ground_truth), `verified_against` (version/config snapshot). Quality hard-capped at tier ceiling regardless of model-passed value. Default `quality_score` 0.8→0.5 (model must be explicit). Tier and evidence stored in document.
+  - **`skill_record` new param**: `source_tier`; ceiling applied; tier stored in document.
+  - **`skill_outcome` new param**: `source_tier` (default=secondary); `new_q` capped at tier ceiling; pushing to 1.0 requires `source_tier=ground_truth`; evidence threshold 20→50 chars for ground_truth.
+  - **Tier ceiling map**: ground_truth=1.0 (live system test, ≥40-char tool-result evidence — else downgraded to 0.7 with warning); primary=0.8 (vendor docs, official README, RFC, man pages); secondary=0.6 (community forums, Stack Overflow, Reddit); inferred=0.4 (untested hypothesis, model inference).
+  - **Root cause fixed**: pfSense read-only incident — LSE indexed untested hypothesis at quality=1.0 before verifying chicken-and-egg lock. With this gate: default tier=inferred caps at 0.4; reaching 1.0 requires live bidirectional test + evidence string from actual tool output. Model cannot self-grant max score.
+- READY FOR DEPLOY — paste into OWUI Admin → Tools → LSE Cogitator → Save.
+
+---
 ## 2026-06-13 — P26 (Cowork): Cogitator v1.7.10 — source-claim verification (fabrication #5 fix in code)
 
 - **v1.7.10 built** (ast OK, raw sha256 `463e0941…`, black-norm `48e13812…`, 203,008 B):
