@@ -333,3 +333,122 @@ def mentor_correct(
         "conflicting":    conflicting,
         "note_preview":   new_note[:200],
     })
+
+
+# ── tool 4: search_kb (hybrid BM25 + kNN via RRF) — trajectory S2.3 ───────────
+#
+# SHIP GATE: this is the REFERENCE implementation, staged here for porting into
+# the Cogitator tool. Do NOT replace the deployed search_kb until
+# `python3 rag/eval_retrieval.py --compare` shows rrf beats `linear` on the gold
+# set (recall@3 then MRR). If linear wins or ties, keep linear and record the
+# result (S2.3 is explicitly "ship only if metrics improve").
+#
+# WHY RRF over the current linear combination: the deployed search_kb sums a
+# kNN score (boost 0.7) and a BM25 score (boost 0.3) in one query and thresholds
+# the SUM at 0.72. BM25 scores are unbounded, so that threshold has no stable
+# meaning (S2.4). RRF fuses RANK positions, not raw scores, so it is immune to
+# the score-scale mismatch; and the miss decision is moved onto the raw kNN
+# COSINE (bounded 0..1), where a floor IS meaningful.
+
+OLLAMA_URL  = "http://127.0.0.1:11434"
+EMBED_MODEL = "nomic-embed-text"
+RRF_K       = 60
+COSINE_FLOOR_DEFAULT = 0.60   # semantic relevance gate (replaces the 0.72-on-sum)
+
+
+def _embed_query(text: str) -> list:
+    """768-dim nomic-embed-text query embedding (matches Cogitator._embed)."""
+    import requests
+    r = requests.post(
+        f"{OLLAMA_URL}/api/embed",
+        json={"model": EMBED_MODEL, "input": "search_query: " + text[:5000]},
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()["embeddings"][0]
+
+
+def _rrf_fuse_ids(list_a: list, list_b: list, k: int = RRF_K) -> list:
+    """Reciprocal Rank Fusion of two ranked id lists -> fused ids (desc score)."""
+    score, order = {}, []
+    for lst in (list_a, list_b):
+        for rank, _id in enumerate(lst, 1):
+            if _id not in score:
+                score[_id] = 0.0
+                order.append(_id)
+            score[_id] += 1.0 / (k + rank)
+    return sorted(order, key=lambda i: (-score[i], order.index(i)))
+
+
+def search_kb(
+    query: str,
+    cosine_floor: float = COSINE_FLOOR_DEFAULT,
+    max_results: int = 5,
+    topic_filter: str = "",
+) -> str:
+    """
+    Search the LSE knowledge base — hybrid BM25 + kNN fused with RRF.
+
+    Ranking: the semantic (kNN cosine) and lexical (BM25 multi_match) result
+    lists are fused with Reciprocal Rank Fusion, so a doc that ranks well on
+    EITHER signal surfaces, and neither score scale dominates the other.
+
+    Miss decision: a result set is a "KB miss" only if the best kNN COSINE is
+    below `cosine_floor` (default 0.60) — i.e. nothing is semantically close.
+    This replaces the old min_score=0.72 applied to an unbounded summed score.
+
+    Args:
+        query:        Natural-language search query.
+        cosine_floor: Semantic relevance gate on raw kNN cosine (0–1). Default 0.60.
+        max_results:  Max fused results to return. Default 5.
+        topic_filter: Optional topic tag (e.g. 'pfsense', 'searxng', 'llama-cpp').
+    """
+    pool = max(max_results * 3, 10)  # fuse over a slightly wider pool
+    flt = [{"term": {"topic": topic_filter}}] if topic_filter else []
+    src = ["title", "content", "source_path", "source_url", "topic",
+           "quality_score", "updated_at"]
+    es = _get_es()
+
+    vec = _embed_query(query)
+    knn_body = {
+        "knn": {"field": "embedding", "query_vector": vec, "k": pool,
+                "num_candidates": 50, "filter": flt or None},
+        "_source": src, "size": pool,
+    }
+    if not flt:
+        knn_body["knn"].pop("filter")
+    bm_body = {
+        "query": {"bool": {"must": [{"multi_match": {"query": query,
+                  "fields": ["title^2", "content"]}}], "filter": flt}},
+        "_source": src, "size": pool,
+    }
+
+    knn_resp = es.search(index=KB_INDEX, body=knn_body)
+    bm_resp = es.search(index=KB_INDEX, body=bm_body)
+
+    knn_hits = knn_resp["hits"]["hits"]
+    by_id = {h["_id"]: h for h in knn_hits}
+    for h in bm_resp["hits"]["hits"]:
+        by_id.setdefault(h["_id"], h)
+
+    # semantic floor on the best RAW kNN cosine (kNN-only query => _score is cosine)
+    best_cosine = max((h.get("_score", 0.0) for h in knn_hits), default=0.0)
+    if best_cosine < cosine_floor:
+        return (
+            f"KB miss — nothing semantically close (best cosine {best_cosine:.2f} "
+            f"< floor {cosine_floor}) for '{query}'.\n"
+            "Fall through to search_web(), then index_to_kb() with quality results."
+        )
+
+    fused_ids = _rrf_fuse_ids([h["_id"] for h in knn_hits],
+                              [h["_id"] for h in bm_resp["hits"]["hits"]])[:max_results]
+
+    lines = [f"KB results for '{query}' ({len(fused_ids)} found, hybrid RRF):\n"]
+    for i, _id in enumerate(fused_ids, 1):
+        s = by_id[_id]["_source"]
+        srcp = s.get("source_path") or s.get("source_url") or "unknown"
+        q = s.get("quality_score", "?")
+        title = s.get("title", "untitled")
+        snippet = (s.get("content", "") or "")[:280].replace("\n", " ")
+        lines.append(f"{i}. {title}  [quality {q}]  ({srcp})\n   {snippet}")
+    return "\n".join(lines)
