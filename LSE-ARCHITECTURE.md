@@ -34,6 +34,7 @@ The LSE is **not** a chatbot. It is an autonomous infrastructure operator with b
 │  node3090 (Ubuntu 24.04, 192.168.5.41)                      │
 │  RTX 3090 24GB · driver 595 · CUDA 13.3                     │
 │  llama-server :8080 — Qwen3.6-27B Q4_K_M (96k ctx, q8_0 KV)│
+│  Hermes gateway :8642 — 0.0.0.0 direct (socat removed P27) │
 │  SSH: lse-admin@node3090.home.arpa (FQDN required)          │
 └─────────────────────────────────────────────────────────────┘
 
