@@ -1,0 +1,18 @@
+{
+  "bench": "lse-bench-v1",
+  "condition": "A (baseline \u2014 learning disabled)",
+  "model_id": "qwen3.6-27b-q4-64k",
+  "run_at": "2026-06-14T07:26:56.790902+00:00",
+  "n_challenges": 1,
+  "n_solved": 1,
+  "total_points": 21.0,
+  "frozen_set_drift": [],
+  "per_challenge": [
+    {
+      "id": "node-t3-006",
+      "outcome": "SOLVED",
+      "attempts": 2,
+      "points": 21.0
+    }
+  ]
+}
