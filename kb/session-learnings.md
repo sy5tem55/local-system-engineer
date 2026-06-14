@@ -620,3 +620,47 @@ Cumulative KB entries from post-session debriefs.
 - KV cache: K must stay Q8_0 -- lowering K breaks this model. V is the only safe knob:
   --cache-type-v q4_0 saves ~2.6 GB at 80k context, extends comfortable range to ~120k.
 - SSH v1.7.13: search_kb('{hostname} SSH access') with NO topic_filter before any ssh command.
+
+---
+
+## Session 2026-06-14 — P29: sudo-block surfacing, Hermes channel skill, stale-mount confirmation
+
+### What worked
+- Surfacing sudo delegation blocks reliably (Cogitator v1.7.21): make `sudo_delegation_block` RETURN
+  a directive that forces the model's visible (post-`<think>`) reply to reproduce a ```bash fence
+  verbatim. The post-think reply is the only channel that renders reliably; format the command as a
+  real ```bash fence so it's copyable.
+- Building v1.7.20→22 via bash splice with per-replacement `count==1` asserts + `ast.parse` +
+  black-norm sha + `diff -u` to prove the change is surgical. Zero collateral edits in ~5000-line files.
+- Hermes producer side as SKILL.md + a deterministic helper (`lse_channel.py`, atomic JSON outbox).
+  Verified the round trip OFFLINE by running the helper's marker through the LSE's exact parser regex
+  before deploying anything.
+
+### What failed and why
+- **Attempted:** Fix "sudo block hidden in thinking" with `__event_emitter__` alone (v1.7.20).
+  **Failed because:** when the model calls a tool mid-reasoning, emitter `message` content is appended
+  inside the still-open `<think>` block → OpenWebUI collapses it → still hidden.
+  **Fix:** don't rely on the emitter to escape thinking; route the surface through the model's
+  post-`<think>` reply via a return-value directive (v1.7.21). Emitter kept only as best-effort.
+- **Attempted:** treat LSE-ARCHITECTURE.md / ROADMAP.md "modified" in sandbox `git diff` as phantom.
+  **Failed because:** the sandbox mount serves a STALE cached copy of existing repo files — it showed
+  LSE-ARCHITECTURE.md socat-FREE while the real working tree (host tools + WSL2 git) had an
+  uncommitted socat block. The earlier "phantom truncation" was stale-cache, and it is file-specific.
+  **Fix:** for existing repo files trust HOST Read/Edit/Grep and WSL2 git — never sandbox bash
+  reads/diffs. Bash WRITES of NEW files propagate fine; bash reads of MODIFIED files can be stale.
+- **Attempted:** carry a full ssh log through the Hermes inbox marker.
+  **Failed because:** the marker rides reply content; large payloads overflow the reply token cap and
+  the JSON marker truncates → `json.loads` fails → message lost. Small messages round-trip fine.
+  **Fix:** carry large artifacts BY REFERENCE — Hermes writes the log to a file, the envelope body
+  holds the path, the LSE fetches via `execute_command` SSH. The inbox is for small control messages.
+  Also: the poll's `max_tokens` was 8 (Path A sizing) — raised to 1024 (v1.7.22) so a Path B marker fits.
+
+### Key facts
+- `check_hermes_inbox` is EMPTY until the Hermes-side outbox (producer) is installed — that is correct,
+  not a bug. The LSE should say "channel requires the Hermes outbox; not installed" rather than
+  confabulating filesystem paths (`/opt/hermes/inbox/` does not exist).
+- Hermes skills = SKILL.md (YAML frontmatter + markdown) in `~/.hermes/skills/`, installed via
+  `skill_manage` BY HERMES (hermes-admin owns `~/.hermes`; lse-admin cannot write it). The producer
+  helper is a plain script at `~/.hermes/bin/`.
+- ctx-size 81920 is universal canon (4090 + node3090). socat eliminated P27; gateway binds :8642 direct.
+- Cogitator deploy identity = black-norm sha. v1.7.21 = `79b74fde…` (deployed); v1.7.22 = `142f155a…`.
