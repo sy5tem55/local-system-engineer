@@ -1,20 +1,21 @@
-// src/log.ts — AGENT IMPLEMENTS.
-// Append-only message log persisted to disk as canonical JSONL. Use
-// serializeMessage / deserializeMessage from schema.ts so the on-disk form is
-// the frozen schema verbatim. Round-trip contract: what you append, a FRESH
-// MessageLog over the same path reads back — schema-valid and deep-equal.
-import type { Message } from "./schema.js";
+// src/log.ts — Append-only JSONL message log using canonical schema (de)serializers.
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { serializeMessage, deserializeMessage, type Message } from "./schema.js";
 
 export class MessageLog {
   constructor(public readonly path: string) {}
 
   /** Append one message as a single canonical JSONL line. */
-  append(_msg: Message): void {
-    throw new Error("NOT IMPLEMENTED: MessageLog.append");
+  append(msg: Message): void {
+    const line = serializeMessage(msg) + "\n";
+    writeFileSync(this.path, line, { encoding: "utf8", flag: "a" });
   }
 
   /** Read all messages back, in order, validated against the schema. */
   all(): Message[] {
-    throw new Error("NOT IMPLEMENTED: MessageLog.all");
+    if (!existsSync(this.path)) return [];
+    const content = readFileSync(this.path, "utf8");
+    const lines = content.split("\n").filter((l) => l.trim() !== "");
+    return lines.map((line) => deserializeMessage(line));
   }
 }

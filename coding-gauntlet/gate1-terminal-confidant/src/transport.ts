@@ -1,23 +1,89 @@
-// src/transport.ts — AGENT IMPLEMENTS.
-// SSE streaming from an OpenAI-compatible llama-server /v1/chat/completions.
-// POST { model, messages:[{role,content}], stream:true }; read `data: {...}`
-// lines; yield choices[0].delta.content; stop on `data: [DONE]` or abort.
+// src/transport.ts — SSE streaming from an OpenAI-compatible llama-server.
+// POST /v1/chat/completions { model, messages, stream: true }
+// Yield choices[0].delta.content as it arrives.
 import type { Message } from "./schema.js";
 
 export interface StreamOpts {
-  baseUrl: string; // e.g. http://node4090.home.arpa:8080  (or node3090 :8642)
-  model?: string; // optional; llama-server tolerates/echoes
-  messages: Message[]; // conversation so far
-  signal?: AbortSignal; // GIVE-UP BUDGET: caller aborts on max-tokens/max-time
+  baseUrl: string;
+  model?: string;
+  messages: Message[];
+  signal?: AbortSignal;
 }
 
-/**
- * MUST yield assistant content deltas (token chunks) as they arrive.
- * MUST terminate cleanly on `[DONE]` or when `signal` aborts.
- * MUST NOT buffer the whole reply before yielding (it has to stream).
- */
-export async function* streamChat(_opts: StreamOpts): AsyncIterable<string> {
-  throw new Error(
-    "NOT IMPLEMENTED: streamChat — Gate 1 SSE transport (/v1/chat/completions)",
-  );
+export async function* streamChat(opts: StreamOpts): AsyncIterable<string> {
+  const { baseUrl, messages, signal } = opts;
+  const url = `${baseUrl.replace(/\/+$/, "")}/v1/chat/completions`;
+
+  const body = JSON.stringify({
+    model: opts.model,
+    messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    stream: true,
+  });
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    signal,
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`streamChat HTTP ${resp.status}: ${text.slice(0, 200)}`);
+  }
+
+  const reader = resp.body?.getReader();
+  if (!reader) throw new Error("no response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        if (line === "data: [DONE]") {
+          return;
+        }
+
+        if (line.startsWith("data: ")) {
+          const jsonStr = line.slice(6);
+          try {
+            const json = JSON.parse(jsonStr);
+            const content = json.choices?.[0]?.delta?.content;
+            if (typeof content === "string" && content.length > 0) {
+              yield content;
+            }
+          } catch {
+            // skip malformed SSE lines
+          }
+        }
+      }
+    }
+
+    // decode any remaining buffer
+    if (buffer.trim()) {
+      const line = buffer.trim();
+      if (line.startsWith("data: ") && line !== "data: [DONE]") {
+        try {
+          const json = JSON.parse(line.slice(6));
+          const content = json.choices?.[0]?.delta?.content;
+          if (typeof content === "string" && content.length > 0) {
+            yield content;
+          }
+        } catch { /* skip */ }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }

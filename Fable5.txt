@@ -11,3 +11,206 @@ python3 -c "import black,hashlib; print(hashlib.sha256(black.format_str(open('to
 
 (base) sy5@LUCIFER:~$ cd /mnt/c/Users/SY5/Claude/Projects/local-system-engineer && python3 -c "import black,hashlib; print(hashlib.sha256(black.format_str(open('tools/cogitator-v1.7.10.py').read(), mode=black.Mode()).encode()).hexdigest())"
 48e13812456ac076d087cdab24d91db832a8a20e0244cb0e4856506678066b1b
+
+
+(base) sy5@LUCIFER:~$ cd /mnt/c/Users/SY5/Claude/Projects/local-system-engineer && python3 -c "import black,hashlib; print(hashlib.sha256(black.format_str(open('tools/cogitator-v1.7.11.py').read(), mode=black.Mode()).encode()).hexdigest())"
+09595a2398c711283cef71cfdc643c1574a70551e7644158254d909a025159cf
+
+
+cd /mnt/c/Users/SY5/Claude/Projects/local-system-engineer && python3 -c "import black,hashlib; print(hashlib.sha256(black.format_str(open('tools/cogitator-v1.7.13.py').read(), mode=black.Mode()).encode()).hexdigest())"
+
+
+(base) sy5@LUCIFER:/mnt/c/Users/SY5/Claude/Projects/local-system-engineer$ cat /home/sy5/docker/searxng_data/settings.yml.backup-v2-20260603
+# SearXNG settings — curated engine whitelist for LSE sysadmin use
+# Live path: /home/sy5/docker/searxng_data/settings.yml
+#
+# ── Engine hierarchy (by estimated LSE usage) ────────────────────────────────
+#
+#  #   Engine                    Weight  Notes
+#  1   google                      3     Primary, broadest coverage
+#  2   duckduckgo                  2     Primary fallback
+#  3   stackoverflow               1     Technical Q&A
+#  4   arxiv                       4     AI/ML research (weight 4 = Tier 1)
+#  5   github                      1     Code, issues, docs
+#  6   wikipedia                   1     Reference baseline
+#  7   huggingface                 1     Models, directly relevant
+#  8   askubuntu                   1     Ubuntu 24.04-specific sysadmin
+#  9   google scholar              3     Academic/technical papers
+# 10   mdn                         1     Web/API documentation
+# 11   duckduckgo news             2     Current events
+# 12   google news                 1     News fallback
+# 13   hackernews                  1     Tech community discussions
+# 14   national vulnerability db   1     CVEs, security
+# 15   docker hub                  1     Container images
+# 16   pypi                        1     Python package lookup
+# 17   mojeek                      1     Independent index fallback
+# 18   qwant                       1     Independent index fallback
+# 19   brave                       1     Low-weight fallback
+# 20   bing                        1     Low-weight fallback
+# 21   superuser                   1     Power user Q&A
+# 22   semantic scholar            1     Academic
+# 23   google images               1     Image queries
+# 24   duckduckgo images           1     Image fallback
+# 25   npm                         1     JS packages
+# 26   pkg.go.dev                  1     Go packages
+# 27   pubmed                      1     Biomedical
+#
+# Engines deliberately excluded:
+#   reddit       — blocks VPS IPs on search.json (use "site:reddit.com" via Google)
+#   brave.news   — redundant with google news / duckduckgo news
+#   bing news    — redundant, low value
+#
+# ── How to add or remove an engine ───────────────────────────────────────────
+#
+#  ADDING an engine:
+#   1. Add the engine name to the `keep_only` list below (exact SearXNG name).
+#      Run `docker exec searxng cat /usr/local/searxng/searx/engines/*.py | grep "name ="`
+#      to confirm the exact registered name.
+#   2. Optionally add an entry under the `engines:` section with a custom weight
+#      and/or categories override. If omitted, weight defaults to 1.
+#   3. Deploy: cp this file to /home/sy5/docker/searxng_data/settings.yml
+#   4. Restart: cd /home/sy5/docker && docker compose restart searxng
+#   5. Verify: curl -s "http://localhost:8088/search?q=test&format=json" | python3 -m json.tool | grep '"engine"' | sort -u
+#   6. Watch Grafana → SearXNG Engine Health dashboard for the new engine to appear
+#      in metrics within one scrape interval (~15s after first search).
+#
+#  REMOVING an engine:
+#   1. Delete its entry from `keep_only`.
+#   2. Delete its entry from `engines:` if one exists.
+#   3. Deploy and restart as above (steps 3–4).
+#   4. Update the hierarchy comment at the top of this file.
+#   5. If the engine appears in the Grafana dashboard legend, update
+#      grafana-dashboard-searxng-engine-health.json to remove the series.
+#
+#  ADJUSTING weight:
+#   1. Add or update an entry under `engines:` with the new weight value.
+#      Do NOT change `keep_only` — that only controls which engines are active.
+#   2. Deploy and restart.
+#
+#  COMMON FAILURE MODES:
+#   - Engine name not matching registered name → engine silently ignored
+#   - Engine blocking VPS IPs → will auto-suspend per `suspended_times` config
+#     (check: docker logs searxng 2>&1 | grep -i "suspend\|blocked\|429")
+#   - Weight not taking effect → confirm entry is under top-level `engines:`,
+#     not nested under `use_default_settings:`
+# ─────────────────────────────────────────────────────────────────────────────
+
+use_default_settings:
+  engines:
+    keep_only:
+      # General web
+      - google
+      - google images
+      - google news
+      - google scholar
+      - duckduckgo
+      - duckduckgo images
+      - duckduckgo news
+      - bing
+      - mojeek
+      - qwant
+      - brave
+      # Technical / developer
+      - arxiv
+      - github
+      - stackoverflow
+      - askubuntu
+      - superuser
+      - mdn
+      - hackernews
+      - pypi
+      - npm
+      - pkg.go.dev
+      - docker hub
+      - huggingface
+      # Scientific / security
+      - pubmed
+      - semantic scholar
+      - national vulnerability database
+      # Reference
+      - wikipedia
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: true
+  secret_key: "913153e683373257077c6b99eebb293055d0784eed80e621cad095921576386b"
+
+search:
+  formats:
+    - html
+    - json
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+  suspended_times:
+    SearxEngineAccessDenied: 180
+    SearxEngineCaptcha: 3600
+    SearxEngineTooManyRequests: 180
+    cf_SearxEngineCaptcha: 1296000
+    cf_SearxEngineAccessDenied: 86400
+    recaptcha_SearxEngineCaptcha: 604800
+
+engines:
+  - name: arxiv
+    weight: 4
+    categories: [science, it, technology]
+
+  - name: google
+    weight: 3
+
+  - name: google scholar
+    weight: 3
+    categories: [science, it]
+
+  - name: duckduckgo
+    weight: 2
+
+  - name: duckduckgo news
+    weight: 2
+    categories: [news]
+
+  - name: brave
+    weight: 1
+
+  - name: bing
+    weight: 1
+
+outgoing:
+  request_timeout: 6.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+(base) sy5@LUCIFER:/mnt/c/Users/SY5/Claude/Projects/local-system-engineer$
+
+
+
+27 loaded, 19 enabled) is the capacity truth. To see how many engines actually respond right now — the real number, independent of both Grafana's usage lag and category routing — fan one query across every category and count distinct responders:
+curl -s "http://localhost:8088/search?q=linux+kernel+tuning&categories=general,science,news,it,files,social+media&format=json" | python3 -c "import sys,json;d=json.load(sys.stdin);r=sorted({e for x in d.get('results',[]) for e in x.get('engines',[])});print('RESPONDED:',len(r),r);print('UNRESPONSIVE:',d.get('unresponsive_engines'))"
+
+
+
+
+
+
+(base) sy5@LUCIFER:~$ # you, once, in WSL2 bash:
+mkdir -p ~/cg && cp -r /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/coding-gauntlet/{gate1-terminal-confidant,design-tokens} ~/cg/
+cd ~/cg/gate1-terminal-confidant && rm -rf node_modules && npm install
+
+added 50 packages, and audited 51 packages in 2s
+
+23 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+(base) sy5@LUCIFER:~/cg/gate1-terminal-confidant$ npm test
+
+> gate1-terminal-confidant@0.1.0 test
+> node --import tsx --test test/*.test.ts
+
+✔ [authored] schema round-trips and rejects malformed messages (0.799573ms)
+✔ [authored] token signatures are the four locked opencode colors (0.078798ms)
+✔ [authored] runs with one command (package.json start script present) (0.133989ms)
+✔ [agent] message log round-trips to disk in the canonical schema (4.835647ms)
+✖ [agent] renderer paints fenced code with the opencode syntax palette (2.559723ms)
+✖ [agent] renderer uses only the opencode palette (no rogue colors) (2.212752ms)
+﹣ [agent][live] streams >=1 token from llama-server (0.201738ms) # set GATE1_LIVE=1 (and LLAMA_URL) to run
