@@ -1,0 +1,40 @@
+{
+  "$comment": "Shared opencode-aesthetic design tokens for the Coding Gauntlet. Every gate (1->4) consumes THIS file so the look is identical from terminal to iOS. Signature colors (background/primary/accent/secondary) are confirmed from the opencode default theme; the rest are close approximations marked APPROX and should be reconciled against the canonical opencode.json in the opencode repo during Gate 1.",
+  "meta": {
+    "name": "opencode",
+    "mode": "dark",
+    "font": {
+      "family": "monospace",
+      "note": "opencode is a terminal-native aesthetic — monospace EVERYWHERE (UI chrome + content). Recommended ramp: a coding typeface such as Berkeley Mono / IBM Plex Mono / JetBrains Mono. Confirm opencode's exact webfont during Gate 1 and pin it here.",
+      "weights": { "regular": 400, "medium": 500, "bold": 700 }
+    }
+  },
+  "color": {
+    "background":        { "hex": "#0a0a0a", "confirmed": true,  "role": "deep black base / app ground" },
+    "backgroundPanel":   { "hex": "#141414", "confirmed": false, "role": "lifted surface: message pane, sidebar (APPROX)" },
+    "backgroundElement": { "hex": "#1c1c1c", "confirmed": false, "role": "input box, chips, hovered rows (APPROX)" },
+    "primary":           { "hex": "#fab283", "confirmed": true,  "role": "warm amber — cursor, links, primary action, own messages" },
+    "accent":            { "hex": "#9d7cd8", "confirmed": true,  "role": "purple — headings, keywords, agent name accents" },
+    "secondary":         { "hex": "#5c9cf5", "confirmed": true,  "role": "blue — lists, focused/selected state, mentions" },
+    "text":              { "hex": "#e0e0e0", "confirmed": false, "role": "primary foreground (APPROX)" },
+    "textMuted":         { "hex": "#808080", "confirmed": false, "role": "timestamps, secondary labels (APPROX)" },
+    "border":            { "hex": "#2a2a2a", "confirmed": false, "role": "panel + bubble borders (APPROX)" },
+    "borderActive":      { "hex": "#3a3a3a", "confirmed": false, "role": "focused input / active panel (APPROX)" },
+    "success":           { "hex": "#7fd88f", "confirmed": false, "role": "online presence, success (APPROX)" },
+    "warning":           { "hex": "#e6c07b", "confirmed": false, "role": "warnings (APPROX)" },
+    "error":             { "hex": "#e06c75", "confirmed": false, "role": "errors, failed sends (APPROX)" },
+    "info":              { "hex": "#5c9cf5", "confirmed": false, "role": "info = secondary blue (APPROX)" }
+  },
+  "syntax": {
+    "$comment": "Code-block highlighting — opencode renders model code output with these. APPROX, reconcile in Gate 1.",
+    "comment":  "#808080",
+    "keyword":  "#9d7cd8",
+    "function": "#5c9cf5",
+    "string":   "#7fd88f",
+    "number":   "#fab283",
+    "type":     "#5c9cf5",
+    "variable": "#e0e0e0"
+  },
+  "radius": { "bubble": 8, "panel": 10, "chip": 6 },
+  "spacing": { "xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24 }
+}

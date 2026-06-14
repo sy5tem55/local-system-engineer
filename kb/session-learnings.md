@@ -664,3 +664,10 @@ Cumulative KB entries from post-session debriefs.
   helper is a plain script at `~/.hermes/bin/`.
 - ctx-size 81920 is universal canon (4090 + node3090). socat eliminated P27; gateway binds :8642 direct.
 - Cogitator deploy identity = black-norm sha. v1.7.21 = `79b74fde…` (deployed); v1.7.22 = `142f155a…`.
+
+---
+
+## Session 2026-06-14 — P31
+
+### Key facts
+- Run throwaway build/verify steps (`npm install`, test runs) in the SANDBOX scratch dir, never inside the mounted repo — the sandbox can create on the NTFS mount but cannot unlink, so a `node_modules/` (or any file) written there is unremovable from the sandbox (EPERM) and must be deleted host-side. Copy only source files into the repo.

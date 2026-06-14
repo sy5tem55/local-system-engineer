@@ -1,0 +1,26 @@
+{
+  "name": "gate1-terminal-confidant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Coding Gauntlet Gate 1 — The Terminal Confidant: one human <-> one local model, in a terminal, rendered the opencode way.",
+  "bin": {
+    "confidant": "dist/index.js"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "ink": "^5.0.1",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "@types/react": "^18.3.3",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3"
+  }
+}
