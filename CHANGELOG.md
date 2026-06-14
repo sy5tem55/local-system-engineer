@@ -3,6 +3,21 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-14 — P29 (Cowork): sudo-block surfacing (v1.7.20→22), Hermes channel producer skill, bench Condition A, doc stamps
+
+**Cogitator v1.7.20 → v1.7.22** (cumulative on the deployed v1.7.19; black-norm = deploy identity):
+
+- **v1.7.20** (ast OK, raw `b5dcfb95…`, black-norm `75ad4a6a…`, 4993 lines, +23): `sudo_delegation_block` made async + force-surface via `__event_emitter__` message event. Insufficient alone — content emitted mid-`<think>` stays collapsed.
+- **v1.7.21** (ast OK, raw `67ffb2dd…`, black-norm `79b74fde…`, 5009 lines, +16): **DEPLOYED & confirmed (P29).** sudo block reformatted as a copyable ```bash fence; the function now RETURNS a directive forcing the model's visible post-`<think>` reply to reproduce the fence verbatim — the only channel that renders reliably. Fixes the long-standing "delegation hidden in thinking / needs explicit user request" issue.
+- **v1.7.22** (ast OK, raw `ba815cd2…`, black-norm `142f155a…`, 5015 lines, +6): inbox poll `max_tokens` 8→1024 (Path B companion — the marker rides reply content, can't fit in 8). BUILT; deploy candidate pending live channel test.
+
+**Hermes channel — producer side built** (`hermes-skill/`): `SKILL.md` (lse-channel, agentskills.io format) + `lse_channel.py` (atomic outbox: enqueue/flush/reply) + `INSTALL.md`. Round-trip verified offline against the LSE parser (`_extract_content_marker`→`_format_hermes_messages`). Staged to node3090 `/tmp`; Hermes self-install via `skill_manage` pending. **Channel finding:** small messages round-trip, but large payloads (e.g. a full ssh log) overflow the reply token cap and truncate the JSON marker → carry large artifacts **by reference** (Hermes writes a file, envelope body holds the path, LSE fetches via SSH), not inline.
+
+**Bench:** re-froze `lse-bench-v1` (1 valid: node-t3-006; 003/004 dropped — no actuation block; 24 self-report excluded). **Condition A** (eval, learning off): 1/1 SOLVED, 21.0 pts — `verify_ssh` caught a false self-report on A2 (model claimed success; ground truth failed attempt 1, solved attempt 2).
+
+**Docs/safety:** ctx-size **81920 confirmed universal canon** (4090 + node3090); `docs/kv-cache-vq4-128k-experiment.md` (KQ8/VQ4 @ 128k test plan); `docs/node-t3-003-004-rebuild-spec.md`; `backups/` (v1.7.19 rollback copy + `ROLLBACK-cogitator.md`).
+
+---
 ## 2026-06-13 — P28 (Cowork): actuation layer (1.7.0-a) + Hermes↔LSE channel (v1.7.15–v1.7.19) + WATERFALL rule + self-repairing SearXNG + Firecrawl
 
 **Cogitator lineage v1.7.15 → v1.7.19** (each cumulative; black-norm sha = deploy identity, raw sha for reference):

@@ -1,5 +1,5 @@
 # LSE Current State
-> Last updated: 2026-06-13 (P28 Cowork)
+> Last updated: 2026-06-14 (P29 Cowork)
 > Source of truth for deployed versions. Update this file at the end of every session.
 
 ---
@@ -8,7 +8,7 @@
 
 | Component | Version | File | Status |
 |---|---|---|---|
-| OpenWebUI Tool | **Cogitator v1.7.19** | `tools/cogitator-v1.7.19.py` | ✅ DEPLOYED (P28) — black-norm `e76d28b6…`, raw `7c1de10e…`, 4970 lines. Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) capping the Hermes↔LSE channel. P28 lineage: v1.7.15 `check_hermes_inbox` (+94) → v1.7.16 `hermes_cooperate` (+141) → v1.7.17 `allow_sudo` (+86) → v1.7.18 WATERFALL PROVENANCE RULE (+93) → v1.7.19 Path B parser (+41). Previous: v1.7.14 (P27, black-norm `435c319a…`, 4515 lines) |
+| OpenWebUI Tool | **Cogitator v1.7.21 (deployed) · v1.7.22 (staged)** | `tools/cogitator-v1.7.22.py` | ✅ **v1.7.21 DEPLOYED (P29)** — sudo force-surface confirmed (black-norm `79b74fde…`): copyable ```bash fence + return-directive. **v1.7.22 staged** (poll cap 8→1024, `142f155a…`) pending live Hermes-channel test. Base v1.7.19 (P28) — black-norm `e76d28b6…`, raw `7c1de10e…`, 4970 lines. Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) capping the Hermes↔LSE channel. P28 lineage: v1.7.15 `check_hermes_inbox` (+94) → v1.7.16 `hermes_cooperate` (+141) → v1.7.17 `allow_sudo` (+86) → v1.7.18 WATERFALL PROVENANCE RULE (+93) → v1.7.19 Path B parser (+41). Previous: v1.7.14 (P27, black-norm `435c319a…`, 4515 lines) |
 | System Prompt | v0.5.15 | `prompts/v0.5.15.md` | ✅ deployed — PFSENSE LOG RULE section |
 | Routing Filter | **v1.2.0** | `tools/lse-routing-filter-v1.2.0.py` | ✅ deployed — model-aware passthrough; Qwen3 preset only |
 | Context Monitor | v1.3.0 | `tools/lse-context-monitor-v1.3.0.py` | 🚫 retired (2026-05-29) — wrong metric prefix; replaced by Grafana alert pipeline (now also removed) |
@@ -234,6 +234,20 @@ docker compose up -d
 | Model | Points | Episodes | Solved | Esc | Avg Att | KB Hits |
 |---|---|---|---|---|---|---|
 | qwen3.6-27b-q4-64k | 425.6 | 23 | 22 | 0 | 1.09 | 23 |
+
+### Frozen Bench — lse-bench-v1 (P29, 2026-06-14)
+
+| Field | Value |
+|---|---|
+| Manifest | `bench/lse-bench-v1.json` — frozen 2026-06-14T07:24Z, `n_challenges=1` |
+| Selection rule | active challenges whose every assertion is verify_ssh-backed (ground-truth only) |
+| Valid | **node-t3-006** (success_criteria sha `b102e912…`) |
+| Excluded | 26 — 24 self-report (assertions not all verify_ssh-backed); **node-t3-003/004** (write-mode, no actuation block — unsolvable) |
+| **Condition A** (eval, learning OFF) | **1/1 SOLVED · 21.0 pts · 2 attempts · KB-assisted** — report `bench/reports/lse-bench-v1-conditionA-qwen3.6-27b-q4-64k-20260614-072656.json` |
+| Validation win | A2 (inventory line-count == real gguf count) FAILED attempt 1 despite the model self-reporting `inventory_matches: True`; `verify_ssh` caught the false self-report and only credited the solve on attempt 2. Eval seal confirmed (no leaderboard / no KB write). |
+| Watch | A2 flipped 2/3→3/3 on near-identical output (cosine 0.992) — possible run-to-run variance / McNemar noise source. |
+
+**Bench is a 1-challenge instrument** — not yet powered for the 3-way McNemar ascension gate. Grow it: rebuild node-t3-003/004 (`docs/node-t3-003-004-rebuild-spec.md`) + convert the 24 self-report challenges to verify_ssh-backed ground truth.
 
 ---
 
