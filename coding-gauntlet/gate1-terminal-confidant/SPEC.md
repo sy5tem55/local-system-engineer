@@ -66,11 +66,35 @@ more tokens buy ~nothing — the loop stops, it doesn't smoke compute.
 | palette matches token file within ΔE | `[agent] renderer uses only the opencode palette` | **red** |
 | streams a live reply from llama-server | `[agent][live] streams ≥1 token…` | skip → **red/green** |
 
-**Definition of done:** `npm test` is all-green offline (authored + the three agent checks), and
-`GATE1_LIVE=1 LLAMA_URL=http://node4090.home.arpa:8080 npm test` passes the live stream.
+### Hardened acceptance (P31 — close the unit/integration gap)
+
+The original render checks proved colors were *in-palette* but not that markdown is *correct*, nor
+that the running App actually **uses** the renderer / persists the log. These do:
+
+| Requirement | Check | Starts |
+|---|---|---|
+| markdown delimiters consumed (`**bold**`→`bold`, `` `code` ``, `[label](url)`) | `[agent] renderer: bold / inline-code / link…` | **red** |
+| the **App displays each message via `renderMessageToAnsi`** (no raw fences/`**` in the frame) | `[agent] App renders messages THROUGH the renderer…` | **red** |
+| the **App persists to `--log`** on send (canonical JSONL) | `[agent][persist] …` | skip (spec req) |
+| the App enforces the give-up budget | `[agent][budget] …` | skip (spec req) |
+
+**Definition of done:** `npm test` is all-green offline (authored + every `[agent]` check incl. the
+hardening checks), and `GATE1_LIVE=1 LLAMA_URL=http://node4090.home.arpa:8080 npm test` passes the
+live stream. The `[budget]` check is a documented requirement (verify the budget aborts a runaway
+stream) until App exposes an injectable `stream` for a deterministic test.
 
 ΔE tolerance is **ΔE76 ≤ 2.0** (just-noticeable). The renderer must emit only colors within that
 of a token in `opencode-tokens.json` — no rogue colors.
+
+### App contract (the testable seams)
+
+`AppProps` now carries seams so the harness can drive the UI offline. The App MUST:
+- accept `initialMessages?: Message[]` and render the pane by passing **each** message through
+  `renderMessageToAnsi` (not raw `msg.content`) — this is how "rendered the opencode way" actually
+  reaches the screen, and the only way later gates' look stays consistent;
+- accept `stream?` (default `streamChat`) so transport is injectable for tests;
+- when `logPath` is set, persist **every** message (user + assistant) via `MessageLog`;
+- enforce `budgetMs?` (default 60_000): abort the assistant turn when the wall-time budget trips.
 
 ## Side-effect deliverable: pin the tokens
 
