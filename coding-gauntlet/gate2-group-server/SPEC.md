@@ -91,10 +91,16 @@ max-tokens/max-time, and `runTurn` is bounded by the turn budget. Loops stop; th
 | @mention a model → it replies; delivery < 1s | `[agent] @mention a model agent…` | **red** |
 | model↔model exchange terminates (no runaway) | `[agent] model<->model …terminates within the turn budget` | **red** |
 | history survives a restart | `[agent] history survives a restart` | **red** |
+| **messages fan out to ALL subscribers** (2 humans + agent reply; exercises `/join`) | `[agent] room messages fan out to ALL subscribers…` | **red** |
 | 2 humans + 2 model agents, live | `[agent][live] …real llama-server` | skip → **red/green** |
 
-**Definition of done:** `npm test` all-green offline (authored + the four agent checks), and the
+**Definition of done:** `npm test` all-green offline (authored + the **five** agent checks), and the
 live check green with `GATE2_LIVE=1 LLAMA_URL=http://node4090.home.arpa:8080 npm test`.
+
+> Fan-out (P31 hardening): a server that only echoes a reply to the *sender* would pass every
+> single-client check but fail the room — "2 humans + 2 agents in one room" means a non-sender must
+> receive both the human message and the agent's reply. The fan-out test opens two human WS clients,
+> has the second **join** the room, and asserts the non-sender sees both.
 
 > The acceptance harness injects a **fake `ModelClient`** (reply is a function of the agent handle,
 > via `endpoint: "fake://<handle>"`) so mention-routing and termination are tested deterministically
