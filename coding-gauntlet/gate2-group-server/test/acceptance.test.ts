@@ -220,6 +220,54 @@ test("[agent] history survives a restart (SQLite persistence)", async () => {
   }
 });
 
+test("[agent] room messages fan out to ALL subscribers (2 humans + an agent reply)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gate2-"));
+  const ctx = await freshServer({ dbPath: join(dir, "fan.sqlite"), model: fakeModel(() => "pong") });
+  try {
+    const base = ctx.server.url();
+    const reg = async (h: string) => (await ctx.server.fetch(new Request(`${base}/auth/register`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ handle: h, password: "pw" }),
+    }))).json();
+    const joe = await reg("joe");
+    const eve = await reg("eve");
+    const hdr = (t: string) => ({ "content-type": "application/json", authorization: `Bearer ${t}` });
+    const room = await (await ctx.server.fetch(new Request(`${base}/rooms`, {
+      method: "POST", headers: hdr(joe.token), body: JSON.stringify({ name: "general" }),
+    }))).json();
+    // eve JOINS the room (exercises /join); an agent is added
+    await ctx.server.fetch(new Request(`${base}/rooms/${room.id}/join`, { method: "POST", headers: hdr(eve.token) }));
+    await ctx.server.fetch(new Request(`${base}/rooms/${room.id}/agents`, {
+      method: "POST", headers: hdr(joe.token), body: JSON.stringify({ handle: "critic", endpoint: "fake://critic" }),
+    }));
+    const open = (tok: string) => new Promise<WebSocket>((res, rej) => {
+      const w = new WebSocket(ctx.server.wsUrl(tok));
+      w.on("open", () => res(w)); w.on("error", rej);
+    });
+    const joeWs = await open(joe.token);
+    const eveWs = await open(eve.token);
+    const eveGot: ServerFrame[] = []; collectFrames(eveWs, (f) => eveGot.push(f));
+    const joeGot: ServerFrame[] = []; collectFrames(joeWs, (f) => joeGot.push(f));
+    joeWs.send(JSON.stringify({ type: "subscribe", roomId: room.id }));
+    eveWs.send(JSON.stringify({ type: "subscribe", roomId: room.id }));
+    await sleep(50); // let both subscriptions register before the send broadcasts
+    joeWs.send(JSON.stringify({ type: "send", roomId: room.id, content: "@critic hi" }));
+    const texts = (fs: ServerFrame[]) =>
+      fs.filter((f) => f.type === "message").map((f) => (f as any).message.content as string);
+    let ok = false;
+    for (let t = 0; t < 100 && !ok; t++) {
+      await sleep(20);
+      const e = texts(eveGot);
+      ok = e.includes("@critic hi") && e.includes("pong"); // non-sender sees BOTH
+    }
+    joeWs.close(); eveWs.close();
+    assert.ok(ok, "non-sender (eve) did not receive both the human message and the agent reply — fan-out broken");
+    assert.ok(texts(joeGot).includes("pong"), "sender did not receive the agent reply");
+  } finally {
+    await ctx.server.close(); ctx.store.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ── [agent][live] — real llama-server; gated ──────────────────────────────────
 const LIVE = process.env.GATE2_LIVE === "1";
 test("[agent][live] a model agent replies using a real llama-server",
@@ -252,12 +300,15 @@ test("[agent][live] a model agent replies using a real llama-server",
       await new Promise((res, rej) => { ws.on("open", res); ws.on("error", rej); });
       ws.send(JSON.stringify({ type: "subscribe", roomId: room.id }));
       ws.send(JSON.stringify({ type: "send", roomId: room.id, content: "@qwen say hi in one word" }));
-      await sleep(8000);
+      // Poll up to ~30s: a cold 27B can take >10s for first reply (Gate 1 cold start was 16.5s).
+      // Returns as soon as the reply lands, so it's fast when the model is warm.
+      let replied = false;
+      for (let t = 0; t < 150 && !replied; t++) {
+        await sleep(200);
+        replied = got.some((f) => f.type === "message" && (f as any).message.author.kind === "model");
+      }
       ws.close();
-      assert.ok(
-        got.some((f) => f.type === "message" && (f as any).message.author.kind === "model"),
-        "no live agent reply",
-      );
+      assert.ok(replied, "no live agent reply within ~30s");
     } finally {
       await server.close(); store.close(); rmSync(dir, { recursive: true, force: true });
     }
