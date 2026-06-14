@@ -48,6 +48,25 @@ The outbox lives at `~/.hermes/lse-outbox.json` (created on first enqueue). No s
    human sees what you told the LSE.
 3. Done. The message is queued and will be delivered on the LSE's next call/poll.
 
+### A.large — sending a large payload (ssh logs, dumps, multi-KB output)
+The reply you ride back to the LSE is capped at the request's `max_tokens` (1024 on the
+poll path). A large inline `body` overflows that cap and truncates the JSON marker, so
+**large payloads go by reference**:
+1. Write the payload to a file and enqueue from it:
+   ```bash
+   python3 ~/.hermes/bin/lse_channel.py enqueue \
+     --body-file /path/to/big-output.txt --kind ask --priority action --want-reply
+   ```
+   You can also `enqueue --body "<huge string>"` — `flush` spills automatically if the
+   body exceeds the spill threshold (800 chars) or the marker would exceed its budget.
+2. On `flush`, the helper writes the full payload to a **world-readable** ref file under
+   `REF_DIR` (default `/tmp/lse-channel/refs/<cid>.txt`) on this node, and the marker
+   carries only a short preview plus `body_ref` (the path) and `body_bytes`.
+3. The LSE (Cogitator ≥ v1.7.23) surfaces the path and fetches the full text itself via
+   `execute_command` SSH (`ssh lse-admin@node3090.home.arpa cat <body_ref>`). No sudo —
+   `/tmp` is world-traversable and the ref file is mode 0644. Override the location with
+   `LSE_CHANNEL_REF_DIR` if `/tmp` is unsuitable; the LSE just reads whatever path it's given.
+
 ## B. On EVERY reply to the LSE, and immediately on `__LSE_POLL__`
 1. Run:
    ```bash
@@ -72,6 +91,10 @@ python3 ~/.hermes/bin/lse_channel.py reply --cid <cid> --text "<the LSE's result
 - Envelope keys the LSE reads: `correlation_id`, `kind` (`notify|ask`), `priority`
   (`info|action|urgent`), `body`, `want_reply` (bool).
 - `correlation_id` format: `hz-YYYYMMDD-NNNN`.
+- **By-reference keys (optional; Cogitator ≥ v1.7.23 surfaces them, older versions ignore
+  them safely):** `body_ref` — absolute path on this node holding the full payload, which
+  the LSE SSH-fetches; `body_bytes` — original size. When `body_ref` is set, `body` holds
+  only a short preview. The keys are additive — markers without them format exactly as before.
 
 ## Critical notes
 - The `__LSE_POLL__` flush must emit the FULL marker. The LSE raised its poll cap to 1024

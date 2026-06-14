@@ -21,3 +21,13 @@ Companion LSE-side change required: deploy Cogitator **v1.7.22** (raises the inb
 `max_tokens` 8 → 1024 so a Path B marker fits on the poll). Without it, messages still ride
 `call_hermes`/`hermes_plan` replies (2048 cap), but the dedicated `check_hermes_inbox` poll
 would clip the marker.
+
+For **large payloads** (ssh logs, dumps), also deploy Cogitator **v1.7.23** — it surfaces the
+`body_ref` fetch instruction so the LSE pulls oversized payloads from the ref file via SSH (see
+SKILL.md §A.large). v1.7.23 is a superset of v1.7.22 (poll cap + by-reference), so deploying
+v1.7.23 covers both. Smoke-test by-reference:
+```bash
+python3 ~/.hermes/bin/lse_channel.py enqueue --body-file /tmp/lse-channel/refs-demo.txt --kind ask --want-reply
+python3 ~/.hermes/bin/lse_channel.py flush   # marker should carry body_ref, not the full payload
+ls -l /tmp/lse-channel/refs/                 # the ref file is world-readable (0644)
+```
