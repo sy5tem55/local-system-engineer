@@ -576,3 +576,47 @@ Cumulative KB entries from post-session debriefs.
 - P24 "webui.db clean" was a false-negative: verify ABSENCE with storage-shaped queries (time-window on chat.updated_at), never text-grep for command text that isn't persisted
 - 06-10 22:14 sweep = SY5's "Claude Code Security Check" OWUI chat (npm supply-chain, Check Point) — harness exonerated: run_episode.py -> llama-server direct, never the cogitator, never agent_commands.log
 - RUTX50: 07.22.3=official Stable, 07.23.4=Latest, NO fix exists (verified 2026-06-12); webui auth = uhttpd->api_dispatcher.lua(LuaJIT)->ubus session, SSH=dropbear (separate); recovery: /etc/init.d/uhttpd restart; downgrade WITHOUT keep-settings
+
+## Session 2026-06-13 - P26/P27: USE BASH for .py on NTFS; OWUI backup; ES source_url; git locks; K cache
+
+### What worked
+- OWUI backup recovery: copy-paste tool code from OWUI editor to txt then rename .py.
+  Pure CRLF on Windows clipboard -- not a problem. Python normalizes CRLF to LF on write.
+  Black-norm sha256 is the deploy identity: python3 -m black --quiet - < file.py | sha256sum
+  (--code flag hits OSError: Argument list too long on files > ~100KB)
+- Finding correct ES field names: print sorted(src.keys()) from a live hit before writing
+  any update logic
+
+### What failed and why
+- **Attempted:** Reconstructing cogitator from P26 transcript after truncation
+  **Failed because:** User paste was last message before context summarization, compressed
+  into summary prose, not preserved in JSONL. Largest JSONL message was 43KB; 213KB paste lost.
+  **Fix:** OWUI copy-paste backup is the authoritative source for deployed code.
+
+- **Attempted:** fix_rutx50_kb_source.py used src.get("source") with URL-content match
+  **Failed because:** KB documents store URL in source_url, not source. Returned "(none)"
+  for all docs -- silent wrong-field read.
+  **Fix:** src.get("source_url"); target by title match, not URL-content match.
+
+- **Attempted:** Git commit from Cowork sandbox
+  **Failed because:** .git/index.lock and HEAD.lock persisted from crashed session.
+  Sandbox cannot delete NTFS lock files -- rm returns "Operation not permitted".
+  **Fix:** PowerShell: Get-ChildItem ".git\*.lock" | Remove-Item -Force before every commit.
+
+- **Attempted:** Bash splice on session-handover.md via sandbox mount
+  **Failed because:** Sandbox /sessions/.../mnt/ showed stale truncated view (109 lines)
+  of a 204-line committed file. Bash splice wrote truncated version back, losing 95 lines.
+  **Fix:** For .md files use Read/Write/Edit file tools (not bash -- bash mount can be stale).
+  For .py files: ALWAYS use bash (Write/Edit silently truncate .py on NTFS). No exceptions.
+
+### Key facts
+- LARGE .py FILES ON NTFS: USE BASH. NOT Write/Edit tools. ALWAYS.
+  Splice: python3 -c "with open(p) as f: s=f.read(); s=s.replace(old,new,1); open(p,'w').write(s)"
+  Verify: python3 -c "print(sum(1 for _ in open(p)))" + python3 -c "import ast; ast.parse(open(p).read())"
+- For .md files: use Read/Write/Edit file tools. Bash mount can show stale/truncated NTFS state.
+- ES lse-kb field is source_url (not source). Full schema: content, created_at, doc_id,
+  embedding, quality_score, refinement_count, source_path, source_url, tags, title, topic,
+  updated_at, version. source_tier and verified_against are dynamic fields.
+- KV cache: K must stay Q8_0 -- lowering K breaks this model. V is the only safe knob:
+  --cache-type-v q4_0 saves ~2.6 GB at 80k context, extends comfortable range to ~120k.
+- SSH v1.7.13: search_kb('{hostname} SSH access') with NO topic_filter before any ssh command.
