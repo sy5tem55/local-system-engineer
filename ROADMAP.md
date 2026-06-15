@@ -443,6 +443,55 @@
 
 ---
 
+## Deferred — `lse-canon` (principle corpus + review gate)
+
+> **Definition:** A KB topic seeded with **distilled, checkable principles mined from the
+> field-defining canon**, plus an intermediate **review gate** (a skill) that runs after the
+> model completes a unit of work and before it claims done — it retrieves the relevant
+> principles and cross-references the diff against them, then the model course-corrects. The
+> generalized examiner: the harness catches what is *encoded as a test*; this catches design /
+> security / craft issues that aren't, by cross-referencing the canon. Named *biblos* — striving.
+
+### The canon (best-in-field; seed source)
+
+- **Design / complexity** — *A Philosophy of Software Design*, John Ousterhout.
+- **Craft / smells → fixes** — *Refactoring* (2nd ed), Martin Fowler.
+- **Engineering judgment** — *The Pragmatic Programmer* (20th-anniversary ed), Hunt & Thomas.
+- **Security depth** — *Security Engineering* (3rd ed), Ross Anderson **(free)**.
+- **Security as verifiable checklist** — **OWASP ASVS + Cheat Sheet Series (open)**.
+- **Threat modeling** — *Threat Modeling: Designing for Security*, Adam Shostack.
+- (optional judgment axis: *The Mythical Man-Month*; Polya *How to Solve It*.)
+
+### Design principles
+
+1. **Distill, don't ingest prose.** RAG over book chunks ≈ pattern-matching, not insight; the
+   ideas are already diffusely in the model's pretraining. Seed the KB with **structured
+   principles** (smell → why → fix; ASVS-style requirement → how to verify), not raw text. The
+   value is the **retrieval anchor + forced cross-reference**, not the corpus.
+2. **Respect copyright.** Anderson's *Security Engineering* and OWASP are free/open → ingest
+   wholesale. The four copyrighted books → seed **own paraphrased principle notes** only (also
+   the more effective form).
+3. **Gate placement** — between "harness green" and "claim done." Take the diff → retrieve top-K
+   principles per axis (design / security / correctness) via the existing `search_kb`/RRF → emit
+   a structured critique (principle → honored|violated → fix) → model revises before done. A
+   would-have-caught list from this session: Gate 1's hollow renderer, Gate 3's polite-boundary
+   sandbox.
+4. **Measure it (Galilean).** Run gauntlet gates with vs without the review gate; McNemar the
+   outcomes. Adopt only if it catches more than it costs in tokens — null result is a result.
+
+### Implementation tasks (deferred)
+
+- [ ] `lse-canon` ES topic + schema (principle_id, axis, source, statement, smell/anti-pattern,
+      check, fix, severity) — reuse the `lse-kb` index conventions.
+- [ ] Seed 15–20 starter principles (Ousterhout + Fowler + ASVS) as the v0 corpus.
+- [ ] `canon-review` skill: diff → per-axis retrieval → structured critique → revise loop, with a
+      give-up budget; wire as the gauntlet's pre-"done" gate.
+- [ ] A/B measurement run (review-gate ON vs OFF) on Gate 2/3-class tasks; McNemar.
+- [ ] Cross-family critic (GLM) as an alternate/parallel reviewer — compare canon-RAG critique vs
+      cross-family critique vs both (ties into the multi-node §5 critic-lift question).
+
+---
+
 ## SSH COMMAND= PROTOCOL — read-only SSH escalation
 
 When a challenge requires read access to pfSense or another host's filesystem that is
