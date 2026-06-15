@@ -1,0 +1,1 @@
+{ "name":"netfetch","version":"1.0.0","apiVersion":"g3.1","entry":"plugin.js","capabilities":["net"],"commands":["/fetch"],"description":"fetches a URL via the net capability" }
