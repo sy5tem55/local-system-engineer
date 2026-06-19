@@ -3,6 +3,37 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-19 — P31 (Cowork): Goethe v0.1.0 — Cogitator fork, Faust consolidation
+
+**Goethe v0.1.0** (`tools/goethe-v0.1.py`, fork of Cogitator v1.7.24; ast OK, raw `a7f379dd…`, 4721 lines, black-norm pending):
+Retires the in-tool Hermes↔LSE OWUI channel — superseded by the **Faust** group-chat room
+(`Faust/`, 1.7.0-b). The async outbox/inbox coordination no longer belongs in the OWUI tool.
+
+- **Removed**: `hermes_cooperate`, `_cooperate_exec`, `check_hermes_inbox`, `_format_hermes_messages`,
+  `_flush_voicemail`, and the Path A/B content-marker + by-reference inbox/outbox machinery
+  (`_extract_content_marker`, `_strip_hermes_marker`). `_call_hermes` simplified to return the
+  plain reply (no inbox append / marker strip).
+- **Kept**: `hermes_plan` (inline pre-flight planner — distinct use, genuinely useful) + its
+  `_call_hermes` backend + `_kanban_create_card`; and all general LSE tooling/hardening
+  (execute_command, sudo_delegation_block, file ops, search_kb/index_to_kb, record_error,
+  pfSense tools, WATERFALL provenance, source-claim verification, SSH KB-first/fingerprint rules).
+- Net: 5051 → 4721 lines. New lineage `goethe-v*`; Cogitator v1.7.x history retained in the module changelog.
+- **Pre-deploy**: black-norm sha, then paste into OWUI as the LSE tool. The LSE's Faust presence is the
+  separate `agent-client/` sidecar (its `on_cue` calls this model via OWUI `/api/chat/completions`).
+
+---
+## 2026-06-19 — P31 (Cowork): Cogitator v1.7.23–v1.7.24 — Hermes by-reference + call_hermes demodeled to internal-only
+
+**Cogitator v1.7.23 → v1.7.24** (cumulative on the deployed v1.7.21; both STAGED, black-norm pending — `black` unavailable in build env, compute before deploy):
+
+- **v1.7.23** (ast OK, raw `3bf589bf…`, black-norm pending, 5031 lines, +16 vs v1.7.22): **HERMES→LSE BY-REFERENCE** (large-payload fix). When an inbound envelope carries `body_ref` (a path written by the Hermes producer on node3090 because the full payload would overflow the reply token cap and truncate the JSON marker), `_format_hermes_messages` now surfaces a fetch instruction (`execute_command` SSH `cat`) alongside the preview, so the model can pull the full text on demand. Unknown-key safe — older markers without `body_ref` format exactly as before. No new tool; the existing `execute_command` SSH path does the fetch. Implements the "carry large artifacts by reference" finding from P29.
+- **v1.7.24** (ast OK, raw `a76c385c…`, black-norm pending, 5051 lines, +20 vs v1.7.23): **`call_hermes` DEMODELED → internal-only `_call_hermes`** (URGENT). The model must no longer invoke the Hermes chat-completion call directly — direct calls frequently surface OWUI networking errors, and the direct entry point is being superseded by `hermes_plan` and `hermes_cooperate`. Renamed `call_hermes` → `_call_hermes` so OWUI no longer exposes it in the tool spec (leading underscore = internal helper). **All logic preserved** — it remains the shared backend both `hermes_plan` (planner) and `hermes_cooperate` (conference call) invoke internally; both tools are behaviourally unchanged. The `check_hermes_inbox` 'ask' reply path, which previously instructed the model to `call_hermes` directly, now routes through `hermes_cooperate(objective=<result>, max_rounds=1, context='correlation_id=<cid>')`. Module tool list + docstring references to `call_hermes` reworded so nothing points the model at the hidden function; historical changelog entries left intact (past-version records).
+
+**Registry:** VERSION.md + CURRENT-STATE.md updated — Current Versions row, Tool Checksums (raw sha + line count; black-norm `_pending_`), Line Count Tally, and Tool Changelog Summary. v1.7.21 remains the DEPLOYED build; v1.7.22–v1.7.24 staged.
+
+**Pre-deploy TODO:** run `black` on `cogitator-v1.7.23.py` and `cogitator-v1.7.24.py`, record black-norm sha256 in VERSION.md (replaces the two `_pending_` cells), then paste v1.7.24 into OWUI Admin → Tools → LSE Cogitator → Save and confirm `call_hermes` no longer appears in the model's tool list.
+
+---
 ## 2026-06-14 — P29 (Cowork): sudo-block surfacing (v1.7.20→22), Hermes channel producer skill, bench Condition A, doc stamps
 
 **Cogitator v1.7.20 → v1.7.22** (cumulative on the deployed v1.7.19; black-norm = deploy identity):
@@ -766,45 +797,4 @@ Next: `EscalationWrapper` (stub at `scripts/escalation_wrapper.py`)
 
 - llama.cpp + OpenWebUI + SearxNG + Playwright stack stood up
 - Windows Terminal launcher with three model profiles (32k, 64k, no-think)
-- Tool v1.4.0: execute_command, read_file, write_file, sudo_delegation_block, search_web, get_context_status
-- Tool v1.4.1–v1.4.3: routing rules, sudo pipeline fix, write_file protocol rewrite
-- Tool v1.5.0: COMBINE RULE and search_web announcement promoted to docstrings; port 8088 fix
-- Prompt v0.1 → v0.4.1: identity, permission boundary, live service rule, context handover
-- Eval Run 1: unscored baseline
-- Skills: `lse:eval-runner`, `lse:docstring-optimizer`, `lse:stack-health-check`, `lse:session-debrief`, `lse:version-manager`
-- Docs: 01–06 written
-
----
-
-## 2026-06-09 — P18 Cowork — pfsense-agent.py + OpenWebUI tool v1.6.1
-
-### pfsense-agent.py — Option C orchestrator CLI
-- Built `pfsense-agent.py`: natural language → Qwen3.6-27B (LM Studio node3090) → structured LSE prompt → LSE
-- `--think` / `--no-think` / `--prompt-only` / `--auto` flags
-- Streaming with live char/timing display
-- Assistant prefill (`"Step 1: "`) for `--no-think` mode — forces clean output start
-- `_extract_prompt` — DO NOT block anchor + contiguous ascending step sequence detection
-  - `rfind(FIRST_DO_NOT)` → last DO NOT block; walk backwards through step matches to find sequence start
-  - CRITICAL: use `^[ \t]*` not `^\s*` in multiline regex — `^\s*` swallows preceding `\n`, landing `match.start()` on newline instead of first space
-  - Restores `Step 1: vault_unlock()...` when model correctly starts at Step 2
-- Config: `/opt/local-se/pfsense-agent.conf` (chmod 600), `[lmstudio]` + `[openwebui]` sections
-- `tool_ids: ["lse_system_admin_terminal", "lse_vaultwarden_tools"]` added to `submit_to_lse` payload
-
-### OpenWebUI tool v1.6.1 deployed (lse_system_admin_terminal)
-- Updated from v1.5.26 → v1.6.1 (pfSense three-tool architecture + schema introspection prohibition)
-- Deployed via Admin → Tools → edit → paste → Save
-
-### OpenWebUI API tool execution gap — confirmed
-- `/api/chat/completions` with `tool_ids` injects tool definitions but local LM (Qwen3.6) generates
-  reasoning text, not structured function-call JSON → agentic loop never fires
-- Chat UI works because OWUI uses text-based tool invocation format (ReAct-style), not native FC
-- Resolution: Dify multi-agent UI (see ROADMAP). OWUI pipe function deferred.
-
-### Architecture decision — Dify for multi-agent UI
-- Qwen3.6 (orchestrator/reasoning) + LSE (executor/tools) pipeline
-- Deployed on-demand, not persistent always-on service
-- OWUI pipe function for Qwen3.6 → LSE handoff: deferred
-
-### pfSense security constraints confirmed
-- SSH admin@pfsense = root shell, bypasses read-only API boundary — human-only, never LSE
-- pfSense auth: `X-API-Key` header (NOT `Authorization: Bearer`)
+- Tool v1.4.0: execute_command, read_file, write_f
