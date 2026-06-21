@@ -71,19 +71,33 @@
   without it every write-mode challenge is a deterministic failure and the bench measures world
   state, not the model. Plus: `verify_ssh` on all bench challenges, `--eval --no-learn` flag,
   freeze `lse-bench-v1`, record Condition A baseline
-- [ ] **1.7.0-b** — **Hermes ↔ LSE bidirectional communication** (added P27 2026-06-13):
-  Current state is ONE-DIRECTIONAL: LSE can call Hermes (`call_hermes`, `hermes_plan`) but
-  Hermes cannot initiate contact with LSE. Hermes has no path to push alerts, cron-triggered
-  tasks, or maintenance events into an LSE session unprompted.
-  Required: a Hermes → LSE push channel. Design options:
-  (a) **OWUI API inject** — Hermes POSTs to OWUI `/api/chat/completions` with a system-seeded
-      context that includes a pending task. Creates a new session; LSE wakes and executes.
-  (b) **hermes-gateway webhook** — expose a POST endpoint on LUCIFER that receives Hermes pushes
-      and injects them into the active OWUI session (requires session ID tracking).
-  (c) **Polling tool** — LSE calls `check_hermes_inbox()` at task boundaries; Hermes writes to
-      a shared queue (kanban.db or a new table). Pull-based, no push infrastructure needed.
-  Companion: `hermes_notify`/`hermes_ask` structured protocol with correlation ids so
-  LSE responses can be routed back to the originating Hermes task. KB entry live on deploy.
+- [ ] **1.7.0-b** — **Faust multi-agent planning protocol** (PARADIGM CHANGED P31 2026-06-19;
+  design: `docs/lse-1.7.0-b-faust-planning-design.md`):
+  Coordination moved from an OWUI push channel into **Faust** (`Faust/`), the realtime
+  group-chat app from the Coding Gauntlet. Humans + local-model agents are first-class room
+  participants (REST + WS + SQLite); agents already connect with a human in the loop. So the
+  problem is no longer "wake LSE" but the multi-agent protocol in a shared room.
+  Target flow: **PLANNING** (agents take turns proposing, round-robin, ≤5 rounds; vote
+  `[[CONVERGED]]` to agree) → **AWAITING_APPROVAL** (moderator posts the converged plan; human
+  admin `/approve` or `/revise`) → **TASKING** (agents assign each other working tasks via
+  `@handle: <task>`, emit `[[DONE]]`) → **IDLE** (assignment ledger posted; mention-reply resumes).
+  Implementation (additive, no rewrites): `planning.ts` `PlanningController` (per-room state
+  machine) + `PlanningPolicy implements SpeakerPolicy` (round-robin selector over the
+  controller, delegates to mention-reply when idle) + one `onTurnComplete` server seam to drain
+  moderator notices. Moderator framing rides as `role:"assistant"` messages (agents drop
+  `role:"system"`). Convergence rule: agents vote `[[CONVERGED]]`, then human admin approves.
+  - ~~OWUI push channel (inject / webhook / polling)~~ SUPERSEDED — the Hermes→LSE pull side
+    (`check_hermes_inbox`, Path A/B markers, by-reference) shipped v1.7.15–v1.7.23; the push
+    framing is retired in favour of Faust rooms.
+  - [ ] **Plugin integration** — fold `gate3-plugin-forge` into `gate2-group-server` (the core,
+    running, admin server) so one `npm start` serves chat + plugins + UI. Seams already exist
+    (`onMessage` hook, `staticFiles`). `exec` capability omitted (no sandboxed runner on host).
+  - [ ] **Repo sanity** (Faust): `git config core.fileMode false` (86 files show "modified" —
+    pure mode churn from the Windows mount, zero content diff); remove abandoned code
+    (`archive/*.py` cogitator forks, `archive/stale-gate3-root/`, `src/server.ts.bak6e`); delete
+    the stale `.git/index.lock` (Windows-side — sandbox lacks permission).
+  - Deferred: real-time typing (needs model streaming + delta WS envelope + UI), SQLite
+    persistence of plan state, wiring assignments to real agent work-loops (1.7.0-d).
 - [ ] **1.7.0-c** — `lse-skills` ES index, episode distillation, retrieval gold set (recall@3/MRR),
   hybrid BM25+kNN scoring, gate web-search auto-indexing (quality 0.7→0.4 + relevance check)
 - [ ] **1.7.0-d** — occupational curriculum batches, skill lifecycle jobs, learning-lift run #1 (A vs B);

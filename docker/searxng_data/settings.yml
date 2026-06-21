@@ -41,12 +41,12 @@ use_default_settings:
       - wikipedia
 general:
   enable_metrics: true
+  open_metrics: "JZVeoVch20+FvyjXEn4BMVHtu1AM6JCH"
 server:
   bind_address: "0.0.0.0"
   port: 8080
   limiter: false            # LSE/Hermes hit the JSON API non-interactively; limiter would 429 them
   secret_key: "913153e683373257077c6b99eebb293055d0784eed80e621cad095921576386b"
-  open_metrics: "JZVeoVch20+FvyjXEn4BMVHtu1AM6JCH"
 search:
   formats:
     - html
