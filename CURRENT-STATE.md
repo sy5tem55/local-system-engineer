@@ -1,5 +1,5 @@
 # LSE Current State
-> Last updated: 2026-06-14 (P29 Cowork)
+> Last updated: 2026-06-19 (P31 Cowork)
 > Source of truth for deployed versions. Update this file at the end of every session.
 
 ---
@@ -8,7 +8,7 @@
 
 | Component | Version | File | Status |
 |---|---|---|---|
-| OpenWebUI Tool | **Cogitator v1.7.21 (deployed) · v1.7.22 (staged)** | `tools/cogitator-v1.7.22.py` | ✅ **v1.7.21 DEPLOYED (P29)** — sudo force-surface confirmed (black-norm `79b74fde…`): copyable ```bash fence + return-directive. **v1.7.22 staged** (poll cap 8→1024, `142f155a…`) pending live Hermes-channel test. Base v1.7.19 (P28) — black-norm `e76d28b6…`, raw `7c1de10e…`, 4970 lines. Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) capping the Hermes↔LSE channel. P28 lineage: v1.7.15 `check_hermes_inbox` (+94) → v1.7.16 `hermes_cooperate` (+141) → v1.7.17 `allow_sudo` (+86) → v1.7.18 WATERFALL PROVENANCE RULE (+93) → v1.7.19 Path B parser (+41). Previous: v1.7.14 (P27, black-norm `435c319a…`, 4515 lines) |
+| OpenWebUI Tool | **Cogitator v1.7.21 (deployed) · v1.7.22–v1.7.24 (staged)** | `tools/cogitator-v1.7.24.py` | 🟡 **v1.7.24 STAGED (P31, URGENT)** — `call_hermes` demodeled to internal-only `_call_hermes` (model can no longer call Hermes directly; logic preserved as the shared backend for `hermes_plan` + `hermes_cooperate`); inbox 'ask' reply routes via `hermes_cooperate(max_rounds=1)`. ast OK, raw `a76c385c…`, 5051 lines, black-norm pending. **v1.7.23 STAGED** — HERMES→LSE by-reference `body_ref` fetch instruction; raw `3bf589bf…`, 5031 lines. ✅ **v1.7.21 DEPLOYED (P29)** — sudo force-surface confirmed (black-norm `79b74fde…`): copyable ```bash fence + return-directive. **v1.7.22 staged** (poll cap 8→1024, `142f155a…`) pending live Hermes-channel test. Base v1.7.19 (P28) — black-norm `e76d28b6…`, raw `7c1de10e…`, 4970 lines. Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) capping the Hermes↔LSE channel. P28 lineage: v1.7.15 `check_hermes_inbox` (+94) → v1.7.16 `hermes_cooperate` (+141) → v1.7.17 `allow_sudo` (+86) → v1.7.18 WATERFALL PROVENANCE RULE (+93) → v1.7.19 Path B parser (+41). Previous: v1.7.14 (P27, black-norm `435c319a…`, 4515 lines) |
 | System Prompt | v0.5.15 | `prompts/v0.5.15.md` | ✅ deployed — PFSENSE LOG RULE section |
 | Routing Filter | **v1.2.0** | `tools/lse-routing-filter-v1.2.0.py` | ✅ deployed — model-aware passthrough; Qwen3 preset only |
 | Context Monitor | v1.3.0 | `tools/lse-context-monitor-v1.3.0.py` | 🚫 retired (2026-05-29) — wrong metric prefix; replaced by Grafana alert pipeline (now also removed) |
@@ -21,6 +21,8 @@
 | GP Shutdown Script | — | `LSEStack_gui/docker-graceful-stop.ps1` | ✅ — graceful Docker stop on Windows shutdown; Dify conditional; signed SY5TEM5Cert (2026-06-09) |
 
 ### Tool Changelog Summary (recent — Cogitator)
+- **Cogitator v1.7.24** — 🟡 STAGED (P31, URGENT). `call_hermes` → internal-only `_call_hermes`: leading underscore removes it from the OWUI tool spec so the model can no longer call Hermes directly (direct calls frequently raised OWUI networking errors + the entry point is being superseded). Logic fully preserved — it remains the shared backend `hermes_plan` and `hermes_cooperate` call internally. `check_hermes_inbox` 'ask' reply path now routes via `hermes_cooperate(max_rounds=1)`. No other tool surface changes.
+- **Cogitator v1.7.23** — 🟡 STAGED (P30). HERMES→LSE BY-REFERENCE: `_format_hermes_messages` surfaces an `execute_command` SSH `cat` fetch instruction when an inbound envelope carries `body_ref` (large payload exceeding the reply token cap). No new tool; unknown-key safe (older markers formatted as before).
 - **Cogitator v1.7.19** — ✅ DEPLOYED (P28). Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) — parses `[[HERMES->LSE]]` markers embedded in gateway content. LSE side now supports both Path A (gateway field) and Path B (content marker).
 - **Cogitator v1.7.18** — WATERFALL PROVENANCE RULE (`_wf_version_claim`/`_wf_has_provenance`): unprovenanced external version/behavior claims persist tagged `[UNVERIFIED]` at quality ≤0.3. Closes ROADMAP 1.7.6.
 - **Cogitator v1.7.17** — `allow_sudo` allowlist + `_cooperate_exec` gated executor (Hermes conference can run gated sudo actions).

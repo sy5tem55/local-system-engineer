@@ -1,31 +1,21 @@
 """
-title: LSE Goethe
+title: LSE Cogitator
 author: local-system-engineer
-version: 0.1.0
+version: 1.7.24
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, read_file, write_file, sudo_delegation_block, search_web,
   get_github_release, get_context_status, compact_context, search_kb, index_to_kb,
   record_error, check_error_kb, record_outcome, mentor_correct, pfsense_graphql,
   pfsense_query, pfsense_log_summary, start_node_agent, stop_node_agent, search_reddit,
-  hermes_plan, skill_search, skill_record, skill_outcome, task_checkpoint,
+  check_hermes_inbox, hermes_cooperate, hermes_plan, skill_search, skill_record, skill_outcome, task_checkpoint,
   and task_resume. Web tools share a code-enforced anti-spiral budget.
-  (_call_hermes is an INTERNAL helper for hermes_plan — not a model-callable tool.)
+  (call_hermes is an INTERNAL helper, _call_hermes — not a model-callable tool;
+  see v1.7.24 changelog.)
   All commands are logged to a persistent audit file. Privileged operations are blocked
   at the code level and routed through a delegation block.
 
   Changelog:
-    Goethe v0.1.0: FORK of Cogitator v1.7.24 — FAUST CONSOLIDATION. The Hermes<->LSE
-              OWUI channel is RETIRED, superseded by the Faust group-chat room
-              (Faust/, lse-1.7.0-b). Removed: hermes_cooperate, _cooperate_exec,
-              check_hermes_inbox, _format_hermes_messages, _flush_voicemail, and the
-              Path A/B content-marker + by-reference inbox/outbox machinery
-              (_extract_content_marker / _strip_hermes_marker). _call_hermes simplified
-              to a plain reply (no inbox/marker append). KEPT: hermes_plan (inline
-              pre-flight planner) + its _call_hermes backend + _kanban_create_card, and
-              all general LSE tooling and hardening (execute_command, sudo_delegation_block,
-              file ops, search_kb/index_to_kb, record_error, pfSense tools, WATERFALL
-              provenance, source-claim verification, SSH KB-first/fingerprint rules).
     v1.7.24: call_hermes DEMODELED -> internal-only _call_hermes (urgent, P30/P31).
               The model must no longer invoke the Hermes chat-completion call
               directly: direct calls frequently surface OWUI networking errors, and
@@ -4436,7 +4426,7 @@ class Tools:
         """
         INTERNAL HELPER (v1.7.24) — NOT a model-callable tool. The leading underscore
         keeps this out of the OWUI tool spec. It is the shared Hermes chat-completion
-        backend used by hermes_plan(); the model reaches Hermes
+        backend used by hermes_plan() and hermes_cooperate(); the model reaches Hermes
         only through those. Direct model invocation was removed because it frequently
         raised OWUI networking errors and the direct entry point is being superseded.
         Do NOT re-promote this to a public method without updating the changelog.
@@ -4529,12 +4519,352 @@ class Tools:
         try:
             with _ureq.urlopen(req, timeout=180) as resp:
                 data = _json.loads(resp.read().decode())
-                return data["choices"][0]["message"]["content"]
+                reply = data["choices"][0]["message"]["content"]
+                inbox = self._format_hermes_messages(data)
+                reply = self._strip_hermes_marker(reply)
+                return reply + inbox if inbox else reply
         except _uerr.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:200]
             return f"ERROR: HTTP {exc.code} from Hermes — {body}"
         except Exception as exc:
             return f"ERROR: Hermes call failed — {exc}"
+
+    def _extract_content_marker(self, data: dict) -> list:
+        """v1.7.19 (Path B): extract [[HERMES->LSE]]{json}[[/HERMES->LSE]] from the
+        reply content and return its messages[] list. Used when the gateway can't add
+        a top-level hermes_messages field, so Hermes embeds the outbox in reply text."""
+        import re as _re  # noqa: PLC0415
+        import json as _json  # noqa: PLC0415
+
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except Exception:  # noqa: BLE001
+            return []
+        m = _re.search(
+            r"\[\[HERMES->LSE\]\](.*?)\[\[/HERMES->LSE\]\]", content or "", _re.DOTALL
+        )
+        if not m:
+            return []
+        try:
+            payload = _json.loads(m.group(1).strip())
+        except Exception:  # noqa: BLE001
+            return []
+        msgs = payload.get("messages") if isinstance(payload, dict) else payload
+        return msgs if isinstance(msgs, list) else []
+
+    def _strip_hermes_marker(self, text: str) -> str:
+        """v1.7.19: remove the [[HERMES->LSE]]...[[/HERMES->LSE]] block from reply text
+        so the model sees a clean reply (the messages are surfaced separately)."""
+        import re as _re  # noqa: PLC0415
+
+        return _re.sub(
+            r"\[\[HERMES->LSE\]\].*?\[\[/HERMES->LSE\]\]", "", text or "", flags=_re.DOTALL
+        ).strip()
+
+    def _format_hermes_messages(self, data: dict) -> str:
+        """Format any hermes_messages[] attached to a gateway response envelope.
+
+        Hermes -> LSE inbound channel (v1.7.15). Returns "" when none are present.
+        Each item: {correlation_id, kind, priority, body, want_reply}.
+        """
+        msgs = data.get("hermes_messages")
+        if not isinstance(msgs, list) or not msgs:
+            msgs = self._extract_content_marker(data)  # Path B (v1.7.19)
+        if not isinstance(msgs, list) or not msgs:
+            return ""
+        lines = ["", "\u2500\u2500 HERMES \u2192 LSE (inbound) \u2500\u2500"]
+        for m in msgs:
+            if not isinstance(m, dict):
+                continue
+            cid = m.get("correlation_id", "?")
+            kind = m.get("kind", "notify")
+            prio = m.get("priority", "info")
+            body = str(m.get("body", "")).strip()
+            wr = " [reply requested]" if m.get("want_reply") else ""
+            lines.append(f"[{cid}] ({kind}/{prio}){wr} {body}")
+            ref = m.get("body_ref")
+            if ref:
+                nbytes = m.get("body_bytes", "?")
+                lines.append(
+                    f"    \u21b3 large payload by reference ({nbytes} bytes) "
+                    f"\u2014 fetch with execute_command: "
+                    f"ssh lse-admin@node3090.home.arpa cat {ref}"
+                )
+        lines.append(
+            "To respond to an 'ask': hermes_cooperate(objective=<result>, "
+            "max_rounds=1, context='correlation_id=<cid>')."
+        )
+        return "\n".join(lines)
+
+    def check_hermes_inbox(self) -> str:
+        """Poll Hermes for any messages queued FOR the LSE (v1.7.15).
+
+        WHY: Hermes cannot open a connection to LSE (LSE is an OWUI tool with no
+        inbound listener — it only runs during a chat turn). Hermes therefore
+        holds an outbox and attaches pending items as `hermes_messages` to any
+        gateway reply. This tool makes the minimal no-task poll that surfaces
+        them on demand; hermes_plan/hermes_cooperate also carry them on their replies.
+
+        CADENCE — call this:
+          - at the START of a new conversation, and
+          - at task boundaries (after finishing a task, before idling).
+
+        INBOUND KINDS:
+          - notify : informational; acknowledge, no action needed.
+          - ask    : act on it, then reply with hermes_cooperate(objective=<result>,
+                     max_rounds=1, context='correlation_id=<cid>') so Hermes routes
+                     your reply back to the originating task.
+
+        Returns the formatted inbound messages, or
+        "INBOX EMPTY \u2014 no pending Hermes messages."
+        Returns "ERROR: <reason>" on connection/timeout/API failure. Do NOT
+        treat an ERROR: response as an empty inbox.
+        """
+        import json as _json  # noqa: PLC0415
+        import urllib.request as _ureq  # noqa: PLC0415
+        import urllib.error as _uerr  # noqa: PLC0415
+
+        api_url = self.valves.HERMES_API_URL
+        api_key = self.valves.HERMES_API_KEY
+
+        payload = _json.dumps(
+            {
+                "model": "default",
+                "messages": [{"role": "user", "content": "__LSE_POLL__ /no_think"}],
+                "max_tokens": 1024,
+            }
+        ).encode()
+        req = _ureq.Request(
+            f"{api_url}/v1/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        self._log("HERMES-INBOX-POLL")
+        try:
+            with _ureq.urlopen(req, timeout=30) as resp:
+                data = _json.loads(resp.read().decode())
+        except _uerr.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:200]
+            return f"ERROR: HTTP {exc.code} from Hermes inbox \u2014 {body}"
+        except Exception as exc:  # noqa: BLE001
+            return f"ERROR: Hermes inbox poll failed \u2014 {exc}"
+
+        inbox = self._format_hermes_messages(data)
+        return inbox if inbox else "INBOX EMPTY \u2014 no pending Hermes messages."
+
+    def _flush_voicemail(self, thread_id: str) -> str:
+        """Flush a conference thread's voicemail to empty (v1.7.16, end-of-call).
+
+        The conference (LSE -> Voicemail <- Hermes) leaves no dangling state: when
+        the call ends the thread's voicemail is wiped. Best-effort DELETE in
+        node3090 kanban.db; tolerant of a missing table (the persistent voicemail
+        store lands with the Hermes-side outbox — until then this is a clean
+        no-op). Returns "" on success/no-op, a short warning otherwise.
+        """
+        import subprocess as _sp  # noqa: PLC0415
+
+        safe = "".join(c for c in str(thread_id) if c.isalnum() or c in "-_")[:64]
+        sql = f"DELETE FROM lse_voicemail WHERE thread_id='{safe}';"
+        cmd = [
+            "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5",
+            "-o", "BatchMode=yes", "lse-admin@node3090.home.arpa",
+            "sudo", "sqlite3", "/home/hermes-admin/.hermes/kanban.db",
+        ]
+        try:
+            r = _sp.run(cmd, input=sql, capture_output=True, text=True, timeout=10)
+            if r.returncode != 0 and "no such table" not in r.stderr.lower():
+                return f"flush warn: {r.stderr.strip()[:120]}"
+            return ""
+        except Exception as exc:  # noqa: BLE001
+            return f"flush warn: {exc}"[:120]
+
+    def _cooperate_exec(self, command: str, allow_sudo: list) -> str:
+        """Gated executor for hermes_cooperate fulfilment (v1.7.17).
+
+        Same gates as execute_command — the hard blocklist (disk wipes, rm -rf,
+        fork bomb, account/credential mgmt) ALWAYS applies and can never be
+        overridden — PLUS a per-conference allow_sudo allowlist: a command bearing
+        sudo/su/doas runs only if EVERY such invocation is covered verbatim by an
+        allowlist entry. Mirrors execute_command's run (shell, COMMAND_TIMEOUT,
+        MAX_OUTPUT_CHARS truncation). Used only by hermes_cooperate.
+        """
+        cmd_lower = command.lower().strip()
+        for blocked in self._BLOCKED_COMMANDS:
+            if blocked in cmd_lower:
+                self._log(f"COOP HARD-BLOCKED: {command}")
+                return f"BLOCKED: '{blocked}' is permanently forbidden (hard blocklist)."
+
+        if any(p in cmd_lower for p in self._PRIVILEGED_PREFIXES):
+            probe = " " + cmd_lower + " "
+            for entry in allow_sudo:
+                e = entry.strip().lower()
+                if e:
+                    probe = probe.replace(e, " ")
+            if any(p in probe for p in self._PRIVILEGED_PREFIXES):
+                self._log(f"COOP PRIV-BLOCKED: {command}")
+                return (
+                    "BLOCKED: privilege escalation not covered by this conference's "
+                    "allow_sudo allowlist. Add the exact command to allow_sudo or "
+                    "use sudo_delegation_block."
+                )
+
+        if any(p in command for p in self._PRIVILEGED_WRITE_PATHS) and any(
+            op in command for op in self._WRITE_OPS
+        ):
+            if not any(
+                e.strip() and e.strip().lower() in cmd_lower for e in allow_sudo
+            ):
+                self._log(f"COOP WRITE-BLOCKED: {command}")
+                return "BLOCKED: write to a privileged system path (not allowlisted)."
+
+        self._log(f"COOP-CMD: {command}")
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.valves.COMMAND_TIMEOUT,
+            )
+            output = result.stdout or result.stderr or "(no output)"
+            rc = result.returncode
+            if len(output) > self.valves.MAX_OUTPUT_CHARS:
+                output = output[: self.valves.MAX_OUTPUT_CHARS] + "\n... [TRUNCATED]"
+            self._log(f"COOP-DONE rc={rc} len={len(output)}")
+            return output if rc == 0 else f"[exit {rc}]\n{output}"
+        except subprocess.TimeoutExpired:
+            self._log(f"COOP-TIMEOUT: {command}")
+            return f"ERROR: command timed out after {self.valves.COMMAND_TIMEOUT}s."
+        except Exception as exc:  # noqa: BLE001
+            return f"ERROR: cooperate exec failed — {exc}"
+
+    def hermes_cooperate(
+        self,
+        objective: str,
+        max_rounds: int = 3,
+        context: str = "",
+        allow_sudo: str = "",
+    ) -> str:
+        """Run a bounded multi-round 'conference call' between LSE and Hermes (v1.7.16).
+
+        PARADIGM: LSE -> Voicemail <- Hermes. The USER fires this on demand when a
+        task genuinely needs Hermes's reasoning PLUS LSE's infra access. One fire
+        runs up to max_rounds synchronous exchanges, then the voicemail is flushed
+        to empty so nothing dangles into the next call.
+
+        EACH ROUND: LSE sends the working message to Hermes (internal call) -> Hermes
+        reasons and replies. If Hermes needs infra data it cannot reach (it has no
+        SSH), it requests commands in a ```bash code block; LSE runs them through
+        the SAME safety gates as execute_command and feeds the output back next
+        round. The call ends when Hermes replies 'CONFERENCE COMPLETE', emits no
+        command request, or max_rounds is reached.
+
+        WHY ROUNDS EXIST: capability separation (Fable5 planner doc) — Hermes plans
+        and reasons but has NO SSH to node infrastructure; LSE executes. The rounds
+        let Hermes pull infra telemetry through LSE (gated) and reason on it, which
+        neither party can do alone.
+
+        IMPORTANT — the LSE *model* is not in the loop between rounds; this method
+        shuttles deterministically. Hermes does the cross-round reasoning; LSE
+        fulfils gated data requests. Firing this tool is a deliberate,
+        human-initiated grant of GATED command execution to Hermes: every
+        Hermes-requested command passes execute_command's hard blocklist, no-sudo,
+        and privileged-path gates. A blocked request is reported back, not run.
+
+        WHEN TO USE: joint diagnosis, plan-then-verify, telemetry-driven decisions.
+        max_rounds caps cost — each round is a 27B round-trip on node3090. Do NOT
+        call during a llama-server restart on node3090 (the Hermes inference
+        backend IS that server).
+
+        ALLOW_SUDO: comma/newline-separated EXACT privileged commands the USER has
+        authorized for this conference (e.g. "sudo docker compose up -d, sudo docker
+        ps"). A sudo/su/doas request runs ONLY if every such invocation is covered
+        verbatim by this allowlist; otherwise it is blocked and reported back.
+        Populate ONLY with commands the user explicitly approved in their request —
+        never invent privileged grants. The hard blocklist is NEVER overridable.
+
+        Returns the full conference transcript. "ERROR:" prefix on a fatal failure.
+        """
+        import re as _re  # noqa: PLC0415
+        import time as _time  # noqa: PLC0415
+
+        try:
+            rounds = max(1, min(int(max_rounds), 6))
+        except (TypeError, ValueError):
+            rounds = 3
+        allow_sudo_list = [
+            x.strip() for x in _re.split(r"[,\n]", allow_sudo) if x.strip()
+        ]
+
+        thread_id = f"conf-{int(_time.time())}"
+        message = (
+            "CONFERENCE CALL with LSE (Local System Engineer). You reason and plan; "
+            "LSE has the SSH/infra access you lack. If you need infra data, emit the "
+            "exact commands in a ```bash code block and LSE will run them "
+            "(safety-gated) and return the output next round. Reply 'CONFERENCE "
+            f"COMPLETE' when the objective is met. Thread: {thread_id}.\n\n"
+            f"OBJECTIVE:\n{objective.strip()}"
+        )
+        if context:
+            message += f"\n\nCONTEXT:\n{context.strip()}"
+        if allow_sudo_list:
+            message += (
+                "\n\nPRE-AUTHORIZED privileged commands you MAY request "
+                "(others are blocked): " + "; ".join(allow_sudo_list)
+            )
+
+        transcript = [
+            f"=== CONFERENCE {thread_id} (max {rounds} rounds) ===",
+            f"OBJECTIVE: {objective.strip()}",
+        ]
+        completed = False
+
+        for n in range(1, rounds + 1):
+            reply = self._call_hermes(message, no_think=False)
+            transcript.append(f"\n--- Round {n} · Hermes ---\n{reply}")
+            if reply.startswith("ERROR:"):
+                transcript.append("Conference aborted — Hermes call failed.")
+                break
+            if "CONFERENCE COMPLETE" in reply:
+                completed = True
+                break
+            m = _re.search(
+                r"```(?:bash|sh)\s*(.*?)```", reply, _re.DOTALL | _re.IGNORECASE
+            )
+            if not m:
+                transcript.append(
+                    f"\n--- Round {n} · no command request — ending conference ---"
+                )
+                completed = True
+                break
+            cmds = [
+                ln.strip()
+                for ln in m.group(1).splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            outputs = []
+            for c in cmds:
+                res = self._cooperate_exec(c, allow_sudo_list)
+                outputs.append(f"$ {c}\n{res}")
+            gathered = "\n\n".join(outputs) if outputs else "(no commands extracted)"
+            transcript.append(f"\n--- Round {n} · LSE fulfilled (gated) ---\n{gathered}")
+            message = (
+                "LSE ran your requested commands (safety-gated). Results below. "
+                "Continue, or reply 'CONFERENCE COMPLETE'.\n\n" + gathered
+            )
+
+        flush_warn = self._flush_voicemail(thread_id)
+        status = "completed" if completed else f"max rounds ({rounds}) reached"
+        tail = f"\n=== CONFERENCE END — {status} — voicemail flushed ==="
+        if flush_warn:
+            tail += f"\n({flush_warn})"
+        transcript.append(tail)
+        self._log(f"HERMES-COOPERATE {thread_id} rounds<={rounds} completed={completed}")
+        return "\n".join(transcript)
 
     def _kanban_create_card(self, task_id: str, title: str, body: str) -> str:
         """Create the triage card for a plan envelope directly in node3090's
