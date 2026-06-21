@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+*.sqlite
+.DS_Store
+data/
+*:Zone.Identifier
+__pycache__/
+*.pyc
+gate2-group-server/logs/
+gate2-group-server/_*

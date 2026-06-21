@@ -1,0 +1,38 @@
+{
+  "name": "gate2-group-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Coding Gauntlet Gate 2 — The Group Server: humans + local-model agents in shared realtime rooms (REST + WebSocket + SQLite + mention-reply orchestration).",
+  "main": "src/index.ts",
+  "exports": {
+    "./server.js": "./src/server.js",
+    "./db.js": "./src/db.js",
+    "./model_live.js": "./src/model_live.js",
+    "./protocol.js": "./src/protocol.js",
+    "./schema.js": "./src/schema.js",
+    "./auth.js": "./src/auth.js",
+    "./orchestrator.js": "./src/orchestrator.js",
+    "./agents.js": "./src/agents.js"
+  },
+  "bin": {
+    "group-server": "dist/index.js"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "sql.js": "^1.12.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/sql.js": "^1.4.11",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

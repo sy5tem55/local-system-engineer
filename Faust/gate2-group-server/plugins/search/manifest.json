@@ -1,0 +1,9 @@
+{
+  "name": "search",
+  "version": "1.0.0",
+  "apiVersion": "g3.1",
+  "entry": "plugin.js",
+  "capabilities": ["net"],
+  "commands": ["/search"],
+  "description": "Search via local SearXNG instance"
+}

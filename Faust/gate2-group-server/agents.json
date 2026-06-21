@@ -1,0 +1,16 @@
+{
+  "_comment": "Supervised agent sidecars. Start a subset with AGENT_SIDECARS=lse (comma list). env values may reference ${VAR}, resolved from the SERVER's env, so secrets (FAUST_KEY) stay out of this committed file — export LSE_FAUST_KEY (and optionally GOETHE_PATH) in the shell that launches Faust.",
+  "lse": {
+    "command": "python3",
+    "args": ["-u", "lse-sidecar.py"],
+    "cwd": "../agent-client",
+    "env": {
+      "FAUST_BASE": "http://localhost:8787",
+      "FAUST_HANDLE": "lse",
+      "FAUST_ROOM": "SY5L4N",
+      "FAUST_KEY": "${LSE_FAUST_KEY}",
+      "LSE_MODEL_URL": "http://localhost:8080/v1/chat/completions",
+      "GOETHE_PATH": "${GOETHE_PATH}"
+    }
+  }
+}
