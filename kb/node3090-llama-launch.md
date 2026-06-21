@@ -10,12 +10,12 @@
 - Note: --flash-attn requires explicit arg: on|off|auto
 
 ## Model
-- File: /home/sy5/.lmstudio/models/lmstudio-community/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf
+- File: /opt/models/lmstudio-community/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf
 - VRAM: ~15.4 GB weights + ~7.2 GB KV cache (q8_0, 4 slots x 81920 ctx) = ~22.6 GB / 24 GB
 
 ## Launch Command
 /usr/local/bin/llama-server \
-  --model /home/sy5/.lmstudio/models/lmstudio-community/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf \
+  --model /opt/models/lmstudio-community/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf \
   --ctx-size 81920 --n-gpu-layers 129 --flash-attn on \
   --cache-type-k q8_0 --reasoning-budget 3072 --n-predict 8192 \
   --jinja --metrics --host 0.0.0.0 --port 8080 --threads 8

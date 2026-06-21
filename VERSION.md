@@ -32,7 +32,7 @@
 
 | File | Lines | Raw SHA-256 | Black-norm SHA-256 |
 |---|---|---|---|
-| `goethe-v0.1.py` (fork of cogitator-v1.7.24) | 4721 | `a7f379dd0ac85621e7fd62012a356ce4d6d22039c96248f84d572c9da26133ba` | _pending (black not in build env)_ |
+| `goethe-v0.1.py` (fork of cogitator-v1.7.24) | 4721 | `a7f379dd0ac85621e7fd62012a356ce4d6d22039c96248f84d572c9da26133ba` | `087485a37458ee109dd297d96e27de38d4052f35f1d16cf9a5c8cffba3934677` |
 | `cogitator-v1.7.24.py` | 5051 | `a76c385cc9d3ecd02bd48e6c427635d36b0119ecb44fe5485efd25d052b085b3` | _pending (black not in build env)_ |
 | `cogitator-v1.7.23.py` | 5031 | `3bf589bf4615ce3bb0750191816dc22675dd9c9ab81ca12fb69addb96eb0cefc` | _pending (black not in build env)_ |
 | `cogitator-v1.7.22.py` | 5015 | `ba815cd26e7e9514ed8c3a1fd250f4bd48405df78731d0a1877241b8911a03eb` | `142f155ac7dba7708b3fcb5d969224af2f789c96d5d8e28dddaed88608878116` |
