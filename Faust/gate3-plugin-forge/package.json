@@ -1,0 +1,28 @@
+{
+  "name": "gate3-plugin-forge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Coding Gauntlet Gate 3 — The Plugin Forge: a typed, capability-sandboxed plugin framework on the Gate 2 server, plus the full opencode component kit.",
+  "bin": {
+    "plugin-forge": "dist/index.js"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "stop": "pkill -f 'tsx src/index.ts' || true",
+    "restart": "npm run stop && sleep 1 && npm start",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "gate2-group-server": "file:../gate2-group-server"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "@types/sql.js": "^1.4.11",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3"
+  }
+}

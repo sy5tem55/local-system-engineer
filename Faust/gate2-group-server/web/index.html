@@ -1,0 +1,206 @@
+<!doctype html>
+<!-- Coding Gauntlet — opencode web client for the Gate 2 Group Server.
+     Self-contained: auth (REST) + realtime (WS) + rooms + model agents, rendered the opencode way.
+     Talks to the Gate 2 server's protocol.ts API. Set the server URL up top (you said :55).
+     NOTE: if you open this from a different origin than the server, the server must send CORS
+     headers (Access-Control-Allow-Origin) OR serve this file same-origin (Gate 3 index.ts). -->
+<meta charset="utf-8" />
+<title>Faust v0.1.0</title>
+<style>
+  :root{
+    --bg:#0a0a0a; --panel:#141414; --el:#1c1c1c; --primary:#fab283; --accent:#9d7cd8;
+    --secondary:#5c9cf5; --text:#e0e0e0; --muted:#808080; --border:#2a2a2a; --ok:#7fd88f; --err:#e06c75;
+    --kw:#9d7cd8; --str:#7fd88f; --num:#fab283; --fn:#5c9cf5; --cmt:#808080;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;font-size:13px;height:100vh;display:flex;flex-direction:column}
+  a{color:var(--secondary)}
+  .bar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+  .bar input{background:var(--el);border:1px solid var(--border);color:var(--text);font:inherit;padding:4px 6px;border-radius:6px}
+  .bar input#srv{width:240px}.bar input#llama{width:240px}.bar input.sm{width:90px}
+  button{background:var(--el);border:1px solid var(--border);color:var(--primary);font:inherit;padding:4px 10px;border-radius:6px;cursor:pointer}
+  button:hover{border-color:var(--primary)}
+  #status{margin-left:auto;color:var(--muted)} #status.err{color:var(--err)} #status.ok{color:var(--ok)}
+  .main{flex:1;display:flex;min-height:0}
+  .side{width:200px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px;gap:6px;overflow:auto}
+  .side h3{margin:4px 0;color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  .room{padding:5px 7px;border-radius:6px;cursor:pointer;color:var(--text);border:1px solid transparent}
+  .room:hover{background:var(--el)} .room.active{background:var(--el);border-color:var(--secondary);color:var(--secondary)}
+  .chat{flex:1;display:flex;flex-direction:column;min-width:0}
+  .roomhdr{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
+  .roomhdr .name{color:var(--accent);font-weight:700}
+  #pane{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+  .msg .who{font-size:11px;color:var(--muted)}
+  .msg .who.me{color:var(--primary)} .msg .who.model{color:var(--accent)}
+  .msg .body{margin-top:2px;white-space:pre-wrap;word-break:break-word;line-height:1.45}
+  .msg .body code{background:var(--el);color:var(--primary);padding:0 3px;border-radius:4px}
+  .msg .body pre{background:#000;border:1px solid var(--border);border-radius:8px;padding:8px 10px;overflow:auto;margin:4px 0}
+  .msg .body pre code{background:none;color:var(--text);padding:0}
+  .msg .body .mention{color:var(--secondary)} .msg .body .h{color:var(--accent);font-weight:700}
+  .tok-kw{color:var(--kw)}.tok-str{color:var(--str)}.tok-num{color:var(--num)}.tok-fn{color:var(--fn)}.tok-cmt{color:var(--cmt)}
+  .composer{display:flex;gap:6px;padding:8px;border-top:1px solid var(--border)}
+  .composer input{flex:1;background:var(--el);border:1px solid var(--border);color:var(--text);font:inherit;padding:8px;border-radius:8px}
+  .composer input:focus{outline:none;border-color:var(--primary)}
+  .hint{color:var(--muted);padding:12px}
+</style>
+
+<div class="bar">
+  <input id="srv" placeholder="server e.g. http://node4090.home.arpa:8080" value="http://localhost:8787" />
+  <input id="handle" class="sm" placeholder="handle" value="joe" />
+  <input id="pw" class="sm" type="password" placeholder="password" value="pw" />
+  <button onclick="auth('login')">Login</button>
+  <button onclick="auth('register')">Register</button>
+  <input id="llama" placeholder="model endpoint e.g. http://node4090.home.arpa:8080" value="http://node4090.home.arpa:8080" />
+  <span id="status">not connected</span>
+</div>
+
+<div class="main">
+  <div class="side">
+    <h3>Rooms</h3>
+    <div id="rooms"></div>
+    <button onclick="newRoom()">+ New room</button>
+    <h3>This room</h3>
+    <button onclick="addAgent()">+ Add model agent</button>
+  </div>
+  <div class="chat">
+    <div class="roomhdr"><span class="name" id="roomname">—</span><span id="roommeta" style="color:var(--muted)"></span>
+      <button id="btnKick" style="display:none" onclick="kickMember()">Kick</button>
+      <button id="btnClear" style="display:none" onclick="clearRoom()">Clear</button>
+      <button id="btnDelete" style="display:none" onclick="deleteRoom()">Delete room</button>
+    </div>
+    <div id="pane"><div class="hint">Login, pick or create a room, add a model agent, then @mention it.</div></div>
+    <div class="composer">
+      <input id="input" placeholder="message…  (@agent to summon a model)" onkeydown="if(event.key==='Enter')send()" />
+      <button onclick="send()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const S = { token:null, accountId:null, handle:null, isAdmin:false, room:null, ws:null, rendered:new Set() };
+const $ = id => document.getElementById(id);
+const base = () => $('srv').value.replace(/\/+$/,'');
+function status(t, cls=''){ const s=$('status'); s.textContent=t; s.className=cls; }
+async function api(path, opts={}){
+  const r = await fetch(base()+path, { ...opts, headers:{ 'content-type':'application/json',
+    ...(S.token?{authorization:'Bearer '+S.token}:{}), ...(opts.headers||{}) } });
+  const txt = await r.text(); let body; try{ body=JSON.parse(txt) }catch{ body=txt }
+  if(!r.ok) throw new Error((body&&body.error)||r.status+' '+String(txt).slice(0,120));
+  return body;
+}
+
+// ── markdown -> opencode-styled HTML ─────────────────────────────────────────
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+const KW=new Set("def return if else elif for while class import from as try except with in not and or is None True False fn let const var function export new this await async switch case break continue throw typeof".split(" "));
+function hi(code){ // tiny syntax highlighter on escaped text
+  return esc(code)
+    .replace(/(&quot;[^&]*?&quot;|'[^']*?')/g,'<span class=tok-str>$1</span>')
+    .replace(/\b(\d+(?:\.\d+)?)\b/g,'<span class=tok-num>$1</span>')
+    .replace(/(#.*$)/gm,'<span class=tok-cmt>$1</span>')
+    .replace(/\b([A-Za-z_]\w*)\b/g,(m)=>KW.has(m)?'<span class=tok-kw>'+m+'</span>':m);
+}
+function md(src){
+  const blocks=[]; src=String(src).replace(/```(\w*)\n([\s\S]*?)```/g,(_,l,c)=>{ blocks.push('<pre><code>'+hi(c.replace(/\n$/,''))+'</code></pre>'); return ' '+(blocks.length-1)+' '; });
+  let h=esc(src)
+    .replace(/^#{1,3} (.*)$/gm,'<span class=h>$1</span>')
+    .replace(/\*\*([^*]+)\*\*/g,'<span class=h>$1</span>')
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'<a href="$2" target=_blank>$1</a>')
+    .replace(/(^|\s)(@[\w.-]+)/g,'$1<span class=mention>$2</span>');
+  return h.replace(/(\d+)/g,(_,i)=>blocks[+i]);
+}
+function addMsg(m){
+  if(!m||S.rendered.has(m.id)) return; S.rendered.add(m.id);
+  const me = m.author.id===S.accountId, model = m.author.kind==='model';
+  const el=document.createElement('div'); el.className='msg';
+  el.innerHTML='<div class="who '+(me?'me':model?'model':'')+'">'+esc(m.author.name||m.author.handle||m.author.id)+
+    ' · '+new Date(m.ts).toLocaleTimeString()+'</div><div class="body">'+md(m.content)+'</div>';
+  const p=$('pane'); p.appendChild(el); p.scrollTop=p.scrollHeight;
+}
+
+// ── auth / rooms / ws ────────────────────────────────────────────────────────
+async function auth(kind){
+  try{ const r=await api('/auth/'+kind,{method:'POST',body:JSON.stringify({handle:$('handle').value,password:$('pw').value})});
+    S.token=r.token; S.accountId=r.accountId; S.handle=r.handle; S.isAdmin=!!r.isAdmin; status('logged in as '+r.handle+(S.isAdmin?' ★':''),'ok'); await loadRooms(); connectWS();
+  }catch(e){ status(kind+' failed: '+e.message,'err'); }
+}
+async function loadRooms(){
+  try{ const rooms=await api('/rooms'); const box=$('rooms'); box.innerHTML='';
+    (rooms||[]).forEach(r=>{ const d=document.createElement('div'); d.className='room'+(S.room===r.id?' active':''); d.textContent='# '+r.name;
+      d.onclick=()=>openRoom(r); box.appendChild(d); });
+  }catch(e){ status('rooms: '+e.message,'err'); }
+}
+async function newRoom(){ const name=prompt('Room name:'); if(!name) return;
+  try{ const r=await api('/rooms',{method:'POST',body:JSON.stringify({name})}); await loadRooms(); openRoom(r); }
+  catch(e){ status('create room: '+e.message,'err'); } }
+async function openRoom(r){
+  S.room=r.id; S.rendered.clear(); $('roomname').textContent='# '+r.name; $('pane').innerHTML=''; loadRooms();
+  // Show admin controls only to admins
+  $('btnKick').style.display=S.isAdmin?'':'none';
+  $('btnClear').style.display=S.isAdmin?'':'none';
+  $('btnDelete').style.display=S.isAdmin?'':'none';
+  try{ const hist=await api('/rooms/'+r.id+'/messages'); (hist||[]).forEach(addMsg); }
+  catch(e){ try{ await api('/rooms/'+r.id+'/join',{method:'POST'}); const hist=await api('/rooms/'+r.id+'/messages'); (hist||[]).forEach(addMsg); }
+    catch(e2){ status('open room: '+e2.message,'err'); } }
+  if(S.ws&&S.ws.readyState===1) S.ws.send(JSON.stringify({type:'subscribe',roomId:r.id}));
+  refreshPresence();
+}
+async function addAgent(){
+  if(!S.room) return status('pick a room first','err');
+  const handle=prompt('Agent handle (e.g. qwen):','qwen'); if(!handle) return;
+  try{ await api('/rooms/'+S.room+'/agents',{method:'POST',body:JSON.stringify({handle,endpoint:$('llama').value})});
+    status('agent @'+handle+' added','ok'); }
+  catch(e){ status('add agent: '+e.message,'err'); }
+}
+async function refreshPresence(){
+  if(!S.room) return;
+  try{ const p=await api('/rooms/'+S.room+'/presence');
+    $('roommeta').textContent = (p&&p.length) ? '  \u25CF online: '+p.map(x=>x.handle).join(', ') : '  \u25CB nobody connected';
+  }catch(e){ /* ignore */ }
+}
+function connectWS(){
+  if(S.ws){ try{S.ws.onclose=null;S.ws.close()}catch{} }
+  if(S._reconnectTimer){ clearTimeout(S._reconnectTimer); S._reconnectTimer=null; }
+  if(!S.token) return;
+  const url=base().replace(/^http/,'ws')+'/ws?token='+encodeURIComponent(S.token);
+  const ws=new WebSocket(url); S.ws=ws;
+  ws.onopen=()=>{ S._backoff=0; status('live','ok'); if(S.room) ws.send(JSON.stringify({type:'subscribe',roomId:S.room})); };
+  ws.onclose=()=>{ if(!S.token) return status('socket closed','err'); scheduleReconnect(); };
+  ws.onerror=()=>{ status('socket error','err'); };
+  ws.onmessage=ev=>{ let f; try{f=JSON.parse(ev.data)}catch{return}
+    if(f.type==='message'&&f.message&&f.message.room===S.room) addMsg(f.message);
+    else if(f.type==='presence'&&f.roomId===S.room) refreshPresence();
+    else if(f.type==='error') status('server: '+f.error,'err'); };
+}
+function scheduleReconnect(){
+  const n=S._backoff||0; S._backoff=n+1;
+  const delay=Math.min(1000*Math.pow(2,n),30000); // exponential backoff, 1s -> 30s cap
+  status('reconnecting in '+Math.round(delay/1000)+'s...','err');
+  S._reconnectTimer=setTimeout(()=>{ if(S.token) connectWS(); }, delay);
+}
+function send(){
+  const v=$('input').value.trim(); if(!v||!S.room) return;
+  if(!S.ws||S.ws.readyState!==1) return status('not connected','err');
+  S.ws.send(JSON.stringify({type:'send',roomId:S.room,content:v})); $('input').value='';
+}
+async function kickMember(){
+  if(!S.room||!S.isAdmin) return;
+  const target=prompt('Account ID to kick:'); if(!target) return;
+  try{ await api('/rooms/'+S.room+'/kick',{method:'POST',body:JSON.stringify({accountId:target})}); status('kicked '+target,'ok'); }
+  catch(e){ status('kick: '+e.message,'err'); }
+}
+async function clearRoom(){
+  if(!S.room||!S.isAdmin) return;
+  if(!confirm('Clear all messages in this room?')) return;
+  try{ await api('/rooms/'+S.room+'/clear',{method:'POST'}); $('pane').innerHTML=''; status('room cleared','ok'); }
+  catch(e){ status('clear: '+e.message,'err'); }
+}
+async function deleteRoom(){
+  if(!S.room||!S.isAdmin) return;
+  if(!confirm('Delete this room permanently?')) return;
+  try{ await api('/rooms/'+S.room,{method:'DELETE'}); S.room=null; $('roomname').textContent='—'; $('pane').innerHTML=''; $('btnKick').style.display='none'; $('btnClear').style.display='none'; $('btnDelete').style.display='none'; await loadRooms(); status('room deleted','ok'); }
+  catch(e){ status('delete: '+e.message,'err'); }
+}
+// if served same-origin by the Gate 2/3 server, default the server field to this origin
+if(location.protocol.startsWith('http')) $('srv').value=location.origin;
+</script>

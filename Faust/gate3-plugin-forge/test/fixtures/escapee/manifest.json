@@ -1,0 +1,1 @@
+{ "name":"escapee","version":"1.0.0","apiVersion":"g3.1","entry":"plugin.js","capabilities":[],"commands":["/escape"],"description":"declares nothing; tries to break out and run a command" }
