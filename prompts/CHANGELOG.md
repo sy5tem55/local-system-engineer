@@ -1,5 +1,74 @@
 # Prompt Version Changelog
 
+## node4090-v0.5.20 / node3090-v0.2.0 — 2026-06-30
+**node4090-v0.5.20 changes from v0.5.19:**
+- IDENTITY: explicitly named node4090 throughout (prompt series parity with node3090).
+- MCP GW: tool count 37 → 39 (ssh_run + ssh_script added in Goethe v0.2.6).
+- TOOLS: ssh_run entry — simple remote commands, argv passthrough, no bash -c, ControlMaster.
+- TOOLS: ssh_script entry — complex scripts via scp+exec, nohup auto-fix, zero escaping.
+- TOOLS: execute_command SSH_COMPLEXITY_GUARD note — blocks nohup/disown/export patterns.
+- WEB SEARCH BUDGET FALLBACK: node3090 reachability check now uses ssh_run(); nohup starts use ssh_script().
+- KNOWLEDGE BASE: SSH ControlMaster mux socket path and verification commands added.
+Deployment note: paste node4090-v0.5.20 into llama-ui on LUCIFER.
+
+**node3090-v0.2.0 changes from v0.1.0:**
+- MCP GW: tool count 33 → 35 (ssh_run + ssh_script added in Goethe v0.2.6).
+- MCP GW START: nohup one-liner retained for local use; note added that FROM LUCIFER
+  the restart must use ssh_script() (SSH_COMPLEXITY_GUARD blocks it via execute_command).
+- TOOLS: ssh_run and ssh_script entries added.
+- TOOLS: execute_command SSH_COMPLEXITY_GUARD note added.
+- KNOWLEDGE BASE: SSH ControlMaster mux socket path and verification commands added.
+Deployment note: paste node3090-v0.2.0 into llama-ui on node3090.
+
+## v0.5.19 — 2026-06-30
+**Changes from v0.5.18:**
+- ENVIRONMENT: goethe_mcp version corrected v1.9.0/v1.9.1 → v1.9.3 (stale references in v0.5.18).
+- No other content changes.
+Root cause: v0.5.18 was written before goethe_mcp reached v1.9.3; version numbers never updated.
+Deployment note: **This is the version to paste into llama-ui.** Zero OWUI references (grep confirmed).
+
+## v0.5.18 — 2026-06-28
+**Changes from v0.5.17:**
+- WEB SEARCH BUDGET FALLBACK: new named section — when search budget exhausted, ping node3090,
+  check/start firecrawl and camoufox, route remaining fetches through them.
+  firecrawl = general web content; camoufox = reddit (JS-rendered, anti-bot).
+  KB-first for startup procedures before attempting to start either service.
+Root cause: `fetch_url` reddit fallback (Goethe v0.2.5) needs the model to know how to reach
+  firecrawl/camoufox on node3090 when the search budget is exhausted on LUCIFER.
+
+## v0.5.17 — 2026-06-28
+**Changes from v0.5.16:**
+- KB-FIRST RULE: new named section — `search_kb()` BEFORE any operational answer, BEFORE any
+  tool call, BEFORE reasoning from training knowledge about this environment. Violation = guessing.
+  Explicit violation examples added (answering "what is the fastest way to wake node3090" without KB,
+  calling pfsense_graphql before search_kb, offering options from general Linux knowledge).
+- ENVIRONMENT: goethe_mcp updated to v1.9.3 (was v1.3.0).
+- ENVIRONMENT: MCP GW start command simplified — `bash start-goethe.sh`.
+- search_kb entry in TOOLS: scope expanded to cover all operational questions, not just errors.
+Root cause: model was answering operational questions from training knowledge instead of the KB,
+  producing unverified answers that contradicted ground-truth KB entries.
+
+## v0.5.16 — 2026-06-21
+**Changes from v0.5.15:**
+- ENVIRONMENT: Frontend updated OpenWebUI/3000 → llama-ui/8080 (built into llama-server).
+  OpenWebUI retired. No separate frontend process.
+- ENVIRONMENT: MCP Gateway entry added — goethe_mcp v1.3.0 on port 9700, started via
+  `bash tools/start-goethe.sh`. Replaces direct OWUI tool injection.
+- sudo_delegation_block: SURFACE RULE added — "described in thinking ≠ called". Calling the tool
+  inside a collapsed think block is invisible to the user; tool call must appear in the response phase.
+- compact_context: removed from TOOLS (OWUI-only, not exposed via goethe_mcp).
+- HANDOVER PROTOCOL: updated — no compact_context step; write handover directly.
+- KNOWLEDGE BASE: OpenWebUI section removed. llama-ui section added (served by llama-server at :8080,
+  check via `ss -tlnp | grep ':8080'`).
+Root cause: OpenWebUI retired as frontend; goethe_mcp decouples the LSE toolset from any frontend.
+  ~/owui/ venv retained as Python runtime for goethe_mcp — not an app, just an env.
+
+## v0.5.15 — 2026-06-06
+**Changes from v0.5.14:**
+- TOOLS: pfsense_log_summary + pfsense_query clarified (pfSense LOG RULE section).
+- Added PFSENSE LOG RULE: never call raw firewall log endpoints directly; always use gateway script.
+- ENVIRONMENT: bumped to v0.5.15, tool v1.5.18.
+
 ## v0.5.14 — 2026-06-04
 **Changes from v0.5.13:**
 - Fix A1: LUCIFER PORT TOPOLOGY — added Docker NAT isolation note to ENVIRONMENT section.
