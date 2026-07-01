@@ -27,16 +27,15 @@ NODE3090_ES="http://localhost:9200"
 # Ollama runs locally on node3090 (127.0.0.1:11434, CPU-only, nomic-embed-text loaded).
 NODE3090_OLLAMA="http://127.0.0.1:11434"
 
-# ── hermes_plan Path 3 — Gemma GGUF spawn (v0.2.8) ───────────────────────────
-# Verify these paths on node3090 before deploying.
-#   PLANNER_MODEL_DIR: directory containing the Gemma GGUFs + mmproj files.
-#   PLANNER_LLAMA_BIN: llama-server binary used to spawn the transient instance.
-#   PLANNER_PORT:      port for the spawned instance (default 8085, avoids :8080).
-#
-# To find the binary: ssh lse-admin@node3090 'which llama-server || find /home/lse-admin -name llama-server -type f 2>/dev/null | head -3'
-# To find model dir: ssh lse-admin@node3090 'find /home/lse-admin -name "gemma-4-*.gguf" 2>/dev/null | head -3'
-NODE3090_PLANNER_MODEL_DIR="/home/lse-admin/models"
-NODE3090_PLANNER_LLAMA_BIN="/home/lse-admin/llama.cpp/build/bin/llama-server"
+# ── planner Path 3 — Gemma GGUF spawn ────────────────────────────────────────
+# Verified 2026-07-01 on node3090:
+#   PLANNER_LLAMA_BIN: /usr/local/bin/llama-server  (verified: which llama-server)
+#   PLANNER_MODEL_DIR: no Gemma GGUFs present on node3090 — Path 3 will not fire.
+#     If Gemma models are added later, place them under PLANNER_MODEL_DIR and
+#     ensure filenames match _GEMMA_MODELS in goethe.py (Q4_K_M quantization).
+#   PLANNER_PORT:      8085 (avoids conflict with llama-server on :8080)
+NODE3090_PLANNER_MODEL_DIR="/opt/models/lmstudio-community"
+NODE3090_PLANNER_LLAMA_BIN="/usr/local/bin/llama-server"
 NODE3090_PLANNER_PORT="8085"
 
 echo "[start-goethe-node3090] ensuring remote tools dir exists..."

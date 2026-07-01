@@ -827,11 +827,11 @@ class Tools:
             "Alternative: gemma3 (also confirmed on node3090 Ollama).",
         )
         PLANNER_MODEL_DIR: str = Field(
-            default="/home/lse-admin/models",
-            description="Directory containing Gemma GGUF + mmproj files for Path 3 planning "
-            "(v0.2.8). Expected files: gemma-4-E4B-it-Q4_K_M.gguf (~4.97 GB), "
-            "gemma-4-26B-A4B-it-Q4_K_M.gguf (~15.6 GB), "
-            "gemma-4-31B-it-Q4_K_M.gguf (~17.4 GB), and their mmproj companions. "
+            default="/opt/models/lmstudio-community",
+            description="Base directory for Gemma GGUF + mmproj files for Path 3 planning "
+            "(v0.2.8). Uses lmstudio-community subdir layout — paths in _GEMMA_MODELS "
+            "are relative to this dir (e.g. gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf). "
+            "Verified on node3090: /opt/models/lmstudio-community/{E4B,26B-A4B,31B}-GGUF/. "
             "Path 3 fires only when both llama-server and Ollama return errors.",
         )
         PLANNER_PORT: int = Field(
@@ -985,24 +985,25 @@ class Tools:
         "Include this rule verbatim in packaged_prompt so the executing agent sees it.\n"
     )
 
-    # ── Gemma model catalog (v0.2.8) ─────────────────────────────────────────
+    # ── Gemma model catalog (v0.2.8, paths verified 2026-07-01) ──────────────
     # Used by _planner_gemma_select / Path 3 of _call_node_planner.
     # vram_mb = minimum free VRAM required (MiB) including safety margin.
-    # All files are expected under PLANNER_MODEL_DIR.
+    # Paths are relative to PLANNER_MODEL_DIR (lmstudio-community subdir layout).
+    # Verified on node3090: ls /opt/models/lmstudio-community/gemma-4-*-GGUF/
     _GEMMA_MODELS: dict = {
         "E4B": {
-            "gguf":    "gemma-4-E4B-it-Q4_K_M.gguf",
-            "mmproj":  "mmproj-gemma-4-E4B-it-BF16.gguf",
+            "gguf":    "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf",
+            "mmproj":  "gemma-4-E4B-it-GGUF/mmproj-gemma-4-E4B-it-BF16.gguf",
             "vram_mb": 5200,   # 4.97 GB model + ~946 MB mmproj + headroom
         },
         "26B": {
-            "gguf":    "gemma-4-26B-A4B-it-Q4_K_M.gguf",
-            "mmproj":  "mmproj-gemma-4-26B-A4B-it-BF16.gguf",
+            "gguf":    "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-Q4_K_M.gguf",
+            "mmproj":  "gemma-4-26B-A4B-it-GGUF/mmproj-gemma-4-26B-A4B-it-BF16.gguf",
             "vram_mb": 17200,  # 15.6 GB model + 1.1 GB mmproj + headroom
         },
         "31B": {
-            "gguf":    "gemma-4-31B-it-Q4_K_M.gguf",
-            "mmproj":  "mmproj-gemma-4-31B-it-BF16.gguf",
+            "gguf":    "gemma-4-31B-it-GGUF/gemma-4-31B-it-Q4_K_M.gguf",
+            "mmproj":  "gemma-4-31B-it-GGUF/mmproj-gemma-4-31B-it-BF16.gguf",
             "vram_mb": 19100,  # 17.4 GB model + 1.1 GB mmproj + headroom
         },
     }
