@@ -1,5 +1,5 @@
 # LSE Version Registry
-> Last updated: 2026-06-19 (P31 Cowork)
+> Last updated: 2026-07-02 (Cowork — P0-1 reconciliation via live goethe MCP bridge)
 > Authored by: Claude (Anthropic) — P26 contributions: cogitator v1.7.10 (source-claim verification, fabrication #5 class), v1.7.11 (KB source-tier quality gate, pfSense self-grant incident). P27: v1.7.12 restored from OWUI backup + cache fix; v1.7.13 SSH KB-FIRST rule (bare-ssh-before-KB + wrong-topic-filter incidents). Ground truth is earned, not claimed.
 > **Ground Rule (P27):** Always verify line count between versions. Report delta and track in Line Count Tally below.
 
@@ -9,8 +9,11 @@
 
 | Component | Version | Shipped | Status |
 |---|---|---|---|
-| Tool | **Cogitator v1.7.24** | 2026-06-19 | **v1.7.24 — URGENT, staged** (P31): `call_hermes` demodeled → internal-only `_call_hermes` (leading underscore removes it from the OWUI tool spec; logic preserved as the shared backend for `hermes_plan` + `hermes_cooperate`). Model can no longer call Hermes directly — direct calls frequently raised OWUI networking errors and the entry point is being superseded. `check_hermes_inbox` 'ask' reply now routes via `hermes_cooperate(max_rounds=1)`. ast OK (py3.10), raw `a76c385c…`, 5051 lines; black-norm pending (compute at deploy). **v1.7.23 — staged** (P30): HERMES→LSE BY-REFERENCE — `_format_hermes_messages` surfaces an `execute_command` SSH `cat` fetch instruction when an inbound envelope carries `body_ref` (large payload that would overflow the reply token cap). No new tool; unknown-key safe. raw `3bf589bf…`, 5031 lines; black-norm pending. **v1.7.21 DEPLOYED ✅** (P29 — sudo force-surface confirmed live); P29 chain v1.7.20 async emitter → v1.7.21 bash-fence + return-directive surfacing → v1.7.22 poll cap 8→1024 (see CHANGELOG). Base: v1.7.19 DEPLOYED ✅ (P28, ast OK, black-norm `e76d28b6…`, raw `7c1de10e…`, 4970 lines) — Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) for the Hermes→LSE voicemail channel. Caps the P28 Hermes↔LSE lineage: v1.7.15 `check_hermes_inbox` + `call_hermes` inbound passthrough → v1.7.16 `hermes_cooperate` bounded conference + `_flush_voicemail` → v1.7.17 `allow_sudo` allowlist + `_cooperate_exec` → v1.7.18 WATERFALL PROVENANCE RULE (`_wf_version_claim`/`_wf_has_provenance`, closes ROADMAP 1.7.6) → v1.7.19 Path B marker parser. Previous: v1.7.14 ✅ (P27, ast OK, black-norm `435c319a…`, raw `ff377203…`, 4515 lines) — HERMES direct connect: HERMES_API_URL valve default :8643→:8642 (gateway confirmed 0.0.0.0:8642, socat workaround eliminated). No code logic change. Previous: v1.7.13 deployed ✅ (P27, ast OK, black-norm `866b0b4d…`, raw `cfc194c5…`, 4508 lines, ast OK, black-norm `866b0b4d…`, raw `cfc194c5…`, 4508 lines) — SSH KB-FIRST RULE in execute_command docstring: search_kb before any ssh command (no topic_filter); never bare ssh without key. Closes: bare-ssh-before-KB-lookup + wrong-topic-filter-on-SSH-query (rutx50 live test). Previous: v1.7.12 deployed ✅ (P27, ast OK, black-norm `a2faad62…`, raw `a6911429…`, 4483 lines) — SSH device auto-fingerprint: execute_command intercepts `ssh ` prefix, extracts host, runs os-release+uname on first connection, prepends `[DEVICE FINGERPRINT]` banner. Failed fingerprints NOT cached (retry on next SSH call with correct key); failed attempts emit `[DEVICE FINGERPRINT PENDING]` note. Source: restored from OWUI backup (4465 lines CRLF) + cache fix applied = 4483 lines LF. Previous: v1.7.11 deployed ✅ (P26, ast OK, black-norm `09595a23…`, raw `631d11df…`, 3934 lines) — source_tier quality gate on index_to_kb/skill_record/skill_outcome: ground_truth=1.0 (evidence required), primary=0.8, secondary=0.6, inferred=0.4 (default). quality=1.0 unreachable without source_tier=ground_truth + ≥40-char tool-result evidence. verified_against field for staleness tracking. Previous: v1.7.10 deployed ✅ (P26, ast OK, black-norm `48e13812…`, raw `463e0941…`, 3859 lines) — verify_source_claims(): re-fetches source + FOUND/PARTIAL/NOT_FOUND per claim with verbatim ±300-char excerpts; fetch_url caches content + emits SOURCE-VERIFY MANDATE banner; SOURCE_VERIFY_CACHE_TTL valve (300s). Does NOT count against search budget. Previous: v1.7.9 deployed ✅ (P25, black-norm `2e15e467…` MATCH, 3679 lines) — hermes_plan kanban card INSERT. NOTE: OWUI black-formats on save — verify deploys by black-normalizing, not raw sha. |
-| Prompt | v0.5.15 | 2026-06-09 | deployed ✅ |
+| Tool | **Goethe v0.2.9** | 2026-07-01 | ✅ **DEPLOYED** — `hermes_plan` → `planner` rename + `<think>`-strip before JSON envelope extraction; 5819 lines, raw `d3ccccf1…` (verified live 2026-07-02 via MCP bridge). Δ v0.2.5→v0.2.9: +476 lines. **Recent chain:** v0.2.6 SSH overhaul (`ssh_run` argv + `ssh_script` scp + ControlMaster + complexity guard — 3 exit-255 root causes) → v0.2.7 **HERMES RETIRED** (`_call_hermes`/`_kanban_create_card` stubbed; `_call_node_planner` 2-path cascade + NODE3090_* valves) → v0.2.8 planner PATH-3 VRAM-gated local Gemma GGUF spawn (E4B/26B-A4B/31B, vision mmproj; PLANNER_* valves) → v0.2.9 planner rename + think-tag JSON fix. Previous: v0.2.5 (5343 lines, raw `aa2aa1e1…`). **Lineage:** v0.1.0 (P31, Cogitator fork, 4721 lines) → v0.2.0 (download-monitor bugfix + audit pass) → v0.2.1 (KB doc-id resolution, stable goethe.py filename, `_resolve_kb_id`) → v0.2.2 (3 ground-truth-before-action rules in execute_command) → v0.2.3 (wake_node ping-first + KB-first) → v0.2.4 (shutdown_node two-step gate) → v0.2.5 (fetch_url reddit/camoufox Firecrawl fallback). **Cogitator v1.7.24 superseded** — staged only, never deployed to MCP; OWUI retired. |
+| MCP Gateway | **goethe_mcp v1.9.3** | 2026-06-28 | ✅ deployed — `_TokenGuard` accepts `Bearer <token>` or raw token; port 9700; HTTP transport; started via `bash tools/start-goethe.sh` (LUCIFER) or `tools/start-goethe-node3090.sh` (node3090). |
+| Tool (Cogitator, archived) | Cogitator v1.7.24 | 2026-06-19 | **v1.7.24 — URGENT, staged** (P31): `call_hermes` demodeled → internal-only `_call_hermes` (leading underscore removes it from the OWUI tool spec; logic preserved as the shared backend for `hermes_plan` + `hermes_cooperate`). Model can no longer call Hermes directly — direct calls frequently raised OWUI networking errors and the entry point is being superseded. `check_hermes_inbox` 'ask' reply now routes via `hermes_cooperate(max_rounds=1)`. ast OK (py3.10), raw `a76c385c…`, 5051 lines; black-norm pending (compute at deploy). **v1.7.23 — staged** (P30): HERMES→LSE BY-REFERENCE — `_format_hermes_messages` surfaces an `execute_command` SSH `cat` fetch instruction when an inbound envelope carries `body_ref` (large payload that would overflow the reply token cap). No new tool; unknown-key safe. raw `3bf589bf…`, 5031 lines; black-norm pending. **v1.7.21 DEPLOYED ✅** (P29 — sudo force-surface confirmed live); P29 chain v1.7.20 async emitter → v1.7.21 bash-fence + return-directive surfacing → v1.7.22 poll cap 8→1024 (see CHANGELOG). Base: v1.7.19 DEPLOYED ✅ (P28, ast OK, black-norm `e76d28b6…`, raw `7c1de10e…`, 4970 lines) — Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) for the Hermes→LSE voicemail channel. Caps the P28 Hermes↔LSE lineage: v1.7.15 `check_hermes_inbox` + `call_hermes` inbound passthrough → v1.7.16 `hermes_cooperate` bounded conference + `_flush_voicemail` → v1.7.17 `allow_sudo` allowlist + `_cooperate_exec` → v1.7.18 WATERFALL PROVENANCE RULE (`_wf_version_claim`/`_wf_has_provenance`, closes ROADMAP 1.7.6) → v1.7.19 Path B marker parser. Previous: v1.7.14 ✅ (P27, ast OK, black-norm `435c319a…`, raw `ff377203…`, 4515 lines) — HERMES direct connect: HERMES_API_URL valve default :8643→:8642 (gateway confirmed 0.0.0.0:8642, socat workaround eliminated). No code logic change. Previous: v1.7.13 deployed ✅ (P27, ast OK, black-norm `866b0b4d…`, raw `cfc194c5…`, 4508 lines, ast OK, black-norm `866b0b4d…`, raw `cfc194c5…`, 4508 lines) — SSH KB-FIRST RULE in execute_command docstring: search_kb before any ssh command (no topic_filter); never bare ssh without key. Closes: bare-ssh-before-KB-lookup + wrong-topic-filter-on-SSH-query (rutx50 live test). Previous: v1.7.12 deployed ✅ (P27, ast OK, black-norm `a2faad62…`, raw `a6911429…`, 4483 lines) — SSH device auto-fingerprint: execute_command intercepts `ssh ` prefix, extracts host, runs os-release+uname on first connection, prepends `[DEVICE FINGERPRINT]` banner. Failed fingerprints NOT cached (retry on next SSH call with correct key); failed attempts emit `[DEVICE FINGERPRINT PENDING]` note. Source: restored from OWUI backup (4465 lines CRLF) + cache fix applied = 4483 lines LF. Previous: v1.7.11 deployed ✅ (P26, ast OK, black-norm `09595a23…`, raw `631d11df…`, 3934 lines) — source_tier quality gate on index_to_kb/skill_record/skill_outcome: ground_truth=1.0 (evidence required), primary=0.8, secondary=0.6, inferred=0.4 (default). quality=1.0 unreachable without source_tier=ground_truth + ≥40-char tool-result evidence. verified_against field for staleness tracking. Previous: v1.7.10 deployed ✅ (P26, ast OK, black-norm `48e13812…`, raw `463e0941…`, 3859 lines) — verify_source_claims(): re-fetches source + FOUND/PARTIAL/NOT_FOUND per claim with verbatim ±300-char excerpts; fetch_url caches content + emits SOURCE-VERIFY MANDATE banner; SOURCE_VERIFY_CACHE_TTL valve (300s). Does NOT count against search budget. Previous: v1.7.9 deployed ✅ (P25, black-norm `2e15e467…` MATCH, 3679 lines) — hermes_plan kanban card INSERT. NOTE: OWUI black-formats on save — verify deploys by black-normalizing, not raw sha. |
+| System Prompt (LUCIFER) | **v0.5.19** | 2026-06-30 | ✅ ready to deploy — goethe_mcp v1.9.3 corrected (v0.5.18 had stale v1.9.0/v1.9.1). Zero OWUI references (grep confirmed). `tools/system-prompt-v0.5.19.md`. Previous: v0.5.18 (WEB SEARCH BUDGET FALLBACK), v0.5.17 (KB-FIRST rule), v0.5.16 (OWUI→llama-ui transition), v0.5.15 (last OWUI-era prompt, archived). |
+| System Prompt (node3090) | **v0.1.0** | 2026-06-29 | ✅ deployed — node3090-specific identity/environment. `tools/system-prompt-node3090-v0.1.0.md`. |
 | Filter | **v1.2.0** | 2026-06-11 | deployed ✅ |
 | Vaultwarden tool | v1.3.0 | 2026-06-03 | deployed ✅ |
 | Launcher CLI | v1.078 | 2026-06-03 | deployed ✅ |
@@ -30,9 +33,28 @@
 
 ## Tool Checksums (SHA-256)
 
+### Goethe lineage (active — `tools/goethe.py`)
+
 | File | Lines | Raw SHA-256 | Black-norm SHA-256 |
 |---|---|---|---|
+| `goethe.py` (v0.2.5) | 5343 | `aa2aa1e192f0ea93…` | _pending_ |
+| `goethe-v0.2.2.py` | 5126 | `bc403c44d5f18bd0…` | _pending_ |
+| `goethe-v0.2.1.py` | 5022 | `b3cf97f2d0b8374b…` | _pending_ |
 | `goethe-v0.1.py` (fork of cogitator-v1.7.24) | 4721 | `a7f379dd0ac85621e7fd62012a356ce4d6d22039c96248f84d572c9da26133ba` | `087485a37458ee109dd297d96e27de38d4052f35f1d16cf9a5c8cffba3934677` |
+
+### goethe_mcp lineage
+
+| Version | Released | Notes |
+|---|---|---|
+| v1.9.3 | 2026-06-28 | `_TokenGuard` accepts `Bearer <token>` or raw token |
+| v1.9.0 | 2026-06-28 | Self-contained port management: `_free_port()` kills process holding the port |
+| v1.8.0 | 2026-06-24 | Milestone (410 lines) |
+| v1.3.0 | 2026-06-21 | Initial MCP gateway deployment (llama-ui era) |
+
+### Cogitator lineage (archived — superseded by Goethe)
+
+| File | Lines | Raw SHA-256 | Black-norm SHA-256 |
+|---|---|---|---|
 | `cogitator-v1.7.24.py` | 5051 | `a76c385cc9d3ecd02bd48e6c427635d36b0119ecb44fe5485efd25d052b085b3` | _pending (black not in build env)_ |
 | `cogitator-v1.7.23.py` | 5031 | `3bf589bf4615ce3bb0750191816dc22675dd9c9ab81ca12fb69addb96eb0cefc` | _pending (black not in build env)_ |
 | `cogitator-v1.7.22.py` | 5015 | `ba815cd26e7e9514ed8c3a1fd250f4bd48405df78731d0a1877241b8911a03eb` | `142f155ac7dba7708b3fcb5d969224af2f789c96d5d8e28dddaed88608878116` |
@@ -58,6 +80,15 @@
 | `cogitator-v1.7.2.py` | 3356 | `eca3b5186c8cc2b23f9a1d39eb660e660970d38a85761a50ba62c682c7898de5` | — |
 | `cogitator-v1.7.1.py` | 3348 | `c89945553320ded2918b0afda7190d13f39c098f38c517077a6049f8c5557bb9` | — |
 | `cogitator-v1.7.0.py` | 3104 | `642067d99b094bf03a3cb26968bd5f05c40596764952f52e46c681f27626c24a` | — |
+
+### Line Count Tally (Goethe)
+
+| Version | Lines | Delta | Note |
+|---|---|---|---|
+| v0.2.5 (`goethe.py`) | 5343 | +217 vs v0.2.2 | reddit/camoufox Firecrawl fallback in `fetch_url`; wake_node ping-first + KB notes; shutdown_node two-step gate |
+| v0.2.2 (`goethe-v0.2.2.py`) | 5126 | +104 vs v0.2.1 | 3 GROUND-TRUTH-BEFORE-ACTION RULES in execute_command docstring (RESOURCE-AVAILABILITY, VENDOR-BEHAVIOR, RELEASE ASSET) |
+| v0.2.1 (`goethe-v0.2.1.py`) | 5022 | +301 vs v0.1.0 | KB doc-id resolution: `search_kb` prints `doc_id=`; `_resolve_kb_id()` id-or-title; stable `goethe.py` filename |
+| v0.1.0 (`goethe-v0.1.py`) | 4721 | −330 vs cogitator-v1.7.24 | Cogitator fork: retired Hermes↔LSE OWUI channel (hermes_cooperate, check_hermes_inbox, inbox/outbox machinery); kept hermes_plan |
 
 ### Line Count Tally (Cogitator)
 
