@@ -214,3 +214,15 @@ found 0 vulnerabilities
 ✖ [agent] renderer paints fenced code with the opencode syntax palette (2.559723ms)
 ✖ [agent] renderer uses only the opencode palette (no rogue colors) (2.212752ms)
 ﹣ [agent][live] streams >=1 token from llama-server (0.201738ms) # set GATE1_LIVE=1 (and LLAMA_URL) to run
+
+
+
+
+
+
+Refactoring Improving the Design of Existing Code Addison-Wesley Signature Series Fowler 2. A Philosophy of Software Design, 2nd Edition -- John K_ Ousterhout -- 2, 2024  3. The Pragmatic Programmer_ Your Journey To Mastery, 20th -- Andrew Hunt; David Hurst Thomas -- 2nd, Hardcover, 2019 -- Addison-Wesley Professional 4.Threat Modeling _ Designing for Security -- Adam Shostack -- 2024  Keeping in mind these books as polar star I need to be able to refactor this code so it can be installed and deployed on any machine, for the moment only Windows WSL but it would be incredibly useful if the scaffolding could contemplate easy porting on Linux. 
+
+GET GOETHE TOKEN
+
+(base) sy5@LUCIFER:~$ grep GOETHE_MCP_TOKEN ~/.lse/secrets
+export GOETHE_MCP_TOKEN=5fa5643ec02d0d62f1e0609dcc780a12
