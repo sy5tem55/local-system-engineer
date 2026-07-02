@@ -1,5 +1,5 @@
 # LSE Current State
-> Last updated: 2026-06-19 (P31 Cowork)
+> Last updated: 2026-07-02 (Cowork)
 > Source of truth for deployed versions. Update this file at the end of every session.
 
 ---
@@ -8,33 +8,84 @@
 
 | Component | Version | File | Status |
 |---|---|---|---|
-| OpenWebUI Tool | **Cogitator v1.7.21 (deployed) · v1.7.22–v1.7.24 (staged)** | `tools/cogitator-v1.7.24.py` | 🟡 **v1.7.24 STAGED (P31, URGENT)** — `call_hermes` demodeled to internal-only `_call_hermes` (model can no longer call Hermes directly; logic preserved as the shared backend for `hermes_plan` + `hermes_cooperate`); inbox 'ask' reply routes via `hermes_cooperate(max_rounds=1)`. ast OK, raw `a76c385c…`, 5051 lines, black-norm pending. **v1.7.23 STAGED** — HERMES→LSE by-reference `body_ref` fetch instruction; raw `3bf589bf…`, 5031 lines. ✅ **v1.7.21 DEPLOYED (P29)** — sudo force-surface confirmed (black-norm `79b74fde…`): copyable ```bash fence + return-directive. **v1.7.22 staged** (poll cap 8→1024, `142f155a…`) pending live Hermes-channel test. Base v1.7.19 (P28) — black-norm `e76d28b6…`, raw `7c1de10e…`, 4970 lines. Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) capping the Hermes↔LSE channel. P28 lineage: v1.7.15 `check_hermes_inbox` (+94) → v1.7.16 `hermes_cooperate` (+141) → v1.7.17 `allow_sudo` (+86) → v1.7.18 WATERFALL PROVENANCE RULE (+93) → v1.7.19 Path B parser (+41). Previous: v1.7.14 (P27, black-norm `435c319a…`, 4515 lines) |
-| System Prompt | v0.5.15 | `prompts/v0.5.15.md` | ✅ deployed — PFSENSE LOG RULE section |
-| Routing Filter | **v1.2.0** | `tools/lse-routing-filter-v1.2.0.py` | ✅ deployed — model-aware passthrough; Qwen3 preset only |
-| Context Monitor | v1.3.0 | `tools/lse-context-monitor-v1.3.0.py` | 🚫 retired (2026-05-29) — wrong metric prefix; replaced by Grafana alert pipeline (now also removed) |
-| Vaultwarden Tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | ✅ deployed — env var wins over valve |
+| **LSE Tool (LUCIFER)** | **Goethe v0.2.9** | `tools/goethe.py` | ✅ **DEPLOYED** — `planner()` rename + think-strip JSON fix; 5819 lines |
+| **LSE Tool (node3090)** | **Goethe v0.2.9** | `tools/goethe.py` (rsynced via start-goethe-node3090.sh) | ✅ synced — node3090 runs its own local goethe_mcp instance |
+| **MCP Gateway** | **goethe_mcp v1.9.3** | `tools/goethe_mcp.py` | ✅ **DEPLOYED** — `_TokenGuard` accepts `Bearer <token>` or raw token; port 9700; started via `bash tools/start-goethe.sh` |
+| **System Prompt (LUCIFER)** | **v0.5.19** | `tools/system-prompt-v0.5.19.md` | ✅ ready to deploy — goethe_mcp corrected to v1.9.3 (v0.5.18 had stale v1.9.0/v1.9.1). Zero OWUI references confirmed. **Paste into llama-ui system prompt field.** |
+| **System Prompt (node3090)** | **v0.1.0** | `tools/system-prompt-node3090-v0.1.0.md` | ✅ deployed — node3090-specific identity/environment/tool section |
+| Routing Filter | v1.2.0 | `tools/lse-routing-filter-v1.2.0.py` | ✅ deployed — model-aware passthrough; Qwen3 preset only |
+| Vaultwarden Tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` | ✅ deployed — loaded alongside goethe via `--also` flag in start-goethe.sh |
 | Launch Script (CLI) | v1.078 | `LSEStack_gui/lse-stack-launch-1.078.ps1` | ✅ |
-| Launch Script (GUI) | **v1.5** | `LSEStack_gui/lse-stack-launch-gui.ps1` | ✅ — PS7 DispatcherTimer scope fix; launch cycle + kill buttons fully working |
-| pfsense-agent | **v1.0** | `pfsense-agent.py` + `/opt/local-se/pfsense-agent.conf` | ✅ — Qwen3.6 orchestrator → LSE; `--think/--no-think/--prompt-only/--auto`; tool_ids pass-through |
-| llama.cpp | **b9577** | `/usr/local/bin/llama-server` (WSL) | ✅ — upgraded from b9553 (2026-06-09) |
-| Dify | **v1.14.2** | `/opt/dify/docker/docker-compose.yaml` | ✅ — on-demand only; port 4000; `docker compose up -d` to start (2026-06-09) |
-| GP Shutdown Script | — | `LSEStack_gui/docker-graceful-stop.ps1` | ✅ — graceful Docker stop on Windows shutdown; Dify conditional; signed SY5TEM5Cert (2026-06-09) |
+| Launch Script (GUI) | v1.5 | `LSEStack_gui/lse-stack-launch-gui.ps1` | ✅ — PS7 DispatcherTimer scope fix; launch cycle + kill buttons fully working |
+| pfsense-agent | v1.0 | `pfsense-agent.py` + `/opt/local-se/pfsense-agent.conf` | ✅ — Qwen3.6 orchestrator → LSE; `--think/--no-think/--prompt-only/--auto` |
+| llama.cpp | **a6647b1** (source build, GCC 14.2.0) | `/opt/llama.cpp/bin/llama-server` (canonical); `/usr/local/bin/llama-server` is a symlink to it | ✅ — rebuilt 2026-07-01 (was b9577). BuildID `fb29ced41a604c42acc2e6d1c1642403dcbb6744`. No git history in `/opt/llama.cpp/` — record build provenance on next rebuild. |
+| Dify | v1.14.2 | `/opt/dify/docker/docker-compose.yaml` | ✅ — on-demand only; port 4000 |
+| GP Shutdown Script | — | `LSEStack_gui/docker-graceful-stop.ps1` | ✅ — graceful Docker stop on Windows shutdown; signed SY5TEM5Cert |
+| OpenWebUI | —  | — | 🚫 **RETIRED** — superseded by llama-ui (built into llama-server :8080) + goethe_mcp gateway |
 
-### Tool Changelog Summary (recent — Cogitator)
-- **Cogitator v1.7.24** — 🟡 STAGED (P31, URGENT). `call_hermes` → internal-only `_call_hermes`: leading underscore removes it from the OWUI tool spec so the model can no longer call Hermes directly (direct calls frequently raised OWUI networking errors + the entry point is being superseded). Logic fully preserved — it remains the shared backend `hermes_plan` and `hermes_cooperate` call internally. `check_hermes_inbox` 'ask' reply path now routes via `hermes_cooperate(max_rounds=1)`. No other tool surface changes.
-- **Cogitator v1.7.23** — 🟡 STAGED (P30). HERMES→LSE BY-REFERENCE: `_format_hermes_messages` surfaces an `execute_command` SSH `cat` fetch instruction when an inbound envelope carries `body_ref` (large payload exceeding the reply token cap). No new tool; unknown-key safe (older markers formatted as before).
-- **Cogitator v1.7.19** — ✅ DEPLOYED (P28). Path B content-marker parser (`_extract_content_marker`/`_strip_hermes_marker`) — parses `[[HERMES->LSE]]` markers embedded in gateway content. LSE side now supports both Path A (gateway field) and Path B (content marker).
-- **Cogitator v1.7.18** — WATERFALL PROVENANCE RULE (`_wf_version_claim`/`_wf_has_provenance`): unprovenanced external version/behavior claims persist tagged `[UNVERIFIED]` at quality ≤0.3. Closes ROADMAP 1.7.6.
-- **Cogitator v1.7.17** — `allow_sudo` allowlist + `_cooperate_exec` gated executor (Hermes conference can run gated sudo actions).
-- **Cogitator v1.7.16** — `hermes_cooperate()` bounded conference call + `_flush_voicemail`.
-- **Cogitator v1.7.15** — `check_hermes_inbox()` + `_format_hermes_messages` + `call_hermes` inbound passthrough — Hermes→LSE channel (1.7.0-b). Returns `INBOX EMPTY` until Hermes side queues a message.
-- **Cogitator v1.7.14** — HERMES direct connect: HERMES_API_URL valve default :8643→:8642. Gateway confirmed binding 0.0.0.0:8642 (P27: ss -tlnp + HTTP 200 from LUCIFER). socat :8643 workaround eliminated. No code logic change.
-- **Cogitator v1.7.13** — SSH KB-FIRST RULE in execute_command docstring: search_kb('{hostname} SSH access') with NO topic_filter before any ssh; never bare ssh without -i key; never apply another device's topic_filter. Closes rutx50 live-test incidents (bare SSH timeout + wrong topic_filter=pfsense).
-- **Cogitator v1.7.12** — SSH DEVICE AUTO-FINGERPRINT: execute_command intercepts `ssh ` prefix, runs os-release+uname on first connection, prepends [DEVICE FINGERPRINT] banner. Failed fingerprints NOT cached. Restored from OWUI backup + cache fix.
-- **Cogitator v1.7.11** — KB source_tier quality gate on index_to_kb/skill_record/skill_outcome.
-- **Cogitator v1.7.10** — verify_source_claims(): re-fetches source, FOUND/PARTIAL/NOT_FOUND per claim.
-- **Cogitator v1.7.9** — hermes_plan kanban card INSERT.
-- **v1.6.1** — pfSense three-tool arch: pfsense_graphql/pfsense_query/pfsense_log_summary; schema introspection prohibition. (See VERSION.md for full history.)
+### Goethe MCP Stack Inventory (recorded 2026-07-02, operator-verified)
+
+| Component | Version | Details |
+|---|---|---|
+| goethe_mcp.py | 1.9.3 | MCP server wrapper |
+| goethe.py | 0.2.9 | Core toolset (title: "LSE Goethe v0.2.9") |
+| llama-server | 1 (a6647b1) | Built with GCC 14.2.0, symlinked from `/opt/llama.cpp/bin/` |
+| Ollama | 0.22.1 | CPU-only, 5 models loaded |
+| Elasticsearch | 8.13.0 | Docker image `docker.elastic.co/elasticsearch/elasticsearch:8.13.0` |
+| SearxNG | 2026.5.8-d8ab61a9e | Docker image `searxng/searxng:latest` (pinned to commit d8ab61a9e) |
+
+Ollama models in use:
+
+| Model | Size |
+|---|---|
+| nomic-embed-text:latest | 261 MB |
+| qwen3:4b | 2.4 GB |
+| gemma3:latest | 3.2 GB |
+| qwen2.5vl:7b | 5.7 GB |
+| deepseek-r1:32b | 18.9 GB |
+
+Ports:
+
+| Port | Service |
+|---|---|
+| 9700 | goethe_mcp.py (HTTP, token-gated) |
+| 8080 | llama-server + llama-ui |
+| 11434 | Ollama |
+| 9200 | Elasticsearch (localhost only) |
+| 8088 | SearxNG |
+
+> Reconcile notes — RESOLVED 2026-07-02 (LSE live checks):
+> 1. **llama-server** — `/proc/<pid>/exe` → `/opt/llama.cpp/bin/llama-server` (actual ELF,
+>    built Jul 1, `a6647b1`, BuildID `fb29ced4…`); `/usr/local/bin/llama-server` is a symlink
+>    (Jun 21) to the same file. b9577 was stale; table row updated. No git history in
+>    `/opt/llama.cpp/` to trace the build chain — record commit + flags at next rebuild.
+> 2. **ES client/server skew** — client `elasticsearch==8.19.3` (pip) vs server 8.13.0
+>    (Docker): compatible per the elasticsearch-py matrix, no functional issue. NOTE:
+>    goethe.py line ~674 mentions `elasticsearch:8.17.0` — that line is the v1.5.9
+>    HISTORICAL changelog entry, not current state; do not "fix" the changelog. Live server
+>    version is 8.13.0.
+> 3. **SearxNG** — compose declared `:latest`, which resolved to `2026.5.8-d8ab61a9e` at the
+>    Jun 28 pull; a future `docker pull latest` would silently break the pin. Compose now
+>    pins the explicit tag (see docker-compose.yml); ROADMAP upgrade step rewritten to pull
+>    a specific tag deliberately.
+
+### Tool Changelog Summary (Goethe lineage — post-P31)
+- **Goethe v0.2.9** ✅ DEPLOYED — `hermes_plan` → `planner` rename (backend is the node planner cascade, not Hermes); strip `<think>…</think>` before JSON envelope extraction (Qwen3 emits thinking even on structured-output requests; greedy regex was capturing mixed content).
+- **Goethe v0.2.8** — planner PATH 3: VRAM-aware local Gemma GGUF spawn (E4B / 26B-A4B / 31B, vision via mmproj; task-class + free-VRAM gated). New valves: `PLANNER_MODEL_DIR`, `PLANNER_PORT`, `PLANNER_LLAMA_BIN`.
+- **Goethe v0.2.7** — **HERMES RETIRED**: `_call_hermes`/`_kanban_create_card` stubbed. New `_call_node_planner` two-path cascade (node3090 llama-server :8080 → Ollama :11434 qwen3:4b). New valves: `NODE3090_LLM_URL`, `NODE3090_OLLAMA_URL`, `NODE3090_PLANNER_FALLBACK_MODEL`.
+- **Goethe v0.2.6** — SSH OVERHAUL: `ssh_run` (argv, no double-shell escaping) + `ssh_script` (scp transfer, nohup `</dev/null` guard) + ControlMaster mux (ControlPersist=60s) + execute_command SSH complexity guard (nohup/disown/export/eval → actionable ssh_script hint instead of exit-255).
+- **Goethe v0.2.5** ✅ DEPLOYED — `fetch_url` reddit/camoufox browser fallback: on reddit.com 403/429/empty, retries via Firecrawl on node3090 (localhost:3002 if on node3090, node3090:3002 from LUCIFER after ping check). Result prefixed `[browser-rendered]`, cached, SOURCE-VERIFY MANDATE tagged.
+- **Goethe v0.2.4** — `shutdown_node` two-step confirmation gate: `confirmed=False` returns a prompt the model must surface to the user; `confirmed=True` executes. Guards against silent node poweroffs.
+- **Goethe v0.2.3** — `wake_node` overhauled: ping-first (skip WoL if already up), search_kb for current wake procedure before sending magic packet, KB notes surfaced in all return paths.
+- **Goethe v0.2.2** — THREE GROUND-TRUTH-BEFORE-ACTION RULES in `execute_command` docstring: (1) RESOURCE-AVAILABILITY RULE (ping/health-check before SSH/API); (2) VENDOR-BEHAVIOR GROUND-TRUTH RULE (waterfall before patching third-party files); (3) RELEASE ASSET RULE (`get_github_release` before pinning any version string).
+- **Goethe v0.2.1** — KB DOC-ID RESOLUTION: `search_kb` now prints `doc_id=<_id>` on every hit; new `_resolve_kb_id()` accepts id or title; `mentor_correct`/`record_outcome` use it instead of raw 404. Stable filename `goethe.py` (ends per-bump renames).
+- **Goethe v0.2.0** — `download-monitor.py` bugfix (UnboundLocalError, false-COMPLETE, interpreter selection, wrong PromQL); `monitor_download()` interpreter fix; audit pass.
+- **Goethe v0.1.0** (P31) — Cogitator fork. Retired Hermes↔LSE OWUI channel (superseded by Faust). Removed: `hermes_cooperate`, `check_hermes_inbox`, inbox/outbox machinery. Kept: `hermes_plan` + all LSE hardening. 5051→4721 lines.
+
+### Architecture Change Log
+- **2026-06-21** — Frontend migrated: **OpenWebUI (port 3000) → llama-ui** (built into llama-server, port 8080). MCP gateway (`goethe_mcp.py`) decouples toolset from any frontend. System prompt moves from OWUI Admin → llama-ui system prompt field.
+- **2026-06-21** — `compact_context` removed from MCP tool surface (OWUI-only, not exposed by goethe_mcp).
+- **2026-06-28** — node3090 gets its own Goethe MCP instance (`start-goethe-node3090.sh`). ES runs locally on node3090 (Docker `lse-kb-es`, `127.0.0.1:9200`) — Windows Firewall blocked LAN access to LUCIFER's Docker. Ollama also local (CPU, nomic-embed-text).
 
 ---
 
@@ -51,8 +102,8 @@
 
 | Node | CPU | RAM | GPU | OS | IP | Status |
 |---|---|---|---|---|---|---|
-| LUCIFER | Intel 9900K | — | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | 192.168.1.x | Primary — Qwen3.6 27B Q4_K_M on port 8080; pfsense-agent.py orchestrator |
-| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — llama-server :8080 (llama-cpp, Qwen3.6-27B Q4_K_M, 96k ctx); Hermes API :8642 (0.0.0.0 direct — confirmed P27); socat :8643 ELIMINATED (P27 — hermes-socat disabled); pfsense-agent orchestrator target |
+| LUCIFER | Intel 9900K | — | RTX 4090 24GB | Win11 + WSL2 Ubuntu 24.04 | 192.168.1.x | Primary — Qwen3.6 27B Q4_K_M on llama-server :8080 (llama-ui frontend); goethe_mcp :9700; pfsense-agent.py orchestrator |
+| node3090 | Intel 9900K | 32GB | RTX 3090 24GB | **Ubuntu 24.04** ✅ | 192.168.5.41 | ✅ Fully commissioned — llama-server :8080 (Qwen3.6-27B Q4_K_M, 96k ctx); goethe_mcp :9700 (local ES + Ollama CPU); Firecrawl :3002 + camoufox (reddit fallback); Hermes API :8642 (retained) |
 | node5090 | AMD 9800X3D | 64GB | RTX 5090 | Win11 | 192.168.5.x | WoL/SSH setup deferred |
 | HA Pi | ARM Cortex-A72 | 4GB | — | HA OS 2026.6.0 | 192.168.1.80 | homeassistant.home.arpa |
 | n45 (NAS) | Marvell Kirkwood | — | — | QTS | 192.168.5.44 + .45 | n45.home.arpa — dual NIC failover |
@@ -262,7 +313,7 @@ docker compose up -d
 - Auth: `x-api-key` header (NOT `Authorization: Bearer`)
 - Read Only mode: must be disabled via Web UI before any POST call, re-enabled after
 
-### Running Docker Containers (key services)
+### Running Docker Containers (key services — LUCIFER)
 | Container | Image | Port | Notes |
 |---|---|---|---|
 | prometheus | prom/prometheus:latest | :9090 | DO NOT start second instance |
@@ -270,13 +321,23 @@ docker compose up -d
 | viteOnNodeJsv26 | node:26-alpine | :5173 | Vite dev server |
 | elasticsearch | elasticsearch:8.17.0 | :9200/:9300 | Core LSE — SearxNG + KB RAG. DO NOT stop. |
 
-### Ollama (WSL systemd service)
+### Running Docker Containers (key services — node3090)
+| Container | Image | Port | Notes |
+|---|---|---|---|
+| lse-kb-es | elasticsearch:8.17.0 | 127.0.0.1:9200 | node3090-local KB index — LAN blocked by Windows Firewall on LUCIFER |
+| firecrawl-api-1 | firecrawl | :3002 | Reddit/general browser-rendered fetch for goethe fetch_url fallback |
+
+### Ollama (WSL systemd service — LUCIFER)
 - **Version**: 0.24.0 · `systemctl status ollama` · auto-starts via systemd (`/etc/wsl.conf` has `[boot] systemd=true`)
 - **GPU VRAM overhead**: `OLLAMA_GPU_OVERHEAD=20500000000` (~20.5 GB reserved from Ollama's allocation)
   - Config: `/etc/systemd/system/ollama.service.d/override.conf`
   - Leaves ~3.4 GB VRAM headroom alongside 27B llama-server (confirmed 2026-06-08)
-- **Models**: `nomic-embed-text` (768-dim, 137M params, 8192-ctx) — KB embeddings + OpenWebUI RAG
+- **Models**: `nomic-embed-text` (768-dim, 137M params, 8192-ctx) — KB embeddings
   - VRAM footprint: ~417 MiB at inference time
+
+### Ollama (node3090 — CPU)
+- **Models**: `nomic-embed-text` — local KB embeddings for node3090's own `lse-kb` index
+- Runs CPU-only (RTX 3090 VRAM fully allocated to llama-server)
 
 ### KB Index (Elasticsearch)
 - **Index**: `lse-kb` · embedding model: `nomic-embed-text` (768-dim)
@@ -292,8 +353,9 @@ docker compose up -d
 - Grafana dashboard: 23 panels (ids 1–29) — added CAPTCHA Events, Parse Errors, Error Totals by Type (P17 Cowork)
 - **sync-docker-config.sh**: run at session start to prevent repo↔live config drift (Root cause of 2026-06-07 "No Data" outage)
 
-### Claude Presets in OpenWebUI
-| Preset | Model |
-|---|---|
-| LSE L2 — Claude Opus | claude-opus-4-6 |
-| LSE Research — Claude Sonnet | claude-sonnet-4-6 |
+### Claude Presets
+> OpenWebUI retired. Claude Opus/Sonnet accessible via Cowork or API if needed for escalation.
+| Preset | Model | Access |
+|---|---|---|
+| LSE L2 — Claude Opus | claude-opus-4-6 | Cowork / API |
+| LSE Research — Claude Sonnet | claude-sonnet-4-6 | Cowork / API |
