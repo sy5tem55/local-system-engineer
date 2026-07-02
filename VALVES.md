@@ -1,44 +1,52 @@
 # LSE Valve Registry
-> Single source of truth for all OpenWebUI valve configuration across LSE tools.
+> Single source of truth for all MCP/tool valve configuration across LSE tools.
 > Update this file whenever a valve is added, removed, or its security posture changes.
-> Last updated: 2026-06-13 (P27 Cowork)
+> Last updated: 2026-06-30 (Cowork)
+> **Note:** OpenWebUI retired (2026-06-21). Valves are now env vars passed to goethe_mcp.py
+> via `GOETHE_<FIELD>` env vars or directly inside the tool's `Valves` class.
+> Override pattern: `GOETHE_ES_URL=http://... bash tools/start-goethe.sh`
 
 ---
 
 ## Security Posture
 
-OpenWebUI **does not encrypt valve values at rest**. All valve values are stored as plaintext JSON
-in `webui.db` (SQLite). Anyone with filesystem access to LUCIFER or OpenWebUI admin credentials
-can read every valve value.
+**MCP era (goethe_mcp v1.9.3+):** Valve values are set via env vars at process launch (`start-goethe.sh`) or as defaults in the `Valves` class inside `goethe.py`. No plaintext SQLite storage (OpenWebUI `webui.db` is retired). The process environment is visible to anyone with access to LUCIFER's process table (`/proc/<pid>/environ`) — treat it the same as OpenWebUI valves were treated.
 
-**Rule:** No secret with a blast radius beyond the immediate tool's read-only scope belongs in a valve.
-Secrets that unlock broader access (master passwords, write-capable API keys) must use env vars instead.
+**Rule:** No secret with a blast radius beyond the immediate tool's read-only scope belongs in an env var visible in `ps aux`. Secrets with broader blast radius (master passwords) use `~/.lse/secrets` (root:sy5 640), sourced in `start-goethe.sh` before launch.
+
+**`GOETHE_MCP_TOKEN`** (bearer token for HTTP MCP server) is **hardcoded in `start-goethe.sh`** as a convenience. Rotate by editing the script + updating the llama-ui MCP connector config. Blast radius: goethe_mcp tool surface on this host only.
 
 ---
 
 ## Active Tools
 
-### 1. LSE Cogitator — `cogitator-v1.7.14.py`
+### 1. LSE Goethe — `goethe.py` (v0.2.5)
+
+Valves configured via `GOETHE_<FIELD>` env vars or `Valves` class defaults in `goethe.py`.
+`compact_context` and `OWUI_DB_PATH` removed (OWUI retired; not exposed via goethe_mcp).
 
 | Valve | Default | Sensitive | Storage | Notes |
 |---|---|---|---|---|
-| `LOG_FILE` | `/opt/local-se/agent_commands.log` | No | Valve OK | Audit log — moved from `~/.lse/` (root-owned, inaccessible to sy5) to /opt/local-se/ |
-| `DEFAULT_WORKING_DIR` | `/home/sy5` | No | Valve OK | Default cwd for execute_command |
-| `MAX_OUTPUT_CHARS` | `4000` | No | Valve OK | Output truncation cap |
-| `COMMAND_TIMEOUT` | `30` | No | Valve OK | Subprocess timeout (seconds) |
-| `LLAMA_SERVER_URL` | `http://localhost:8080` | No | Valve OK | llama-server endpoint |
-| `SEARXNG_URL` | `http://localhost:8088/search` | No | Valve OK | SearXNG JSON search endpoint |
-| `EXTRA_WRITE_PATHS` | `` (empty) | No | Valve OK | Colon-separated extra write paths |
-| `OWUI_DB_PATH` | `/home/sy5/owui/lib/...webui.db` | No | Valve OK | OpenWebUI SQLite path for compact_context |
-| `ES_URL` | `http://127.0.0.1:9200` | No | Valve OK | Elasticsearch RAG endpoint |
-| `OLLAMA_URL` | `http://127.0.0.1:11434` | No | Valve OK | Ollama endpoint — used for RAG embeddings AND pfsense_log_summary anomaly narrative (llama3.2:3b) |
-| `EMBED_MODEL` | `nomic-embed-text` | No | Valve OK | Embedding model name |
-| `HERMES_API_URL` | `http://192.168.5.41:8642` | No | Valve OK | Hermes gateway on node3090. Binds 0.0.0.0:8642 directly (confirmed P27: `ss -tlnp` + HTTP 200 from LUCIFER). socat :8643→:8642 workaround eliminated in v1.7.14. |
-| `HERMES_API_KEY` | `7aa537e0…` (see source) | Low | Valve OK | Hermes gateway API key. Blast radius: node3090 Hermes tasks only. Key validated P27 (HTTP 200). Second key `PFIStFD_yp…` in Vaultwarden — likely stale; reconcile before retiring. |
+| `LOG_FILE` | `/opt/local-se/agent_commands.log` | No | Env var OK | Audit log path |
+| `DEFAULT_WORKING_DIR` | `/home/sy5` | No | Env var OK | Default cwd for execute_command |
+| `MAX_OUTPUT_CHARS` | `4000` | No | Env var OK | Output truncation cap |
+| `COMMAND_TIMEOUT` | `30` | No | Env var OK | Subprocess timeout (seconds) |
+| `LLAMA_SERVER_URL` | `http://localhost:8080` | No | Env var OK | llama-server endpoint (same port as llama-ui) |
+| `SEARXNG_URL` | `http://localhost:8088/search` | No | Env var OK | SearXNG JSON search endpoint |
+| `EXTRA_WRITE_PATHS` | `` (empty) | No | Env var OK | Colon-separated extra write paths |
+| `ES_URL` | `http://127.0.0.1:9200` | No | Env var OK | Elasticsearch RAG endpoint. node3090 overrides to `http://localhost:9200` (local `lse-kb-es` Docker). |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | No | Env var OK | Ollama endpoint for RAG embeddings. node3090: CPU-only local instance. |
+| `EMBED_MODEL` | `nomic-embed-text` | No | Env var OK | Embedding model name |
+| `HERMES_API_URL` | `http://192.168.5.41:8642` | No | Env var OK | Hermes gateway on node3090. Direct bind confirmed P27. |
+| `HERMES_API_KEY` | `7aa537e0…` (see source) | Low | Env var OK | Hermes gateway API key. Blast radius: node3090 Hermes tasks only. |
+| `PFSENSE_API_KEY` | (see `~/.lse/secrets` or Vaultwarden) | **YES** | ✅ **ENV VAR** | pfSense REST API key — use env var, not hardcoded value. |
+| `TASKS_DB` | `/home/sy5/lse/tasks.db` | No | Env var OK | SQLite DB for task_checkpoint/task_resume. node3090: `/home/lse-admin/lse/tasks.db`. |
 
-All valves in this tool are non-sensitive (localhost URLs, paths, integers) except HERMES_API_KEY which is low-sensitivity (node3090-scoped). No action required.
+All valves in this tool are non-sensitive except `HERMES_API_KEY` (low, node3090-scoped) and `PFSENSE_API_KEY` (high — must use env var or `~/.lse/secrets`).
 
-**Audit log path change:** default updated from `/home/sy5/.lse/agent_commands.log` to `/opt/local-se/agent_commands.log`. The `.lse` directory is now root:sy5 710 — sy5 can traverse it to read the secrets file but cannot write new files into it. The audit log (written every tool call) must live in a sy5-writable path. Update the `LOG_FILE` valve in OpenWebUI to match if not yet redeployed.
+**Removed from Goethe (vs Cogitator):**
+- `OWUI_DB_PATH` — `compact_context` removed; OpenWebUI retired.
+- `compact_context` entirely removed from tool surface in MCP mode.
 
 ---
 
