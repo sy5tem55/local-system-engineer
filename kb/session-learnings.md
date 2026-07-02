@@ -671,3 +671,37 @@ Cumulative KB entries from post-session debriefs.
 
 ### Key facts
 - Run throwaway build/verify steps (`npm install`, test runs) in the SANDBOX scratch dir, never inside the mounted repo — the sandbox can create on the NTFS mount but cannot unlink, so a `node_modules/` (or any file) written there is unremovable from the sandbox (EPERM) and must be deleted host-side. Copy only source files into the repo.
+
+## Session 2026-07-02 — Goethe MCP hardening + Claude stdio bridge
+
+### What worked
+- Claude Desktop (MSIX-packaged) bridges stdio MCP servers into Cowork sessions:
+  claude_desktop_config.json entry → `wsl.exe -d Ubuntu-24.04 -- bash tools/start-goethe-stdio.sh`
+- start-goethe.sh v2.0 pattern: token sourced from ~/.lse/secrets, bind 127.0.0.1,
+  pkill matches only '--transport http' so stdio bridge instances survive gateway restarts
+
+### What failed and why
+- **Attempted:** delete the LocalCache claude_desktop_config.json, keep %APPDATA%\Claude copy
+  **Failed because:** the packaged app's active AppData is the MSIX virtualized tree —
+  config AND logs live under AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\;
+  deleting that copy deregistered the MCP server entirely (pgrep count 0, no spawn attempt)
+  **Fix:** Copy-Item the config back into LocalCache — that path is authoritative for the app
+- **Attempted:** narrow gateway CORS to 'http://localhost:8080'
+  **Failed because:** llama-ui is browsed at http://127.0.0.1:8080 — a different origin string;
+  OPTIONS preflight → 400, tool list never fetched (UI showed "connected" but zero tools)
+  **Fix:** --cors-origin must match the browser address bar EXACTLY: 'http://127.0.0.1:8080'
+- **Attempted:** rotate GOETHE_MCP_TOKEN server-side only
+  **Failed because:** llama-ui kept sending the old token → HTTP 401 {"error":"unauthorized"} on initialize
+  **Fix:** grep GOETHE_MCP_TOKEN ~/.lse/secrets → paste into llama-ui MCP settings (raw or Bearer both OK)
+- **Attempted:** three changes in one gateway restart (token + bind + CORS)
+  **Failed because:** simultaneous failures masked root causes — the token was blamed for a CORS break
+  **Fix:** one change per restart, verify between each
+
+### Key facts
+- Claude Desktop active config: C:\Users\SY5\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json
+- Both LocalCache AND %APPDATA% configs present → TWO stdio instances spawn (one per copy)
+- MCP spawn diagnostics: same LocalCache tree, logs\mcp-server-goethe.log
+- stdio transport has NO token — token auth is HTTP-transport only; rotation cannot break the bridge
+- Never bare `pkill -f goethe_mcp.py` — kills the Claude bridge; use 'goethe_mcp.py.*--transport http'
+- Cowork sandbox's mounted repo view can lag the real filesystem — verify git state via WSL
+  (goethe execute_command), not the sandbox mount
