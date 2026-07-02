@@ -1,250 +1,373 @@
 # LSE Roadmap — Open Items Only
 > Completed work lives in `CHANGELOG.md`. Current versions in `CURRENT-STATE.md`.
-> Last updated: 2026-06-11 (P20 Cowork)
+> Last updated: 2026-07-02 (Cowork) — **full reconciliation pass**: roadmap re-baselined against
+> the actual code in `tools/` (Goethe v0.2.9 frontier). Retired sections removed: P20 Active,
+> v1.7.0 Hermes Core (superseded by Goethe MCP), Claude L2 (done, OWUI-era), Eval Run 7 (OWUI-era).
+> Surviving items redistributed into the Phased Plan below. Note: working-copy ROADMAP.md was
+> found truncated at "Backlog — Arena" this session; tail recovered from git HEAD.
 
 ---
 
-## Immediate — P20 Active (2026-06-11)
+## Current Frontier — what this roadmap is baselined against (2026-07-02)
 
-- [ ] **node-t3-005 Duplicate Model Cleanup** — 3 runs TRUNCATED 2/4, ROOT CAUSE FOUND (P20):
-  **the episode harness has no actuation path.** `run_episode.py` calls llama-server directly
-  (bare chat completion, no tools); `lse_challenge_env.step()` only parses the JSON and runs
-  `verify_ssh` ground truth — model-emitted commands are NEVER executed. verify_ssh overrides
-  self-report, so write challenges pass only if the world is already fixed (t3-004 "solved" via
-  the interactive LSE session at 19:27/19:33, not the episode). Secondary findings still valid:
-  execute_command sudo-blocker + /opt/models perms (fixed: lse-admin in sy5 group, WRITE-OK ✅).
-  **Next:** perform the cleanup via interactive LSE chat session, then run the episode as verifier
-  (expect 4/4); long-term fix = episode actuation layer (see v1.7.0-a).
-- [x] **Hermes KB entry — LSE relationship** ✅ (2026-06-11 P21) — installed via Hermes's own
-  memory tool: LSE sent `call_hermes` task to read `/tmp/hermes-kb-lse-relationship.md` and save
-  to persistent memory (hand-editing `.hermes/memories/USER.md` rejected — agent-managed + lock).
-  Verified cross-channel via Telegram "what is LSE". Exercised the full LSE→socat 8643→gateway path.
-- [x] **hermes-gateway TimeoutStopSec fix** ✅ (2026-06-11 P21) — drop-in
-  `/etc/systemd/system/hermes-gateway.service.d/timeout.conf` with `TimeoutStopSec=210s`,
-  daemon-reloaded, verified `TimeoutStopUSec=3min 30s`, gateway active.
-- [ ] **Hermes /status "Agent Running: No"** — assessed as normal idle state (agent sessions spawn
-  per conversation; gateway holds messaging+cron). Confirm: /status during an active reply.
-- [ ] **Hermes web_search/firecrawl broken** — `externally-managed-environment` pip failure in
-  gateway log; Hermes SSH to node3090 fails (password auth). Triage later — low priority.
-- [x] **[P0] Model store reconciliation — node3090** ✅ (2026-06-12 P21):
-  `/opt/models` symlink removed, real directory created, all model files migrated via
-  same-fs `mv` (zero downtime — running server held the inode via mmap). 18 `.gguf` files
-  `chattr +i` immutable. sha256 records: `/opt/models/SHA256SUMS` (node) + `kb/node3090-model-sha256sums.md`
-  (repo). Canonical launch consolidated to `/opt/local-se/scripts/start-llama-server.sh`
-  (ctx 81920, q8_0 KV both, threads 7/7, log `/home/lse-admin/llama-server.log`) — runbook
-  step 2 now calls the script. Verification restart completed, Hermes notified pre/post.
-  Postmortem: `docs/incident-2026-06-11-model-deletion.md`.
-- [ ] **ES index loss — follow-ups** (P21): `lse-errors` + `lse-rfc-kb` were wiped 2026-06-08
-  (es-data volume lost in the WSL/Docker cascade failure; only `lse-kb` was reseeded). Missing
-  indices are SILENT until first read. Recreated 2026-06-12 via `rag/02-es-setup.py` (idempotent).
-  - Add ES index-existence probe to the stack health check:
-    `curl -s localhost:9200/lse-kb,lse-errors,lse-rfc-kb,lse-search-cache/_count`
-  - RFC KB: ZERO `search_rfc` calls in 44,637 logged commands; rfc-cache untouched since ship day
-    (2026-06-04). Index reseeded untagged; Ollama tagging DEFERRED to first real demand. Add a
-    usage log line to `search_rfc` so the next review has data. Consider wiring RFC KB into LSE
-    prompts/episodes or retiring it.
-  - `lse-kb.sqlite` (0 bytes) is vestigial — no active code references it (tool v1.6.4's only
-    sqlite is the OWUI chat DB). Delete or ignore; do NOT "reinitialize".
-  - ~~Two repo clones on LUCIFER~~ RESOLVED (P21): `/home/sy5/projects/local-system-engineer` is a
-    symlink → `/mnt/c/...` (since Jun 7). One real repo; no reconciliation needed. Repo had ~2 days
-    of uncommitted session work — committed P21.
-- [ ] **Model store reconciliation — follow-ups** (P21):
-  - LM Studio repoint: My Models → models directory → `/opt/models` (confirm it indexes)
-  - lse-errors ES index missing — LSE `record_error` failed (2026-06-12); reinitialize index
-  - Other nodes (LUCIFER, node5090 when built) get the same one-real-dir + chattr +i treatment
-  - Design challenge `node-t3-006` "Model Store Reconciliation" with inode-level assertions
-    (replaces retired node-t3-005 — premise was false: the "duplicate" was one inode behind
-    a symlink; deletion removed the only copy; recovered byte-exact via Hermes aria2c from HF)
+**Deployed stack (verified in `tools/`, not from memory):**
+
+| Component | Actual | Notes |
+|---|---|---|
+| LSE Tool | **Goethe v0.2.9** (`tools/goethe.py`, 5819 lines, 2026-07-01) | ⚠️ CURRENT-STATE.md / VERSION.md still say v0.2.5 — doc drift, see P0-1 |
+| MCP Gateway | **goethe_mcp v1.9.3** (`tools/goethe_mcp.py`) | HTTP :9700, `_TokenGuard`, `SKIP_TOOLS={compact_context}`, `--also` vaultwarden v1.3.0 |
+| Frontend | **llama-ui** (built into llama-server :8080) | OWUI **retired** |
+| Planner | **`planner()`** (v0.2.9 rename of `hermes_plan`) | 3-path cascade: node3090 llama-server :8080 → Ollama :11434 qwen3:4b → local VRAM-gated Gemma GGUF spawn (E4B/26B-A4B/31B, vision via mmproj). `<think>`-strip before JSON envelope regex. |
+| Hermes agent | **RETIRED** (v0.2.7) | `_call_hermes`/`_kanban_create_card` are stubs. Multi-agent coordination moved to **Faust** rooms. |
+| SSH layer | `ssh_run` (argv, no double-shell) + `ssh_script` (scp + nohup guard) + ControlMaster mux + complexity guard (v0.2.6) | |
+| System prompt | v0.5.19 (tools/) marked "ready to deploy"; `prompts/node4090-v0.5.21.md` exists and is NEWER | lineage forked — reconcile, see P0-5 |
+
+**Goethe changelog since the docs stopped tracking (v0.2.5 → v0.2.9):**
+v0.2.6 SSH overhaul (3 root causes of exit-255 fixed) · v0.2.7 Hermes retired → `_call_node_planner`
+cascade · v0.2.8 PATH-3 VRAM-aware Gemma spawn (+valves `PLANNER_MODEL_DIR/PORT/LLAMA_BIN`) ·
+v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
+
+**Findings from the tools/ analysis that create new work:**
+1. **SEC:** `start-goethe.sh` hardcodes `GOETHE_MCP_TOKEN=6e003f5c…` (committed to git history)
+   and launches with `--host 0.0.0.0 --cors-origin '*'` — directly contradicting goethe_mcp.py's
+   own security header (bind 127.0.0.1, token = the "who", CORS = specific origin). This is a
+   remote-code-execution surface exposed LAN-wide with a public token. → P0-2.
+2. **Doc drift:** CURRENT-STATE/VERSION at v0.2.5; four Goethe releases undocumented. → P0-1.
+3. **Repo hygiene:** 25 cogitator + 28 openwebui-tool + assorted superseded copies (~4.5 MB)
+   still in `tools/`; git is the version store. → P0-3.
+4. **Stale skill:** `skills/lse-eval-runner` still instructs OWUI Admin-panel checks and
+   `openwebui-tool-v1.5.x` version confirmation — unusable against llama-ui + MCP. → PH3-3.
+5. Waterfall "remaining gap" (a)+(b) from old v1.7.6 item **SHIPPED** in Goethe v0.2.2
+   (VENDOR-BEHAVIOR GROUND-TRUTH + RELEASE ASSET rules in `execute_command`) — closed, removed.
 
 ---
 
-## v1.7.0 — Hermes Core + Self-Learning Skills
+## Phased Plan — all remaining work, dependency-ordered
 
-> **Design doc: `docs/lse-1.7.0-design.md`** · **Execution order: `docs/self-learning-trajectory.md`** (S0–S6)
-> **node5090 (NODE3): `docs/node5090-deployment-design.md`** + `scripts/node5090/` deploy/provision/teardown kit
-> (P20, DRAFT for review). Four workstreams:
-> structured Hermes peer protocol · occupational self-learning skills on RAG/ES ·
-> frozen-suite benchmark with SWE-bench-comparable metrics · Qwen3.6-35B-A3B coding delegation.
+> Workstream item IDs (KB-DECAY-n, CHRONOS-n, PROVE-n, DATA-n, SCRIBE-n, REFACTOR-n) are
+> defined in detail in the next section. Phases bundle them with carried-over backlog items.
 
-- [ ] **1.7.0-a** — **episode actuation layer (NEW — P0):** env executes model-emitted command
-  blocks via SSH with the tool's safety gates ported (blocklist, no-sudo, privileged-path guard);
-  without it every write-mode challenge is a deterministic failure and the bench measures world
-  state, not the model. Plus: `verify_ssh` on all bench challenges, `--eval --no-learn` flag,
-  freeze `lse-bench-v1`, record Condition A baseline
-- [ ] **1.7.0-b** — **Faust multi-agent planning protocol** (PARADIGM CHANGED P31 2026-06-19;
-  design: `docs/lse-1.7.0-b-faust-planning-design.md`):
-  Coordination moved from an OWUI push channel into **Faust** (`Faust/`), the realtime
-  group-chat app from the Coding Gauntlet. Humans + local-model agents are first-class room
-  participants (REST + WS + SQLite); agents already connect with a human in the loop. So the
-  problem is no longer "wake LSE" but the multi-agent protocol in a shared room.
-  Target flow: **PLANNING** (agents take turns proposing, round-robin, ≤5 rounds; vote
-  `[[CONVERGED]]` to agree) → **AWAITING_APPROVAL** (moderator posts the converged plan; human
-  admin `/approve` or `/revise`) → **TASKING** (agents assign each other working tasks via
-  `@handle: <task>`, emit `[[DONE]]`) → **IDLE** (assignment ledger posted; mention-reply resumes).
-  Implementation (additive, no rewrites): `planning.ts` `PlanningController` (per-room state
-  machine) + `PlanningPolicy implements SpeakerPolicy` (round-robin selector over the
-  controller, delegates to mention-reply when idle) + one `onTurnComplete` server seam to drain
-  moderator notices. Moderator framing rides as `role:"assistant"` messages (agents drop
-  `role:"system"`). Convergence rule: agents vote `[[CONVERGED]]`, then human admin approves.
-  - ~~OWUI push channel (inject / webhook / polling)~~ SUPERSEDED — the Hermes→LSE pull side
-    (`check_hermes_inbox`, Path A/B markers, by-reference) shipped v1.7.15–v1.7.23; the push
-    framing is retired in favour of Faust rooms.
-  - [ ] **Plugin integration** — fold `gate3-plugin-forge` into `gate2-group-server` (the core,
-    running, admin server) so one `npm start` serves chat + plugins + UI. Seams already exist
-    (`onMessage` hook, `staticFiles`). `exec` capability omitted (no sandboxed runner on host).
-  - [ ] **Repo sanity** (Faust): `git config core.fileMode false` (86 files show "modified" —
-    pure mode churn from the Windows mount, zero content diff); remove abandoned code
-    (`archive/*.py` cogitator forks, `archive/stale-gate3-root/`, `src/server.ts.bak6e`); delete
-    the stale `.git/index.lock` (Windows-side — sandbox lacks permission).
-  - Deferred: real-time typing (needs model streaming + delta WS envelope + UI), SQLite
-    persistence of plan state, wiring assignments to real agent work-loops (1.7.0-d).
-- [ ] **1.7.0-c** — `lse-skills` ES index, episode distillation, retrieval gold set (recall@3/MRR),
-  hybrid BM25+kNN scoring, gate web-search auto-indexing (quality 0.7→0.4 + relevance check)
-- [ ] **1.7.0-d** — occupational curriculum batches, skill lifecycle jobs, learning-lift run #1 (A vs B);
-  SOUL.md curation discipline (`hermes-t4` family — proven-knowledge appends to Hermes identity
-  prompt, human-approved, ground-truth-verified; trajectory §5.4)
-- [ ] **1.7.0** — 35B-A3B delegation after model shootout Runs 3–4 (Qwopus 35B vs Qwen3-Coder 30B);
-  serving on node3090 LM Studio with Hermes maintenance-window coordination until NODE3 exists
-- [x] **Reconcile VERSION.md** ✅ (P27 2026-06-13) — registry now current through Cogitator v1.7.13 (raw + black-norm sha256, line count tally v1.7.0–v1.7.13). Gap v1.6.2–v1.6.4 noted in version history.
-- [ ] **v1.7.6 candidate — WATERFALL PROVENANCE RULE** (added P23 2026-06-12, SY5 observation):
-  the source-of-truth hierarchy (KB → vendor docs/master README → github → web) exists as
-  *available tools* but not as a *mandatory path for claims* — so "slots API removed in v9577"
-  could be invented and persisted without ever touching the waterfall it contradicts.
-  Enforce at the WRITE path (attention is not a control plane): `record_error`/`index_to_kb`
-  reject resolutions/content containing external-software behavior claims ("removed/changed/added
-  in version X") unless provenance from the waterfall is attached (kb doc id, fetched URL, RFC ref);
-  otherwise persist tagged UNVERIFIED at quality ≤0.3. Companion docstring rule: version/behavior
-  claims about vendor components require a waterfall lookup BEFORE diagnosis, same shape as the
-  1.7.5 CONFIG GROUND-TRUTH rule.
+### Phase 0 — Reconcile & lock down (immediate, ~half a day)
 
----
+- [ ] **P0-1** — Update `CURRENT-STATE.md` + `VERSION.md` to Goethe v0.2.9 / goethe_mcp v1.9.3;
+      record the v0.2.6–v0.2.9 lineage + line-count tally (5819); note Hermes retirement and
+      `planner()` rename so no future session re-documents `hermes_plan`.
+      **PARTIAL ✅ (2026-07-02):** CURRENT-STATE.md updated — v0.2.9 rows, v0.2.6–v0.2.9
+      changelog, operator-verified stack inventory recorded (goethe_mcp 1.9.3 / goethe 0.2.9 /
+      llama-server a6647b1 / Ollama 0.22.1 ×5 models / ES 8.13.0 / SearxNG 2026.5.8-pinned +
+      port map). Remaining: VERSION.md registry + sha256/black-norm hashes; reconcile
+      llama-server build identity (a6647b1 source build vs recorded b9577) per node.
+- [ ] **P0-2** — **SEC: goethe_mcp exposure.** Rotate `GOETHE_MCP_TOKEN` (old one is in git
+      history — treat as public); move it into `~/.lse/secrets` (already sourced by
+      start-goethe.sh); decide binding: 127.0.0.1 if only llama-ui on LUCIFER needs it, else
+      bind the LAN IP + pfSense allow-rule scoped to node3090; CORS `'*'` → the actual llama-ui
+      origin. Same audit for `start-goethe-node3090.sh`. Verify with `ss -tlnp` + a tokenless
+      curl (expect 401).
+- [ ] **P0-3** — Purge superseded copies from `tools/` (= REFACTOR-3): cogitator v1.7.0–v1.7.24,
+      openwebui-tool v1.4.0–v1.6.4, goethe-v0.2.1/v0.2.2, goethe_mcp_v1.8.0,
+      backupfromOWUI1.7.12.py, lse-context-monitor v1.0–1.2, lse-routing-filter v1.0–1.1,
+      vaultwarden v1.0/v1.2, root `lse-stack-launch-1.05…1.077`. Sentimental → `.backups/`.
+      Gitignore `__pycache__/`. Git tag `pre-purge` first.
+- [ ] **P0-4** — Documentation cleanup (carried): delete `docs/searxng-settings-patch-v2.yml`;
+      archive `docs/searxng-config.md`; move `mesh_builder.py` + `portrait_3d_pifuhd.py` out of
+      root; grep-audit remaining OWUI references across docs/ + kb/ + skills/.
+- [ ] **P0-5** — Prompt lineage reconcile: `tools/system-prompt-v0.5.19.md` ("ready to deploy")
+      vs `prompts/node4090-v0.5.20/21.md` (newer) — pick ONE canonical dir (`prompts/`), confirm
+      what is actually pasted into llama-ui on each node, deploy/record it.
+- [ ] **P0-6** — Carried P21 leftovers: ES index-existence probe added to stack health check
+      (`curl -s localhost:9200/lse-kb,lse-errors,lse-rfc-kb,lse-search-cache/_count`); delete
+      vestigial `lse-kb.sqlite` (0 bytes, unreferenced).
 
-## Immediate — GUI & Stack
+### Phase 1 — Safety net, then KB trust lifecycle (Workstreams C→A)
 
-- [ ] **Launcher docker container visibility** (added P23 2026-06-12) — show ALL running docker
-  containers and their resource usage in the LSE Stack launcher GUI (next launcher version, ≥1.078).
-  Launcher repo: `C:\Users\SY5\Claude\Projects\LSEStack_gui` (edit there, sign SY5TEM5Cert — see
-  `docs/08-launcher-edit-workflow.md`).
-  Source: `docker stats --no-stream --format json` (or `{{json .}}` per line) from WSL — gives
-  name, CPU%, mem usage/limit, net/block IO per container. Display: container list panel with
-  per-container CPU/MEM, refreshed on a DispatcherTimer tick (reuse the PS7 scope-fixed pattern
-  from GUI v1.5). Covers searxng, elasticsearch, prometheus, grafana, exporters, dify (when up) —
-  today only the compose-managed core services are visible/launchable, untracked containers are invisible.
+- [ ] **PH1-1** — PROVE-2 contract tests FIRST (pin current tier/evidence/dedup behavior against
+      a throwaway `lse-kb-test` index).
+- [ ] **PH1-2** — KB-DECAY-1..5 (demotion in `record_outcome`, [STALE] quarantine + trust counts
+      in `search_kb`, `kb_verify` regression probe on `verified_against`, `mentor_demote`,
+      mapping migration). Ship as **Goethe v0.3.0** — this is the headline behavior change.
 
-- [x] **GUI v1.5 PS7 DispatcherTimer scope fix** ✅ — launch cycle + kill buttons fully working (2026-06-08)
-- [x] **pfsense-agent.py v1.0** ✅ — Qwen3.6 → LSE orchestrator; `--think/--no-think/--prompt-only/--auto`; tool_ids pass-through; `_extract_prompt` DO NOT block anchor + contiguous step sequence extraction (2026-06-09)
-- [x] **NoMtp flag: ps1 + XML** ✅ — `Build-LlamaServerCmd` now emits `--no-mtp` when `<NoMtp>true</NoMtp>` (2026-06-08)
-  - Affects presets 9 (Qwopus 32k), 10 (Qwopus 96k), 11 (Huihui), 12 (HauhauCS) — all 35B A3B MoE
-  - **Needs commit + re-sign from WSL** — changes not yet committed: `lse-stack-launch-gui.ps1`, `lse-profiles.xml`
+### Phase 2 — Sense of time (Workstream B)
 
-- [x] **Grafana :3002 server error** ✅ — resolved (2026-06-09)
+- [ ] **PH2-1** — CHRONOS-1 `time_check()` (multi-NTP + TLS-date sanity, report-don't-adjust).
+- [ ] **PH2-2** — CHRONOS-2 `MODEL_PRETRAIN_CUTOFF` valve + server-side `[TIME]` banner injection.
+- [ ] **PH2-3** — CHRONOS-3 volatility TTLs on KB docs; CHRONOS-4 retire the now-redundant
+      docstring date rules. Ship as **Goethe v0.3.1**.
 
-- [ ] **16-tool-call limit** — LSE stops after ~16 tool calls per session
-  **Investigation result (2026-06-09):**
-  - Env var `CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS` defaults to **256** — NOT the cause. Not set in launch scripts.
-  - Old name `CHAT_RESPONSE_MAX_TOOL_CALL_RETRIES` (pre-v0.9.6) defaulted to 30 — also not 16.
-  - Neither variable is set in `lse-stack-launch-1.077.ps1` → OWUI inherits default (256).
-  - **Root cause candidates:** (a) per-model UI override in Admin → Models → [Qwen3 preset] → Advanced → Max Tool Calls; (b) Qwen3 model behaviour — model self-terminates tool loop; (c) context_monitor tool yielding early on HIGH/CRITICAL context state.
-  **Next action:** Open WebUI Admin → Models → Qwen3.6 preset → Advanced → check "Max Tool Calls" field. If blank/256 → root cause is (b) or (c).
+### Phase 3 — Prove-it surface + eval re-baseline
 
-- [x] **llama.cpp b9577 upgrade** ✅ — upgraded from b9553 (2026-06-09)
+- [ ] **PH3-1** — PROVE-1 `run_tests(scope)` + PROVE-3 `assert_state()` + PROVE-4 health-check
+      wiring. Ship as **Goethe v0.3.2**.
+- [ ] **PH3-2** — Retrieval decision (carried from 1.7.0-c, the only piece not yet shipped):
+      run `rag/eval_retrieval.py --compare` on live ES; adopt linear vs RRF on recall@3/MRR
+      numbers; settle the 0.72 threshold with `--threshold-report`. Update `search_kb` if RRF wins.
+- [ ] **PH3-3** — Rewrite `skills/lse-eval-runner` for the llama-ui + goethe_mcp stack (pre-run
+      checklist becomes `run_tests`-backed; drop OWUI Admin steps; version checks read goethe.py
+      frontmatter via MCP). Then **full eval re-run** — Run 7's 63/63 was scored on
+      OWUI + openwebui-tool v1.5.18 and does not certify the current stack. New baseline =
+      Run 8 on Goethe v0.3.x + llama-ui, with `tools/system-prompt` canonical version from P0-5.
+- [ ] **PH3-4** — Run `lse-docstring-optimizer` on every new tool docstring from Phases 1–3
+      (kb_verify, time_check, run_tests, assert_state, mentor_demote, planner) — SCRIBE-5.
 
-- [x] **Confirm session-learnings.md KB entry landed** ✅ resolved 2026-06-12 (P21): confirmed the
-  entries were NEVER written (not present in either KB copy nor the pre-link backup — the prepared
-  WSL command was evidently never run). PS7 DispatcherTimer + Ollama GPU overhead learnings are
-  lost; rewrite from memory if still relevant. KB copies since merged + deduped (13 session blocks)
-  into the single real KB (repo kb/, symlinked from /opt/local-se/kb).
+### Phase 4 — Data quality + the self-writing loop (Workstreams D+E)
 
----
+- [ ] **PH4-1** — DATA-1..4 (self-harvested gold sets — no HF/Kaggle; `dataset_lint.py`;
+      sha256-frozen datasets; reseed preserves trust fields).
+- [ ] **PH4-2** — SCRIBE-1..4 (debrief→ES unified write path with human gate; backfill distiller
+      over `kb/session-learnings.md`; "contradicts existing KB?" step feeding KB-DECAY;
+      monthly retrieval self-measurement).
+- [ ] **PH4-3** — RFC KB verdict (carried P21): still ZERO `search_rfc` calls. Either wire it
+      into episode prompts (topology/DNS challenges cite RFC 8375 etc.) or retire the index.
+      Decide with usage-log data, not sentiment.
 
-## Immediate — Claude L2 Setup
+### Phase 5 — Refactor under green tests (Workstream F)
 
-- [x] **Create Claude Opus L2 preset in OpenWebUI** ✅ — deployed (2026-06-05)
-- [x] **Create Claude Sonnet Research preset in OpenWebUI** ✅ — deployed (2026-06-05)
-- [x] **Write `prompts/claude-l2-system-prompt.md`** ✅ (2026-06-05)
-- [x] **Routing filter stays v1.1.0** ✅ — Global OFF · Qwen3 preset only · v1.2.0 not needed
-- [x] **Apply SearXNG settings v3** ✅ — bing news + google news active (2026-06-05)
-- [x] **Run SearXNG diagnostic v2** ✅ — news gap confirmed fixed (2026-06-05) · NVD/cvedetails blocked (VPS 403, confirmed 2026-06-06)
+- [ ] **PH5-1** — REFACTOR-1 (single `TrustPolicy`, kills 3× `_TIER_CEILING`).
+- [ ] **PH5-2** — REFACTOR-2 (extract `goethe_kb.py`; MCP tool-list diff must be empty;
+      goethe.py is 5819 lines and growing ~150/release — do this before v0.4).
+- [ ] **PH5-3** — REFACTOR-4 threat-model doc (`docs/threat-model-kb.md`) — includes the P0-2
+      gateway exposure as its first worked example, plus KB poisoning origin-tags.
 
-- [x] **Grafana engine health panels** ✅ — 6 tuning-signal panels deployed (P3 Cowork 2026-06-05)
-  - Response time ranking, result yield ranking, reliability rate, error rate table, dead-engine detector, response time trend
-  - `searxng_engine_errors_total` (Panel 24) wired but empty — **see searxng-error-exporter below (now P1)**
+### Phase 6 — Arena, episodes, autonomy (parallel track, gated on Phase 1)
+
+- [ ] **PH6-1** — **Episode actuation layer** (carried 1.7.0-a, still the arena P0): env executes
+      model-emitted command blocks via SSH with goethe's safety gates ported; without it every
+      write-mode challenge measures world state, not the model. `--eval --no-learn` flag;
+      freeze `lse-bench-v1`; record Condition A baseline (bench/reports/ has 2 runs already).
+- [ ] **PH6-2** — Carried arena items: net-t3-002 re-run (a3 assertion verification);
+      Samsung TV DHCP hammer T2.5/T4 (rate measurement, lease-time confirmation, remediation
+      spec); ChallengeGenerator assertion AST-validation before DB insert.
+- [ ] **PH6-3** — Network Topology Challenge Series (T1 discovery → T2 analysis → T3 JSON+PNG
+      deliverable) — see backlog section below for the full challenge specs.
+- [ ] **PH6-4** — Occupational curriculum batches + learning-lift run #1 (A vs B) (carried
+      1.7.0-d) — now unblocked: lse-skills index, skill lifecycle (record/outcome/archive), and
+      demotion (Phase 1) all live.
 
 ---
 
-## Immediate — Arena T2/T3 remaining
+## Workstreams — KB Trust Lifecycle, Sense of Time, Prove-It Tests (2026-07-02)
 
-- [x] nas-t2-001 NAS Unexpected Port Investigation ✅ SOLVED · 19.5 pts
-- [x] nas-t3-001 NAS Anonymous Access Hardening Verification ✅ SOLVED · 19.5 pts
-- [x] net-t2-011 Samsung TV Traffic Analysis ✅ SOLVED · 19.5 pts
-- [x] net-t3-002 Samsung TV WAN Isolation ✅ SOLVED · 19.5 pts (a3 assertion fixed post-run)
+> Source: Cowork analysis of the RAG/KB corpus (`tools/goethe.py`, `rag/`, `eval/`, `skills/`),
+> read against the four polar-star texts: Fowler (*Refactoring*), Ousterhout (*APoSD*),
+> Hunt/Thomas (*Pragmatic Programmer*), Shostack (*Threat Modeling*).
+>
+> **Core findings (verified in code, not vibes):**
+> 1. **lse-kb quality is monotonic upward.** `index_to_kb` takes `max(existing, new)`;
+>    `mentor_correct` REJECTS any lower `new_quality` by design;
+>    `record_outcome(success=False)` increments `failure_count` but **never touches
+>    `quality_score`** — failure evidence is collected, then discarded from ranking.
+>    Meanwhile `skill_outcome` on lse-skills already does it right: −0.15 verified
+>    failure, floor 0.2 → auto-archive. The demotion pattern exists; it was never
+>    ported to lse-kb. This is the regression gap (app updated → KB "ground truth"
+>    silently wrong forever).
+> 2. **Sense of time is prompt-level only.** DATE-SENSITIVE and YEAR-INJECTION rules
+>    live in the `search_web` docstring; nothing is enforced server-side. No NTP
+>    cross-check, no pretraining-cutoff comparison, no volatility TTLs on KB docs.
+>    Qwen treating pretraining as gospel is exactly the failure mode Ousterhout says
+>    to *define out of existence* rather than police with rules.
+> 3. **No user-callable test surface.** Test assets exist (`rag/eval_retrieval.py`
+>    with `--self-test`, `eval_goethe_rules.py`, `scripts/test_*.py`, gold set
+>    `eval/retrieval-gold-v1.jsonl` @50 queries) but the model exposes no `run_tests`
+>    tool — the user cannot say "prove it" and get pytest output as evidence.
+> 4. **DRY violations & god-class risk (Fowler):** `_TIER_CEILING` dict duplicated 3×
+>    (index_to_kb / skill_record / skill_outcome); goethe.py is a 5819-line single
+>    class; per-version file copies are VCS-inside-VCS.
+> 5. **Threat surface (Shostack, STRIDE-lite):** web-fetched content can be indexed
+>    into KB (poisoning/prompt-injection path — tier ceilings mitigate but origin is
+>    not tagged); NTP is unauthenticated (spoofable time source); a future test-runner
+>    tool is an arbitrary-code-exec surface if paths are not scoped; the MCP gateway
+>    is currently LAN-exposed with a git-committed token (see P0-2). Prior art: the
+>    pfSense self-grant incident (P26) is exactly a Shostack "tampering with trust
+>    metadata" case — the tier gate fixed elevation, demotion still ungated.
 
-- [ ] **net-t3-002 re-run** (optional) — a3 was patched after the solve. Re-run to confirm
-  `write_access_verified_inactive` assertion works correctly with the API probe approach.
+### Workstream A — KB-DECAY: trust lifecycle for lse-kb (demotion + regression)
 
-- [ ] **Samsung TV DHCP hammer** — WAN blocked but DHCP rate still high (every 1-2 min)
-  Needs T2.5 investigation: is the DHCP hammer causing network issues or just noise?
+- [ ] **KB-DECAY-1** — Port the skill_outcome demotion math to `record_outcome`:
+      `success=False` + evidence (≥20 chars, same evidence gate as skill_outcome) →
+      `quality_score = max(0.2, q − 0.15)`; add `consecutive_failures`; floor 0.2 →
+      set `stale: true` (quarantine, NEVER silent-delete — keep for forensics).
+      Success on a previously-failing doc resets `consecutive_failures` but regains
+      quality only via the existing tier-gated paths (no free re-elevation).
+- [ ] **KB-DECAY-2** — `search_kb` must surface the trust state: show
+      `runs/success/failure` counts per hit; prepend `[STALE — quarantined, verify
+      live before use]` banner on floored docs; penalize ranking by failure ratio
+      (client-side rerank multiplier is enough — don't over-engineer ES function_score
+      on day one; measure with the gold set first).
+- [ ] **KB-DECAY-3** — Make `verified_against` (stored since v1.7.11, consumed by
+      NOTHING) actually work: new `kb_verify(doc_id)` tool — re-probes the recorded
+      version/config snapshot against the live system (`get_github_release`, os
+      probe, `read_file`); mismatch → auto `record_outcome(success=False,
+      evidence=<probe output>)` with note "verified_against regression: fw X → Y".
+      This is the "application updated → KB no longer relevant" detector.
+- [ ] **KB-DECAY-4** — Human demotion path: `mentor_correct` keeps its raise-only
+      rule (good — protects against model self-sabotage), but add explicit
+      `mentor_demote(doc_id, new_quality, reason)` documented as human-authorized
+      only, mirrored in system prompt. Today the ONLY way to say "this entry is
+      wrong" is a competing entry — that leaves the poisoned high-quality doc
+      outranking its correction.
+- [ ] **KB-DECAY-5** — Migration: add `stale`, `consecutive_failures`,
+      `volatility` (see CHRONOS-3) fields to the lse-kb mapping via a
+      `rag/08-kb-trust-migration.py` (idempotent, same pattern as 02-es-setup.py).
 
----
+### Workstream B — CHRONOS: enforced sense of time
 
-## Immediate — Eval
+> Pipeline: system time → NTP cross-check → report/adjust discrepancy → compare with
+> model pretraining cutoff → web-verify degradable datapoints. Enforcement must be
+> server-side (injected into tool returns), not docstring pleading.
 
-- [ ] All 63/63 confirmed ✅ (Run 7, v0.5.14 + v1.5.18)
-- [ ] No new prompt/tool changes pending — Run 8 only after new gaps identified
+- [ ] **CHRONOS-1** — New tool `time_check()`: query ≥2 NTP servers (`pool.ntp.org`,
+      `time.cloudflare.com`; ntplib, 2s timeout, graceful degrade to system clock
+      with a WARN), report offset vs system clock in ms; offset >2s → surface
+      discrepancy + suggested fix (`chronyc`/`timedatectl`), and log to lse-errors.
+      *Threat note (Shostack): NTP is unauthenticated — require both servers to
+      agree within bounds AND sanity-check against system clock + TLS date header
+      from a known HTTPS endpoint before "adjust" is ever suggested. Never
+      auto-adjust the clock; report and ask.*
+- [ ] **CHRONOS-2** — Pretraining anchor: `MODEL_PRETRAIN_CUTOFF` valve (per-model,
+      e.g. Qwen3.6 = its published cutoff). `time_check()` returns a banner:
+      `[TIME] verified now=<date> | model cutoff=<date> | gap=<N months> — any
+      version/price/CVE/firmware claim from model memory is presumed stale;
+      web-verify before asserting.` Wire the same banner **server-side** into the
+      first `search_kb`/`search_web` return of each session (cheap: cache a
+      session flag) so compliance does not depend on the model reading docstrings.
+- [ ] **CHRONOS-3** — Volatility classes on KB docs: `volatility: static|slow|fast`
+      (default slow) with TTLs — static=∞ (topology facts change rarely), slow=90d
+      (procedures), fast=7d (versions, CVEs, firmware, prices). `search_kb` computes
+      age vs TTL and tags `[EXPIRED — pointer only, re-verify live]`, demoting the
+      hit below fresh ones. This moves the existing docstring staleness table
+      (30d/7d rules in search_web) into enforced metadata. Expired+re-verified →
+      bump `updated_at` via `record_outcome(success=True)`.
+- [ ] **CHRONOS-4** — Retire YEAR-INJECTION/date rules from docstrings once
+      CHRONOS-2/3 land (single source of truth — Pragmatic Programmer DRY: the
+      rule lives in code OR prose, not both drifting apart).
 
----
+### Workstream C — PROVE-IT: user-callable unit tests as evidence
 
-## Immediate — Documentation Cleanup
+- [ ] **PROVE-1** — New tool `run_tests(scope)` — scopes: `kb` (ES index probes +
+      count sanity), `retrieval` (`rag/eval_retrieval.py --self-test`, and `--compare`
+      when ES is up), `rules` (`eval_goethe_rules.py`), `harness`
+      (`scripts/test_*.py` via pytest), `all`. Returns raw pytest/pass-fail output
+      verbatim (it IS the evidence; feeds skill_outcome/record_outcome evidence
+      gates). *Threat note: exec surface — hardcode the allowlisted commands per
+      scope; NO arbitrary path/args from the model. Same pattern as the sudo
+      allowlist (v1.7.17).*
+- [ ] **PROVE-2** — Contract tests for every KB-mutating tool function
+      (`tests/test_kb_contracts.py`): tier ceilings hold, evidence gates reject
+      thin evidence, demotion floors at 0.2, mentor_correct rejects lowering,
+      dedup updates instead of duplicating. These are Fowler's safety net —
+      **must land BEFORE Phase 5 refactoring starts.** Run against a
+      throwaway ES index (`lse-kb-test`), never production indices.
+- [ ] **PROVE-3** — Post-action assertion helper `assert_state(check_command,
+      expected_regex)` (read-only allowlist: df/ss/systemctl is-active/curl -s
+      health endpoints/sha256sum): turns "the model claims it worked" into "the
+      model ran the check and the output matched". Surface in docstrings as the
+      preferred `evidence=` producer. User phrase "prove it" → system prompt maps
+      to run_tests/assert_state, never prose.
+- [ ] **PROVE-4** — Wire `run_tests(scope=harness)` into the stack health-check
+      skill and the eval-runner pre-run checklist (replaces "ask the user to
+      confirm" rows where a command can answer).
 
-- [ ] Delete `docs/searxng-settings-patch-v2.yml` — superseded by `docker/searxng_data/settings.yml`
-- [ ] Archive `docs/searxng-config.md` — superseded by `docs/searxng-operations.md`
-- [ ] Move `mesh_builder.py` + `portrait_3d_pifuhd.py` from root to `tools/` or delete
-- [ ] Write `docs/claude-l2-system-prompt.md` — document the L2 escalation role
+### Workstream D — DATA: clean, always-relevant datasets (no HF/Kaggle)
+
+- [ ] **DATA-1** — All gold/eval data is **self-harvested from own telemetry**:
+      grow `eval/retrieval-gold-v2.jsonl` by mining the goethe log for real
+      `search_kb` misses and mis-rankings (the q01 "classic miss" pattern —
+      every real retrieval failure becomes a gold row); episode outcomes from
+      `leaderboard.db`; skill `evidence_log` entries as verification-format exemplars.
+- [ ] **DATA-2** — `scripts/dataset_lint.py`: JSONL schema validation (required
+      fields per dataset type), duplicate-query detection, provenance field
+      REQUIRED on every row (episode id / log line / incident doc — unattributed
+      rows rejected, same rule as skill_record), expected-file existence check
+      against `kb/`. Run in PROVE-1 `scope=all`.
+- [ ] **DATA-3** — Freeze + fingerprint datasets like models: sha256 in
+      `eval/SHA256SUMS`, version-bumped filenames (`freeze_bench.py` already does
+      this for the bench — extend to gold sets). A changed gold set silently
+      invalidates every historical eval number; the hash makes that loud.
+- [ ] **DATA-4** — KB reseed hygiene: `03-kb-seed.py --reindex` must preserve
+      trust fields (quality/stats/stale/volatility) — today a reseed would reset
+      earned trust. Snapshot trust metadata before reindex, re-apply after
+      (extend `kb-reseed-procedure.md`).
+
+### Workstream E — SCRIBE: self-improving + auto-writing skill, next stage
+
+> Today: `lse-session-debrief` (markdown append to session-learnings.md, human-
+> confirmed, good format discipline) and the lse-skills loop
+> (skill_record/skill_search/skill_outcome — evidence-gated, deduped, decays,
+> auto-archives) are TWO disconnected memories. The debrief writes prose no
+> retrieval loop consumes; the skills index never learns from debriefs.
+
+- [ ] **SCRIBE-1** — Unify the write path: debrief Step 4 additionally proposes
+      structured calls — facts → `index_to_kb(source_tier=..., verified_against=...)`,
+      procedures → `skill_record(provenance="debrief YYYY-MM-DD")` — shown in the
+      same human-confirm gate (one yes commits file + ES atomically; file remains
+      the human-readable journal, ES the retrieval surface).
+- [ ] **SCRIBE-2** — Backfill distiller: one-shot script proposing
+      index_to_kb/skill_record candidates from the existing
+      `kb/session-learnings.md` corpus; human reviews a diff-style list, approves
+      per-entry. No auto-commit — the confirm gate is the skill's load-bearing
+      safety property, keep it (Shostack: repudiation — every ES write carries
+      `provenance=debrief-<date>` so bad entries trace back).
+- [ ] **SCRIBE-3** — Close the loop with decay: debrief template gains a
+      "Contradicts existing KB?" step — if the session disproved a KB entry, the
+      proposal includes `record_outcome(doc_id, success=False, evidence=...)`
+      (uses KB-DECAY-1) instead of only writing the new truth alongside the old.
+- [ ] **SCRIBE-4** — Skill self-measurement: monthly `run_tests(scope=retrieval)`
+      + skills-index report (uses/successes/failures/archived count — data already
+      in `stats`) appended to the debrief; the skill that writes learnings should
+      report whether learnings are being retrieved (RFC-KB lesson: 0 calls in
+      44,637 commands — build the usage counter in from day one).
+- [ ] **SCRIBE-5** — Run `lse-docstring-optimizer` on every new tool docstring
+      added by A–D (kb_verify, time_check, run_tests, assert_state, mentor_demote)
+      before deploy — eval regressions traced to docstring ambiguity are a known
+      failure class.
+
+### Workstream F — REFACTOR: pay down before the next 1000 lines (Fowler/Ousterhout)
+
+- [ ] **REFACTOR-1** — Extract `_TIER_CEILING` + evidence-gate logic into ONE
+      module-level `TrustPolicy` (3 copies today → 1). Zero behavior change;
+      covered by PROVE-2 contract tests first.
+- [ ] **REFACTOR-2** — Extract KB layer (`search_kb/index_to_kb/record_*/
+      mentor_*/skill_*` + `_embed/_es`) from the Tools god-class into
+      `tools/goethe_kb.py`, goethe.py keeps thin delegating methods (deep module,
+      shallow interface — the MCP gateway surface must not change; verify with
+      `run_tests(scope=rules)` + goethe_mcp `--list` diff).
+- [x] **REFACTOR-3** — folded into **P0-3** (purge superseded version copies).
+- [ ] **REFACTOR-4** — Threat-model pass (Shostack 4-question frame) written as
+      `docs/threat-model-kb.md`: what are we building (KB trust dataflow diagram),
+      what can go wrong (poisoning via fetch_url→index_to_kb, tier self-grant,
+      NTP spoof, test-runner exec, MCP gateway exposure P0-2, ES unauthenticated
+      on LAN), what do we do (origin tags: `origin: web|local-probe|human` on every
+      KB doc — web-origin can NEVER carry source_tier=ground_truth without a local
+      probe corroboration), did we do a good job (contract tests assert each
+      mitigation).
 
 ---
 
 ## Backlog — SearXNG
 
-- [x] **[P1] arXiv pollutes general-purpose queries** ✅ ROOT CAUSE WAS TOOL-SIDE (P23 2026-06-12,
-  surfaced during a multi-step research task). search_web requested `categories="general,it,science"`
-  on every call; arxiv is in `[science,it,technology]` (settings.yml line 156) so it fired on all
-  queries incl. general-domain/product ones, returning 4-5 off-domain physics/ML hits and burning the web budget.
-  FIXED in cogitator v1.7.8: categories → `general` only. NOT a SearxNG misconfiguration.
-- [ ] **Defense-in-depth: tighten arxiv to science-only in settings.yml** (optional follow-up) —
-  even though the tool now requests `general` only, arxiv's `categories: [science, it, technology]`
-  means any future `it`/`technology` query would re-pull it. Consider `categories: [science]` so
-  arxiv only ever answers deliberate science searches. Low priority now that the tool no longer
-  requests those categories. Verify canonical settings path via docker exec read before editing.
-
+- [ ] **Defense-in-depth: tighten arxiv to science-only in settings.yml** — the tool now
+  requests `general` only (fixed v1.7.8), but arxiv's `categories: [science, it, technology]`
+  means any future `it`/`technology` query would re-pull it. Low priority. Verify canonical
+  settings path via docker exec read before editing.
 - [ ] **[P1] searxng-error-exporter** — Grafana "Failing engines" panel (Panel 24) shows 0.
-  Without this, silently-failing engines (e.g. cvedetails 403) are invisible until manual diagnosis.
-  Implementation: scrape SearXNG `/metrics` endpoint, parse `searx_engine_*` counters,
-  expose `searxng_engine_errors_total{engine,error_type}` on :9840 for Prometheus to scrape.
-  Replaces the stale searxng-logger approach. Deploy as systemd service alongside other exporters.
-
+  Without this, silently-failing engines (e.g. cvedetails 403) are invisible until manual
+  diagnosis. Scrape SearXNG `/metrics`, parse `searx_engine_*` counters, expose
+  `searxng_engine_errors_total{engine,error_type}` on :9840. Replaces the stale searxng-logger
+  approach (do together). Deploy as systemd service alongside other exporters.
 - [ ] **[P1] NVD custom SearXNG engine** — cvedetails.com VPS blocked (403). CVE search critical
-  for security audit challenges. Write a custom engine file hitting NVD REST API directly:
-  - Endpoint: `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=<q>&resultsPerPage=10`
-  - Returns: CVE ID, CVSS score, description, published date — no IP restrictions, no auth needed
-  - Rate limit: 5 req/30s unauthenticated (add `api_key` support for 50 req/30s later)
-  - Deploy to: `/usr/local/searxng/searx/engines/nvd_api.py` via Docker volume mount
-  - Engine name in settings: `nvd` · categories: `[it, security]` · weight: 3
-  Workaround until built: `site:nvd.nist.gov <CVE-ID>` via Google
-
-- [ ] **URL redirect leak fix** — google.com/search?q= URLs appearing in results
-  Root cause: SearXNG parser issue, not config. Requires `docker pull searxng/searxng:latest`
-  + test in staging before applying. Check current version: `docker exec searxng searxng --version`
-
-- [ ] **Reddit engine** — blocked on VPS IPs for anonymous access
-  Options: (a) Reddit OAuth app + bearer token, (b) site:reddit.com via Google (current workaround)
-  "Velvet gloves" approach: OAuth with proper User-Agent, respect rate limits (60 req/min)
-
-- [ ] **Google Scholar** — 0% reliability, VPS IP blocked
-  Debug: `docker exec searxng curl -sA "Mozilla/5.0" "https://scholar.google.com/scholar?q=test" | head -3`
-  Re-enable checklist in `docs/searxng-operations.md`
-
-- [ ] **searxng-logger rewrite** — scrape /metrics directly with Authorization: Basic header
-  (superseded by error-exporter P1 item above — do together)
+  for security audit challenges. Custom engine hitting NVD REST API directly:
+  `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=<q>&resultsPerPage=10`;
+  rate 5 req/30s unauth. Deploy `/usr/local/searxng/searx/engines/nvd_api.py` via volume mount;
+  categories `[it, security]`, weight 3. Workaround until built: `site:nvd.nist.gov <CVE-ID>`.
+- [ ] **URL redirect leak fix** — google.com/search?q= URLs in results. SearXNG parser issue.
+  NOTE (2026-07-02): image is now PINNED to `searxng/searxng:2026.5.8-d8ab61a9e` in
+  docker-compose.yml — do NOT `docker pull latest`. Upgrade path: pick a newer explicit tag,
+  `docker manifest inspect` it, update the compose pin, staging test, then roll.
+- [ ] **Reddit engine** — blocked on VPS IPs for anonymous access. NOTE (reconcile 2026-07-02):
+  Goethe v0.2.5 shipped the Firecrawl/camoufox browser fallback for reddit URLs in `fetch_url`,
+  and `search_reddit` exists — the SearXNG-engine-level fix is now lower priority. Options if
+  still wanted: (a) Reddit OAuth app + bearer token, (b) site:reddit.com via Google (current).
+- [ ] **Google Scholar** — 0% reliability, VPS IP blocked. Debug via docker exec curl;
+  re-enable checklist in `docs/searxng-operations.md`.
 
 ---
 
@@ -262,7 +385,6 @@
   192.168.10.x is dedicated wired IoT only (solar inverter). Expect most IoT on 1.x, not 10.x.
   Produce: JSON list of `{ip, mac, hostname, open_ports[], vendor}` for each live host.
   Assertions: a1=hosts found on each subnet, a2=MAC vendors resolved, a3=JSON written to KB.
-
 - [ ] **net-t1-014 pfSense Interface Inventory** — enumerate pfSense interfaces, IPs, and
   assigned subnets via `pfsense_query("/api/v2/network/interface")`.
   Produce: `{interface, description, ip, subnet, connected_to}` per interface.
@@ -276,11 +398,9 @@
   Confirm: pfsense/homeassistant/n45 resolve correctly. Identify gaps (lucifer, node2 = NXDOMAIN).
   Assertions: a1=known hosts resolve to correct IPs, a2=gap hosts return NXDOMAIN (documented),
   a3=resolution report produced with all 3 subnets' static hosts tested.
-
 - [ ] **net-t2-013 NAS Subnet Topology** — map 192.168.5.0/24 physical topology.
   Discover Netgear switch (IP, model via SNMP/nmap), confirm NODE2 presence and MAC.
   Assertions: a1=switch identified, a2=all 5.x hosts mapped with MAC, a3=topology JSON produced.
-
 - [ ] **net-t2-014 DHCP Static Mapping Audit** — enumerate all pfSense static DHCP mappings.
   Identify: which hosts have static mappings, which are dynamic, hostname coverage gaps.
   Assertions: a1=static mappings retrieved, a2=dynamic hosts identified, a3=gaps documented.
@@ -289,130 +409,99 @@
 - [ ] **net-t3-003 Network Topology JSON** — produce a validated topology document combining
   all T1/T2 findings into a single canonical JSON:
   `{subnets[], hosts[], connections[], dns_entries[], missing_dns[]}`.
-  Assertions: a1=all 3 subnets present, a2=all known hosts present with MAC+hostname, a3=JSON validates against schema.
-
+  Assertions: a1=all 3 subnets present, a2=all known hosts present with MAC+hostname,
+  a3=JSON validates against schema.
 - [ ] **net-t3-004 Network Topology Diagram** — render topology as PNG using `diagrams` library.
-  Requirements: vendor icons (pfSense, QNAP, Raspberry Pi, Samsung, generic server/PC),
-  subnet clusters (LAN / NAS+Server / IoT), edge labels (IP + hostname), Netgear switch node.
-  Output: `/opt/local-se/topology/network-diagram.png` + source `.py` script.
-  Assertions: a1=PNG file written (>10KB), a2=all subnets represented in diagram,
-  a3=all static-mapped hosts appear as labelled nodes.
-
-### Implementation notes
-- `diagrams` library: `pip install diagrams` (requires Graphviz: `apt install graphviz`)
-- Vendor icon sets available: `diagrams.onprem.network` (generic), custom PNG icons via `Custom()`
-- For Cisco/pfSense/QNAP icons: use `Custom()` with downloaded vendor SVG/PNG icons
-- Challenge `requires_human_approval=1` for T3-004 (writes files, needs Graphviz install)
-- Natural T4 extension: `net-t4-001` — topology diff challenge (detect when topology changes)
+  Requirements: vendor icons, per-subnet clustering, labeled links. Input: net-t3-003 JSON.
+  Assertions: a1=PNG rendered, a2=all subnets/hosts from JSON present, a3=file written to repo.
 
 ---
 
 ## Backlog — Arena
 
-- [ ] **[P0] Ground-truth assertion verifier** — node-t3-002 hallucination incident (2026-06-06):
-  LSE reported `gpu_detected=True`, `cuda_major=13`, `cuda_verified=True` but `nvidia-smi` was not
-  installed (`nvidia-compute-utils-595` removed during Ubuntu upgrade) and CUDA was 12.0 not 13.x.
-  The assertion framework trusted the model's self-reported JSON — there is no independent verification.
-
-  **Design**: Add an optional `verify_ssh` field to challenge assertions. After the model completes
-  and reports its JSON, `lse_challenge_env.py` SSHes to the target node and runs the verify command
-  independently. The actual stdout/exit code overrides the model's self-reported variable for that
-  assertion. Model cannot pass a verify_ssh assertion by hallucination.
-
-  Example assertion with ground-truth probe:
-  ```python
-  {
-    "id": "a3", "points": 1,
-    "code": "assert gpu_detected == True and 'RTX 3090' in gpu_name",
-    "verify_ssh": {
-      "host_key": "node3090",           # resolved via _NODE_REGISTRY
-      "cmd": "nvidia-smi --query-gpu=name --format=csv,noheader",
-      "parse": "gpu_name = stdout.strip(); gpu_detected = (exit_code == 0)"
-    }
-  }
-  ```
-
-  Priority: P0 — any challenge that touches real infrastructure can be gamed by hallucination.
-  Affects: node-t3-001, node-t3-002, and any future infra challenges with measurable state.
-
+- [x] **Ground-truth assertion verifier (`verify_ssh`)** ✅ RECONCILED 2026-07-02 — shipped:
+  `lse_challenge_env.step()` runs `verify_ssh` ground truth and overrides model self-report
+  (confirmed in the P20 root-cause note). Original design (node-t3-002 hallucination incident)
+  kept in git history. Remaining related gap is the actuation layer → **PH6-1**.
 - [ ] **Samsung TV T4** — DHCP hammer confirmed firmware noise (lease 7200s normal).
   Design challenge: measure DHCP rate from MAC 1c:af:4a:04:5f:b6 via DHCP logs,
   confirm lease time is not the cause, document remediation options (rate-limit UDP 67/68).
   Assertions: a1=DHCP request rate measured, a2=lease time confirmed normal (>3600s),
   a3=remediation documented (rate-limit rule spec or benign-noise classification).
-- [x] **ha-t1-004** ✅ SOLVED 15.0 pts (2026-06-05)
-- [x] **ha-t1-008** ✅ SOLVED 15.0 pts · 2 stale automations found (2026-06-05)
-- [x] **ha-t2-002** ✅ SOLVED 19.5 pts · template sensors identified (2026-06-05)
-- [x] **ha-t3-001** ✅ SOLVED 22.5 pts · YAML fixed + confirmed (2026-06-05)
-- [x] **infra-t2-001** ✅ SOLVED 19.5 pts · SSH posture audited (2026-06-05)
-- [x] **infra-t3-002** ✅ SOLVED 22.5 pts · key auth live, password auth disabled (2026-06-05)
-- [ ] **ChallengeGenerator quality** — llama3.2:3b produces broken assertions (a2 bug in Samsung T2 proposal)
-  Consider: validate assertions with AST parse before inserting to DB
+- [ ] **net-t3-002 re-run** (optional) — a3 was patched after the solve. Re-run to confirm
+  `write_access_verified_inactive` assertion works with the API probe approach.
+- [ ] **ChallengeGenerator quality** — llama3.2:3b produces broken assertions (a2 bug in
+  Samsung T2 proposal). Validate assertions with AST parse before inserting to DB.
+- [ ] **node-t3-006 "Model Store Reconciliation"** — design with inode-level assertions
+  (replaces retired node-t3-005 — premise was false; see CHANGELOG P21).
 
 ---
 
 ## Backlog — Infrastructure
 
 - [ ] **Local DNS Architecture** — converge all hosts to coherent `*.home.arpa` naming.
-  Current state (pfSense DNS Resolver overrides):
-  - `homeassistant.home.arpa` → 192.168.1.80 ✅
-  - `n45.home.arpa` → 192.168.5.45 ✅
-  - pfSense, LUCIFER (WSL2 + Windows), Samsung TV, NODE2, NODE3 — **not yet mapped**
-  Work items:
-  Known DNS entries confirmed via `dig @192.168.1.50` (2026-06-06):
-  - `pfsense.home.arpa` → 192.168.1.50 ✅
-  - `homeassistant.home.arpa` → 192.168.1.80 ✅
-  - `n45.home.arpa` → 192.168.5.44 + 192.168.5.45 ✅ both correct
-    (NAS has 2 NICs, failover config — switch doesn't support LACP. Both MACs in pfSense static DHCP.
-    DNS returns both A records; clients use whichever NIC is active.)
-  Missing (to add in pfSense DNS Resolver → Host Overrides):
-  - `lucifer.home.arpa` → 192.168.1.57
-  - `4090.home.arpa` → 192.168.1.57 (LUCIFER GPU alias — additive, no hostname change)
-  - `3090.home.arpa` → 192.168.5.41 ✅ (NODE2/3090 · MAC 0c:9d:92:84:6e:6a · hostname set to 3090)
-  - `5090.home.arpa` → NODE3 IP TBD (NODE3 GPU alias — after NODE3 setup)
-  GPU naming strategy: DNS aliases only — machine hostnames (LUCIFER/NODE2/NODE3) unchanged.
-  No script/prompt migration needed. Aliases coexist with existing names.
-  Work items:
-  1. Audit all current pfSense host overrides: `pfsense_query("/api/v2/services/unbound/host")`
-  2. Add static DHCP mapping for NODE2 (MAC needed) → then `node2.home.arpa`
-  3. Add PTR records (reverse DNS) — makes firewall log analysis readable by hostname
-  4. Update LSE NETWORK_CONTEXT and KB docs to use hostnames over IPs consistently
-  Design as arena challenges — see Network Topology Challenge Series below.
-  Ref: RFC 8375 — `home.arpa` is the IETF-recommended local domain for residential networks.
-
-- [ ] NODE2 — LM Studio server mode on RTX 3090, expose :8081, add to pfSense API access list
-- [ ] NODE3 — WSL2 install, llama-server deploy, test `wsl-gaming-teardown.ps1`
-- [x] HA long-lived token — ✅ created (2026-06-05) · stored in Vaultwarden as HA_TOKEN
-- [ ] **Kostal Smart Energy Meter** — disconnected, pending integration on 192.168.10.x (OPT2)
-  When connected: add static DHCP mapping, add `kostal.home.arpa` DNS entry, integrate with HA
-  Design as arena challenge: `ha-t2-003` Energy Meter Integration
+  Confirmed via `dig @192.168.1.50` (2026-06-06): `pfsense`, `homeassistant`,
+  `n45` (both NICs — failover, both MACs in static DHCP) ✅. `3090.home.arpa` → 192.168.5.41 ✅.
+  Missing (add in pfSense DNS Resolver → Host Overrides):
+  - `lucifer.home.arpa` → 192.168.1.57 · `4090.home.arpa` → 192.168.1.57 (GPU alias)
+  - `5090.home.arpa` → node5090 IP (after setup)
+  GPU naming strategy: DNS aliases only — machine hostnames unchanged.
+  Work items: audit host overrides via `pfsense_query("/api/v2/services/unbound/host")`;
+  PTR records for readable firewall logs; update NETWORK_CONTEXT + KB docs to hostnames.
+  Design as arena challenges (see Topology Series). Ref: RFC 8375.
+- [x] **node3090 commissioning** ✅ RECONCILED 2026-07-02 — fully commissioned: llama-server
+  :8080 (Qwen3.6-27B, 96k ctx), local goethe_mcp :9700 + ES + Ollama, Firecrawl :3002 +
+  camoufox. The old "NODE2 — LM Studio server mode :8081" item is superseded.
+- [ ] **node5090 (NODE3)** — WoL/SSH setup deferred; WSL2 install, llama-server deploy,
+  test `wsl-gaming-teardown.ps1`; then `5090.home.arpa` + 35B-A3B coding-delegation experiments
+  (carried from v1.7.0 — model shootout Runs 3–4 first: Qwopus 35B vs Qwen3-Coder 30B).
+- [ ] **Kostal Smart Energy Meter** — disconnected, pending integration on 192.168.10.x (OPT2).
+  When connected: static DHCP mapping, `kostal.home.arpa`, HA integration.
+  Design as arena challenge: `ha-t2-003` Energy Meter Integration.
+- [ ] **Launcher docker container visibility** (carried) — show ALL running docker containers +
+  resource usage in the LSE Stack launcher GUI (≥1.078). Launcher repo:
+  `C:\Users\SY5\Claude\Projects\LSEStack_gui` (edit there, sign SY5TEM5Cert —
+  `docs/08-launcher-edit-workflow.md`). Source: `docker stats --no-stream --format json`.
+- [ ] **Tool-call ceiling under llama-ui** (rewritten 2026-07-02; was "16-tool-call limit") —
+  the OWUI-era investigation (Admin → Models → Max Tool Calls) is obsolete. Re-test on the
+  current stack: llama-ui + goethe_mcp — count sequential MCP calls until stall; candidates now:
+  llama-server/llama-ui loop cap, Qwen3 self-termination, context_monitor CRITICAL yield.
 
 ---
 
-## Immediate — Multi-Agent UI (Dify)
+## Backlog — Faust multi-agent planning protocol (carried from 1.7.0-b)
 
-> **Decision (P18 2026-06-09):** Adopt Dify for the Qwen3.6 → LSE multi-agent workflow UI.
-> Replaces ad-hoc `pfsense-agent.py` for interactive/persistent pfSense work sessions.
-> OWUI pipe function (Qwen3.6 → LSE handoff inside OpenWebUI) is **deferred** — not needed.
+> Coordination lives in **Faust** (`Faust/`) — realtime group-chat, humans + local-model agents
+> as first-class room participants (REST + WS + SQLite). Hermes push channel retired.
+> Design: `docs/lse-1.7.0-b-faust-planning-design.md`.
 
-- [x] **Dify deploy** ✅ — v1.14.2, on-demand (not in launcher), port 4000, installed at `/opt/dify` (2026-06-09)
-  `docker compose -f /opt/dify/docker/docker-compose.yaml up -d` to start; `down` to stop.
-  GP shutdown script `docker-graceful-stop.ps1` handles graceful stop on Windows shutdown — committed to LSEStack_gui, signed SY5TEM5Cert.
+- [ ] **Planning state machine** — PLANNING (round-robin proposals, ≤5 rounds, vote
+  `[[CONVERGED]]`) → AWAITING_APPROVAL (moderator posts plan; human `/approve` or `/revise`) →
+  TASKING (`@handle: <task>`, emit `[[DONE]]`) → IDLE (assignment ledger; mention-reply resumes).
+  Implementation (additive): `planning.ts` `PlanningController` + `PlanningPolicy implements
+  SpeakerPolicy` + one `onTurnComplete` server seam. Moderator framing as `role:"assistant"`.
+- [ ] **Plugin integration** — fold `gate3-plugin-forge` into `gate2-group-server` so one
+  `npm start` serves chat + plugins + UI. Seams exist (`onMessage`, `staticFiles`).
+  `exec` capability omitted (no sandboxed runner on host).
+- [ ] **Repo sanity (Faust)** — `git config core.fileMode false` (86 files of mode churn);
+  remove `archive/*.py` cogitator forks, `archive/stale-gate3-root/`, `src/server.ts.bak6e`;
+  delete stale `.git/index.lock` (Windows-side).
+- Deferred: real-time typing (model streaming + delta WS envelope + UI), SQLite persistence of
+  plan state, wiring assignments to real agent work-loops.
 
-- [ ] **Dify LM Studio connections** — add both LM Studio instances as OpenAI-compatible providers:
-  - LUCIFER llama-server: `http://192.168.1.x:8080/v1` — model `qwen/qwen3.6-27b` (orchestrator)
-  - node3090 LM Studio: `http://192.168.5.41:1234/v1` — model `qwen/qwen3.6-27b` (executor / alt)
-  Note: Dify uses display names; actual model string must match what LM Studio serves.
+---
 
-- [ ] **Dify pfSense workflow** — visual pipeline: User message → Qwen3.6 orchestrator →
-  structured LSE prompt → LSE node (OpenWebUI API or direct tool call) → streamed output.
-  Human-in-the-loop node: show generated prompt, wait for approval before submitting to LSE.
-  Persistent chat history: Dify maintains conversation across sessions (PostgreSQL backend).
+## Backlog — Multi-Agent UI (Dify)
 
-- [ ] **OpenWebUI pipe function** — Qwen3.6 → LSE handoff inside OWUI.
-  **DEFERRED** — root cause: local Qwen3.6 doesn't emit OpenAI-style function-call JSON via API;
-  ReAct-style tool invocation only works in Chat UI, not `/api/chat/completions` path.
-  Revisit when: (a) Dify covers the use case, or (b) a local FC-capable model is available.
+> Reconciled 2026-07-02: deployed v1.14.2, on-demand, port 4000, `/opt/dify`. The OWUI pipe
+> function item is dropped (OWUI retired). **Decision pending:** Faust rooms may supersede the
+> Dify workflow use case entirely — evaluate after the Faust planning state machine lands.
+
+- [ ] **Dify model connections** — add providers: LUCIFER llama-server `http://192.168.1.x:8080/v1`
+  (orchestrator) + node3090 llama-server `http://192.168.5.41:8080/v1` (executor). Model string
+  must match what the server reports.
+- [ ] **Dify pfSense workflow** — User → Qwen3.6 orchestrator → structured LSE prompt → LSE node
+  (goethe_mcp HTTP call) → streamed output; human-in-the-loop approval node; persistent history.
 
 ---
 
@@ -422,34 +511,33 @@
 > on disk between sessions. A physical USB key is the session gate — present to start,
 > removed to terminate all secret access. Extends Zero Trust with a physical persistence
 > boundary: even a fully compromised host cannot access secrets after USB removal.
+> **2026-07-02 note:** the P0-2 finding (MCP token hardcoded in a committed script) is exactly
+> the failure class ZPT eliminates — P0-2 is the tactical fix, ZPT the strategic one.
+> **STATUS CHANGE (2026-07-02, operator):** ZPT is now the COMMITTED security direction, not
+> just deferred exploration — all secrets move to an external file on a USB key (→ tmpfs).
+> `tools/start-goethe-stdio.sh` was written ZPT-ready: its single `source` line is the only
+> change needed when the USB/tmpfs layout lands.
 
 ### Design Principles
 
 1. **Single physical gate** — USB presence is the only requirement to start a session.
    No USB = no secrets = no session. Removes the "always-on credential" attack surface.
-
 2. **Load-once, session-scoped** — Secrets are read from USB once at launch into tmpfs
-   (`/run/lse-secrets/` or similar). tmpfs is wiped on unmount/reboot. No disk writes.
-
+   (`/run/lse-secrets/`). tmpfs is wiped on unmount/reboot. No disk writes.
 3. **Secret tiering by access frequency:**
-   - `HIGH FREQ` (pfSense API key, HA token, HF_TOKEN) → USB → tmpfs → `.lse/secrets`
-     ~50 tokens per read, no Vaultwarden roundtrip needed
+   - `HIGH FREQ` (pfSense API key, HA token, HF_TOKEN, GOETHE_MCP_TOKEN) → USB → tmpfs
    - `LOW FREQ` (user passwords, OAuth tokens) → Vaultwarden only
-     Vault roundtrip acceptable for rare operations
    - `GATE KEY` (Vaultwarden master password) → USB only, never written to disk
-
-4. **Vaultwarden role narrows** — becomes the store for secrets requiring human-level
-   protection or rare access. High-frequency operational keys bypass it entirely.
-   Token cost of vault unlock is paid at most once per session.
-
-5. **HF_TOKEN and other env var secrets removed from `.bashrc`** — currently exposed
-   in plaintext. Must move to USB → tmpfs load before ZPT can be considered complete.
+4. **Vaultwarden role narrows** — store for secrets requiring human-level protection or rare
+   access. High-frequency operational keys bypass it entirely.
+5. **Plaintext env secrets removed from `.bashrc`** — currently exposed. Must move to
+   USB → tmpfs load before ZPT can be considered complete.
 
 ### Implementation Tasks (deferred)
 
-- [ ] Audit all plaintext secrets currently in `.bashrc`, `.lse/secrets`, env vars
+- [ ] Audit all plaintext secrets currently in `.bashrc`, `.lse/secrets`, env vars, launch scripts
 - [ ] Design USB filesystem layout (encrypted LUKS partition recommended)
-- [ ] Modify `lse-stack-launch-1.078.ps1` — add USB presence check + secrets load to tmpfs
+- [ ] Modify launcher — USB presence check + secrets load to tmpfs
 - [ ] Replace `.bashrc` `export HF_TOKEN=...` with tmpfs-loaded env injection at launch
 - [ ] Write shutdown hook — wipe tmpfs on session end / USB removal
 - [ ] Design as arena challenge: `infra-t3-003` ZPT Bootstrap (T3, security, 1.5×)
@@ -464,7 +552,9 @@
 > model completes a unit of work and before it claims done — it retrieves the relevant
 > principles and cross-references the diff against them, then the model course-corrects. The
 > generalized examiner: the harness catches what is *encoded as a test*; this catches design /
-> security / craft issues that aren't, by cross-referencing the canon. Named *biblos* — striving.
+> security / craft issues that aren't. Named *biblos* — striving.
+> **2026-07-02 note:** same four polar-star books now drive the Workstreams A–F analysis —
+> lse-canon is the mechanism that would make that review repeatable by the local model itself.
 
 ### The canon (best-in-field; seed source)
 
@@ -478,18 +568,14 @@
 
 ### Design principles
 
-1. **Distill, don't ingest prose.** RAG over book chunks ≈ pattern-matching, not insight; the
-   ideas are already diffusely in the model's pretraining. Seed the KB with **structured
-   principles** (smell → why → fix; ASVS-style requirement → how to verify), not raw text. The
-   value is the **retrieval anchor + forced cross-reference**, not the corpus.
-2. **Respect copyright.** Anderson's *Security Engineering* and OWASP are free/open → ingest
-   wholesale. The four copyrighted books → seed **own paraphrased principle notes** only (also
-   the more effective form).
-3. **Gate placement** — between "harness green" and "claim done." Take the diff → retrieve top-K
-   principles per axis (design / security / correctness) via the existing `search_kb`/RRF → emit
-   a structured critique (principle → honored|violated → fix) → model revises before done. A
-   would-have-caught list from this session: Gate 1's hollow renderer, Gate 3's polite-boundary
-   sandbox.
+1. **Distill, don't ingest prose.** RAG over book chunks ≈ pattern-matching, not insight.
+   Seed the KB with **structured principles** (smell → why → fix; ASVS-style requirement →
+   how to verify), not raw text. The value is the **retrieval anchor + forced cross-reference**.
+2. **Respect copyright.** Anderson + OWASP are free/open → ingest wholesale. The four
+   copyrighted books → seed **own paraphrased principle notes** only (also the more effective form).
+3. **Gate placement** — between "harness green" and "claim done." Diff → retrieve top-K
+   principles per axis (design/security/correctness) via `search_kb`/RRF → structured critique
+   (principle → honored|violated → fix) → model revises before done.
 4. **Measure it (Galilean).** Run gauntlet gates with vs without the review gate; McNemar the
    outcomes. Adopt only if it catches more than it costs in tokens — null result is a result.
 
@@ -502,7 +588,7 @@
       give-up budget; wire as the gauntlet's pre-"done" gate.
 - [ ] A/B measurement run (review-gate ON vs OFF) on Gate 2/3-class tasks; McNemar.
 - [ ] Cross-family critic (GLM) as an alternate/parallel reviewer — compare canon-RAG critique vs
-      cross-family critique vs both (ties into the multi-node §5 critic-lift question).
+      cross-family critique vs both.
 
 ---
 
@@ -540,3 +626,9 @@ pfSense REST API is read-only by default. For T3+ write challenges:
 
 Verify re-enabled: `pfsense_query('/api/v2/firewall/rule', method='PATCH', payload={})` should return 403.
 **NOTE:** `/api/v2/system/api` returns 404 — read-only toggle NOT available via REST API, web UI only.
+**SECURITY INVARIANT (clarified 2026-07-02, operator):** the REST API exposes the *enabling*
+bit for read-only but NOT the *disabling* bit — write access can only ever be granted through
+the web UI by a human. This asymmetry is the load-bearing control on the most critical point of
+the infra: no agent (LSE, Claude via MCP, or any API caller) can self-escalate pfSense to write
+mode. Any future pfSense-API version bump must re-verify this asymmetry still holds before
+deploy (add to kb_verify targets once KB-DECAY-3 lands).
