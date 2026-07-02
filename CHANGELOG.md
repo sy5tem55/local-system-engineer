@@ -3,6 +3,78 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-06-30 (Cowork): Capital-case file sync — README, CURRENT-STATE, VERSION, CHANGELOG, VALVES updated to Goethe v0.2.5 / llama-ui / goethe_mcp v1.9.3
+
+All top-level documentation files cross-referenced against on-disk tool versions and updated to reflect post-P31 sessions (Jun 21–29). Key changes recorded:
+- **README.md**: frontend OWUI→llama-ui, goethe_mcp entry, tool/prompt/gateway version table, repo layout.
+- **CURRENT-STATE.md**: Deployed Versions table rewritten for Goethe v0.2.5 + goethe_mcp v1.9.3 + system-prompt v0.5.18. Architecture Change Log section added. node3090 local ES/Ollama/Firecrawl stack noted. OWUI marked retired.
+- **VERSION.md**: Current Versions table updated. Goethe Checksums + goethe_mcp lineage table added. Line Count Tally (Goethe) added before the Cogitator tally.
+- **CHANGELOG.md**: Post-P31 session entries added (Jun 21, Jun 25, Jun 26, Jun 28–29).
+- **VALVES.md**: Section 1 tool reference updated cogitator→goethe.py v0.2.5; OWUI security note updated to MCP context.
+
+---
+## 2026-06-29 — Goethe v0.2.5 + node3090 MCP deploy script
+
+**Goethe v0.2.5** (`tools/goethe.py`, 5343 lines, raw `aa2aa1e1…`):
+- `fetch_url` **reddit/camoufox browser fallback**: reddit.com 403/429/empty → retries via Firecrawl (`_reddit_browser_fallback`). On node3090: `localhost:3002`. From LUCIFER: ping node3090 first, then `node3090:3002`. Result prefixed `[browser-rendered]`, cached, SOURCE-VERIFY MANDATE tagged. Fails gracefully if node3090 offline.
+- `wake_node` overhauled (v0.2.3 cumulative): ping-first (skip WoL if already up), `search_kb` for current wake procedure before sending magic packet, KB notes surfaced in all return paths.
+- `shutdown_node` two-step gate (v0.2.4 cumulative): `confirmed=False` returns prompt for user; `confirmed=True` executes. Model must surface the prompt and wait for explicit yes.
+
+**`tools/start-goethe-node3090.sh`**: rsync `goethe.py` + `goethe_mcp.py` to node3090, kill old instance, start via nohup with local ES (`localhost:9200`) + Ollama (`127.0.0.1:11434`) env overrides. Token `266ce5843de4fd3ad04dffefae8f17db`. Logs to `/tmp/goethe-node3090.log`.
+
+**`tools/system-prompt-node3090-v0.1.0.md`**: node3090-specific system prompt (v0.1.0). Separate identity/environment section for the node3090 agent instance.
+
+---
+## 2026-06-28 — goethe_mcp v1.9.3 + system prompt v0.5.17→v0.5.18
+
+**goethe_mcp v1.9.3** (`tools/goethe_mcp.py`, 487 lines):
+- v1.9.3: `_TokenGuard` accepts both `Bearer <token>` and raw `<token>` — normalises auth header format so llama-ui client format differences don't matter.
+- v1.9.2: removed all OpenWebUI/OWUI references from comments; owui venv path retained (historical artifact, still hosts `mcp` lib).
+- v1.9.1: passes goethe.py's own version to FastMCP banner.
+- v1.9.0: `_free_port()` self-contained port management — kills any process holding the port before binding.
+
+**System Prompt v0.5.18** (`tools/system-prompt-v0.5.18.md`):
+- WEB SEARCH BUDGET FALLBACK: new named section — when budget exhausted, ping node3090, check/start firecrawl and camoufox, route remaining searches through them. firecrawl = general content; camoufox = reddit.
+- ENVIRONMENT updated to goethe_mcp v1.9.3; start command simplified to `bash start-goethe.sh`.
+
+**System Prompt v0.5.17** (`tools/system-prompt-v0.5.17.md`):
+- KB-FIRST RULE: new named section — search_kb() BEFORE any operational answer, BEFORE any tool call, BEFORE reasoning from training knowledge.
+- ENVIRONMENT: goethe_mcp bumped to v1.9.3.
+- search_kb entry in TOOLS: scope expanded to all operational questions.
+
+---
+## 2026-06-26 — Goethe v0.2.2: three ground-truth-before-action rules
+
+**Goethe v0.2.2** (`tools/goethe-v0.2.2.py`, 5126 lines, raw `bc403c44…`):
+THREE GROUND-TRUTH-BEFORE-ACTION RULES added to `execute_command` docstring (design session; Camoufox + n45 incidents as empirical basis — rules abstracted to pattern class):
+1. **RESOURCE-AVAILABILITY RULE**: before any external connection (SSH, API, docker exec, curl to service), verify resource state first via ping/health-check. For managed nodes: check `_NODE_REGISTRY` → `wake_node` if found; else `search_kb("<hostname> access")`; else stop. Prevents 30s SSH timeouts misdiagnosed as credential failures.
+2. **VENDOR-BEHAVIOR GROUND-TRUTH RULE**: before modifying any file from an external project based on an assumption about HOW that software behaves internally, run the waterfall: search_kb → vendor changelog/README → GitHub issues → search_web. `write_file` snapshot gate makes patches reversible; it does NOT prevent acting on a false premise.
+3. **RELEASE ASSET RULE**: before writing any download URL, VERSION variable, image tag, or package pin, fetch the source of truth — `get_github_release("<owner>/<repo>")` for GitHub, registry page/API for Docker/PyPI/npm. Version patterns cannot be inferred by incrementing a prior release.
+
+---
+## 2026-06-25 — Goethe v0.2.1: KB doc-id resolution + stable goethe.py filename
+
+**Goethe v0.2.1** (`tools/goethe-v0.2.1.py` → stable `tools/goethe.py`, 5022 lines, raw `b3cf97f2…`):
+- **KB DOC-ID RESOLUTION** (SY5 debug — mentor_correct 404): `mentor_correct`/`record_outcome` passed the KB doc TITLE as `doc_id` → `NotFoundError(404)`. Root cause: `search_kb` never printed the doc_id. Fixes: (a) `search_kb` now prints `doc_id=<_id>` on every hit; (b) new `_resolve_kb_id()` accepts `_id` OR title (exact `match_phrase` lookup); (c) `mentor_correct` + `record_outcome` use it — return actionable error ("run search_kb for the doc_id") instead of raw 404; ambiguous titles list candidate ids.
+- **Stable filename**: switched to `goethe.py` — ends per-bump renames that broke path references. Version now lives in frontmatter `title:` / `version:` only. `exec_test.py` resolves via glob.
+- v0.2.0 (cumulative): `download-monitor.py` UnboundLocalError fix + false-COMPLETE fix + interpreter-selection fix + wrong PromQL fix; `monitor_download()` interpreter selection fix; `monitor_download` audit pass.
+
+---
+## 2026-06-21 — OWUI → llama-ui migration; goethe_mcp initial deployment; system prompt v0.5.16
+
+**Architecture migration — OpenWebUI retired:**
+- Frontend: **OpenWebUI (port 3000) → llama-ui** (built into llama-server, served at `:8080`). No separate process. Model runs directly in llama-server's built-in web interface.
+- **goethe_mcp v1.3.0** deployed: MCP gateway at `:9700`, HTTP transport, bearer-token-gated (`GOETHE_MCP_TOKEN=6e003f5c…`). Started via `bash tools/start-goethe.sh`. Loads `goethe.py` + `vaultwarden_tools_v1.3.0.py` via `--also` flag.
+- `compact_context` removed from tool surface (OWUI-only, not exposed via goethe_mcp).
+
+**System Prompt v0.5.16** (`tools/system-prompt-v0.5.16.md`):
+- ENVIRONMENT: `Frontend` OpenWebUI/3000 → llama-ui/8080. MCP GW entry added (goethe_mcp v1.3.0, port 9700).
+- `sudo_delegation_block`: SURFACE RULE added — "described in thinking ≠ called".
+- `compact_context`: removed from TOOLS section.
+- HANDOVER PROTOCOL: updated — no compact_context step.
+- KNOWLEDGE BASE: OpenWebUI section removed.
+
+---
 ## 2026-06-19 — P31 (Cowork): Goethe v0.1.0 — Cogitator fork, Faust consolidation
 
 **Goethe v0.1.0** (`tools/goethe-v0.1.py`, fork of Cogitator v1.7.24; ast OK, raw `a7f379dd…`, 4721 lines, black-norm pending):

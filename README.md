@@ -11,9 +11,10 @@ A locally-hosted AI system administrator running on a private inference stack. O
 | Host | Windows 11 → WSL2 → Ubuntu 24.04 (hostname: LUCIFER) |
 | Inference | llama.cpp `llama-server` |
 | Model | Qwen3.6-27B-Q4_K_M (64k ctx · KV:q8_0 · think:3072) |
-| Frontend | OpenWebUI (localhost:3000) |
+| Frontend | llama-ui (built into llama-server, localhost:8080) |
+| MCP Gateway | goethe_mcp.py v1.9.3 · port 9700 · `bash tools/start-goethe.sh` |
 | Web search | SearxNG (self-hosted, localhost:8088) |
-| Monitoring | Prometheus + Grafana + context alert pipeline |
+| Monitoring | Prometheus + Grafana |
 | Launcher | Windows Terminal PowerShell profiles (lse-stack-launch-*.ps1) |
 | KB / RAG | Elasticsearch (lse-kb + lse-rfc-kb) + Ollama nomic-embed-text |
 | RFC Authority | 20 RFCs indexed · `lse-rfc-kb` · authority_ceiling/recency/confirmation model |
@@ -24,9 +25,12 @@ A locally-hosted AI system administrator running on a private inference stack. O
 
 | Component | Version | File |
 |---|---|---|
-| Tool | **Cogitator v1.7.14** | `tools/cogitator-v1.7.14.py` |
-| Prompt | v0.5.15 | `prompts/v0.5.15.md` |
+| Tool | **Goethe v0.2.5** | `tools/goethe.py` |
+| MCP Gateway | **goethe_mcp v1.9.3** | `tools/goethe_mcp.py` |
+| System Prompt (LUCIFER) | **v0.5.18** | `tools/system-prompt-v0.5.18.md` |
+| System Prompt (node3090) | **v0.1.0** | `tools/system-prompt-node3090-v0.1.0.md` |
 | Routing filter | v1.2.0 | `tools/lse-routing-filter-v1.2.0.py` |
+| Vaultwarden Tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` |
 | Launcher CLI | v1.078 | `LSEStack_gui/lse-stack-launch-1.078.ps1` |
 | Launcher GUI | v1.5 | `LSEStack_gui/lse-stack-launch-gui.ps1` |
 
@@ -84,9 +88,15 @@ Quality model: `quality_score = min(authority_ceiling, raw × confirmation_weigh
 - Delegate any `sudo` to the user via `sudo_delegation_block` — never runs sudo itself
 - `pfsense_log_summary()` — compact firewall log analysis (never returns raw logs)
 - `nmap_summary()` — XML-parsed port scan (never returns raw nmap text)
-- `search_kb` / `index_to_kb` / `record_error` / `check_error_kb` — ES RAG layer
-- `search_web` via SearxNG · `fetch_url` for full-page fetch
-- `pfsense_query()` — pfSense REST API v2 (read-only by default)
+- `search_kb` / `index_to_kb` / `record_error` / `check_error_kb` / `mentor_correct` — ES RAG layer
+- `search_web` via SearxNG · `fetch_url` for full-page fetch (reddit: camoufox/Firecrawl fallback)
+- `search_reddit()` — reddit search via SearxNG
+- `pfsense_query()` / `pfsense_graphql()` / `pfsense_log_summary()` — pfSense REST API v2
+- `wake_node()` / `shutdown_node()` — node lifecycle (ping-first, two-step confirmation for shutdown)
+- `get_github_release()` — fetch verified release version before pinning any version string
+- `hermes_plan()` — inline pre-flight planner via Hermes API
+- `skill_search` / `skill_record` / `skill_outcome` — occupational self-learning skills layer
+- `task_checkpoint` / `task_resume` — SQLite-backed task state persistence
 
 **Permanently blocked:** `mkfs fdisk parted iptables -F passwd visudo wipefs dd if=`
 
@@ -101,13 +111,15 @@ Quality model: `quality_score = min(authority_ceiling, raw × confirmation_weigh
 
 ---
 
-## Context Alert Pipeline
+## MCP Gateway
 
 ```
-llama-server /metrics → llama-context-exporter (port 9836)
-→ Prometheus → Grafana alert (KV > 80%) → grafana-owui-adapter (port 9837)
-→ OpenWebUI lse-alerts channel
+llama-ui (llama-server :8080) → MCP client → goethe_mcp.py (:9700, bearer-token-gated)
+→ goethe.py Tools class (execute_command, search_kb, pfsense_*, etc.)
 ```
+
+Start: `bash ~/projects/local-system-engineer/tools/start-goethe.sh`
+node3090: `bash ~/projects/local-system-engineer/tools/start-goethe-node3090.sh`
 
 ---
 
@@ -140,13 +152,19 @@ local-system-engineer/
 │   └── test_*.py               ← smoke tests
 │
 ├── tools/
-│   ├── cogitator-v1.7.13.py        ← current production tool (READY FOR DEPLOY)
-│   ├── cogitator-v1.7.12.py        ← previous deployed version
-│   └── lse-routing-filter-v1.2.0.py
+│   ├── goethe.py                    ← current production tool (Goethe v0.2.5, stable filename)
+│   ├── goethe_mcp.py                ← MCP gateway server (v1.9.3)
+│   ├── start-goethe.sh              ← LUCIFER MCP startup script
+│   ├── start-goethe-node3090.sh     ← node3090 MCP deploy + startup script
+│   ├── system-prompt-v0.5.18.md    ← current LUCIFER system prompt
+│   ├── system-prompt-node3090-v0.1.0.md ← node3090 agent system prompt
+│   ├── vaultwarden_tools_v1.3.0.py ← Vaultwarden MCP tool
+│   ├── lse-routing-filter-v1.2.0.py
+│   └── goethe-v0.2.*.py / cogitator-v1.7.*.py  ← version history
 │
 ├── prompts/
 │   ├── CHANGELOG.md
-│   └── v0.5.15.md               ← current production prompt
+│   └── v0.5.15.md               ← last OWUI-era system prompt (archived)
 │
 └── eval/
     └── eval-report-v6.md        ← Run 7: 62/63 (projected); see VERSION.md Co-test Matrix
