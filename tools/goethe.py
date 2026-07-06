@@ -3042,6 +3042,36 @@ tail -5 /tmp/goethe-node3090.log
             )
         return False
 
+    def _pfsense_cap_response(self, text: str, max_bytes: int = 32000) -> str:
+        """Truncate an outbound pfSense response if it exceeds max_bytes.
+
+        Defense-in-depth backstop, applied uniformly across all pfsense_*
+        tools. Some pfSense GraphQL/REST responses have no pagination or size
+        limit -- e.g. queryDiagnosticsTables returning built-in alias tables
+        like 'bogons' (several thousand entries) inline. Confirmed incident
+        2026-07-06: an unbounded response reached 2,966,261 tokens against a
+        131,072 token context window, killing the session mid-response.
+        A content-based check on the query string can't enumerate every large
+        built-in collection type in advance -- this caps the RESPONSE instead,
+        which catches all of them regardless of which field/table caused it.
+        """
+        encoded = text.encode("utf-8", errors="ignore")
+        if len(encoded) <= max_bytes:
+            return text
+        truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+        self._log(
+            f"PFSENSE-SIZE-CAP: response truncated from {len(encoded)} to {max_bytes} bytes"
+        )
+        return (
+            truncated
+            + f"\n\n...[TRUNCATED: full response was {len(encoded)} bytes, exceeds "
+            f"the {max_bytes}-byte pfSense response cap. This usually means the query "
+            "touched a large built-in collection (e.g. a diagnostics table like "
+            "'bogons', or an unfiltered list type) -- not a firewall log. Narrow the "
+            "query with more specific field selections or a filter argument if the "
+            "type supports one; use pfsense_log_summary specifically for log data.]"
+        )
+
     def pfsense_graphql(
         self,
         query: str,
@@ -3149,8 +3179,12 @@ tail -5 /tmp/goethe-node3090.log
             try:
                 data = resp.json()
                 if "errors" in data:
-                    return f"GraphQL errors: {_json.dumps(data['errors'], indent=2)}"
-                return _json.dumps(data.get("data", data), indent=2)
+                    return self._pfsense_cap_response(
+                        f"GraphQL errors: {_json.dumps(data['errors'], indent=2)}"
+                    )
+                return self._pfsense_cap_response(
+                    _json.dumps(data.get("data", data), indent=2)
+                )
             except Exception:
                 return f"[HTTP {resp.status_code}] {resp.text[:3000]}"
         except _req.exceptions.ConnectionError as e:
@@ -3298,7 +3332,7 @@ tail -5 /tmp/goethe-node3090.log
                 timeout=15,
             )
             try:
-                return _json.dumps(resp.json(), indent=2)
+                return self._pfsense_cap_response(_json.dumps(resp.json(), indent=2))
             except Exception:
                 return f"[HTTP {resp.status_code}] {resp.text[:2000]}"
         except requests.exceptions.ConnectionError as e:
@@ -6169,7 +6203,7 @@ tail -5 /tmp/goethe-node3090.log
                 f"PFSENSE-LOG-SUMMARY: gateway={mode} hours={hours} "
                 f"blocks={data.get('firewall', {}).get('total_blocks', '?')}"
             )
-            return _json.dumps(data, indent=2)
+            return self._pfsense_cap_response(_json.dumps(data, indent=2))
 
         except Exception as e:
             return f"ERROR: pfsense_log_summary — gateway call failed: {e}"
