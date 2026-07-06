@@ -1,19 +1,163 @@
 """
-title: LSE Goethe v0.2.9
+title: LSE Goethe v0.3.8
 author: local-system-engineer
-version: 0.2.9
+version: 0.3.8
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
   search_web, get_github_release, get_context_status, compact_context, search_kb, index_to_kb,
-  record_error, check_error_kb, record_outcome, mentor_correct, pfsense_graphql,
-  pfsense_query, pfsense_log_summary, start_node_agent, stop_node_agent, search_reddit,
-  planner, skill_search, skill_record, skill_outcome, task_checkpoint,
-  and task_resume. Web tools share a code-enforced anti-spiral budget.
-  All commands are logged to a persistent audit file. Privileged operations are blocked
-  at the code level and routed through a delegation block.
+  record_error, check_error_kb, record_outcome, mentor_correct, kb_verify, mentor_demote,
+  time_check, run_tests, assert_state, pfsense_graphql, pfsense_query,
+  pfsense_log_summary, start_node_agent, stop_node_agent, search_reddit, planner,
+  plan_step_done, skill_search, skill_record,
+  skill_outcome, task_checkpoint, and task_resume. Web tools share a code-enforced
+  anti-spiral budget. All commands are logged to a persistent audit file. Privileged
+  operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
+    Goethe v0.3.8: PH3-2 retrieval decision (data-driven, gold set n=50).
+              --compare verdict: LINEAR wins (recall@3 0.84, MRR 0.800) over
+              RRF (0.84, 0.735; recall@1 −0.12) — search_kb ranking unchanged,
+              null result recorded. Threshold finding: the 0.72 default was
+              calibrated for cosine [0,1] but hybrid _score = 0.7·knn +
+              0.3·BM25 runs ~3.5–16 — the filter was a NO-OP. New default
+              min_score=4.2 from --threshold-report: keeps 38/38 correct
+              top-1, rejects 3/11 wrong, loses zero correct. Re-sweep after
+              major KB growth (BM25 stats drift with the corpus).
+    Goethe v0.3.7: SSH post-mortem hardening (2026-07-04 LSE post-mortem on
+              node3090 exit-255 storm; both root causes now code-enforced).
+              ssh_run MUX AUTO-RECOVERY: exit 255 with a ControlMaster socket
+              present → 'ssh -O exit' the stale master, remove the socket,
+              retry ONCE, annotate '[stale ControlMaster mux ... retried OK]'.
+              Manual 'rm /tmp/ssh_mux_*' no longer needed; failure message now
+              gives the diagnostic order (ping → sshd → self-match).
+              ssh_run PKILL SELF-MATCH GUARD: unbracketed 'pkill -f <pattern>'
+              is BLOCKED (the remote shell's cmdline contains the pattern and
+              pkill kills the SSH session — exit 255, target state unknown);
+              hint shows the bracketed form and the ssh_script alternative.
+              ssh_script docstring: script files do not self-match (correct
+              home for kill-by-pattern) + '|| true' rule for pkill exit-1
+              (already-dead target reads as false failure).
+    Goethe v0.3.6: PROVE-IT surface (PH3-1: PROVE-1 + PROVE-3; PROVE-4 partial).
+              NEW run_tests(scope): kb (ES index/count probes) | retrieval
+              (rag/eval_retrieval.py --self-test) | rules (eval_goethe_rules.py)
+              | harness (pytest tests/ + legacy scripts/) | all. Commands,
+              paths and args HARDCODED per scope (exec-surface allowlist, sudo
+              pattern) — the model supplies only the scope name. Verbatim
+              output returned as evidence; missing assets → SKIP (node3090
+              lacks rag/, tests/). New valve REPO_DIR (GOETHE_REPO_DIR).
+              NEW assert_state(check_command, expected_regex): read-only argv
+              allowlist (df/ss/sha256sum/dig/pgrep/stat/ls/wc/free/uptime/
+              ip-reads/nvidia-smi/curl-GET-only/systemctl-read-verbs/ping-capped),
+              shlex + shell=False, metacharacter rejection, 20s timeout;
+              regex searched in stdout+stderr → ASSERT PASS/FAIL with verbatim
+              output. Docstrings written to the 8-dimension audit standard
+              PRE-deploy (SCRIBE-5 discipline): GOOD/BAD pairs, mutating-verb
+              prohibition, no-regex-loosening rule, "prove it" mapping.
+    Goethe v0.3.5: SCRIBE-5 docstring audit pass (lse-docstring-optimizer,
+              docstring-only) on the four v0.3.x tools. kb_verify: GOOD/BAD
+              pair for observed= (verbatim output vs paraphrase) + same-session
+              probe rule. time_check: FIX EXECUTION PROHIBITION — never run or
+              auto-delegate the suggested clock fix unasked. mentor_demote:
+              GOOD/BAD pair pinning the human-words-vs-evidence boundary (P26
+              class) + trust-the-return rule. plan_step_done: GOOD/BAD evidence
+              pair, no mid-loop task_resume, and a CONTEXT HANDOFF rule —
+              past 70% context, hand the next step to a fresh session instead
+              of grinding to the ceiling (encodes the DNS Phase-2 lesson).
+    Goethe v0.3.4: planner GATE conflict fix (docstring-only). Field report:
+              given "get a plan to audit DNS infra", the LSE never called
+              planner() — the old gate ("must be your first or second tool
+              call") conflicted with KB-FIRST/SKILLS-FIRST, so after two
+              search_kb calls the model treated planning as forbidden,
+              hand-wrote a prose plan and an ad-hoc active-task.md, bypassing
+              the ledger. New gate: information gathering (KB, read-only
+              probes) does NOT close the planning window — findings go into
+              context=; the window closes at first state change. New MANDATORY
+              TRIGGER: user asking for "a plan" REQUIRES planner(); hand-written
+              plan files are named a protocol violation. GOOD/BAD examples
+              updated to show the reads→planner(context=…) order.
+    Goethe v0.3.3: PLANNER UNAVAILABLE root-cause fix (LSE-debugged, 2026-07-03).
+              Three compounding causes: (1) _llm_call max_tokens=2048 truncated
+              v2 envelopes (per-step packaged prompts need far more) → 8192;
+              (2) Qwen3.6 thinking consumed the same completion budget — the
+              /no_think prose hint does not hold reliably → per-request
+              "thinking_budget_tokens": 0, the server-enforced reasoning-budget
+              kill-switch (a request value of 0 overrides any CLI
+              --reasoning-budget; harmlessly ignored by think-tag-less models);
+              (3) no resilience → two-attempt envelope loop: parse failure
+              feeds a corrective REJECTED note back and retries once before
+              surfacing PLANNER UNAVAILABLE.
+    Goethe v0.3.2: PLANNER v2 — atomized plans with a living ledger.
+              _PLANNER_CONTRACT v2: every step is ONE tightly scoped unit
+              (<=5 tool calls, one verifiable outcome, mandatory verify) with
+              its OWN self-contained packaged_prompt plus explicit depends_on/
+              inputs/output edges, topologically ordered. Built for Qwen3.6
+              (performs best tightly scoped) and 131k-context management: each
+              step executes in a fresh window with only a compact ledger summary.
+              planner(mode="revise", task_id=...): re-plans ONLY remaining work,
+              feeding completed/failed steps (with evidence) back as LEDGER
+              context; completed history is preserved in the merged plan.
+              NEW plan_step_done(task_id, step_n, evidence, failed=False):
+              strikes a step in the tasks.db ledger (steps_json column, added
+              via idempotent PRAGMA migration), stores verify evidence
+              (>=20-char gate), returns the NEXT step's fresh-context prompt;
+              failed=True routes to revise; last strike closes the block.
+              Decision: NO websocket — the SQLite ledger is the bidirectional
+              planner↔agent channel (durable across context resets/crashes);
+              real-time multi-agent belongs to Faust when its state machine lands.
+              NEW valves PLANNER_FORCE_URL / PLANNER_FORCE_MODEL: Step-0
+              health-probed endpoint override — set permanently to the Gemma
+              swap port; used when up, silently cascades when down.
+              NEW tools/planner-gemma-swap-node3090.sh + restore script:
+              swap-on-demand Gemma-4-31B planner on node3090:8085 (captures the
+              pre-swap llama-server cmdline for exact restore; Gemma sampling
+              temp 1.0 / top-k 64; bracketed pkill patterns per self-kill lesson).
+    Goethe v0.3.1: CHRONOS — enforced sense of time (CHRONOS-1..4).
+              NEW time_check(): stdlib SNTP against pool.ntp.org +
+              time.cloudflare.com (2s timeout, graceful degrade) with TLS
+              Date-header cross-check (NTP is unauthenticated — a clock-fix
+              command is only SUGGESTED when both NTP sources agree AND TLS
+              corroborates; never auto-adjusts). Offset >2s → discrepancy
+              report + lse-errors record.
+              NEW valve MODEL_PRETRAIN_CUTOFF (YYYY-MM, per-model): time_check
+              and the first search_kb/search_web return of each session carry a
+              server-injected [TIME] banner (now | cutoff | gap → model-memory
+              claims presumed stale). Compliance no longer depends on the model
+              reading docstrings.
+              Volatility TTLs (CHRONOS-3): index_to_kb gains volatility=
+              static|slow|fast (default slow; 90d / 7d TTLs, static=∞).
+              search_kb tags [EXPIRED — pointer only, re-verify live] past TTL
+              and demotes expired hits in the trust rerank (×0.5, same as
+              stale). record_outcome(success=True) now bumps updated_at —
+              re-verification resets the TTL clock. Field mapped since the
+              v0.3.0 migration (08-kb-trust-migration.py).
+              CHRONOS-4: YEAR-INJECTION + 30d/7d staleness rules RETIRED from
+              the search_web docstring — years are now stripped from queries
+              server-side (standalone 19xx/20xx tokens; CVE-2025-1234-style
+              compounds survive), freshness lives in the TTL metadata.
+    Goethe v0.3.0: KB TRUST LIFECYCLE (KB-DECAY-1..5) — lse-kb quality is no
+              longer monotonic upward; verified failure evidence now demotes.
+              record_outcome: new evidence= param; success=False + evidence
+              (>=20 chars) → quality = max(0.2, q − 0.15), consecutive_failures
+              streak; 0.2 floor → stale=true QUARANTINE (never deleted).
+              success=True resets the streak, never re-elevates quality.
+              search_kb: surfaces runs/ok/fail per hit, [STALE — quarantined]
+              banner, client-side trust rerank (failure-ratio multiplier,
+              stale halved so quarantined docs rank below fresh ones).
+              NEW kb_verify(doc_id[, observed]): two-phase regression probe of
+              verified_against vs live system; mismatch auto-demotes via
+              record_outcome with the probe output as evidence.
+              NEW mentor_demote(doc_id, new_quality, reason): human-authorized
+              kill-switch for wrong high-quality docs (mentor_correct stays
+              raise-only); reason stored as demote_reason for forensics.
+              Recovery: tier-gated raises (index_to_kb dedup, mentor_correct)
+              above 0.2 clear stale + reset the streak.
+              skill_outcome demotion floor aligned to documented 0.2 (was 0.0 —
+              code/docstring drift caught by PROVE-2 contract tests); archive
+              now fires only on failure at the floor.
+              Mapping migration: rag/08-kb-trust-migration.py adds stale,
+              consecutive_failures, volatility (CHRONOS-ready) to lse-kb.
+              Contract tests extended: tests/test_kb_contracts.py.
     Goethe v0.2.9: hermes_plan → planner (renamed). Semantics + JSON fix.
               Tool renamed planner to reflect backend change (no longer Hermes).
               Docstring rewritten: 3-path cascade (node3090 LSE → Ollama →
@@ -772,6 +916,33 @@ class Tools:
             default="nomic-embed-text",
             description="Ollama embedding model (768-dim). Must be pulled via 01-ollama-setup.sh.",
         )
+        REPO_DIR: str = Field(
+            default="/home/sy5/projects/local-system-engineer",
+            description="v0.3.6 (PROVE-1): repo root where run_tests finds the "
+            "allowlisted test assets (rag/eval_retrieval.py, eval_goethe_rules.py, "
+            "tests/, scripts/). Override per node via GOETHE_REPO_DIR; scopes "
+            "whose assets are absent on a node report SKIP, never error.",
+        )
+        PLANNER_FORCE_URL: str = Field(
+            default="",
+            description="v0.3.2: when set, the planner calls THIS OpenAI-compatible "
+            "endpoint first (e.g. http://node3090.home.arpa:8085 for the Gemma-31B "
+            "swap experiment), falling back to the normal cascade on error. "
+            "Cross-LLM-family planner experiments become pure configuration.",
+        )
+        PLANNER_FORCE_MODEL: str = Field(
+            default="",
+            description="Optional model name sent with PLANNER_FORCE_URL requests "
+            "(needed for Ollama-style endpoints; llama-server ignores it).",
+        )
+        MODEL_PRETRAIN_CUTOFF: str = Field(
+            default="",
+            description="CHRONOS-2 (v0.3.1): the serving model's published pretraining "
+            "cutoff as YYYY-MM (e.g. '2025-06' for Qwen3.6). Drives the [TIME] banner "
+            "gap computation in time_check() and the first search_kb/search_web return "
+            "of each session. Empty = banner warns that the cutoff is unset. Set "
+            "per-model, per-node (env GOETHE_MODEL_PRETRAIN_CUTOFF in start scripts).",
+        )
         PFSENSE_URL: str = Field(
             default="https://pfsense.home.arpa",
             description="Base URL of the pfSense REST API (pfrest.org package, Plus 26.03). "
@@ -944,6 +1115,7 @@ class Tools:
         self.valves = self.Valves()
         self._fetch_cache: dict = {}  # url -> {"text": str, "ts": float} (v1.7.10)
         self._device_cache: dict = {}  # host -> {"platform": str, "raw": str} (v1.7.12)
+        self._time_banner_emitted = False  # CHRONOS-2 (v0.3.1): [TIME] banner once/session
 
     # ── Node planner contract (v0.2.7) ───────────────────────────────────────
     # Embedded in every node_plan() call as the system message so the target
@@ -951,38 +1123,57 @@ class Tools:
     # Old Hermes had this baked into its system prompt memory; we now pass it
     # explicitly per-request.
     _PLANNER_CONTRACT = (
-        "You are a task planner. Given a task, decompose it and return ONLY "
+        "You are a task planner. Given a task, ATOMIZE it and return ONLY "
         "a single JSON object — no prose, no markdown fences, no explanation.\n\n"
-        "JSON envelope schema (v=1):\n"
+        "JSON envelope schema (v=2):\n"
         "{\n"
-        '  "task_id": "<8-char hex>",\n'
         '  "intent": "plan",\n'
         '  "correlation_id": "<from request header>",\n'
+        '  "goal_summary": "<one line — what done looks like>",\n'
         '  "sessions_estimate": <int: 1 if one context window suffices, 2+ for multi-day>,\n'
         '  "single_session": <bool>,\n'
         '  "confidence": "low" | "medium" | "high",\n'
         '  "abort_criteria": "<specific condition to stop and report instead of continuing>",\n'
         '  "steps": [\n'
-        '    {"n": 1, "what": "<action>", "web_calls": <int>, "tool_calls": <int>, '
-        '"verify": "<how to confirm success or NONE>"},\n'
-        '    ...\n'
-        '  ],\n'
-        '  "packaged_prompt": "<complete self-contained prompt to hand a fresh agent — '
-        'include goal, constraints, starting state, and first step>"\n'
+        '    {"n": 1, "what": "<ONE action>", "depends_on": [<step numbers>], '
+        '"inputs": "<artifacts/facts needed, naming which step produced them>", '
+        '"output": "<the single artifact/fact this step produces>", '
+        '"web_calls": <int>, "tool_calls": <int>, '
+        '"verify": "<concrete check command/observation — NEVER NONE>", '
+        '"packaged_prompt": "<self-contained brief for a fresh agent executing ONLY '
+        "this step: goal one-liner, this step's inputs (with values or where to read "
+        'them), the action, the verify check, and STOP-AFTER instruction>"},\n'
+        "    ...\n"
+        "  ]\n"
         "}\n\n"
+        "ATOMIZATION RULES (v2 — the reason this contract exists):\n"
+        "- Each step is ONE tightly scoped unit: <=5 tool calls, ONE verifiable "
+        "outcome. If an action needs more, SPLIT it.\n"
+        "- Each step must be executable by a fresh agent with ZERO memory of other "
+        "steps, given only its packaged_prompt plus a short ledger summary. Never "
+        "write 'as before' or 'continue' in a packaged_prompt.\n"
+        "- Declare every dependency: depends_on lists the step numbers whose output "
+        "this step consumes; inputs names those artifacts explicitly.\n"
+        "- Order steps so each depends only on EARLIER steps (topological order — "
+        "they must fall into place naturally).\n"
+        "- Prefer more, smaller steps over fewer, bigger ones: the executing model "
+        "performs best tightly scoped, and each step runs in a fresh context window.\n"
+        "- verify is mandatory per step: a command to run or observation to make "
+        "whose output proves the step's output exists/works.\n"
         "Rules:\n"
         "- Return ONLY the JSON object. No prose before or after it.\n"
         "- abort_criteria: be specific (e.g. 'Stop if 3 searches return no new data').\n"
         "- web_calls / tool_calls: budget estimates only, not hard limits.\n"
-        "- packaged_prompt: write as if briefing an agent with zero prior context.\n"
         "- single_session=true if the task fits in one ~8k-token context window.\n"
         "- confidence: 'high' if the plan is complete; 'low' if key unknowns remain.\n"
         "- BACKUP RULE (hard, no exceptions): any step that modifies or overwrites a file "
         "must begin with a timestamped backup: "
         "cp <file> <bkp_dir>/<filename>_$(date +%Y%m%d_%H%M%S). "
-        "State the backup command explicitly in that step's 'what' field. "
-        "No file may be overwritten without a backup copy first. "
-        "Include this rule verbatim in packaged_prompt so the executing agent sees it.\n"
+        "State the backup command explicitly in that step's 'what' field AND in that "
+        "step's packaged_prompt. No file may be overwritten without a backup copy first.\n"
+        "- REVISION MODE: if the user message contains a LEDGER section with completed/"
+        "failed steps, re-plan ONLY the remaining work. Do not re-emit completed steps; "
+        "number new steps continuing after the highest completed step number.\n"
     )
 
     # ── Gemma model catalog (v0.2.8, paths verified 2026-07-01) ──────────────
@@ -1061,8 +1252,17 @@ class Tools:
 
             payload_obj: dict = {
                 "messages": messages,
-                "max_tokens": 2048,
+                # v0.3.3: 2048 was truncating v2 envelopes (per-step packaged
+                # prompts) — the dominant "PLANNER UNAVAILABLE" root cause.
+                "max_tokens": 8192,
                 "temperature": 0.3,
+                "response_format": {"type": "json_object"},
+                # v0.3.3: server-enforced thinking kill-switch (llama-server
+                # reasoning-budget layer; 0 = end thinking immediately, and a
+                # per-request 0 OVERRIDES any CLI --reasoning-budget). The
+                # /no_think prose hint alone does not hold reliably on Qwen3.6.
+                # Endpoints without think tags (Gemma) ignore this field.
+                "thinking_budget_tokens": 0,
             }
             if model:
                 payload_obj["model"] = model
@@ -1082,6 +1282,31 @@ class Tools:
                 return f"ERROR: HTTP {exc.code} — {body}"
             except Exception as exc:
                 return f"ERROR: {exc}"
+
+        # ── Step 0: forced endpoint (v0.3.2 — cross-family planner experiments) ─
+        # Health-probed: the valve can stay set permanently (e.g. the Gemma-31B
+        # swap port on node3090) — used when up, silently skipped when down.
+        force_url = (self.valves.PLANNER_FORCE_URL or "").strip().rstrip("/")
+        if force_url:
+            force_ok = False
+            try:
+                with _ureq.urlopen(f"{force_url}/health", timeout=3) as r:
+                    force_ok = r.status == 200
+            except Exception:
+                force_ok = False
+            if force_ok:
+                self._log(f"NODE-PLAN: PLANNER_FORCE_URL healthy → {force_url}")
+                result = _llm_call(
+                    force_url, model=self.valves.PLANNER_FORCE_MODEL, timeout=180
+                )
+                if not result.startswith("ERROR:"):
+                    return result
+                self._log(
+                    f"NODE-PLAN: forced endpoint failed ({result[:80]}), "
+                    "falling back to cascade"
+                )
+            else:
+                self._log(f"NODE-PLAN: PLANNER_FORCE_URL down ({force_url}) — cascade")
 
         # ── Step 1: probe node3090 llama-server ──────────────────────────────
         llm_url = self.valves.NODE3090_LLM_URL.rstrip("/")
@@ -1390,7 +1615,8 @@ class Tools:
     # ── Task blocks: multi-session carryover (v1.7.1) ────────────────────────
 
     def _tasks_db(self):
-        """SQLite handle for the task-block store (auto-creates schema)."""
+        """SQLite handle for the task-block store (auto-creates schema).
+        v0.3.2: adds steps_json column (structured per-step plan ledger)."""
         import sqlite3  # noqa: PLC0415
 
         conn = sqlite3.connect(self.valves.TASKS_DB, timeout=5)
@@ -1401,6 +1627,9 @@ class Tools:
             "next_prompt TEXT, checkpoints INTEGER DEFAULT 0, "
             "created_at TEXT, updated_at TEXT)"
         )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(task_blocks)")]
+        if "steps_json" not in cols:
+            conn.execute("ALTER TABLE task_blocks ADD COLUMN steps_json TEXT")
         return conn
 
     def task_checkpoint(
@@ -1467,13 +1696,18 @@ class Tools:
             conn = self._tasks_db()
             with conn:
                 row = conn.execute(
-                    "SELECT checkpoints, created_at FROM task_blocks WHERE task_id=?",
+                    "SELECT checkpoints, created_at, steps_json FROM task_blocks "
+                    "WHERE task_id=?",
                     (tid,),
                 ).fetchone()
                 n = (row[0] + 1) if row else 1
                 created = row[1] if row else now
+                steps_json = row[2] if row else None  # carry the v0.3.2 step ledger
                 conn.execute(
-                    "INSERT OR REPLACE INTO task_blocks VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO task_blocks "
+                    "(task_id, goal, status, plan, done_steps, findings, unverified, "
+                    "next_prompt, checkpoints, created_at, updated_at, steps_json) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         tid,
                         goal,
@@ -1486,6 +1720,7 @@ class Tools:
                         n,
                         created,
                         now,
+                        steps_json,
                     ),
                 )
             conn.close()
@@ -1517,14 +1752,22 @@ class Tools:
         """
         self._log(f"TASK-RESUME: {task_id or '(latest open)'}")
         try:
+            # v0.3.3: explicit column list — SELECT * broke on the steps_json
+            # migration (12 columns vs 11-value unpack), killing resume for ALL
+            # blocks. Columns are pinned here; new columns never leak in.
+            _COLS = (
+                "task_id, goal, status, plan, done_steps, findings, unverified, "
+                "next_prompt, checkpoints, created_at, updated_at"
+            )
             conn = self._tasks_db()
             if task_id.strip():
                 row = conn.execute(
-                    "SELECT * FROM task_blocks WHERE task_id=?", (task_id.strip(),)
+                    f"SELECT {_COLS} FROM task_blocks WHERE task_id=?",
+                    (task_id.strip(),),
                 ).fetchone()
             else:
                 row = conn.execute(
-                    "SELECT * FROM task_blocks WHERE status='open' "
+                    f"SELECT {_COLS} FROM task_blocks WHERE status='open' "
                     "ORDER BY updated_at DESC LIMIT 1"
                 ).fetchone()
             open_count = conn.execute(
@@ -1562,6 +1805,153 @@ class Tools:
         except Exception as e:
             self._log(f"TASK-RESUME ERROR: {e}")
             return f"TASK resume error: {e}"
+
+    def plan_step_done(
+        self,
+        task_id: str,
+        step_n: int,
+        evidence: str,
+        failed: bool = False,
+    ) -> str:
+        """
+        Strike a completed plan step in the ledger and receive the NEXT step's
+        packaged prompt (v0.3.2 — the planner↔agent loop for atomized plans).
+
+        EVIDENCE GATE — mandatory:
+          evidence must be the step's ACTUAL verify-check output (>=20 chars of
+          command output / probe result), not a claim. Same gate as skill_outcome:
+          "it worked" is rejected. The evidence is stored on the step for
+          forensics and shown in later ledger summaries.
+          GOOD: evidence="dig @192.168.1.5 pfsense.home.arpa → 192.168.1.50; 12/12 NOERROR"
+                ← the verify command AND its output
+          BAD:  evidence="step completed successfully"  ← claim, rejected
+
+        LOOP DISCIPLINE:
+          - Call this after executing exactly ONE step from a planner() plan.
+          - The return value contains the next step's fresh-context prompt —
+            execute ONLY that, then call this again.
+          - Never skip ahead, never mark steps you did not execute.
+          - Trust the return value — do NOT call task_resume mid-loop to
+            re-check the ledger (task_resume is for fresh sessions only).
+
+        CONTEXT HANDOFF — mandatory:
+          If context usage is high (>70% or any context-monitor warning), do
+          NOT execute the next step in this session. The ledger already
+          persists — tell the user to start a fresh session, where
+          task_resume returns the next step's prompt with the ledger summary.
+          Grinding to the context ceiling mid-step loses work; the handoff
+          costs nothing. Continuing past a context warning is a protocol
+          violation.
+
+        ON FAILURE:
+          failed=True records the step as FAILED with your evidence and tells you
+          to call planner(task, mode="revise", task_id=...) — the planner re-plans
+          the remaining work with the failure in its ledger context. Do NOT keep
+          executing subsequent steps after a failed dependency.
+
+        Args:
+            task_id: The ledger id returned by planner().
+            step_n:  The step number just executed.
+            evidence: Verbatim verify-check output (>=20 chars).
+            failed:  True if the step's verify check did NOT pass.
+        """
+        import json as _json  # noqa: PLC0415
+
+        self._log(f"PLAN-STEP-DONE: {task_id} step={step_n} failed={failed}")
+        evidence = (evidence or "").strip()[:500]
+        if len(evidence) < 20:
+            return (
+                "plan_step_done rejected: evidence too thin (<20 chars). Paste the "
+                "step's actual verify-check output, not a claim."
+            )
+        try:
+            now = datetime.now().astimezone().isoformat()
+            conn = self._tasks_db()
+            row = conn.execute(
+                "SELECT goal, steps_json, checkpoints FROM task_blocks WHERE task_id=?",
+                (task_id.strip(),),
+            ).fetchone()
+            if not row:
+                conn.close()
+                return (
+                    f"plan_step_done: no task block '{task_id}'. Use the id "
+                    "returned by planner()."
+                )
+            goal, steps_raw, ckpts = row[0], row[1], row[2] or 0
+            steps = _json.loads(steps_raw) if steps_raw else []
+            if not steps:
+                conn.close()
+                return (
+                    f"plan_step_done: task block '{task_id}' has no step ledger — "
+                    "it predates planner v2. Use task_checkpoint instead."
+                )
+            target = next((s for s in steps if s.get("n") == int(step_n)), None)
+            if target is None:
+                conn.close()
+                ns = ", ".join(str(s.get("n")) for s in steps)
+                return f"plan_step_done: no step {step_n} in plan (steps: {ns})."
+            if target.get("status") == "done":
+                conn.close()
+                return f"plan_step_done: step {step_n} is already struck. No change."
+            target["status"] = "failed" if failed else "done"
+            target["evidence"] = evidence
+            target["done_at"] = now
+            pending = [s for s in steps if s.get("status") == "pending"]
+            done = [s for s in steps if s.get("status") == "done"]
+            done_lines = "; ".join(f"step {s['n']}: {s['what']}" for s in done)
+            plan_lines = "; ".join(f"step {s['n']}: {s['what']}" for s in pending)
+            if failed:
+                next_prompt = (
+                    f"Step {step_n} FAILED. Call planner(task=<original goal>, "
+                    f"mode='revise', task_id='{task_id}') to re-plan the remaining "
+                    "work before executing anything else."
+                )
+                status = "open"
+            elif pending:
+                next_prompt = self._plan_step_prompt(goal, steps, pending[0])
+                status = "open"
+            else:
+                next_prompt = "(all steps complete)"
+                status = "done"
+            with conn:
+                conn.execute(
+                    "UPDATE task_blocks SET steps_json=?, done_steps=?, plan=?, "
+                    "next_prompt=?, status=?, checkpoints=?, updated_at=? "
+                    "WHERE task_id=?",
+                    (
+                        _json.dumps(steps),
+                        done_lines,
+                        plan_lines,
+                        next_prompt,
+                        status,
+                        ckpts + 1,
+                        now,
+                        task_id.strip(),
+                    ),
+                )
+            conn.close()
+            if failed:
+                return (
+                    f"Step {step_n} recorded as FAILED ❌ (evidence stored).\n"
+                    f"{next_prompt}"
+                )
+            if status == "done":
+                return (
+                    f"Step {step_n} struck ✔ — ALL {len(steps)} STEPS COMPLETE. "
+                    f"Task block {task_id} closed (status=done). Report the "
+                    "final outcome to the user with the collected evidence."
+                )
+            return (
+                f"Step {step_n} struck ✔ ({len(done)}/{len(steps)} done, "
+                f"{len(pending)} remaining).\n"
+                "EXECUTE ONLY THE STEP BELOW, run its verify check, then call "
+                f"plan_step_done('{task_id}', {pending[0]['n']}, "
+                "evidence=<verify output>).\n"
+                f"---\n{next_prompt}"
+            )
+        except Exception as e:
+            self._log(f"PLAN-STEP-DONE ERROR: {e}")
+            return f"plan_step_done error: {e}"
 
     def _active_download_guard(self, command: str) -> str:
         """Block starting a NEW download while one is already running on the host,
@@ -1635,6 +2025,21 @@ class Tools:
         For multi-command sequences, nohup/background operations, or env var exports:
         use ssh_script() instead.
 
+        PKILL RULE (v0.3.7 — enforced in code, 2026-07-04 post-mortem):
+          'pkill -f <pattern>' sent through ssh_run matches the remote shell's
+          OWN command line (it contains the pattern) and kills the SSH session:
+          exit 255, target possibly dead but unconfirmed. The guard blocks
+          unbracketed patterns.
+          GOOD: ssh_run(host, "pkill -f 'llama[-]server'")
+                ← bracketed char: regex matches the process, not this cmdline
+          GOOD: kill by PID via ssh_script (script files never self-match)
+          BAD:  ssh_run(host, "pkill -f llama-server")  ← self-kill, blocked
+
+        MUX AUTO-RECOVERY (v0.3.7): a stale ControlMaster socket is the #1
+        cause of exit 255 on a REACHABLE host. On exit 255 with a mux socket
+        present, ssh_run now terminates the stale master, removes the socket,
+        and retries ONCE automatically — do not hand-rm /tmp/ssh_mux_* first.
+
         KB-FIRST: search_kb("{host} SSH access") before the first ssh_run to a new host.
 
         Args:
@@ -1657,6 +2062,25 @@ class Tools:
                 f"→ Use ssh_script(host={host!r}, user={user!r}, script=<commands as script body>)"
             )
 
+        # v0.3.7 PKILL SELF-MATCH GUARD (2026-07-04 post-mortem): the remote
+        # shell's cmdline contains the pattern → pkill -f kills the session.
+        toks = command.split()
+        if "pkill" in toks and "-f" in toks:
+            try:
+                pat = toks[toks.index("-f") + 1].strip("'\"")
+            except IndexError:
+                pat = ""
+            if pat and "[" not in pat:
+                return (
+                    "[PKILL_SELF_MATCH_GUARD] 'pkill -f "
+                    f"{pat}' over ssh_run matches the remote shell's own command "
+                    "line and kills the SSH session (exit 255; target possibly "
+                    "dead but UNCONFIRMED).\n"
+                    f"→ Bracket one character: pkill -f '{pat[:1]}[{pat[1:2] or pat[:1]}]"
+                    f"{pat[2:]}'  — or kill by PID via ssh_script (script files "
+                    "do not self-match)."
+                )
+
         opts = self._ssh_opts(host, user, port)
         cmd = ["ssh"] + opts + [f"{user}@{host}", command]
 
@@ -1667,18 +2091,52 @@ class Tools:
         except Exception as e:
             return f"[ERROR] ssh_run: {e}"
 
+        note = ""
+        if r.returncode == 255:
+            # v0.3.7 MUX AUTO-RECOVERY: stale ControlMaster socket → kill the
+            # dead master, remove the socket, retry ONCE.
+            ctl = self._SSH_CTL_PATH.format(host=host, port=port, user=user)
+            if os.path.exists(ctl):
+                try:
+                    _sp.run(
+                        ["ssh", "-O", "exit", "-o", f"ControlPath={ctl}",
+                         f"{user}@{host}"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                except Exception:
+                    pass
+                try:
+                    os.unlink(ctl)
+                except OSError:
+                    pass
+                try:
+                    r2 = _sp.run(cmd, capture_output=True, text=True, timeout=timeout)
+                    if r2.returncode != 255:
+                        r = r2
+                        note = ("[stale ControlMaster mux detected — socket "
+                                "removed, retried OK]\n")
+                        self._log(f"SSH-RUN: mux auto-recovery on {host}")
+                except _sp.TimeoutExpired:
+                    return f"[TIMEOUT] ssh_run mux-retry to {host} exceeded {timeout}s"
+
         if r.returncode == 255:
             return (
-                f"[SSH FAILURE] exit 255 — SSH could not reach {host}.\n"
-                f"Diagnose: ping -c2 {host}\n"
+                f"[SSH FAILURE] exit 255 — SSH could not reach {host} "
+                "(mux already auto-cleared and retried).\n"
+                f"Diagnose in order: (1) ping -c2 {host}; (2) sshd on the host; "
+                "(3) if your command embeds a process pattern (pkill/pgrep), "
+                "suspect self-match.\n"
                 f"ssh stderr: {r.stderr.strip() or '(none)'}"
             )
         if r.returncode != 0:
             out = r.stdout.strip()
             err = r.stderr.strip()
-            return f"[exit {r.returncode}]\n{out}\n{('[stderr] ' + err) if err else ''}".strip()
+            return (
+                f"{note}[exit {r.returncode}]\n{out}\n"
+                f"{('[stderr] ' + err) if err else ''}"
+            ).strip()
 
-        return r.stdout.strip() or "(no output)"
+        return (note + (r.stdout.strip() or "(no output)")).strip()
 
     def ssh_script(
         self,
@@ -1704,6 +2162,17 @@ class Tools:
         Use this for: nohup/background sequences, multi-step setup chains, env var
         exports, kill+restart sequences — anything that would need nested quoting as
         a one-liner in execute_command.
+
+        PKILL IN SCRIPTS (v0.3.7, 2026-07-04 post-mortem):
+          Script files do NOT self-match pkill -f patterns (the remote cmdline is
+          'bash /tmp/lse_script_<hash>.sh'), so kill-by-pattern is SAFE here —
+          this is the correct home for process management, not ssh_run.
+          BUT: pkill exits 1 when NOTHING matched. Under set -e / bare exit-code
+          checks that reads as failure. Append '|| true' to every pkill/kill
+          line whose target may already be dead:
+          GOOD: pkill -9 -f 'llama[-]server' 2>/dev/null || true
+          BAD:  pkill -9 -f 'llama-server'   ← exit 1 when already dead is a
+                false failure; you will misread it as "the kill failed".
 
         KB-FIRST: search_kb("{host} SSH access") before first use on a new host.
 
@@ -2868,31 +3337,25 @@ tail -5 /tmp/goethe-node3090.log
         first announcing what you are searching for and why.
         Do not call search_web more than once for the same topic.
 
-        YEAR INJECTION IS FORBIDDEN — if your query string contains any year (2024,
-          2025, 2026, or any other), remove it before calling. No exceptions.
-          WRONG: search_web("ASUSWRT-Merlin RT-BE19000 firmware 2025")
-          RIGHT: search_web("ASUSWRT-Merlin RT-BE19000 firmware")
-          Appending a year filters out current results and produces stale matches.
-          The current date is already in your system prompt — trust it, don't bake it in.
-          For version lookups of GitHub projects, prefer get_github_release instead.
-
-        DATE-SENSITIVE QUERIES — mandatory pre-check:
-          If the query involves ANY of: firmware versions, software releases, CVEs,
-          hardware compatibility, product availability, or anything that changes over time:
-          Step 0 (before search_kb): call execute_command("date +%Y-%m-%d") to confirm
-          the actual current date. Then assess KB results for freshness:
-            - KB entry older than 30 days for a firmware/CVE topic → treat as stale, go to web
-            - KB entry older than 7 days for a CVE/security topic → treat as stale, go to web
-            - KB entry from today → use directly, skip search_web
-          This prevents accepting outdated KB entries for topics where correctness
-          depends on recency. Never assume the date from training data.
+        TIME DISCIPLINE (v0.3.1 — ENFORCED IN CODE, not prose; CHRONOS-4 retired
+        the old YEAR-INJECTION and 30d/7d staleness rules from this docstring):
+          - Standalone years (e.g. "2025") are STRIPPED from the query server-side —
+            they filter out current results. Compound ids like CVE-2025-1234 survive.
+          - The first search_kb/search_web return of each session carries a [TIME]
+            banner (system-clock based; call time_check() for NTP-verified time).
+          - KB freshness is enforced by volatility TTLs in search_kb ([EXPIRED] tags
+            + rerank demotion) — no manual date arithmetic needed.
+          For version lookups of GitHub projects, prefer get_github_release.
         """
         import requests  # noqa: PLC0415
+
+        query = self._strip_years(query)
+        _tb = self._consume_time_banner()
 
         self._log(f"SEARCH: {query} max={max_results}")
         _gate = self._budget_gate()
         if _gate.startswith("BUDGET EXHAUSTED"):
-            return _gate
+            return _tb + _gate
         try:
             resp = requests.get(
                 self.valves.SEARXNG_URL,
@@ -2904,14 +3367,14 @@ tail -5 /tmp/goethe-node3090.log
             data = resp.json()
             results = data.get("results", [])[:max_results]
             if not results:
-                return "No results found." + _gate
+                return _tb + "No results found." + _gate
             lines = []
             for r in results:
                 title = r.get("title", "Untitled")
                 url = r.get("url", "")
                 snippet = r.get("content", "")[:300]
                 lines.append(f"**{title}**\n{url}\n{snippet}")
-            return "\n---\n".join(lines) + _gate
+            return _tb + "\n---\n".join(lines) + _gate
         except Exception as e:
             return f"ERROR searching SearxNG: {str(e)}"
 
@@ -2954,6 +3417,460 @@ tail -5 /tmp/goethe-node3090.log
         full_query = f"{site} {query}"
         self._log(f"SEARCH-REDDIT: subreddit={subreddit!r} query={query!r}")
         return self.search_web(full_query, max_results=max_results)
+
+    # ── CHRONOS — enforced sense of time (v0.3.1, Workstream B) ─────────────
+
+    def _strip_years(self, query: str) -> str:
+        """CHRONOS-4 (v0.3.1): year injection defined out of existence — strip
+        standalone 19xx/20xx tokens from search queries (they filter out current
+        results). Compound tokens survive: CVE-2025-1234, ubuntu-24.04, b2025x."""
+        import re as _re  # noqa: PLC0415
+
+        stripped = _re.sub(r"(?<![\w.\-])(?:19|20)\d{2}(?![\w.\-])", " ", query)
+        stripped = _re.sub(r"\s{2,}", " ", stripped).strip()
+        if stripped and stripped != query.strip():
+            self._log(f"SEARCH year-strip: {query!r} -> {stripped!r}")
+            return stripped
+        return query
+
+    def _sntp_offset(self, server: str, timeout: float = 2.0):
+        """SNTP query via stdlib UDP (no ntplib dependency). Returns the offset
+        in seconds (server − local midpoint) or None on any failure. Read-only:
+        never adjusts the clock."""
+        import socket  # noqa: PLC0415
+        import struct  # noqa: PLC0415
+        import time as _t  # noqa: PLC0415
+
+        NTP_DELTA = 2208988800  # seconds between 1900-01-01 and 1970-01-01
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        try:
+            t0 = _t.time()
+            sock.sendto(b"\x1b" + 47 * b"\0", (server, 123))
+            data, _ = sock.recvfrom(64)
+            t3 = _t.time()
+            if len(data) < 48:
+                return None
+            secs, frac = struct.unpack("!II", data[40:48])
+            server_time = secs - NTP_DELTA + frac / 2**32
+            return server_time - (t0 + t3) / 2
+        except Exception:
+            return None
+        finally:
+            sock.close()
+
+    def _tls_date_offset(self, url: str = ""):
+        """Offset (seconds) between the HTTPS Date response header of a known
+        endpoint and the local clock. Coarse (1s header resolution) — used only
+        as a third-source sanity check on the unauthenticated NTP answers
+        (Shostack: NTP is spoofable; TLS date rides an authenticated channel).
+        Tries two endpoints — without a TLS answer the clock-fix suggestion
+        gate can never open, so availability matters."""
+        import email.utils  # noqa: PLC0415
+        import time as _t  # noqa: PLC0415
+        import urllib.request  # noqa: PLC0415
+
+        urls = (url,) if url else (
+            "https://www.cloudflare.com",
+            "https://www.google.com",
+        )
+        for u in urls:
+            try:
+                req = urllib.request.Request(u, method="HEAD")
+                t0 = _t.time()
+                with urllib.request.urlopen(req, timeout=4) as r:
+                    date_hdr = r.headers.get("Date")
+                t3 = _t.time()
+                if date_hdr:
+                    server = email.utils.parsedate_to_datetime(date_hdr).timestamp()
+                    return server - (t0 + t3) / 2
+            except Exception:
+                continue
+        return None
+
+    def _time_banner(self, verified: bool = False) -> str:
+        """The [TIME] banner (CHRONOS-2). Injected server-side into the first
+        search_kb/search_web return of each session and into every time_check()."""
+        now = datetime.now().astimezone()
+        cutoff = (self.valves.MODEL_PRETRAIN_CUTOFF or "").strip()
+        if cutoff:
+            try:
+                cy, cm = int(cutoff[:4]), int(cutoff[5:7])
+                gap = (now.year - cy) * 12 + (now.month - cm)
+                cut_txt = f"model cutoff={cutoff} | gap≈{gap} months"
+            except Exception:
+                cut_txt = f"model cutoff={cutoff!r} (unparseable — use YYYY-MM)"
+        else:
+            cut_txt = "model cutoff UNSET (set MODEL_PRETRAIN_CUTOFF valve)"
+        src = "NTP-verified" if verified else "system clock — run time_check() to NTP-verify"
+        return (
+            f"[TIME] now={now:%Y-%m-%d} ({src}) | {cut_txt} — any version/price/"
+            "CVE/firmware claim from model memory is presumed stale; web-verify "
+            "before asserting."
+        )
+
+    def _consume_time_banner(self) -> str:
+        """Return the [TIME] banner exactly once per session (server-side
+        enforcement — compliance must not depend on the model reading docstrings)."""
+        if self._time_banner_emitted:
+            return ""
+        self._time_banner_emitted = True
+        return self._time_banner(verified=False) + "\n\n"
+
+    def time_check(self) -> str:
+        """
+        Verify the system clock against external time sources and anchor the
+        session against the model's pretraining cutoff (CHRONOS-1/2, v0.3.1).
+
+        WHEN TO CALL:
+          - At the start of any session involving dates, versions, CVEs, firmware,
+            prices, or release timelines.
+          - Whenever a KB hit is tagged [EXPIRED] or a claim depends on "now".
+          - When the user asks "what time/date is it" or doubts the clock.
+
+        WHAT IT DOES (report-only — NEVER adjusts the clock):
+          1. Queries 2 NTP servers (pool.ntp.org, time.cloudflare.com; 2s timeout,
+             stdlib SNTP) for clock offset.
+          2. Cross-checks against the TLS Date header of a known HTTPS endpoint —
+             NTP is unauthenticated/spoofable; a fix is only ever SUGGESTED when
+             both NTP servers agree AND the TLS date corroborates.
+          3. Compares verified now against MODEL_PRETRAIN_CUTOFF and returns the
+             [TIME] banner: everything the model "remembers" after that gap is
+             presumed stale.
+          Offset >2s → discrepancy report with the suggested fix command
+          (timedatectl/chronyc) for the HUMAN to run, and the event is recorded
+          to lse-errors. Graceful degrade: no NTP reachable → system clock + WARN.
+
+        FIX EXECUTION PROHIBITION — mandatory, no exceptions:
+          NEVER execute the suggested clock fix yourself — not via
+          execute_command, not by raising an unrequested sudo_delegation_block.
+          Surface the discrepancy; the human decides. Only produce a delegation
+          block if the user explicitly asks to fix the clock. Executing or
+          auto-delegating a clock change unasked is a protocol violation.
+
+        GATE: call at most once per session unless the user asks again — results
+        do not change mid-session.
+        """
+        self._log("TIME-CHECK")
+        try:
+            servers = ("pool.ntp.org", "time.cloudflare.com")
+            offsets = {s: self._sntp_offset(s) for s in servers}
+            good = {s: o for s, o in offsets.items() if o is not None}
+            tls_off = self._tls_date_offset()
+            now = datetime.now().astimezone()
+            lines = [f"TIME CHECK — system clock: {now:%Y-%m-%d %H:%M:%S %z}"]
+            for s in servers:
+                o = offsets[s]
+                lines.append(
+                    f"  NTP {s}: " + (f"offset {o * 1000:+.0f} ms" if o is not None
+                                      else "UNREACHABLE")
+                )
+            lines.append(
+                "  TLS date (cloudflare.com): "
+                + (f"offset {tls_off:+.1f} s" if tls_off is not None else "unavailable")
+            )
+            verified = False
+            if len(good) == 2:
+                o1, o2 = good.values()
+                if abs(o1 - o2) <= 1.0:
+                    verified = True
+                    mean = (o1 + o2) / 2
+                    if abs(mean) > 2.0:
+                        tls_agrees = tls_off is not None and abs(tls_off - mean) <= 5.0
+                        lines.append(
+                            f"  ⚠️ CLOCK DISCREPANCY: system clock is {mean:+.1f}s vs "
+                            "NTP consensus"
+                            + ("" if tls_agrees else " (TLS date does NOT corroborate "
+                               "— treat the NTP answer itself as suspect, no fix "
+                               "suggested)")
+                        )
+                        if tls_agrees:
+                            lines.append(
+                                "  SUGGESTED FIX (human-run, never automatic): "
+                                "sudo timedatectl set-ntp true   # or: chronyc makestep"
+                            )
+                            self.record_error(
+                                error_text=f"system clock offset {mean:+.1f}s vs NTP consensus",
+                                context="time_check() CHRONOS-1 discrepancy detection",
+                                resolution="suggested timedatectl set-ntp true / chronyc makestep (human-run)",
+                            )
+                    else:
+                        lines.append("  ✅ clock agrees with NTP consensus (<2s)")
+                else:
+                    lines.append(
+                        "  ⚠️ NTP servers DISAGREE with each other (>1s) — "
+                        "unauthenticated NTP cannot be trusted here; using system clock"
+                    )
+            elif len(good) == 1:
+                s, o = next(iter(good.items()))
+                verified = tls_off is not None and abs(tls_off - o) <= 5.0
+                lines.append(
+                    f"  single NTP source ({s}) "
+                    + ("corroborated by TLS date" if verified
+                       else "NOT corroborated — treating as unverified")
+                )
+            else:
+                lines.append(
+                    "  WARN: no NTP source reachable — degrading to system clock"
+                )
+            self._time_banner_emitted = True  # this return carries the banner
+            lines.append("")
+            lines.append(self._time_banner(verified=verified))
+            return "\n".join(lines)
+        except Exception as e:
+            self._log(f"TIME-CHECK ERROR: {e}")
+            return f"time_check failed: {e}\n{self._time_banner(verified=False)}"
+
+    # ── PROVE-IT — user-callable tests as evidence (v0.3.6, Workstream C) ────
+
+    def run_tests(self, scope: str = "all") -> str:
+        """
+        Run the LSE's own test surface and return the RAW output as evidence
+        (PROVE-1, v0.3.6). When the user says "prove it" / "run the tests" /
+        "is the harness green", THIS is the answer — never prose.
+
+        SCOPES (hardcoded allowlist — this is an exec surface, so the model
+        supplies ONLY the scope name; commands, paths and args are fixed in
+        code, same pattern as the sudo allowlist):
+          kb        — ES index existence + doc-count sanity (read-only probes)
+          retrieval — rag/eval_retrieval.py --self-test (no ES/Ollama needed)
+          rules     — eval_goethe_rules.py — an LLM-BEHAVIOR eval: drives 9
+                      scenarios through the live llama-server. Minutes of GPU
+                      time. EXPLICIT scope only, never part of 'all'; do not
+                      run while the user is mid-conversation with the model.
+          harness   — pytest tests/ (contract suites) AND pytest scripts/
+                      (legacy harness; failures there are FINDINGS, report them)
+          all       — kb + retrieval + pytest tests/ (rules and scripts/ run
+                      only when explicitly named; 'all' takes ~1-2 minutes)
+
+        EVIDENCE RULE — mandatory:
+          The verbatim output below each section IS the evidence. Paste the
+          relevant lines into evidence= fields (skill_outcome, record_outcome,
+          plan_step_done) — do NOT summarise test output into a claim.
+          A FAIL result must be reported to the user verbatim, never softened.
+
+        GATE: at most once per scope per session unless code changed in
+        between. Do NOT run to "double-check" a scope that just passed.
+
+        Args:
+            scope: one of kb | retrieval | rules | harness | all.
+        """
+        import subprocess as _sp  # noqa: PLC0415
+        import sys as _sys  # noqa: PLC0415
+
+        self._log(f"RUN-TESTS: scope={scope}")
+        scopes = ("kb", "retrieval", "rules", "harness", "all")
+        if scope not in scopes:
+            return f"run_tests: unknown scope '{scope}'. Valid: {', '.join(scopes)}."
+        repo = self.valves.REPO_DIR.rstrip("/")
+        py = _sys.executable
+        sections: list = []
+
+        def _kb_scope() -> tuple:
+            try:
+                es = self._es()
+                lines = []
+                ok = True
+                for idx in ("lse-kb", "lse-errors", "lse-skills",
+                            "lse-rfc-kb", "lse-search-cache"):
+                    try:
+                        if es.indices.exists(index=idx):
+                            c = es.count(index=idx)["count"]
+                            lines.append(f"  {idx}: EXISTS, {c} docs")
+                            if idx == "lse-kb" and c == 0:
+                                ok = False
+                                lines.append("    ^ FAIL: lse-kb is EMPTY")
+                        else:
+                            lines.append(f"  {idx}: MISSING")
+                            if idx in ("lse-kb", "lse-errors"):
+                                ok = False
+                    except Exception as exc:
+                        lines.append(f"  {idx}: ERROR {exc}")
+                        ok = False
+                return ("PASS" if ok else "FAIL"), "\n".join(lines)
+            except Exception as exc:
+                return "FAIL", f"  ES unreachable: {exc}"
+
+        def _cmd_scope(label, rel_target, argv, timeout_s) -> tuple:
+            target = os.path.join(repo, rel_target)
+            if not os.path.exists(target):
+                return "SKIP", f"  {rel_target} not present on this node ({repo})"
+            try:
+                r = _sp.run(argv, cwd=repo, capture_output=True, text=True,
+                            timeout=timeout_s)
+                out = ((r.stdout or "") + (r.stderr or "")).strip()
+                if len(out) > 1200:
+                    out = out[:300] + f"\n  … [{len(out) - 1500} chars omitted] …\n" + out[-1200:]
+                status = "PASS" if r.returncode == 0 else f"FAIL (exit {r.returncode})"
+                return status, out or "(no output)"
+            except _sp.TimeoutExpired:
+                return "FAIL", f"  TIMEOUT after {timeout_s}s"
+            except Exception as exc:
+                return "FAIL", f"  {exc}"
+
+        want = (scope,) if scope != "all" else ("kb", "retrieval", "harness")
+        for sc in want:
+            if sc == "kb":
+                st, body = _kb_scope()
+                sections.append((sc, st, body))
+            elif sc == "retrieval":
+                st, body = _cmd_scope(
+                    sc, "rag/eval_retrieval.py",
+                    [py, "rag/eval_retrieval.py", "--self-test"], 90)
+                sections.append((sc, st, body))
+            elif sc == "rules":
+                st, body = _cmd_scope(
+                    sc, "eval_goethe_rules.py",
+                    [py, "eval_goethe_rules.py"], 300)
+                sections.append((sc, st, body))
+            elif sc == "harness":
+                st, body = _cmd_scope(
+                    "harness/tests", "tests",
+                    [py, "-m", "pytest", "tests/", "-q", "--tb=line",
+                     "-p", "no:cacheprovider"], 200)
+                sections.append(("harness/tests", st, body))
+                if scope == "harness":  # legacy scripts only on explicit ask
+                    st2, body2 = _cmd_scope(
+                        "harness/scripts", "scripts",
+                        [py, "-m", "pytest", "scripts/", "-q", "--tb=line",
+                         "-p", "no:cacheprovider"], 150)
+                    sections.append(("harness/scripts", st2, body2))
+        overall = "PASS"
+        if any(st.startswith("FAIL") for _, st, _ in sections):
+            overall = "FAIL"
+        elif all(st == "SKIP" for _, st, _ in sections):
+            overall = "SKIP"
+        head = " | ".join(f"{name}={st}" for name, st, _ in sections)
+        report = [f"RUN-TESTS [{overall}] — {head}", ""]
+        for name, st, body in sections:
+            report.append(f"── {name}: {st} ──")
+            report.append(body)
+            report.append("")
+        return "\n".join(report)[:3800]
+
+    # Read-only argv allowlist for assert_state. Threat note (Shostack): this
+    # is an exec surface — first token must match, mutating verbs and shell
+    # metacharacters are rejected, and execution is argv-only (no shell).
+    _ASSERT_ALLOW = {
+        "df", "ss", "sha256sum", "dig", "pgrep", "stat", "ls", "wc",
+        "free", "uptime", "curl", "systemctl", "ping", "ip", "nvidia-smi",
+    }
+    _ASSERT_CURL_DENY = {
+        "-x", "--request", "-d", "--data", "--data-raw", "--data-binary",
+        "--data-urlencode", "-f", "--form", "-t", "--upload-file",
+        "-o", "--output", "-O", "--remote-name", "-K", "--config",
+    }
+
+    def assert_state(self, check_command: str, expected_regex: str) -> str:
+        """
+        Run ONE read-only check command and assert a regex against its output —
+        turning "I claim it worked" into "I ran the check and the output
+        matched" (PROVE-3, v0.3.6). This is the PREFERRED producer for
+        evidence= fields (plan_step_done, skill_outcome, record_outcome).
+
+        ALLOWLIST — read-only commands ONLY (argv-exec, no shell):
+          df, ss, sha256sum, dig, pgrep, stat, ls, wc, free, uptime, ip (show
+          subcommands), nvidia-smi, curl (GET only — no -X/-d/-o/upload),
+          systemctl (is-active/is-enabled/is-failed/show only), ping (count
+          capped). Anything else — including pipes, redirects, ';', '&&' — is
+          REJECTED. This tool NEVER mutates state; state changes go through
+          execute_command/ssh_run with their own gates. Trying to sneak a
+          mutating command through here is a protocol violation.
+
+        GOOD: assert_state("systemctl is-active ollama", "^active")
+              ← one check, concrete expectation, output is the evidence
+        GOOD: assert_state("curl -s http://127.0.0.1:9700/", "401")
+              ← tokenless gateway probe expecting the auth wall
+        BAD:  assert_state("systemctl restart ollama", "active")
+              ← mutating verb. REJECTED — this tool proves, it never fixes.
+        BAD:  assert_state("df -h | grep sda", "9[0-9]%")
+              ← pipe. REJECTED — put the filter in the regex instead.
+
+        AFTER THE RESULT:
+          PASS ✅ → paste the returned block as evidence where needed.
+          FAIL ❌ → the claim is NOT established. Report the mismatch verbatim;
+          do NOT retry with a looser regex just to make it pass — weakening an
+          assertion to green is a protocol violation.
+
+        Args:
+            check_command:  One allowlisted command as a plain string
+                            (shlex-parsed, executed without a shell).
+            expected_regex: Python regex searched (MULTILINE) in stdout+stderr.
+        """
+        import re as _re  # noqa: PLC0415
+        import shlex  # noqa: PLC0415
+        import subprocess as _sp  # noqa: PLC0415
+
+        self._log(f"ASSERT-STATE: {check_command[:100]!r} ~ /{expected_regex[:60]}/")
+        try:
+            argv = shlex.split(check_command)
+        except ValueError as exc:
+            return f"assert_state rejected: unparseable command ({exc})."
+        if not argv:
+            return "assert_state rejected: empty command."
+        bad_tokens = [t for t in argv if any(c in t for c in ";|&`$><\n")]
+        if bad_tokens:
+            return (
+                f"assert_state rejected: shell metacharacters in {bad_tokens!r} — "
+                "no pipes/redirects/chaining. Put filtering in expected_regex."
+            )
+        prog = os.path.basename(argv[0])
+        if prog not in self._ASSERT_ALLOW:
+            return (
+                f"assert_state rejected: '{prog}' is not in the read-only "
+                f"allowlist ({', '.join(sorted(self._ASSERT_ALLOW))}). "
+                "Use execute_command for anything else."
+            )
+        if prog == "systemctl":
+            verb = argv[1] if len(argv) > 1 else ""
+            if verb not in ("is-active", "is-enabled", "is-failed", "show", "status"):
+                return (
+                    f"assert_state rejected: systemctl verb '{verb}' — only "
+                    "is-active/is-enabled/is-failed/show/status (read-only)."
+                )
+            if verb == "status" and "--no-pager" not in argv:
+                argv.insert(2, "--no-pager")
+        if prog == "curl":
+            lowered = {t.lower() for t in argv[1:]}
+            hit = lowered & self._ASSERT_CURL_DENY
+            if hit:
+                return (
+                    f"assert_state rejected: curl flag(s) {sorted(hit)} — "
+                    "GET-only probes here; writes go through execute_command."
+                )
+            if "-s" not in argv:
+                argv.insert(1, "-s")
+        if prog == "ip":
+            sub = argv[1] if len(argv) > 1 else ""
+            if sub not in ("addr", "address", "route", "link", "neigh", "-br"):
+                return "assert_state rejected: only 'ip addr/route/link/neigh' reads."
+            if any(t in ("add", "del", "set", "flush", "replace") for t in argv):
+                return "assert_state rejected: mutating ip subcommand."
+        if prog == "ping" and "-c" not in argv:
+            argv[1:1] = ["-c", "3"]
+        try:
+            r = _sp.run(argv, capture_output=True, text=True, timeout=20)
+            out = ((r.stdout or "") + (r.stderr or "")).strip() or "(no output)"
+        except _sp.TimeoutExpired:
+            return f"ASSERT FAIL ❌ — '{check_command}' timed out after 20s."
+        except FileNotFoundError:
+            return f"ASSERT FAIL ❌ — '{prog}' not found on this host."
+        except Exception as exc:
+            return f"assert_state error: {exc}"
+        out_cap = out[:1500]
+        try:
+            m = _re.search(expected_regex, out, _re.MULTILINE)
+        except _re.error as exc:
+            return f"assert_state rejected: invalid regex /{expected_regex}/ ({exc})."
+        if m:
+            return (
+                f"ASSERT PASS ✅ — /{expected_regex}/ matched {m.group(0)!r} "
+                f"(exit {r.returncode})\n--- {check_command} ---\n{out_cap}"
+            )
+        return (
+            f"ASSERT FAIL ❌ — /{expected_regex}/ NOT found in output "
+            f"(exit {r.returncode})\n--- {check_command} ---\n{out_cap}"
+        )
 
     # ------------------------------------------------------------------
     # Browser-rendering fallback helpers (v1.5.29)
@@ -3732,7 +4649,7 @@ tail -5 /tmp/goethe-node3090.log
     def search_kb(
         self,
         query: str,
-        min_score: float = 0.72,
+        min_score: float = 4.2,
         max_results: int = 5,
         topic_filter: str = "",
     ) -> str:
@@ -3763,12 +4680,20 @@ tail -5 /tmp/goethe-node3090.log
 
         Args:
             query:        Natural language search query.
-            min_score:    Cosine similarity threshold (0–1). Default 0.72.
+            min_score:    HYBRID-score threshold (0.7·knn + 0.3·BM25 — BM25 is
+                          unbounded, so real scores run ~3.5–16, NOT 0–1).
+                          Default 4.2, set from the 2026-07-04 gold-set sweep:
+                          keeps 38/38 correct top-1 hits, rejects 3/11 wrong
+                          ones, loses zero correct. (The old 0.72 default was
+                          calibrated for cosine and filtered nothing.) Do not
+                          hand-tune — re-run rag/eval_retrieval.py
+                          --threshold-report after major KB growth instead.
             max_results:  Max results to return. Default 5.
             topic_filter: Optional topic tag: 'comfyui', 'wan2.1', 'searxng',
                           'llama-cpp', 'pfsense', 'infrastructure', 'openwebui'.
         """
         self._log(f"SEARCH-KB: {query}")
+        _tb = self._consume_time_banner()  # CHRONOS-2 (v0.3.1)
         try:
             embedding = self._embed(query)
             es = self._es()
@@ -3803,39 +4728,92 @@ tail -5 /tmp/goethe-node3090.log
                     "topic",
                     "quality_score",
                     "updated_at",
+                    "empirical_runs",
+                    "success_count",
+                    "failure_count",
+                    "consecutive_failures",
+                    "stale",
+                    "volatility",
                 ],
                 "size": max_results,
             }
             resp = es.search(index="lse-kb", body=body)
             hits = [h for h in resp["hits"]["hits"] if h.get("_score", 0) >= min_score]
             if not hits:
-                return (
+                return _tb + (
                     f"KB miss — no results above threshold {min_score} for '{query}'.\n"
                     "Fall through to search_web(), then call index_to_kb() with quality results."
                 )
+
+            # CHRONOS-3 (v0.3.1): volatility TTLs — static=∞, slow=90d (default),
+            # fast=7d. Age beyond TTL → [EXPIRED] tag + rerank demotion. This
+            # replaces the retired 30d/7d docstring table with enforced metadata.
+            _TTL_DAYS = {"static": None, "slow": 90, "fast": 7}
+
+            def _age_days(s):
+                try:
+                    return max(
+                        0,
+                        (
+                            datetime.now().astimezone()
+                            - datetime.fromisoformat(s.get("updated_at") or "")
+                        ).days,
+                    )
+                except Exception:
+                    return None
+
+            def _is_expired(s):
+                ttl = _TTL_DAYS.get(s.get("volatility") or "slow", 90)
+                age = _age_days(s)
+                return ttl is not None and age is not None and age > ttl
+
+            # KB-DECAY-2 (v0.3.0): client-side trust rerank. Penalize by verified
+            # failure ratio (multiplier 1 − 0.3·fail/runs); halve stale (quarantined)
+            # and expired docs so they always rank below fresh ones. Deliberately NOT
+            # an ES function_score — measure with the gold set before moving server-side.
+            def _trust_rank(h):
+                s = h["_source"]
+                runs = s.get("empirical_runs", 0) or 0
+                fails = s.get("failure_count", 0) or 0
+                mult = 1.0 - 0.3 * (fails / runs) if runs else 1.0
+                if s.get("stale"):
+                    mult *= 0.5
+                if _is_expired(s):
+                    mult *= 0.5
+                return h.get("_score", 0) * mult
+
+            hits.sort(key=_trust_rank, reverse=True)
             lines = [f"KB results for '{query}' ({len(hits)} found):\n"]
             for i, h in enumerate(hits, 1):
                 s = h["_source"]
                 src = s.get("source_path") or s.get("source_url") or "unknown"
-                try:
-                    _upd = s.get("updated_at") or ""
-                    _age_d = max(
-                        0,
-                        (
-                            datetime.now().astimezone() - datetime.fromisoformat(_upd)
-                        ).days,
+                _age_d = _age_days(s)
+                _age = f"updated {_age_d}d ago" if _age_d is not None else "age unknown"
+                _vol = s.get("volatility") or "slow"
+                _runs = s.get("empirical_runs", 0) or 0
+                _ok = s.get("success_count", 0) or 0
+                _fail = s.get("failure_count", 0) or 0
+                _trust = (
+                    f"runs={_runs} ({_ok} ok/{_fail} fail)" if _runs else "untested"
+                )
+                _flags = ""
+                if s.get("stale"):
+                    _flags += "    [STALE — quarantined, verify live before use]\n"
+                if _is_expired(s):
+                    _flags += (
+                        f"    [EXPIRED — {_vol} TTL exceeded; pointer only, "
+                        "re-verify live before use]\n"
                     )
-                    _age = f"updated {_age_d}d ago"
-                except Exception:
-                    _age = "age unknown"
                 lines.append(
                     f"[{i}] doc_id={h['_id']} | {s['title']} | topic={s['topic']} | "
-                    f"quality={s['quality_score']:.2f} | score={h['_score']:.3f} | {_age}\n"
+                    f"quality={s['quality_score']:.2f} | score={h['_score']:.3f} | "
+                    f"{_trust} | {_age} | volatility={_vol}\n"
+                    f"{_flags}"
                     f"    source: {src}\n"
                     f"    (pass doc_id above to record_outcome/mentor_correct)\n"
                     f"    {s['content'][:5000].strip()}\n"
                 )
-            return "\n".join(lines)
+            return _tb + "\n".join(lines)
         except Exception as e:
             self._log(f"SEARCH-KB ERROR: {e}")
             return f"KB search error: {e}\nFall through to search_web()."
@@ -3902,6 +4880,7 @@ tail -5 /tmp/goethe-node3090.log
         source_tier: str = "inferred",
         evidence: str = "",
         verified_against: str = "",
+        volatility: str = "slow",
     ) -> str:
         """
         Index a document into the LSE knowledge base (lse-kb index).
@@ -3947,6 +4926,13 @@ tail -5 /tmp/goethe-node3090.log
             verified_against: Optional version/config snapshot this entry was
                            verified against, e.g. "pfSense Plus 26.03" or
                            "RUTX50 fw 07.23.4". Stored for staleness tracking.
+            volatility:    CHRONOS-3 (v0.3.1) freshness class — how fast this fact
+                           decays. 'static' (never expires: topology, hardware,
+                           protocols), 'slow' (90d TTL: procedures, configs —
+                           DEFAULT), 'fast' (7d TTL: versions, CVEs, firmware,
+                           prices). Past its TTL a doc is tagged [EXPIRED] in
+                           search_kb and demoted below fresh hits. Re-verifying
+                           via record_outcome(success=True) resets the clock.
         """
         import hashlib  # noqa: PLC0415
         from datetime import timezone  # noqa: PLC0415
@@ -3959,6 +4945,7 @@ tail -5 /tmp/goethe-node3090.log
         }
         tier = source_tier if source_tier in _TIER_CEILING else "inferred"
         ceiling = _TIER_CEILING[tier]
+        volatility = volatility if volatility in ("static", "slow", "fast") else "slow"
         tier_warn = ""
         if tier == "ground_truth" and len((evidence or "").strip()) < 40:
             ceiling = 0.7
@@ -4014,21 +5001,25 @@ tail -5 /tmp/goethe-node3090.log
                 new_q = min(
                     1.0, max(existing["_source"]["quality_score"], quality_score)
                 )
+                _dup_doc = {
+                    "content": content,
+                    "embedding": embedding,
+                    "quality_score": new_q,
+                    "refinement_count": existing["_source"]["refinement_count"] + 1,
+                    "updated_at": now,
+                    "version": existing["_source"]["version"] + 1,
+                    "source_url": source_url or None,
+                    "volatility": volatility,
+                }
+                # KB-DECAY recovery: re-indexing with tier-gated evidence above
+                # the quarantine floor clears stale + the failure streak.
+                if new_q > 0.2:
+                    _dup_doc["stale"] = False
+                    _dup_doc["consecutive_failures"] = 0
                 es.update(
                     index="lse-kb",
                     id=existing["_id"],
-                    body={
-                        "doc": {
-                            "content": content,
-                            "embedding": embedding,
-                            "quality_score": new_q,
-                            "refinement_count": existing["_source"]["refinement_count"]
-                            + 1,
-                            "updated_at": now,
-                            "version": existing["_source"]["version"] + 1,
-                            "source_url": source_url or None,
-                        }
-                    },
+                    body={"doc": _dup_doc},
                 )
                 es.update(
                     index="lse-kb",
@@ -4065,6 +5056,7 @@ tail -5 /tmp/goethe-node3090.log
                 "source_tier": tier,
                 "evidence": (evidence or "").strip()[:1000] or None,
                 "verified_against": (verified_against or "").strip() or None,
+                "volatility": volatility,
             }
             es.index(index="lse-kb", id=doc_hash, document=doc)
             return (
@@ -4249,6 +5241,7 @@ tail -5 /tmp/goethe-node3090.log
         doc_id: str,
         success: bool,
         notes: str = "",
+        evidence: str = "",
     ) -> str:
         """
         Record an operational outcome against an existing KB document.
@@ -4262,14 +5255,32 @@ tail -5 /tmp/goethe-node3090.log
           so the LSE can track how many times a procedure has been tested in production
           and whether it reliably works.
 
+        DEMOTION (v0.3.0, KB-DECAY-1 — applied server-side, do not compute yourself):
+          success=False WITH evidence (>=20 chars of real tool output) demotes the doc:
+            quality_score = max(0.2, quality − 0.15) and consecutive_failures += 1.
+          At the 0.2 floor the doc is QUARANTINED: stale=true. It is never deleted —
+          search_kb shows it with a [STALE] banner and ranks it below fresh docs.
+          Quality is regained ONLY via the tier-gated paths (index_to_kb with better
+          evidence, or a human mentor_correct) — a later success does NOT re-elevate.
+          success=False WITHOUT evidence still counts the failure but does NOT demote —
+          unverified failure claims must not erode the KB (same gate as skill_outcome).
+          success=True resets consecutive_failures to 0. quality_score is untouched.
+
+        EVIDENCE:
+          GOOD: evidence="curl :8080/health → 404; systemctl is-active llama → inactive"
+          BAD:  evidence="didn't work"   ← thin self-report, no demotion applied
+
         Args:
             doc_id:   The doc_id field from a search_kb or index_to_kb result.
             success:  True if the procedure succeeded, False if it failed.
             notes:    Optional context: variant used, environment, what differed, etc.
+            evidence: For failures: the actual tool/command output proving the doc is
+                      wrong (>=20 chars). Required to trigger demotion.
         """
         from datetime import timezone  # noqa: PLC0415
 
         self._log(f"RECORD-OUTCOME: doc_id={doc_id} success={success}")
+        evidence = (evidence or "").strip()[:500]
         try:
             es = self._es()
             now = datetime.now(timezone.utc).isoformat()
@@ -4280,12 +5291,21 @@ tail -5 /tmp/goethe-node3090.log
             resp = es.get(
                 index="lse-kb",
                 id=doc_id,
-                _source=["empirical_runs", "success_count", "failure_count", "title"],
+                _source=[
+                    "empirical_runs",
+                    "success_count",
+                    "failure_count",
+                    "title",
+                    "quality_score",
+                    "consecutive_failures",
+                    "stale",
+                ],
             )
             src = resp["_source"]
             runs = src.get("empirical_runs", 0) + 1
             success_count = src.get("success_count", 0) + (1 if success else 0)
             failure_count = src.get("failure_count", 0) + (0 if success else 1)
+            old_q = src.get("quality_score", 0.0)
             update: dict = {
                 "empirical_runs": runs,
                 "success_count": success_count,
@@ -4294,12 +5314,46 @@ tail -5 /tmp/goethe-node3090.log
             }
             if notes:
                 update["last_outcome_notes"] = notes
+            decay_note = ""
+            if success:
+                # KB-DECAY-1: verified success ends the failure streak but does
+                # NOT re-elevate quality — that stays tier-gated (index_to_kb /
+                # mentor_correct). stale stays until a tier-gated raise clears it.
+                # CHRONOS-3 (v0.3.1): a verified success IS a re-verification —
+                # bump updated_at so the volatility TTL clock resets and an
+                # [EXPIRED] tag clears.
+                update["updated_at"] = now
+                if src.get("consecutive_failures", 0):
+                    update["consecutive_failures"] = 0
+                    decay_note = " | failure streak reset"
+            elif len(evidence) >= 20:
+                new_q = max(0.2, old_q - 0.15)
+                streak = src.get("consecutive_failures", 0) + 1
+                update["quality_score"] = new_q
+                update["consecutive_failures"] = streak
+                update["last_failure_evidence"] = evidence
+                if new_q <= 0.2:
+                    update["stale"] = True
+                    decay_note = (
+                        f" | DEMOTED {old_q:.2f} → {new_q:.2f} (streak={streak}) | "
+                        f"STALE — quarantined at the 0.2 floor; kept for forensics, "
+                        f"re-verify live before ever using this entry"
+                    )
+                else:
+                    decay_note = f" | DEMOTED {old_q:.2f} → {new_q:.2f} (streak={streak})"
+            else:
+                decay_note = (
+                    " | failure counted but NOT demoted — no evidence supplied. "
+                    "Pass evidence= (>=20 chars of real tool output) to demote a "
+                    "wrong KB entry."
+                )
             es.update(index="lse-kb", id=doc_id, body={"doc": update})
             outcome_str = "✅ success" if success else "❌ failure"
             return (
                 f"Outcome recorded: {outcome_str} | "
                 f"doc='{src.get('title', doc_id)}' | "
                 f"runs={runs} ({success_count} success / {failure_count} failure)"
+                f"{decay_note}"
             )
         except Exception as e:
             self._log(f"RECORD-OUTCOME ERROR: {e}")
@@ -4358,20 +5412,20 @@ tail -5 /tmp/goethe-node3090.log
                     f"Use index_to_kb to add a competing entry instead."
                 )
             embedding = self._embed(correction)
-            es.update(
-                index="lse-kb",
-                id=doc_id,
-                body={
-                    "doc": {
-                        "content": correction,
-                        "embedding": embedding,
-                        "quality_score": new_quality,
-                        "refinement_count": src.get("refinement_count", 0) + 1,
-                        "updated_at": now,
-                        "mentor_corrected_at": now,
-                    }
-                },
-            )
+            _mc_doc = {
+                "content": correction,
+                "embedding": embedding,
+                "quality_score": new_quality,
+                "refinement_count": src.get("refinement_count", 0) + 1,
+                "updated_at": now,
+                "mentor_corrected_at": now,
+            }
+            # KB-DECAY recovery: a human correction above the quarantine floor
+            # is THE tier-gated re-elevation path — clear stale + failure streak.
+            if new_quality > 0.2:
+                _mc_doc["stale"] = False
+                _mc_doc["consecutive_failures"] = 0
+            es.update(index="lse-kb", id=doc_id, body={"doc": _mc_doc})
             return (
                 f"Mentor correction applied: doc='{src.get('title', doc_id)}' | "
                 f"quality {old_quality:.2f} → {new_quality:.2f} | "
@@ -4380,6 +5434,207 @@ tail -5 /tmp/goethe-node3090.log
         except Exception as e:
             self._log(f"MENTOR-CORRECT ERROR: {e}")
             return f"mentor_correct failed: {e}"
+
+    def kb_verify(self, doc_id: str, observed: str = "") -> str:
+        """
+        Verify a KB document's recorded version/config snapshot against the live
+        system — the "application updated → KB silently wrong" regression detector
+        (v0.3.0, KB-DECAY-3).
+
+        TWO-PHASE PROTOCOL:
+          Phase 1 — kb_verify(doc_id):
+            Returns the stored verified_against snapshot plus probe instructions.
+            YOU then run the live probe with existing tools (get_github_release,
+            read_file, execute_command 'cat /etc/os-release', service --version, …).
+          Phase 2 — kb_verify(doc_id, observed=<probe output>):
+            Compares the snapshot against your probe output.
+            MATCH    → auto record_outcome(success=True) — updated_at refreshed,
+                       failure streak reset.
+            MISMATCH → auto record_outcome(success=False, evidence=<probe output>)
+                       — the KB-DECAY-1 demotion fires; the doc is on its way to
+                       the 0.2 stale quarantine if it keeps failing verification.
+
+        GATE:
+          observed must be REAL probe output (>=20 chars), pasted verbatim.
+          Passing a summary or a claim instead of tool output is a protocol
+          violation — the comparison and the demotion evidence are only as
+          trustworthy as the probe text.
+          GOOD: observed="pfSense Plus 26.03-RELEASE (amd64) built on Thu Jun 12"
+                ← verbatim tool output, comparable token by token
+          BAD:  observed="the version matches what the KB says"
+                ← a claim, not output. Do NOT paraphrase probe results.
+          Do NOT call phase 2 with output from memory or an earlier session —
+          the probe must have run THIS session.
+
+        WHEN TO CALL:
+          - Before acting on any KB doc whose verified_against names a version,
+            firmware, or config snapshot ("pfSense Plus 26.03", "RUTX50 fw 07.23.4").
+          - After any known upgrade of a system the KB documents.
+          - When search_kb shows a doc as untested or with failures.
+
+        Args:
+            doc_id:   The doc_id from search_kb/index_to_kb results (title accepted).
+            observed: Phase 2 only — verbatim live-probe output to compare against
+                      the stored snapshot.
+        """
+        self._log(f"KB-VERIFY: doc_id={doc_id} phase={'2' if observed else '1'}")
+        observed = (observed or "").strip()
+        try:
+            es = self._es()
+            resolved, note = self._resolve_kb_id(es, doc_id)
+            if not resolved:
+                return f"kb_verify: {note}"
+            doc_id = resolved
+            resp = es.get(
+                index="lse-kb",
+                id=doc_id,
+                _source=["title", "verified_against", "source_url", "updated_at",
+                         "quality_score", "stale"],
+            )
+            src = resp["_source"]
+            va = (src.get("verified_against") or "").strip()
+            title = src.get("title", doc_id)
+            if not va:
+                return (
+                    f"kb_verify: doc '{title}' has NO verified_against snapshot — "
+                    "nothing to regression-check. If you verify it against the live "
+                    "system now, re-index with verified_against= set (index_to_kb "
+                    "dedup will update the existing entry)."
+                )
+            if not observed:
+                return (
+                    f"kb_verify phase 1 — doc '{title}' (doc_id={doc_id})\n"
+                    f"  verified_against: {va}\n"
+                    f"  quality={src.get('quality_score', 0):.2f}"
+                    f"{' | STALE' if src.get('stale') else ''} | "
+                    f"last updated: {str(src.get('updated_at', ''))[:10]}\n"
+                    "NEXT: probe the live system for this exact version/config "
+                    "(get_github_release / read_file / execute_command), then call "
+                    f"kb_verify('{doc_id}', observed=<verbatim probe output>)."
+                )
+            if len(observed) < 20:
+                return (
+                    "kb_verify rejected: observed is too thin (<20 chars) to be real "
+                    "probe output. Paste the verbatim tool result, not a claim."
+                )
+            # Normalized containment check: every token of the snapshot should
+            # appear in the probe output for a match (case-insensitive).
+            import re as _re  # noqa: PLC0415
+
+            va_tokens = [t for t in _re.split(r"[\s,;/]+", va.lower()) if t]
+            obs_l = observed.lower()
+            missing = [t for t in va_tokens if t not in obs_l]
+            if not missing:
+                outcome = self.record_outcome(
+                    doc_id, success=True,
+                    notes=f"kb_verify: snapshot '{va}' confirmed against live probe",
+                )
+                return (
+                    f"kb_verify MATCH ✅ — '{title}': live system still matches "
+                    f"verified_against '{va}'.\n{outcome}"
+                )
+            outcome = self.record_outcome(
+                doc_id, success=False,
+                notes="kb_verify regression",
+                evidence=(
+                    f"verified_against regression: recorded '{va}' but live probe "
+                    f"shows: {observed[:300]}"
+                ),
+            )
+            return (
+                f"kb_verify MISMATCH ❌ — '{title}': recorded '{va}' but the live "
+                f"probe does not contain: {', '.join(missing[:5])}.\n"
+                f"The entry has been demoted with the probe as evidence.\n{outcome}\n"
+                "If the doc is still conceptually right, re-verify its content and "
+                "re-index with the NEW verified_against snapshot."
+            )
+        except Exception as e:
+            self._log(f"KB-VERIFY ERROR: {e}")
+            return f"kb_verify failed: {e}"
+
+    def mentor_demote(self, doc_id: str, new_quality: float, reason: str) -> str:
+        """
+        HUMAN-AUTHORIZED demotion of a KB document's quality score
+        (v0.3.0, KB-DECAY-4).
+
+        AUTHORIZATION GATE — mandatory, no exceptions:
+          Call this ONLY when the human user has explicitly said this specific KB
+          entry is wrong or overrated IN THIS SESSION. Never call it on your own
+          judgment — model-initiated demotion is a protocol violation (the pfSense
+          trust-metadata incident, P26). Evidence-based demotion you may perform
+          yourself goes through record_outcome(success=False, evidence=...) instead.
+          GOOD: user says "that RUTX50 wake-procedure doc is wrong, knock it
+                down" → mentor_demote with their words as reason
+          BAD:  kb_verify MISMATCH, a failed probe, or your own reasoning says
+                a doc is outdated → record_outcome(success=False, evidence=…),
+                NOT mentor_demote. Human words authorize; evidence demotes.
+
+        WHY THIS EXISTS:
+          mentor_correct is raise-only by design. Before v0.3.0 the only way to
+          neutralise a wrong high-quality doc was a competing entry — which the
+          wrong doc kept outranking. This is the direct human kill-switch.
+
+        EFFECT:
+          quality_score set to new_quality (must be LOWER than current — use
+          mentor_correct to raise). new_quality <= 0.2 → stale=true quarantine
+          (never deleted; search_kb shows the [STALE] banner). reason is stored
+          on the doc as demote_reason for forensics.
+
+        Args:
+            doc_id:      The doc_id from search_kb results (title accepted).
+            new_quality: New score, 0.0–1.0, strictly below the current one.
+            reason:      Why the human demoted it (>=10 chars, stored on the doc).
+
+        Trust the return value — do NOT call search_kb afterwards to confirm
+        the new score.
+        """
+        from datetime import timezone  # noqa: PLC0415
+
+        self._log(f"MENTOR-DEMOTE: doc_id={doc_id} new_quality={new_quality}")
+        reason = (reason or "").strip()
+        try:
+            if len(reason) < 10:
+                return (
+                    "mentor_demote rejected: reason is required (>=10 chars) — it is "
+                    "the forensic record of why a human pulled this entry down."
+                )
+            new_quality = max(0.0, min(float(new_quality), 1.0))
+            es = self._es()
+            now = datetime.now(timezone.utc).isoformat()
+            resolved, note = self._resolve_kb_id(es, doc_id)
+            if not resolved:
+                return f"mentor_demote: {note}"
+            doc_id = resolved
+            resp = es.get(
+                index="lse-kb", id=doc_id, _source=["quality_score", "title"]
+            )
+            src = resp["_source"]
+            old_quality = src.get("quality_score", 0.0)
+            if new_quality >= old_quality:
+                return (
+                    f"REJECTED: new_quality ({new_quality:.2f}) is not lower than "
+                    f"existing ({old_quality:.2f}). mentor_demote only lowers — "
+                    "use mentor_correct to raise."
+                )
+            update = {
+                "quality_score": new_quality,
+                "mentor_demoted_at": now,
+                "demote_reason": reason[:500],
+                "updated_at": now,
+            }
+            stale_note = ""
+            if new_quality <= 0.2:
+                update["stale"] = True
+                stale_note = " | STALE — quarantined (kept for forensics)"
+            es.update(index="lse-kb", id=doc_id, body={"doc": update})
+            return (
+                f"Mentor demotion applied: doc='{src.get('title', doc_id)}' | "
+                f"quality {old_quality:.2f} → {new_quality:.2f}{stale_note} | "
+                f"reason: {reason[:120]}"
+            )
+        except Exception as e:
+            self._log(f"MENTOR-DEMOTE ERROR: {e}")
+            return f"mentor_demote failed: {e}"
 
     # ── v1.5.17: Log / scan summarisers ──────────────────────────────────────
 
@@ -4725,8 +5980,14 @@ tail -5 /tmp/goethe-node3090.log
                 return f"SKILL outcome error: skill_id '{skill_id}' not found."
             h = hits[0]
             old_q = h["_source"]["quality"]
-            new_q = min(so_ceiling, old_q + 0.10) if success else max(0.0, old_q - 0.15)
-            archived = (new_q < 0.2) and not h["_source"].get("pinned", False)
+            # v0.3.0: floor aligned to the documented 0.2 (was max(0.0, …) — code/
+            # docstring drift found by PROVE-2). Same demotion math as record_outcome.
+            new_q = min(so_ceiling, old_q + 0.10) if success else max(0.2, old_q - 0.15)
+            archived = (
+                (not success)
+                and (new_q <= 0.2)
+                and not h["_source"].get("pinned", False)
+            )
             stats_field = "episode_successes" if success else "episode_failures"
             now = datetime.now().astimezone().isoformat()
             es.update(
@@ -5692,12 +6953,21 @@ tail -5 /tmp/goethe-node3090.log
         """
         return "kanban retired (v0.2.7)"
 
-    def planner(self, task: str, context: str = "") -> str:
+    def planner(
+        self,
+        task: str,
+        context: str = "",
+        mode: str = "new",
+        task_id: str = "",
+    ) -> str:
         """
-        Request a pre-flight execution plan from the peer LSE instance on node3090
-        BEFORE starting a complex task. Returns the plan envelope (steps with
-        per-step budgets, abort criteria, packaged starting prompt) and writes
-        the initial task block so the plan survives session loss.
+        Request a pre-flight ATOMIZED execution plan from the peer LSE instance
+        BEFORE starting a complex task (contract v2, Goethe v0.3.2). Every step is
+        a tightly scoped unit (<=5 tool calls, ONE verifiable outcome) with its own
+        self-contained packaged_prompt, so each step can run in a FRESH context
+        window — this is how 131k context ceilings are managed on long work.
+        The plan is written to the task ledger (tasks.db); execute the returned
+        first step, then call plan_step_done() to strike it and receive the next.
 
         Planner backend — 3-path cascade (v0.2.8):
           1. node3090 llama-server :8080 (Qwen 27B, GPU) — primary
@@ -5706,31 +6976,48 @@ tail -5 /tmp/goethe-node3090.log
              Model selected by task size: E4B / 26B-A4B / 31B.
              Vision tasks (image/png/jpg keywords) load the mmproj companion.
 
-        GATE — call ONLY when ALL of the following are true:
-          1. The user gave a FRESH multi-step task — research-shaped ("verify",
-             "find all", "compare", unfamiliar domain) or >2 distinct steps.
-          2. You have NOT started executing yet — this must be your first or
-             second tool call for the task.
-          3. You are NOT resuming carried-over work (that is task_resume).
-        Do NOT call for single-fact lookups or well-defined procedural tasks
-        with known steps — execute directly instead.
-        Do NOT call mid-task — planning after execution has started is a
-        protocol violation.
+        MANDATORY TRIGGER — the user asked for a plan:
+          If the user's request contains "plan" / "get a plan" / "how should we
+          approach", or assigns a multi-phase audit/overhaul/migration, calling
+          planner() is REQUIRED. NEVER hand-write a plan in prose instead, and
+          NEVER create ad-hoc tracking files (active-task.md, plan.md, …) — the
+          tasks.db ledger written by THIS tool is the single source of truth
+          that survives session loss and that plan_step_done operates on.
 
+        GATE — planner comes before EXECUTION, not before reading:
+          Information gathering does NOT close the planning window. search_kb,
+          skill_search, and read-only probes (dig, GET/status endpoints, health
+          checks, config reads) BEFORE planner are correct — KB-FIRST still
+          applies — and their findings belong in context=. The window closes
+          when you start CHANGING state or producing deliverables.
+          Do NOT call for single-fact lookups or short well-defined procedures
+          (<3 steps) — execute directly instead.
+          Do NOT call when resuming carried-over work (that is task_resume).
+
+        GOOD: search_kb ×2 → pfsense_graphql reads → planner("audit DNS infra",
+              context="<topology + findings from the reads>")
+              ← reads first, findings handed to the planner. Correct order.
         GOOD: planner("Find the verbatim Goethe quote on architecture as
               frozen music and verify it against a primary source")
               ← research-shaped, spiral risk: plan first
-        BAD:  planner("Update llama.cpp on node3090 to latest build")
-              ← well-defined procedure with known steps; execute directly.
+        BAD:  user says "get a plan" → you write a phase list in prose and a
+              tracking markdown file
+              ← protocol violation: that plan has no ledger, no plan_step_done
+              loop, and dies with your context window.
         BAD:  planner("What is the hostname of node3090?")
               ← single fact; use execute_command.
         BAD:  10 web searches, then planner
-              ← pre-flight means BEFORE execution. Protocol violation.
+              ← web searches burn budget and ARE execution. Reads of local/KB
+              state are fine; web-search spirals before planning are not.
 
-        AFTER A PLAN IS RETURNED — mandatory:
-          Begin execution from the packaged prompt at the END of the result.
-          Respect each step's web/tool budgets and the ABORT CRITERIA exactly.
-          Checkpoint with task_checkpoint(task_id=<returned id>) after each step.
+        AFTER A PLAN IS RETURNED — mandatory step loop:
+          1. Execute ONLY the step in the packaged prompt at the END of the result.
+          2. Run that step's verify check and call
+             plan_step_done(task_id, step_n, evidence=<verify output>).
+          3. plan_step_done returns the NEXT step's packaged prompt — repeat.
+          Do NOT look ahead, do NOT execute multiple steps from one prompt.
+          On a FAILED step: plan_step_done(..., failed=True), then
+          planner(task, mode="revise", task_id=<id>) to re-plan the remainder.
           Planner estimates are ESTIMATES, not established facts: never copy
           them into findings, never raise skill/KB quality from a plan (P2).
           Ignoring the abort criteria is a protocol violation.
@@ -5745,6 +7032,11 @@ tail -5 /tmp/goethe-node3090.log
                      pre-digest it; the planner needs the original shape.
             context: Optional constraints, prior findings, or KB pointers for
                      the planner. Passed through as context.
+            mode:    "new" (default) or "revise". Revise loads the ledger for
+                     task_id, hands the planner the completed/failed step
+                     summary, and replaces only the remaining steps.
+            task_id: Required for mode="revise" — the id returned by the
+                     original planner call.
 
         Returns the plan summary + packaged prompt, or a string starting with
         "PLANNER UNAVAILABLE" on any failure (all backends down, bad envelope).
@@ -5753,68 +7045,200 @@ tail -5 /tmp/goethe-node3090.log
         import json as _json  # noqa: PLC0415
         import re as _re  # noqa: PLC0415
 
-        self._log(f"NODE-PLAN: {task[:80]}")
+        self._log(f"NODE-PLAN: mode={mode} {task[:80]}")
         corr = hashlib.sha256((task + datetime.now().isoformat()).encode()).hexdigest()[
             :12
         ]
-        reply = self._call_node_planner(task, context=context, no_think=False)
-        if not reply or reply.startswith("ERROR:"):
-            return (
-                "PLANNER UNAVAILABLE — proceed with default budgets, "
-                f"checkpoint early. ({(reply or 'no reply')[:160]})"
+        # ── v0.3.2 revise mode: feed the ledger back to the planner ──────────
+        prior_done_steps: list = []
+        if mode == "revise":
+            if not task_id.strip():
+                return "planner: mode='revise' requires task_id from the original plan."
+            try:
+                conn = self._tasks_db()
+                row = conn.execute(
+                    "SELECT goal, steps_json FROM task_blocks WHERE task_id=?",
+                    (task_id.strip(),),
+                ).fetchone()
+                conn.close()
+            except Exception as e:
+                return f"planner revise: ledger read failed: {e}"
+            if not row:
+                return f"planner revise: no task block '{task_id}' in the ledger."
+            old_steps = _json.loads(row[1]) if row[1] else []
+            prior_done_steps = [s for s in old_steps if s.get("status") == "done"]
+            ledger_lines = []
+            for s in old_steps:
+                st = s.get("status", "pending")
+                mark = {"done": "COMPLETED", "failed": "FAILED"}.get(st, "pending")
+                line = f"step {s.get('n')}: [{mark}] {s.get('what', '')}"
+                if st in ("done", "failed") and s.get("evidence"):
+                    line += f" | evidence: {str(s['evidence'])[:150]}"
+                ledger_lines.append(line)
+            context = (
+                (context + "\n\n" if context else "")
+                + "LEDGER (completed/failed steps of the existing plan — re-plan "
+                "ONLY the remaining work, number new steps after the highest "
+                "completed step):\n" + "\n".join(ledger_lines)
             )
-        # Strip Qwen3 / DeepSeek thinking blocks before JSON extraction.
-        # Greedy \{.*\} (DOTALL) would otherwise match from the first { inside
-        # a <think>...</think> block to the last } of the JSON envelope,
-        # producing unparseable mixed content.
-        clean = _re.sub(r"<think>.*?</think>", "", reply, flags=_re.DOTALL).strip()
-        m = _re.search(r"\{.*\}", clean, _re.DOTALL)
-        if not m:
+        elif mode != "new":
+            return "planner: mode must be 'new' or 'revise'."
+        # ── v0.3.3: two-attempt envelope loop — truncated/malformed envelopes
+        # (long thinking + tight completion budget) were the dominant
+        # "PLANNER UNAVAILABLE" cause; one corrective retry recovers most.
+        env = None
+        fail_reason = ""
+        plan_ctx = context
+        for attempt in (1, 2):
+            reply = self._call_node_planner(task, context=plan_ctx, no_think=True)
+            if not reply or reply.startswith("ERROR:"):
+                return (
+                    "PLANNER UNAVAILABLE — proceed with default budgets, "
+                    f"checkpoint early. ({(reply or 'no reply')[:160]})"
+                )
+            # Strip Qwen3 / DeepSeek thinking blocks before JSON extraction.
+            clean = _re.sub(r"<think>.*?</think>", "", reply, flags=_re.DOTALL).strip()
+            # Strip markdown code fences (```json ... ```) some models wrap JSON in.
+            clean = _re.sub(r"^```[a-z]*\n?", "", clean).rstrip("`").strip()
+            # raw_decode parses the FIRST valid JSON object, stopping cleanly at
+            # its closing brace regardless of trailing prose or garbage.
+            idx = clean.find("{")
+            if idx == -1:
+                fail_reason = f"no JSON object in reply. RAW: {clean[:200]!r}"
+            else:
+                try:
+                    env_c, _ = _json.JSONDecoder().raw_decode(clean, idx)
+                    if env_c.get("steps"):
+                        env = env_c
+                        break
+                    fail_reason = "envelope has no 'steps' array"
+                except Exception as _exc:
+                    fail_reason = (
+                        f"JSON parse failed ({_exc}). "
+                        f"RAW: {clean[idx : idx + 200]!r}"
+                    )
+            self._log(f"NODE-PLAN: attempt {attempt} rejected — {fail_reason[:120]}")
+            plan_ctx = (
+                (context + "\n\n" if context else "")
+                + "PREVIOUS REPLY REJECTED: " + fail_reason[:200]
+                + "\nReturn ONLY the v2 JSON envelope object — no thinking, no "
+                "prose, no code fences. Keep each packaged_prompt under 80 words."
+            )
+        if env is None:
             return (
-                "PLANNER UNAVAILABLE — no JSON envelope in node planner reply. "
+                f"PLANNER UNAVAILABLE — {fail_reason} (after retry). "
                 "Proceed with default budgets, checkpoint early."
             )
-        try:
-            env = _json.loads(m.group(0))
-        except Exception:
+        raw_steps = env.get("steps") or []
+        legacy_packaged = str(env.get("packaged_prompt", "")).strip()
+        goal = str(env.get("goal_summary") or task.strip()[:300])
+        # Normalize steps into ledger entries; per-step packaged_prompt is v2 —
+        # synthesize a defensive fallback when the model omitted it.
+        new_steps = []
+        for s in raw_steps:
+            n = s.get("n")
+            what = str(s.get("what", "")).strip()
+            if n is None or not what:
+                continue
+            pkg = str(s.get("packaged_prompt", "")).strip()
+            if not pkg:
+                pkg = legacy_packaged if (len(new_steps) == 0 and legacy_packaged) else (
+                    f"GOAL: {goal}\nYOU ARE EXECUTING STEP {n} ONLY: {what}\n"
+                    f"INPUTS: {s.get('inputs', '(see ledger summary)')}\n"
+                    f"VERIFY: {s.get('verify', '')}\n"
+                    "STOP after this step and report the verify output."
+                )
+            new_steps.append(
+                {
+                    "n": int(n),
+                    "what": what,
+                    "depends_on": s.get("depends_on") or [],
+                    "inputs": str(s.get("inputs", "")),
+                    "output": str(s.get("output", "")),
+                    "web_calls": s.get("web_calls", 0),
+                    "tool_calls": s.get("tool_calls", 0),
+                    "verify": str(s.get("verify", "")),
+                    "packaged_prompt": pkg,
+                    "status": "pending",
+                    "evidence": "",
+                    "done_at": None,
+                }
+            )
+        if not new_steps:
             return (
-                "PLANNER UNAVAILABLE — envelope JSON failed to parse. "
+                "PLANNER UNAVAILABLE — no usable steps in envelope. "
                 "Proceed with default budgets, checkpoint early."
             )
-        packaged = str(env.get("packaged_prompt", "")).strip()
-        steps = env.get("steps") or []
-        if not packaged or not steps:
-            return (
-                "PLANNER UNAVAILABLE — envelope missing packaged_prompt "
-                "or steps. Proceed with default budgets, checkpoint early."
-            )
-        tid = str(env.get("task_id") or hashlib.sha256(task.encode()).hexdigest()[:8])
+        # revise: keep completed history in front of the re-planned remainder
+        all_steps = prior_done_steps + new_steps
+        all_steps.sort(key=lambda s: s.get("n", 0))
+        # v0.3.3: NEVER trust a model-supplied task_id — live smoke showed the
+        # model copying the schema example ("a1b2c3d4") verbatim, which would
+        # collide every plan onto one ledger row. corr already hashes task+now.
+        tid = task_id.strip() if mode == "revise" else corr[:8]
         plan_lines = "; ".join(
-            f"step {s.get('n', '?')}: {s.get('what', '')} "
+            f"step {s['n']}: {s['what']} "
             f"(web={s.get('web_calls', 0)}, tools={s.get('tool_calls', 0)}, "
-            f"verify: {s.get('verify', 'NONE')})"
-            for s in steps
+            f"verify: {s.get('verify') or 'NONE'})"
+            for s in new_steps
         )
+        done_lines = "; ".join(
+            f"step {s['n']}: {s['what']}" for s in prior_done_steps
+        )
+        first = new_steps[0]
+        next_prompt = self._plan_step_prompt(goal, all_steps, first)
         ck = self.task_checkpoint(
-            goal=task.strip()[:300],
+            goal=goal,
             plan=plan_lines,
-            done="",
+            done=done_lines,
             findings="",
-            next_prompt=packaged,
+            next_prompt=next_prompt,
             unverified="all planner estimates (sessions, budgets) — plan, not fact",
             status="open",
             task_id=tid,
         )
+        try:
+            conn = self._tasks_db()
+            with conn:
+                conn.execute(
+                    "UPDATE task_blocks SET steps_json=? WHERE task_id=?",
+                    (_json.dumps(all_steps), tid),
+                )
+            conn.close()
+        except Exception as e:
+            return f"planner: ledger steps write failed: {e}"
         return (
-            f"PLAN ENVELOPE accepted: task_id={tid} | correlation_id={corr}\n"
+            f"PLAN ENVELOPE accepted ({mode}): task_id={tid} | correlation_id={corr}\n"
             f"sessions_estimate={env.get('sessions_estimate', '?')} | "
             f"single_session={env.get('single_session', '?')} | "
-            f"confidence={env.get('confidence', '?')}\n"
+            f"confidence={env.get('confidence', '?')} | "
+            f"steps={len(new_steps)} atomized"
+            f"{f' (+{len(prior_done_steps)} already done)' if prior_done_steps else ''}\n"
             f"STEPS: {plan_lines}\n"
             f"ABORT CRITERIA: "
             f"{env.get('abort_criteria', '(none given — budget gate is the only stop)')}\n"
             f"{ck}\n"
-            "EXECUTE NOW from the packaged prompt below. Respect per-step "
-            "budgets and abort criteria. Estimates are NOT facts (P2).\n"
-            f"---\n{packaged}"
+            "EXECUTE ONLY THE STEP BELOW, run its verify check, then call "
+            f"plan_step_done('{tid}', {first['n']}, evidence=<verify output>) "
+            "to strike it and receive the next step. Estimates are NOT facts (P2).\n"
+            f"---\n{next_prompt}"
         )
+
+    def _plan_step_prompt(self, goal: str, all_steps: list, step: dict) -> str:
+        """Build the fresh-context prompt for ONE plan step: compact ledger
+        summary + the step's own packaged prompt (v0.3.2 context-ceiling tool)."""
+        done = [s for s in all_steps if s.get("status") == "done"]
+        pending = [s for s in all_steps if s.get("status") == "pending"]
+        ledger = []
+        for s in done[-8:]:  # cap ledger growth — oldest strikes fall away
+            ev = str(s.get("evidence", ""))[:120]
+            ledger.append(f"  ✔ step {s['n']}: {s['what']}" + (f" — {ev}" if ev else ""))
+        remaining = ", ".join(str(s["n"]) for s in pending)
+        header = (
+            f"[PLAN {goal[:120]}]\n"
+            f"LEDGER — completed:\n" + ("\n".join(ledger) or "  (none yet)") + "\n"
+            f"REMAINING steps: {remaining or '(this is the last one)'}\n"
+            f"YOU ARE EXECUTING STEP {step['n']} ONLY. Do not look ahead.\n"
+            "---\n"
+        )
+        return header + step["packaged_prompt"]

@@ -1,0 +1,46 @@
+# goethe-mcp.service - LSE Goethe exposed as a localhost MCP server for llama-ui.
+#
+# Install:
+#   sudo cp goethe-mcp.service /etc/systemd/system/
+#   sudo install -m 600 -o sy5 -g sy5 goethe-mcp.env.example /opt/local-se/goethe-mcp.env
+#   # edit /opt/local-se/goethe-mcp.env: set GOETHE_MCP_TOKEN (openssl rand -hex 16)
+#   #   and any GOETHE_<VALVE> overrides (e.g. GOETHE_COMMAND_TIMEOUT=200)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now goethe-mcp
+#   systemctl status goethe-mcp ; journalctl -u goethe-mcp -f
+#
+# Interpreter: use the owui venv python - it already has mcp + uvicorn AND goethe's
+# runtime deps (elasticsearch, requests, ...), since OWUI loaded goethe there.
+# If you pick a different venv, `pip install mcp uvicorn` into it first.
+#
+# SECURITY: binds 127.0.0.1 only. The token is the caller-auth ("who"); goethe's
+# internal gates are the command-auth ("what"). Never change --host off 127.0.0.1,
+# and never expose llama-server itself to the network.
+
+[Unit]
+Description=LSE Goethe MCP server (streamable-HTTP, localhost only)
+After=network-online.target
+
+[Service]
+Type=simple
+User=sy5
+Group=sy5
+WorkingDirectory=/mnt/c/Users/SY5/Claude/Projects/local-system-engineer/tools
+
+# Secrets + valve overrides (chmod 600). MUST define GOETHE_MCP_TOKEN.
+EnvironmentFile=/opt/local-se/goethe-mcp.env
+
+ExecStart=/home/sy5/owui/bin/python3 \
+    /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/tools/goethe_mcp.py \
+    --goethe /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/tools/goethe.py \
+    --also  /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/tools/vaultwarden_tools_v1.3.0.py \
+    --transport http --host 127.0.0.1 --port 9700
+
+Restart=on-failure
+RestartSec=3
+# light hardening (do NOT add NoNewPrivileges - sudo_delegation_block is the user's job,
+# and goethe itself never runs sudo; but it does SSH and write under /home + /opt/local-se)
+ProtectSystem=full
+ReadWritePaths=/home/sy5 /opt/local-se /tmp/lse
+
+[Install]
+WantedBy=multi-user.target
