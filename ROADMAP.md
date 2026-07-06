@@ -71,35 +71,72 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 - [ ] **P0-4** — Documentation cleanup (carried): delete `docs/searxng-settings-patch-v2.yml`;
       archive `docs/searxng-config.md`; move `mesh_builder.py` + `portrait_3d_pifuhd.py` out of
       root; grep-audit remaining OWUI references across docs/ + kb/ + skills/.
-- [ ] **P0-5** — Prompt lineage reconcile: `tools/system-prompt-v0.5.19.md` ("ready to deploy")
+- [x] **P0-5** — Prompt lineage reconcile: `tools/system-prompt-v0.5.19.md` ("ready to deploy")
       vs `prompts/node4090-v0.5.20/21.md` (newer) — pick ONE canonical dir (`prompts/`), confirm
       what is actually pasted into llama-ui on each node, deploy/record it.
+      **✅ RECONCILED (2026-07-04):** v0.5.21 confirmed the newer lineage; canonical dir =
+      `prompts/`; NEW **`prompts/node4090-v0.6.0.md`** built on it for Goethe v0.3.8 (45
+      tools): REQUEST-SHAPE MAPPINGS section (plan→planner, prove-it→run_tests/assert_state,
+      resume→task_resume, human-says-wrong→mentor_demote), MULTI-BLOCK TASK RULE **rebuilt
+      around the tasks.db ledger** (the old rule MANDATED hand-written active-task.md — root
+      cause of the DNS-audit ledger bypass), planner v2 / plan_step_done / kb_verify /
+      time_check / run_tests / assert_state tool entries, SSH v0.3.7 guard notes, TIME
+      DISCIPLINE, ledger-first HANDOVER. tools/system-prompt-v0.5.x = superseded (purge with
+      P0-3). OPERATOR: paste v0.6.0 into llama-ui on node4090 + start fresh threads;
+      node3090's prompt (v0.1.0) needs its own smaller update — follow-up.
 - [ ] **P0-6** — Carried P21 leftovers: ES index-existence probe added to stack health check
       (`curl -s localhost:9200/lse-kb,lse-errors,lse-rfc-kb,lse-search-cache/_count`); delete
       vestigial `lse-kb.sqlite` (0 bytes, unreferenced).
 
 ### Phase 1 — Safety net, then KB trust lifecycle (Workstreams C→A)
 
-- [ ] **PH1-1** — PROVE-2 contract tests FIRST (pin current tier/evidence/dedup behavior against
+- [x] **PH1-1** — PROVE-2 contract tests FIRST (pin current tier/evidence/dedup behavior against
       a throwaway `lse-kb-test` index).
-- [ ] **PH1-2** — KB-DECAY-1..5 (demotion in `record_outcome`, [STALE] quarantine + trust counts
+      **✅ DONE (2026-07-02, Cowork):** `tests/test_kb_contracts.py` — 34 tests, all green on
+      live ES 8.13.0 via owui-venv python. Index-rewrite proxy makes production indices
+      unreachable; deterministic fake embeddings (no Ollama dep). Pins: tier ceilings, evidence
+      gates, waterfall cap, dedup-updates, record_outcome quality-never-touched (KB-DECAY-1
+      flip point marked in-test), mentor_correct raise-only, skill quality clamp/floor,
+      skill_outcome demotion + archive. Found: skill_outcome demotion floor is 0.0 in code vs
+      0.2 in docstring — test pins code; reconcile in KB-DECAY-1. See CHANGELOG 2026-07-02.
+- [x] **PH1-2** — KB-DECAY-1..5 (demotion in `record_outcome`, [STALE] quarantine + trust counts
       in `search_kb`, `kb_verify` regression probe on `verified_against`, `mentor_demote`,
       mapping migration). Ship as **Goethe v0.3.0** — this is the headline behavior change.
+      **✅ SHIPPED (2026-07-02, Cowork):** Goethe v0.3.0, 6128 lines. All five KB-DECAY items
+      implemented + skill_outcome floor reconciled to 0.2 (PROVE-2 finding). Migration run on
+      live lse-kb. Contract tests 34 → 53, all green. See CHANGELOG 2026-07-02 (PH1-2 entry).
+      Deploy note: system prompt should gain the mentor_demote human-authorization rule and
+      the "prove it" → kb_verify mapping (fold into P0-5 canonical prompt work).
 
 ### Phase 2 — Sense of time (Workstream B)
 
-- [ ] **PH2-1** — CHRONOS-1 `time_check()` (multi-NTP + TLS-date sanity, report-don't-adjust).
-- [ ] **PH2-2** — CHRONOS-2 `MODEL_PRETRAIN_CUTOFF` valve + server-side `[TIME]` banner injection.
-- [ ] **PH2-3** — CHRONOS-3 volatility TTLs on KB docs; CHRONOS-4 retire the now-redundant
+- [x] **PH2-1** — CHRONOS-1 `time_check()` (multi-NTP + TLS-date sanity, report-don't-adjust).
+- [x] **PH2-2** — CHRONOS-2 `MODEL_PRETRAIN_CUTOFF` valve + server-side `[TIME]` banner injection.
+- [x] **PH2-3** — CHRONOS-3 volatility TTLs on KB docs; CHRONOS-4 retire the now-redundant
       docstring date rules. Ship as **Goethe v0.3.1**.
+      **✅ SHIPPED (2026-07-02, Cowork):** Goethe v0.3.1, 6387 lines; tests 53 → 75 green.
+      Year injection now stripped in code (`_strip_years`), not policed by prose.
+      OPERATOR TODO: set `export GOETHE_MODEL_PRETRAIN_CUTOFF=<YYYY-MM>` (Qwen3.6's real
+      published cutoff) in ~/.lse/secrets on BOTH nodes — banner nags UNSET until then.
+      See CHANGELOG 2026-07-02 (PH2 entry).
 
 ### Phase 3 — Prove-it surface + eval re-baseline
 
-- [ ] **PH3-1** — PROVE-1 `run_tests(scope)` + PROVE-3 `assert_state()` + PROVE-4 health-check
+- [x] **PH3-1** — PROVE-1 `run_tests(scope)` + PROVE-3 `assert_state()` + PROVE-4 health-check
       wiring. Ship as **Goethe v0.3.2**.
-- [ ] **PH3-2** — Retrieval decision (carried from 1.7.0-c, the only piece not yet shipped):
+      **✅ SHIPPED (2026-07-03, as Goethe v0.3.6):** both tools live on both gateways
+      (45 tools), 105/105 contract tests. Deviations from spec: `rules` scope is an LLM
+      eval (GPU-minutes) → explicit-only, excluded from `all`; PROVE-4 wiring deferred to
+      PH3-3 (installed health-check skill is Cowork-side read-only). System prompt should
+      gain "prove it" → run_tests/assert_state mapping (fold into P0-5).
+- [x] **PH3-2** — Retrieval decision (carried from 1.7.0-c, the only piece not yet shipped):
       run `rag/eval_retrieval.py --compare` on live ES; adopt linear vs RRF on recall@3/MRR
       numbers; settle the 0.72 threshold with `--threshold-report`. Update `search_kb` if RRF wins.
+      **✅ DECIDED (2026-07-04, Goethe v0.3.8):** linear wins (recall@3 0.84 / MRR 0.800 vs
+      RRF 0.84 / 0.735) — ranking unchanged, RRF rejected on data. BONUS FINDING: the 0.72
+      threshold was a cosine-scale no-op against hybrid scores (~3.5–16); recalibrated to 4.2
+      via sweep (38/38 correct kept, 3/11 wrong dropped, 0 correct lost). KB doc + re-sweep
+      maintenance rule recorded. See CHANGELOG 2026-07-04.
 - [ ] **PH3-3** — Rewrite `skills/lse-eval-runner` for the llama-ui + goethe_mcp stack (pre-run
       checklist becomes `run_tests`-backed; drop OWUI Admin steps; version checks read goethe.py
       frontmatter via MCP). Then **full eval re-run** — Run 7's 63/63 was scored on
@@ -181,30 +218,30 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 
 ### Workstream A — KB-DECAY: trust lifecycle for lse-kb (demotion + regression)
 
-- [ ] **KB-DECAY-1** — Port the skill_outcome demotion math to `record_outcome`:
+- [x] **KB-DECAY-1** ✅ v0.3.0 — Port the skill_outcome demotion math to `record_outcome`:
       `success=False` + evidence (≥20 chars, same evidence gate as skill_outcome) →
       `quality_score = max(0.2, q − 0.15)`; add `consecutive_failures`; floor 0.2 →
       set `stale: true` (quarantine, NEVER silent-delete — keep for forensics).
       Success on a previously-failing doc resets `consecutive_failures` but regains
       quality only via the existing tier-gated paths (no free re-elevation).
-- [ ] **KB-DECAY-2** — `search_kb` must surface the trust state: show
+- [x] **KB-DECAY-2** ✅ v0.3.0 — `search_kb` must surface the trust state: show
       `runs/success/failure` counts per hit; prepend `[STALE — quarantined, verify
       live before use]` banner on floored docs; penalize ranking by failure ratio
       (client-side rerank multiplier is enough — don't over-engineer ES function_score
       on day one; measure with the gold set first).
-- [ ] **KB-DECAY-3** — Make `verified_against` (stored since v1.7.11, consumed by
+- [x] **KB-DECAY-3** ✅ v0.3.0 (two-phase: model supplies the probe output) — Make `verified_against` (stored since v1.7.11, consumed by
       NOTHING) actually work: new `kb_verify(doc_id)` tool — re-probes the recorded
       version/config snapshot against the live system (`get_github_release`, os
       probe, `read_file`); mismatch → auto `record_outcome(success=False,
       evidence=<probe output>)` with note "verified_against regression: fw X → Y".
       This is the "application updated → KB no longer relevant" detector.
-- [ ] **KB-DECAY-4** — Human demotion path: `mentor_correct` keeps its raise-only
+- [x] **KB-DECAY-4** ✅ v0.3.0 — Human demotion path: `mentor_correct` keeps its raise-only
       rule (good — protects against model self-sabotage), but add explicit
       `mentor_demote(doc_id, new_quality, reason)` documented as human-authorized
       only, mirrored in system prompt. Today the ONLY way to say "this entry is
       wrong" is a competing entry — that leaves the poisoned high-quality doc
       outranking its correction.
-- [ ] **KB-DECAY-5** — Migration: add `stale`, `consecutive_failures`,
+- [x] **KB-DECAY-5** ✅ v0.3.0 (run on live lse-kb 2026-07-02) — Migration: add `stale`, `consecutive_failures`,
       `volatility` (see CHRONOS-3) fields to the lse-kb mapping via a
       `rag/08-kb-trust-migration.py` (idempotent, same pattern as 02-es-setup.py).
 
@@ -214,7 +251,7 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 > model pretraining cutoff → web-verify degradable datapoints. Enforcement must be
 > server-side (injected into tool returns), not docstring pleading.
 
-- [ ] **CHRONOS-1** — New tool `time_check()`: query ≥2 NTP servers (`pool.ntp.org`,
+- [x] **CHRONOS-1** ✅ v0.3.1 (stdlib SNTP, no ntplib dep) — New tool `time_check()`: query ≥2 NTP servers (`pool.ntp.org`,
       `time.cloudflare.com`; ntplib, 2s timeout, graceful degrade to system clock
       with a WARN), report offset vs system clock in ms; offset >2s → surface
       discrepancy + suggested fix (`chronyc`/`timedatectl`), and log to lse-errors.
@@ -222,21 +259,22 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       agree within bounds AND sanity-check against system clock + TLS date header
       from a known HTTPS endpoint before "adjust" is ever suggested. Never
       auto-adjust the clock; report and ask.*
-- [ ] **CHRONOS-2** — Pretraining anchor: `MODEL_PRETRAIN_CUTOFF` valve (per-model,
+- [x] **CHRONOS-2** ✅ v0.3.1 — Pretraining anchor: `MODEL_PRETRAIN_CUTOFF` valve (per-model,
       e.g. Qwen3.6 = its published cutoff). `time_check()` returns a banner:
       `[TIME] verified now=<date> | model cutoff=<date> | gap=<N months> — any
       version/price/CVE/firmware claim from model memory is presumed stale;
       web-verify before asserting.` Wire the same banner **server-side** into the
       first `search_kb`/`search_web` return of each session (cheap: cache a
       session flag) so compliance does not depend on the model reading docstrings.
-- [ ] **CHRONOS-3** — Volatility classes on KB docs: `volatility: static|slow|fast`
+- [x] **CHRONOS-3** ✅ v0.3.1 — Volatility classes on KB docs: `volatility: static|slow|fast`
       (default slow) with TTLs — static=∞ (topology facts change rarely), slow=90d
       (procedures), fast=7d (versions, CVEs, firmware, prices). `search_kb` computes
       age vs TTL and tags `[EXPIRED — pointer only, re-verify live]`, demoting the
       hit below fresh ones. This moves the existing docstring staleness table
       (30d/7d rules in search_web) into enforced metadata. Expired+re-verified →
       bump `updated_at` via `record_outcome(success=True)`.
-- [ ] **CHRONOS-4** — Retire YEAR-INJECTION/date rules from docstrings once
+- [x] **CHRONOS-4** ✅ v0.3.1 (went further: years stripped in code via `_strip_years`) —
+      Retire YEAR-INJECTION/date rules from docstrings once
       CHRONOS-2/3 land (single source of truth — Pragmatic Programmer DRY: the
       rule lives in code OR prose, not both drifting apart).
 
@@ -250,7 +288,7 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       gates). *Threat note: exec surface — hardcode the allowlisted commands per
       scope; NO arbitrary path/args from the model. Same pattern as the sudo
       allowlist (v1.7.17).*
-- [ ] **PROVE-2** — Contract tests for every KB-mutating tool function
+- [x] **PROVE-2** ✅ SHIPPED 2026-07-02 (see PH1-1) — Contract tests for every KB-mutating tool function
       (`tests/test_kb_contracts.py`): tier ceilings hold, evidence gates reject
       thin evidence, demotion floors at 0.2, mentor_correct rejects lowering,
       dedup updates instead of duplicating. These are Fowler's safety net —
@@ -315,10 +353,15 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       in `stats`) appended to the debrief; the skill that writes learnings should
       report whether learnings are being retrieved (RFC-KB lesson: 0 calls in
       44,637 commands — build the usage counter in from day one).
-- [ ] **SCRIBE-5** — Run `lse-docstring-optimizer` on every new tool docstring
+- [~] **SCRIBE-5** — Run `lse-docstring-optimizer` on every new tool docstring
       added by A–D (kb_verify, time_check, run_tests, assert_state, mentor_demote)
       before deploy — eval regressions traced to docstring ambiguity are a known
       failure class.
+      **PARTIAL ✅ (2026-07-03, pulled forward):** kb_verify, time_check,
+      mentor_demote, plan_step_done audited + fixed (Goethe v0.3.5). Remaining:
+      run_tests/assert_state when they land (PH3-1), and opportunistic passes on
+      older docstrings. The v0.3.4 planner-gate conflict is a live example of why
+      this audit must run BEFORE deploy, not after a field failure.
 
 ### Workstream F — REFACTOR: pay down before the next 1000 lines (Fowler/Ousterhout)
 

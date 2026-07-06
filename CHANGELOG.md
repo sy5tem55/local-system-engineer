@@ -3,6 +3,300 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-07-04 (Cowork): P0-5 done — canonical system prompt `prompts/node4090-v0.6.0.md`
+
+Lineage reconciled: v0.5.21 (prompts/) confirmed as the newer line (v0.5.19 in tools/ is a
+strict subset); canonical dir = `prompts/`. **v0.6.0** built for Goethe v0.3.8 / 45 tools:
+
+- **NEW REQUEST-SHAPE MAPPINGS section** — "get a plan"→planner, "prove it"→run_tests/
+  assert_state, "resume"→task_resume, human-says-wrong→mentor_demote vs evidence-says-wrong
+  →record_outcome. Prose answers to these shapes are named protocol violations.
+- **ROOT CAUSE RETIRED**: the old MULTI-BLOCK TASK RULE *mandated* hand-writing
+  /opt/local-se/active-task.md — the LSE's DNS-audit ledger bypass was rule-following, not
+  improvisation. Replaced by the PLANNED-TASK LOOP (planner → plan_step_done → task_resume)
+  with the ledger as the only sanctioned task state; NO AUTONOMOUS NOTE-WRITING updated to
+  match. HANDOVER PROTOCOL rewritten ledger-first with the ≥70% context handoff.
+- Tool entries added/updated: planner v2 (+reads-don't-close-the-window gate),
+  plan_step_done, kb_verify, mentor_demote, time_check, run_tests, assert_state,
+  record_outcome evidence demotion, search_kb trust surface + hybrid threshold note,
+  ssh_run v0.3.7 guards (mux auto-recovery, PKILL rule), ssh_script bracketed-pkill example,
+  TIME DISCIPLINE (server-injected banner), search_web year-strip note.
+- OPERATOR ACTION: paste v0.6.0 into llama-ui's system prompt field on node4090 and start
+  fresh threads. node3090's system prompt (v0.1.0) still needs its own smaller update.
+
+---
+## 2026-07-04 (Cowork): Goethe v0.3.8 — PH3-2 retrieval decision: linear beats RRF; threshold no-op found and recalibrated 0.72 → 4.2
+
+Gold-set eval on live ES (n=50, ~200 docs): **linear** (production 0.7·knn + 0.3·BM25)
+recall@1 0.76 / recall@3 0.84 / MRR 0.800 vs **rrf** 0.64 / 0.84 / 0.735 — RRF rejected on
+data, ranking unchanged (null result recorded). **Bonus finding:** the search_kb
+min_score=0.72 default was calibrated for cosine [0,1] but hybrid scores run ~3.5–16 — the
+filter was a NO-OP. Recalibrated to **4.2** per --threshold-report (38/38 correct top-1
+kept, 3/11 wrong dropped, 0 correct lost). Maintenance rule: re-sweep after major KB growth
+(BM25 stats drift). KB doc 2253baf1e9df847d (ground_truth). 110/110 tests; both gateways
+on v0.3.8. Live smoke: natural query → 1 precise hit with [TIME] banner + trust surface
+all composing.
+
+---
+## 2026-07-04 (Cowork): Goethe v0.3.7 — SSH post-mortem hardening (mux auto-recovery + pkill self-match guard)
+
+LSE-authored post-mortem on the node3090 exit-255 storm (11 failed attempts) → both root
+causes moved from prose into code:
+
+- **ssh_run MUX AUTO-RECOVERY**: exit 255 with a ControlMaster socket present → `ssh -O
+  exit` the dead master, unlink the socket, retry ONCE, annotate. Stale-socket storms are
+  now self-healing; the failure message gives the diagnostic order (ping → sshd → self-match).
+- **ssh_run PKILL SELF-MATCH GUARD**: unbracketed `pkill -f <pattern>` BLOCKED — the remote
+  shell's cmdline contains the pattern, so pkill kills the SSH session (exit 255, target
+  possibly dead but unconfirmed — the post-mortem's "irony" case). Hint shows the bracketed
+  form and the ssh_script alternative. Third occurrence of this failure class this week
+  (v0.3.0 deploy script, v0.3.1 agent-shell probe, now the LSE at runtime) — now impossible
+  via ssh_run.
+- **ssh_script docstring**: script files never self-match (correct home for kill-by-pattern);
+  `|| true` rule for pkill exit-1 (already-dead target reads as false failure).
+- KB: ground-truth post-mortem doc indexed (diagnostic order for exit 255); LSE's own
+  record_error entry complements it for check_error_kb hits.
+- Tests 105 → **110/110 green** (guard + failure-message contracts). Both gateways on v0.3.7.
+
+---
+## 2026-07-03 (Cowork): Goethe v0.3.6 — PROVE-IT surface shipped (PH3-1: PROVE-1 + PROVE-3, PROVE-4 partial)
+
+The user can now say "prove it" and get test output instead of prose.
+
+- **PROVE-1 `run_tests(scope)`** — scopes: `kb` (ES index/count probes), `retrieval`
+  (rag/eval_retrieval.py --self-test), `rules` (eval_goethe_rules.py — discovered to be an
+  LLM-BEHAVIOR eval driving 9 scenarios through the live llama-server: minutes of GPU time,
+  therefore EXPLICIT-only, excluded from `all`, 300s budget), `harness` (pytest tests/ +
+  legacy scripts/ — hermes-era failures there are findings, reported verbatim), `all` (kb +
+  retrieval + tests/). Exec-surface discipline: commands/paths/args HARDCODED per scope —
+  the model supplies only the scope name (sudo-allowlist pattern). Verbatim output IS the
+  evidence; missing assets → SKIP (node3090 has no rag/ or tests/). New valve REPO_DIR.
+- **PROVE-3 `assert_state(check_command, expected_regex)`** — read-only argv allowlist
+  (df, ss, sha256sum, dig, pgrep, stat, ls, wc, free, uptime, ip-reads, nvidia-smi,
+  curl GET-only, systemctl read-verbs, ping count-capped), shlex + shell=False,
+  metacharacter/pipe rejection, 20s timeout → `ASSERT PASS/FAIL` + verbatim output.
+  Docstring bans assertion-loosening ("weakening a regex to green is a protocol violation").
+- Both docstrings written to the 8-dimension audit standard BEFORE deploy (SCRIBE-5
+  discipline honored this time). Live-verified: run_tests(kb) PASS on 5 indices;
+  assert_state systemctl probe PASS.
+- **PROVE-4 partial**: run_tests exists for the health-check/eval-runner wiring, but the
+  installed lse-stack-health-check skill is Cowork-side read-only — wiring lands with the
+  PH3-3 eval-runner rewrite.
+- Tests 91 → **105/105 green** (new tests/test_prove_it.py). Both gateways on v0.3.6
+  (45 tools). Observed: LUCIFER lse-kb at 200 docs, lse-skills 8 — the KB is compounding.
+
+---
+## 2026-07-03 (Cowork): Goethe v0.3.5 — SCRIBE-5 pulled forward: docstring-optimizer audit of the four v0.3.x tools + node3090 lse-skills index created
+
+**SCRIBE-5 (partial, pulled forward from Phase 4):** 8-dimension lse-docstring-optimizer
+audit on kb_verify / time_check / mentor_demote / plan_step_done. Findings → fixes
+(docstring-only, shipped as v0.3.5):
+- kb_verify [FAIL dim3]: GOOD/BAD pair for `observed=` (verbatim probe output vs
+  paraphrased claim) + probe-must-run-THIS-session rule.
+- time_check [FAIL dim5]: FIX EXECUTION PROHIBITION — never execute or auto-delegate
+  the suggested clock fix unasked; human decides. (P2/P3 failure class.)
+- mentor_demote [FAIL dim3]: GOOD/BAD pair pinning human-words-authorize vs
+  evidence-demotes (P26 class); trust-the-return rule added (dim8 WARN).
+- plan_step_done [FAIL dim8]: GOOD/BAD evidence pair; no mid-loop task_resume;
+  NEW CONTEXT HANDOFF rule — past 70% context, hand the next step to a fresh session
+  (encodes the DNS Phase-2 77%-context lesson as a named protocol violation).
+91/91 tests; both gateways redeployed. Remaining SCRIBE-5 scope: audit older tool
+docstrings opportunistically at next touch.
+
+**node3090 lse-skills index created** (was NotFoundError since the node got its own ES
+2026-06-28 — 06-skills-index-setup.py had only ever run on LUCIFER). Created empty via
+curl PUT with the canonical mapping; skill_search now returns clean misses and
+skill_record can write. NOTE: node3090's skill memory is independent of LUCIFER's
+(5 skills) — copy/reindex is a follow-up decision. node3090 local lse-kb observed at
+9 docs (was 7) — its LSE is indexing independently.
+
+---
+## 2026-07-03 (Cowork): Goethe v0.3.4 — planner GATE conflict fix (docstring-only) + ledger reconciliation of the DNS audit run
+
+**Field report 1 (stale tool surface):** the DNS Phase-2 LSE thread predated the v0.3.3
+gateway restart → no plan_step_done in its tool list → ledger block 2ae2f45e sat untouched
+while 5 steps completed. Reconciled from Cowork: steps 1–5 struck with the run's evidence;
+`planner(mode="revise")` (first live **Gemma-31B**-served plan, node3090:8080) appended
+steps 6–13 correctly folding all findings incl. human-gated WRITE ACCESS PROTOCOL steps.
+Lesson: llama-ui snapshots the tool schema per thread — after a gateway deploy, START A
+FRESH THREAD.
+
+**Field report 2 (gate conflict → v0.3.4):** told "get a plan to audit DNS infra", the LSE
+never called planner(): the old GATE ("must be your first or second tool call") conflicted
+with KB-FIRST/SKILLS-FIRST — after 2× search_kb the model treated planning as forbidden,
+hand-wrote a prose plan + ad-hoc /opt/local-se/active-task.md, bypassing the ledger.
+Fix (docstring-only): information gathering (KB, read-only probes) does NOT close the
+planning window — findings go into `context=`; window closes at first STATE CHANGE. New
+MANDATORY TRIGGER: a user request for "a plan" REQUIRES planner(); hand-written plan files
+are a named protocol violation. GOOD/BAD examples updated (reads→planner(context=…)).
+
+**Also fixed en route (v0.3.3 hotfix, same session):** `task_resume` broken for ALL blocks
+since the steps_json migration (`SELECT *` + 11-value unpack vs 12 columns) — pinned
+explicit column list + regression test. Tests **91/91 green**. Both gateways redeployed.
+
+**Follow-up for P0-5 (canonical system prompt):** add the request-shape mappings
+("get a plan" → planner; "prove it" → run_tests/assert_state; mentor_demote = human-only)
+so tool routing does not depend on docstrings alone.
+
+---
+## 2026-07-03 (Cowork): Goethe v0.3.3 — "PLANNER UNAVAILABLE" root-cause fix (LSE-debugged, Cowork-confirmed)
+
+Three compounding causes, all in `_call_node_planner`/`planner()`:
+
+1. **max_tokens=2048 truncated v2 envelopes** — per-step packaged prompts need far more
+   than the v1 allowance → raised to 8192.
+2. **Qwen3.6 thinking ate the completion budget** — node3090 runs 35B-A3B with
+   `--reasoning-budget 16000 --reasoning-preserve`; `/no_think` is prose and does not hold.
+   Fix: per-request `"thinking_budget_tokens": 0` — the server-enforced reasoning-budget
+   kill-switch (request value 0 OVERRIDES any CLI budget; the -1 sentinel collision from
+   KB doc 29c77cd7 does not apply to 0). Ignored harmlessly by think-tag-less models (Gemma).
+3. **No resilience** — new two-attempt envelope loop: a parse failure feeds a corrective
+   "PREVIOUS REPLY REJECTED: <reason>" note back to the planner and retries once before
+   surfacing PLANNER UNAVAILABLE.
+
+**Bonus fix from the live smoke**: the model copies the schema-example task_id
+("a1b2c3d4") verbatim → every plan would collide onto one ledger row. task_id removed
+from the contract schema; the server now ALWAYS generates the ledger id (task+time hash).
+
+Live verification: real planner call against node3090 (35B-A3B, reasoning budget active)
+returned a clean 5-step atomized envelope, each step 1 tool call with a concrete verify.
+Tests 88 → **90/90 green** (retry loop, payload contract: max_tokens/thinking_budget_tokens).
+
+---
+## 2026-07-03 (Cowork): Goethe v0.3.2 — PLANNER v2: atomized plans + living tasks.db ledger + cross-family (Gemma) planner path
+
+Built for the DNS-migration workload class: Qwen3.6 performs best tightly scoped, and 131k
+context must be managed across long multi-session work.
+
+- **Contract v2** (`_PLANNER_CONTRACT`): every step is ONE atomized unit — ≤5 tool calls,
+  one verifiable outcome, mandatory concrete `verify`, explicit `depends_on`/`inputs`/`output`
+  edges, topological order, and its OWN self-contained `packaged_prompt` (executable by a
+  fresh agent with zero memory + a compact ledger summary). BACKUP RULE retained.
+- **Living ledger**: `steps_json` column on task_blocks (idempotent PRAGMA migration in
+  `_tasks_db`); `planner()` writes the atomized plan there. NEW **`plan_step_done(task_id,
+  step_n, evidence, failed=False)`** strikes a step (evidence gate ≥20 chars, stored for
+  forensics), returns the NEXT step's fresh-context prompt (ledger header: last 8 strikes +
+  remaining), closes the block on the last strike; `failed=True` routes to revise.
+- **`planner(mode="revise", task_id=…)`**: feeds completed/failed steps (with evidence)
+  back as LEDGER context; planner re-plans ONLY the remainder; done history preserved in
+  the merged plan.
+- **Decision — no websocket**: the SQLite ledger IS the planner↔agent channel (durable
+  across context resets/crashes; goethe has no event loop). Real-time multi-agent planning
+  remains Faust's job when its state machine lands.
+- **Cross-family planner**: NEW valves `PLANNER_FORCE_URL`/`PLANNER_FORCE_MODEL` — Step-0
+  health-probed endpoint override (used when up, silent cascade when down, so it can stay
+  set permanently). NEW `tools/planner-gemma-swap-node3090.sh` + `…restore…sh`:
+  swap-on-demand **Gemma-4-31B planner on node3090:8085** (GGUF verified present, 17.4GB);
+  captures the pre-swap llama-server cmdline to /tmp for exact restore; Gemma sampling
+  (temp 1.0, top-k 64); bracketed `llama[-]server` pkill patterns per the self-kill lesson.
+- **Bug found by tests**: task_checkpoint's `INSERT OR REPLACE VALUES(11)` broke against the
+  12-column table AND would have silently wiped steps_json on every checkpoint — fixed with
+  explicit column list + steps_json carry-through.
+- **Tests**: NEW `tests/test_planner_ledger.py` (13 tests, canned envelopes, no ES/LLM
+  needed) — full suite now **88/88 green**.
+
+---
+## 2026-07-02 (Cowork, same session): PH2 shipped — Goethe v0.3.1 CHRONOS: enforced sense of time (CHRONOS-1..4)
+
+**Goethe v0.3.1** (`tools/goethe.py`, 6387 lines). Time discipline moved from docstring
+pleading to server-side enforcement (Ousterhout: define the failure mode out of existence):
+
+- **CHRONOS-1** — NEW `time_check()`: stdlib SNTP (no ntplib dep) against pool.ntp.org +
+  time.cloudflare.com (2s timeout each, graceful degrade to system clock + WARN), offsets
+  in ms. Threat-modeled per Shostack: NTP is unauthenticated, so a clock-fix command
+  (timedatectl/chronyc, HUMAN-run, never automatic) is only suggested when BOTH NTP
+  sources agree (≤1s) AND the TLS Date header of a known HTTPS endpoint corroborates
+  (≤5s; two-endpoint fallback cloudflare→google). Offset >2s → discrepancy report +
+  lse-errors record. Live smoke: consensus verified at +175/+326 ms, TLS −0.4s.
+- **CHRONOS-2** — NEW valve `MODEL_PRETRAIN_CUTOFF` (YYYY-MM, per-model; set via
+  `GOETHE_MODEL_PRETRAIN_CUTOFF` in ~/.lse/secrets — goethe_mcp maps GOETHE_<FIELD> envs).
+  `[TIME] now=… | model cutoff=… | gap≈N months` banner returned by time_check AND
+  server-injected into the FIRST search_kb/search_web return of each session
+  (`_consume_time_banner` session flag). Unset valve → banner nags UNSET.
+- **CHRONOS-3** — Volatility TTLs enforced: `index_to_kb(volatility=static|slow|fast)`
+  (default slow; invalid → slow). TTLs: static=∞, slow=90d, fast=7d. `search_kb` tags
+  `[EXPIRED — <class> TTL exceeded; pointer only, re-verify live]` and demotes expired
+  hits ×0.5 in the trust rerank (same as stale). `record_outcome(success=True)` now bumps
+  `updated_at` — re-verification resets the TTL clock. NOTE: pre-existing docs default to
+  slow — anything >90d old now surfaces as EXPIRED until re-verified (intended).
+- **CHRONOS-4** — YEAR-INJECTION + 30d/7d staleness rules RETIRED from the search_web
+  docstring (single source of truth). Years now stripped server-side (`_strip_years`:
+  standalone 19xx/20xx tokens; CVE-2025-1234 / ubuntu-24.04 / b2025 compounds survive).
+
+**Contract tests**: 53 → **75, all green** (44s) — banner once-per-session, gap math,
+year-strip table, volatility store/validate/expire/static/reset, and all four time_check
+trust paths (consensus / discrepancy+TLS→fix / discrepancy−TLS→no-fix / NTP-disagree /
+no-NTP degrade) with monkeypatched sources.
+
+---
+## 2026-07-02 (Cowork, same session as PH1-1): PH1-2 shipped — Goethe v0.3.0 KB trust lifecycle (KB-DECAY-1..5)
+
+**Goethe v0.3.0** (`tools/goethe.py`, 6128 lines): lse-kb quality is **no longer monotonic
+upward** — verified failure evidence now demotes, closing the "app updated → KB ground truth
+silently wrong forever" regression gap.
+
+- **KB-DECAY-1** — `record_outcome` gains `evidence=`: success=False + evidence (≥20 chars)
+  → `quality = max(0.2, q − 0.15)` + `consecutive_failures` streak; at the 0.2 floor →
+  `stale: true` QUARANTINE (never deleted — forensics). Failure without evidence counts but
+  never demotes (same gate as skill_outcome). success=True resets the streak only — no free
+  re-elevation. Recovery is tier-gated: index_to_kb dedup or mentor_correct raising quality
+  above 0.2 clears stale + streak.
+- **KB-DECAY-2** — `search_kb` surfaces trust: `runs=N (ok/fail)` or `untested` per hit,
+  `[STALE — quarantined, verify live before use]` banner, client-side trust rerank
+  (score × (1 − 0.3·fail/runs), stale ×0.5 → quarantined docs always rank below fresh).
+  Deliberately not ES function_score yet — measure with the gold set first (PH3-2).
+- **KB-DECAY-3** — NEW `kb_verify(doc_id[, observed])`: two-phase verified_against
+  regression probe. Phase 1 returns the stored snapshot + probe instructions; phase 2
+  compares live probe output (token containment, ≥20-char gate) — MATCH → auto
+  record_outcome(success=True); MISMATCH → auto record_outcome(success=False,
+  evidence="verified_against regression: …") which fires the KB-DECAY-1 demotion.
+- **KB-DECAY-4** — NEW `mentor_demote(doc_id, new_quality, reason)`: human-authorized-only
+  kill-switch for wrong high-quality docs (reason ≥10 chars stored as `demote_reason`;
+  ≤0.2 → stale). `mentor_correct` stays raise-only.
+- **KB-DECAY-5** — `rag/08-kb-trust-migration.py` (idempotent): added `stale`,
+  `consecutive_failures`, `volatility` (CHRONOS-3-ready) to the live lse-kb mapping. ✅ RUN.
+- **skill_outcome floor reconciled** — demotion now `max(0.2, q − 0.15)` matching its
+  docstring (was 0.0; PROVE-2 finding); archive fires only on failure at the floor.
+
+**Contract tests extended**: `tests/test_kb_contracts.py` 34 → **53 tests, all green**
+(29.5s, owui-venv python vs live ES; anchor-blended fake embeddings added so rerank tests
+get controllable mid-range cosine similarity). Production verified untouched post-run.
+
+---
+## 2026-07-02 (Cowork): PH1-1 shipped — PROVE-2 contract tests (`tests/test_kb_contracts.py`)
+
+**34 contract tests, all green** (19.5s, run with the production interpreter
+`/home/sy5/owui/bin/python3` — pytest 9.1.1, elasticsearch-py 8.19.3 — against live ES 8.13.0).
+Pins the current Goethe v0.2.9 KB-mutation contracts as the Fowler safety net required before
+KB-DECAY (PH1-2) and the Phase-5 refactors (TrustPolicy extraction, goethe_kb.py split):
+
+- **index_to_kb**: tier ceilings (inferred 0.4 / secondary 0.6 / primary 0.8 / ground_truth 1.0;
+  unknown tier → inferred), ground_truth evidence gate (<40 chars → 0.7 downgrade), waterfall
+  provenance cap (version claim w/o provenance → ≤0.3 + [UNVERIFIED] prefix + tier=inferred),
+  dedup at cosine ≥0.92 (updates, never duplicates; quality = max(existing, new); refinement/version bump).
+- **record_outcome**: counts increment; **quality_score never touched — even on failure**
+  (the monotonic-upward behavior KB-DECAY-1 will change; test carries an update note);
+  id/title resolution; graceful unknown-ref handling.
+- **mentor_correct**: REJECTS lowering (doc fully untouched on rejection); raise path replaces
+  content, re-embeds, bumps refinement_count, stamps mentor_corrected_at.
+- **skill_record**: quality clamp min(q, 0.7, tier ceiling) with floor 0.2; <2-step procedure
+  rejected as fact; empty verification rejected; dedup updates; missing provenance → FLAGGED/UNATTRIBUTED.
+- **skill_outcome**: evidence gates (≥20 chars, ≥50 for ground_truth); +0.10 capped at tier
+  ceiling; −0.15 demotion; auto-archive below 0.2; pinned skills never archived.
+  **Discrepancy documented:** code floors demotion at 0.0 (`max(0.0, q−0.15)`) while the
+  docstring says "floor 0.2" — the test pins the CODE (0.25 → 0.10 + ARCHIVED).
+
+**Safety design**: every ES call from code under test passes through an index-rewrite proxy
+(`lse-kb`→`lse-kb-test`, `lse-skills`→`lse-skills-test`; any other index → RuntimeError), so
+production indices are physically unreachable. Embeddings are deterministic fakes (no Ollama
+dependency; identical text → cosine 1.0, distinct → ~0.0) so the 0.92 dedup threshold is exact.
+Throwaway indices created/deleted per test; post-run verified: no `-test` indices remain,
+lse-kb=187 / lse-skills=5 docs intact.
+
+Run: `cd <repo> && /home/sy5/owui/bin/python3 -m pytest tests/test_kb_contracts.py -q`
+(pytest installed into the owui venv this session; system python3 lacks pydantic/elasticsearch.)
+
+---
 ## 2026-06-30 (Cowork): Capital-case file sync — README, CURRENT-STATE, VERSION, CHANGELOG, VALVES updated to Goethe v0.2.5 / llama-ui / goethe_mcp v1.9.3
 
 All top-level documentation files cross-referenced against on-disk tool versions and updated to reflect post-P31 sessions (Jun 21–29). Key changes recorded:
