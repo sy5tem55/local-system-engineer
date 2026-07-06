@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.3.8
+title: LSE Goethe v0.3.9
 author: local-system-engineer
-version: 0.3.8
+version: 0.3.9
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -15,6 +15,23 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
+    Goethe v0.3.9: pfSense hardening (2026-07-06 confirmed incident: an
+              unbounded queryDiagnosticsTables/bogons response reached
+              2,966,261 tokens against a 131,072 context window, and a
+              separate unconfirmed pfsense_query write broke Unbound DNS
+              forwarding). NEW _pfsense_cap_response(): every pfsense_graphql,
+              pfsense_query, and pfsense_log_summary response is capped at
+              32000 bytes with a truncation warning, applied uniformly since
+              no content-based query check can enumerate every large
+              built-in collection type in advance. NEW confirmed=False
+              parameter on pfsense_query: real writes are blocked at the
+              code level until confirmed=True is passed explicitly; exempt
+              when the endpoint contains dry_run=true (validates without
+              persisting, per Common Control Parameters). Reads
+              (pfsense_graphql, pfsense_log_summary) are unaffected --
+              no confirmed parameter added to either. See
+              lse/skills/pfsense/DESIGN.md and the 2026-07-06 entry in
+              kb/session-learnings.md for the full incident writeup.
     Goethe v0.3.8: PH3-2 retrieval decision (data-driven, gold set n=50).
               --compare verdict: LINEAR wins (recall@3 0.84, MRR 0.800) over
               RRF (0.84, 0.735; recall@1 −0.12) — search_kb ranking unchanged,
@@ -3202,10 +3219,27 @@ tail -5 /tmp/goethe-node3090.log
         method: str = "POST",
         payload: dict = None,
         api_key: str = "",
+        confirmed: bool = False,
     ) -> str:
         """
         Write to the pfSense REST API v2 (POST, PATCH, PUT, DELETE only).
         Base URL: https://pfsense.home.arpa
+
+        CONFIRMATION GATE — mandatory, code-enforced, applies to writes only:
+          This function refuses to execute unless confirmed=True is passed
+          explicitly. Reads (pfsense_graphql, pfsense_log_summary) are NOT
+          affected by this gate -- only this function, and only real writes.
+          Before calling with confirmed=True: show the user the exact
+          endpoint, method, and payload you are about to send, and wait for
+          an explicit yes. Confirmed 2026-07-06 incident: a write was executed
+          during a read-only investigatory task with no explicit instruction
+          to write and no confirmation -- this parameter exists so that gap
+          cannot happen silently again.
+          EXEMPT from this gate: any endpoint containing dry_run=true. A
+          dry_run call validates the payload against pfSense without
+          persisting anything (see Common Control Parameters below) -- it is
+          not a write, so it does not require confirmation. Use it freely to
+          preview a change before asking the user to confirm the real write.
 
         ── TOOL ROUTING — READ THIS FIRST ────────────────────────────────────────
         Three tools, three responsibilities. Use exactly the right one:
@@ -3293,11 +3327,16 @@ tail -5 /tmp/goethe-node3090.log
         SSL: Uses /opt/local-se/cert/pfsense-webgui-ca.crt (falls back to verify=False).
 
         Args:
-            endpoint: API path, e.g. "/api/v2/firewall/rule"
-            method:   POST | PATCH | PUT | DELETE (no GET — use pfsense_graphql instead)
-            payload:  Dict for request body.
-            api_key:  pfSense API key from Vaultwarden.
+            endpoint:  API path, e.g. "/api/v2/firewall/rule"
+            method:    POST | PATCH | PUT | DELETE (no GET — use pfsense_graphql instead)
+            payload:   Dict for request body.
+            api_key:   pfSense API key from Vaultwarden.
+            confirmed: Must be True for any real (non-dry_run) write. Defaults to
+                       False so an omitted/forgotten argument fails safe. Show the
+                       user the exact call first, get an explicit yes, then retry
+                       with confirmed=True.
         """
+        import re as _re  # noqa: PLC0415
         import requests  # noqa: PLC0415
         import json as _json  # noqa: PLC0415
 
@@ -3315,8 +3354,24 @@ tail -5 /tmp/goethe-node3090.log
                 "ERROR: pfsense_query is for writes only. "
                 "Use pfsense_graphql() for all read operations."
             )
+
+        is_dry_run = bool(_re.search(r"dry_run=true", endpoint, _re.IGNORECASE))
+        if not confirmed and not is_dry_run:
+            self._log(
+                f"PFSENSE-WRITE-BLOCKED: unconfirmed {method} {endpoint} "
+                f"(confirmed=False, dry_run={is_dry_run})"
+            )
+            return (
+                "ERROR: This write requires explicit user confirmation first. "
+                f"Proposed call: {method} {endpoint} payload={payload}. "
+                "Show the user this exact endpoint, method, and payload, wait for "
+                "an explicit yes, then call pfsense_query again with confirmed=True. "
+                "To validate the payload without writing anything, add dry_run=true "
+                "to the endpoint instead -- that does not require confirmation."
+            )
+
         url = self.valves.PFSENSE_URL.rstrip("/") + "/" + endpoint.lstrip("/")
-        self._log(f"PFSENSE-WRITE: {method} {url}")
+        self._log(f"PFSENSE-WRITE: {method} {url} confirmed={confirmed} dry_run={is_dry_run}")
 
         try:
             resp = requests.request(
