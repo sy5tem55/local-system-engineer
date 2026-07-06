@@ -34,6 +34,7 @@ BW_PASSWORD="${BW_PASSWORD:-}" \
   /home/sy5/owui/bin/python3 "$LSE_DIR/goethe_mcp.py" \
   --goethe "$LSE_DIR/goethe.py" \
   --also  "$LSE_DIR/vaultwarden_tools_v1.3.0.py" \
+  --also  "$LSE_DIR/pfsense_tools_v1.0.0.py" \
   --transport http \
   --port 9700 \
   --host 127.0.0.1 \
