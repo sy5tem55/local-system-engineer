@@ -22,3 +22,8 @@ __pycache__/
 *.bak
 .backups/
 nohup.out
+
+# LSE product monorepo (docs/LSE-PRODUCT-ROADMAP.md) — its own repo with its own
+# remote once Phase 5 lands. Not tracked here; avoid it becoming an embedded/nested
+# repo blob in this one.
+lse/
