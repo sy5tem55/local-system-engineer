@@ -33,6 +33,7 @@ ExecStart=/home/sy5/owui/bin/python3 \
     /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/tools/goethe_mcp.py \
     --goethe /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/tools/goethe.py \
     --also  /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/tools/vaultwarden_tools_v1.3.0.py \
+    --also  /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/tools/pfsense_tools_v1.0.0.py \
     --transport http --host 127.0.0.1 --port 9700
 
 Restart=on-failure
