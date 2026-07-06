@@ -705,3 +705,59 @@ Cumulative KB entries from post-session debriefs.
 - Never bare `pkill -f goethe_mcp.py` — kills the Claude bridge; use 'goethe_mcp.py.*--transport http'
 - Cowork sandbox's mounted repo view can lag the real filesystem — verify git state via WSL
   (goethe execute_command), not the sandbox mount
+
+## Session 2026-07-02 — PROVE-2 contract tests: venv + demotion-floor findings
+
+### What worked
+- Contract-testing goethe.py KB tools against live ES without touching production:
+  monkeypatch `Tools._es` with an index-rewrite proxy (lse-kb -> lse-kb-test,
+  lse-skills -> lse-skills-test, any other index -> RuntimeError) + auto-refresh after writes
+- Monkeypatch `Tools._embed` with deterministic hash-seeded 768-dim unit vectors —
+  no Ollama dependency; identical text -> cosine 1.0 (dedup fires), distinct -> ~0.0
+- Run: `cd <repo> && /home/sy5/owui/bin/python3 -m pytest tests/test_kb_contracts.py -q`
+  (34/34 green, 19.5s)
+
+### What failed and why
+- **Attempted:** `python3 -m pytest tests/test_kb_contracts.py` with system python3
+  **Failed because:** system python3 on LUCIFER has NO pydantic/elasticsearch — those live
+  only in the owui venv (/home/sy5/owui/bin/python3), which is the goethe_mcp runtime
+  **Fix:** /home/sy5/owui/bin/pip install pytest (done this session) and always run
+  goethe-importing tests with the owui-venv interpreter
+
+### Key facts
+- skill_outcome demotion floor DISCREPANCY: code is max(0.0, q - 0.15) (floor 0.0),
+  docstring claims "floor 0.2". Archive triggers at new_q < 0.2 (unless pinned).
+  Test pins the CODE (0.25 -> 0.10 + ARCHIVED); reconcile in KB-DECAY-1.
+- record_outcome(success=False) never touches quality_score (v0.2.9) — pinned in-test,
+  marked as the KB-DECAY-1 flip point
+- Repo copies identical: /home/sy5/projects/local-system-engineer/tools/goethe.py ==
+  /mnt/c/Users/SY5/Claude/Projects/local-system-engineer/tools/goethe.py (diff -q verified)
+- ES top-level knn score = (1+cosine)/2 — dedup threshold 0.92 => cosine >= 0.84
+- pytest 9.1.1 + elasticsearch-py 8.19.3 now in owui venv; ES server 8.13.0
+
+## Session 2026-07-04 — PH3-3 Run 8: sandbox git/write blocks on /mnt/, base64 paste fix
+
+### What worked
+- `run_tests(scope="rules")` as the automated Run 8 path — 9 scenarios, no manual suite-version judgment call needed
+- Checking `curl :8080/slots` for `is_processing:false` before a GPU-bound eval run, instead of guessing whether the user is mid-conversation
+- Delegating git/file writes to a real terminal via `sudo_delegation_block` with a base64-encoded one-liner (`echo '<b64>' | base64 -d > file`) instead of a multi-line heredoc — avoids paste truncation on content with em-dashes/checkmarks
+- Repo at `/mnt/c/Users/SY5/Claude/Projects/local-system-engineer` is also mounted directly as the Cowork workspace folder — plain file edits (non-git) can go through Claude's own Read/Edit tools instead of goethe execute_command, with no privileged-path block
+
+### What failed and why
+- **Attempted:** `git commit` via goethe `execute_command`, path `/mnt/c/Users/SY5/Claude/Projects/local-system-engineer` (also tried the Windows-style `C:\Users\...` form)
+  **Failed because:** `/mnt/` is a privileged write path in goethe's execute_command guard — blocked regardless of path spelling, even for a plain `git commit` with no sudo involved
+  **Fix:** `sudo_delegation_block` → user runs it in a real WSL terminal
+- **Attempted:** first delegated git commit attempt, run in Joe's terminal
+  **Failed because:** a stale `.git/index.lock` was left behind from the blocked in-sandbox attempt
+  **Fix:** `rm -f .git/index.lock` before retrying add+commit
+- **Attempted:** multi-line `cat > file << 'EOF' ... EOF` heredoc pasted into the terminal for a ~5KB report with unicode chars
+  **Failed because:** paste truncated mid-block; bash sat at the `>` PS2 prompt waiting for the never-arrived `EOF`
+  **Fix:** base64-encode the whole file content, single-line `echo '<b64>' | base64 -d > path`, verify with `wc -l` + `head`
+- **Attempted (avoided, not actually run):** treating the gateway token-guard assert failure as a stack-health blocker
+  **Failed because:** skill's `assert_state` regex expects literal `401`, but `curl 127.0.0.1:9700/` returns `{"error":"unauthorized"}` (JSON body, not a bare status line) — doc is stale, not a real problem
+
+### Key facts
+- goethe execute_command / write_file privileged-path block covers `/mnt/` regardless of whether the path is written as `/mnt/c/...` or `C:\Users\...` — always delegate git and repo-root writes under this path to a real terminal
+- `~/projects/local-system-engineer` is a symlink to `/mnt/c/Users/SY5/Claude/Projects/local-system-engineer` — same privileged-path block applies through the symlink for goethe's write_file, but Claude's own mounted-folder file tools (Read/Write/Edit) can write there directly since it's the Cowork workspace folder
+- Three different version strings currently coexist for "Goethe": `tools/goethe.py` title/version = v0.3.8 (live, matches CURRENT-STATE.md changelog line), `goethe_mcp` startup banner = v1.9.3, and the `eval_goethe_rules.py` harness banner prints "Goethe v0.2.2" — none of these were reconciled this session, flagged in eval-report-v7.md instead
+- Run 8 baseline (7/9, rules scope only) recorded in CURRENT-STATE.md and eval/eval-report-v7.md — commit e84eeb1
