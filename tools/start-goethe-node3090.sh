@@ -48,7 +48,11 @@ rsync -az --info=name \
   "${USER}@${NODE}:${REMOTE_DIR}/"
 
 echo "[start-goethe-node3090] killing any existing goethe_mcp.py on node3090..."
-ssh "${USER}@${NODE}" 'pkill -9 -f goethe_mcp.py 2>/dev/null && sleep 0.5 || true'
+# NOTE (2026-07-02): pattern uses [.] so the ssh wrapper's own command line does
+# NOT match the regex — a plain 'goethe_mcp.py' pattern made pkill SIGKILL its own
+# parent shell (remote 'bash -c' cmdline contains the pattern), the ssh exited
+# nonzero, and set -e aborted this script mid-deploy (v0.3.0 rollout incident).
+ssh "${USER}@${NODE}" "pkill -9 -f 'goethe_mcp[.]py' 2>/dev/null && sleep 0.5 || true"
 
 echo "[start-goethe-node3090] writing remote start script..."
 # Write a self-contained launcher to a temp file and rsync it — avoids
@@ -56,12 +60,13 @@ echo "[start-goethe-node3090] writing remote start script..."
 LAUNCHER="$(mktemp /tmp/goethe-node3090-launcher.XXXXXX.sh)"
 cat > "${LAUNCHER}" <<EOF
 #!/usr/bin/env bash
-pkill -9 -f goethe_mcp.py 2>/dev/null || true
+pkill -9 -f 'goethe_mcp[.]py' 2>/dev/null || true
 sleep 0.3
 mkdir -p /home/lse-admin/lse /home/lse-admin/lse/bkp
 GOETHE_MCP_TOKEN=${NODE3090_TOKEN} \\
 GOETHE_ES_URL=${NODE3090_ES} \\
 GOETHE_OLLAMA_URL=${NODE3090_OLLAMA} \\
+GOETHE_MODEL_PRETRAIN_CUTOFF=2026-01 \\
 GOETHE_TASKS_DB=/home/lse-admin/lse/tasks.db \\
 GOETHE_PLANNER_MODEL_DIR=${NODE3090_PLANNER_MODEL_DIR} \\
 GOETHE_PLANNER_LLAMA_BIN=${NODE3090_PLANNER_LLAMA_BIN} \\
