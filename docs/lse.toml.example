@@ -1,0 +1,138 @@
+# lse.toml — the single source of truth for ONE LSE install.
+# Lives at:  $XDG_CONFIG_HOME/lse/lse.toml   (rootless: ~/.config/lse/lse.toml ; system: /etc/lse/lse.toml)
+#
+# RULE: nothing in the code hardcodes a path, IP, port, or URL. It ALL resolves from here.
+# Secrets are NEVER stored in this file — they live in secrets.env (chmod 600) and are
+# referenced here by their env-var NAME (the *_env keys). This file is safe to commit.
+#
+# ${var} references below are expanded by the LSE config loader (not native TOML) so you
+# can derive paths from the prefixes without repeating yourself.
+
+schema = 1
+
+# ── This box's identity + what it runs ───────────────────────────────────────────────
+[lse]
+node         = "lucifer"                    # short name; MUST match a [[nodes]] entry below
+roles        = ["control", "inference"]     # control | inference | lse  (drives what `lse up` starts)
+skills       = ["vault", "pfsense"]         # deployable skill packages on THIS box (skills/<name>/).
+                                            #   gateway loads each skill's tools.py via --also.
+                                            #   a topology box would add "net-discovery".
+home         = "/opt/lse"                   # $LSE_HOME = code root      (rootless: ~/.local/share/lse)
+state_dir    = "/var/lib/lse"               # data + logs + cache        (rootless: ~/.local/state/lse)
+models_dir   = "/opt/models"                # large GGUFs (one canonical location, per node5090 doc)
+secrets_file = "/etc/lse/secrets.env"       # chmod 600                  (rootless: ~/.config/lse/secrets.env)
+
+# NOTE: [vault] / [pfsense] below are CONTRIBUTED by their skill packages (skills/<name>/config.schema),
+# present only when that skill is in `skills` above. Core config is the sections without a skill.
+
+# ── Filesystem (mostly derived from state_dir; override only when you must) ───────────
+[paths]
+work_dir    = "/home/sy5"                   # execute_command default cwd
+log_file    = "${state_dir}/logs/agent_commands.log"
+tasks_db    = "${state_dir}/data/tasks.db"
+cache_dir   = "${state_dir}/cache"          # fetch / device-fingerprint / search-budget
+extra_write = []                            # extra allowed write prefixes (was EXTRA_WRITE_PATHS)
+
+[command]
+timeout_s   = 200                           # execute_command COMMAND_TIMEOUT (raised for the monitor sleeps)
+max_output  = 4000
+
+# ── Local inference + retrieval endpoints this box's LSE talks to ─────────────────────
+[model]
+llama_url   = "http://localhost:8080"       # llama-server (this box's serving endpoint)
+embed_model = "nomic-embed-text"
+ollama_url  = "http://127.0.0.1:11434"
+
+[search]
+budget      = 8
+window_min  = 2
+searxng_url = "http://localhost:8088/search"
+
+[kb]
+es_url      = "http://127.0.0.1:9200"
+
+[owui]                                       # control role only
+db_path     = "/home/sy5/owui/lib/python3.12/site-packages/open_webui/data/webui.db"
+
+# ── The Goethe MCP gateway (what llama-ui / Claude / OWUI connect to) ─────────────────
+[mcp]
+host        = "127.0.0.1"                    # NEVER 0.0.0.0 — it exposes a shell executor
+port        = 9700                           # avoid 9100 (node-exporter) / 98xx (your exporters)
+transport   = "http"                         # http | stdio
+cors_origin = "http://127.0.0.1:8080"        # llama-ui origin (enables direct-CORS, skip the buggy proxy)
+token_env   = "GOETHE_MCP_TOKEN"             # bearer token NAME (value in secrets.env)
+modules     = [                              # OWUI Tools files to expose, relative to home
+  "goethe/goethe.py",
+  "goethe/vaultwarden_tools_v1.3.0.py",
+]
+
+# ── Vaultwarden (vault_unlock / get_vault_secret) ────────────────────────────────────
+[vault]
+bw_host     = "https://localhost:3003"
+bw_clientid = "user.7dc216f7-dc47-4b60-9ef6-4d4aca446bd0"
+# bw_clientsecret + bw_password are in secrets.env (BW_CLIENTSECRET, BW_PASSWORD)
+
+# ── pfSense ──────────────────────────────────────────────────────────────────────────
+[pfsense]
+url         = "https://pfsense.home.arpa"
+ca_cert     = "/etc/lse/pfsense-webgui-ca.crt"
+api_key_env = "PFSENSE_API_KEY"
+
+# ── Hermes gateway (node3090) ────────────────────────────────────────────────────────
+[hermes]
+api_url     = "http://192.168.5.41:8642"
+api_key_env = "HERMES_API_KEY"
+
+# ── Faust group-server + agent sidecars ──────────────────────────────────────────────
+[faust]
+base_url      = "http://localhost:8787"
+http_port     = 8787
+tls_port      = 8443
+http_bind     = "127.0.0.1"                  # agents are local; wss://:8443 is the LAN/iPad surface
+tls_cert      = "/home/sy5/certs/node4090.home.arpa+2.pem"
+tls_key       = "/home/sy5/certs/node4090.home.arpa+2-key.pem"
+room          = "SY5L4N"
+agent_handles = ["hermes", "lse"]            # planning roster
+sidecars      = ["lse"]                      # which to supervise on THIS box (AGENT_SIDECARS)
+# per-agent FAUST_KEY names resolved from secrets.env: LSE_FAUST_KEY, HERMES_FAUST_KEY
+
+# ── Cluster registry: every node, one entry. Replaces goethe's hardcoded _NODE_REGISTRY ─
+[[nodes]]
+name       = "lucifer"
+hostname   = "node4090.home.arpa"
+ip         = "192.168.1.57"
+mac        = "a8:a1:59:xx:xx:xx"             # fill in
+gpu        = "RTX 4090"
+roles      = ["control", "inference"]
+ssh_user   = "sy5"
+os         = "wsl"                            # wsl | linux | windows
+model      = "Qwen3.6-27B"
+agent_port = 8080
+
+[[nodes]]
+name       = "node3090"
+hostname   = "node3090.home.arpa"
+ip         = "192.168.5.41"
+mac        = "0c:9d:92:84:6e:6a"
+gpu        = "RTX 3090 24GB"
+roles      = ["inference", "hermes"]
+ssh_user   = "lse-admin"
+os         = "linux"
+model      = "Qwen3.6-27B-Q4_K_M"
+agent_port = 8080
+ctx_size   = 96000
+gpu_layers = 129
+
+[[nodes]]
+name        = "node5090"
+hostname    = "node5090.home.arpa"
+ip          = "192.168.1.55"
+mac         = "a0:ad:9f:84:d5:bf"
+gpu         = "RTX 5090 32GB"
+roles       = ["inference", "lse"]           # full LSE replica + serves the 35B-A3B coding delegate
+ssh_user    = "sy5"
+os          = "wsl"
+model       = "Qwen3.6-35B-A3B"
+agent_port  = 8080
+ctx_size    = 96000
+extra_flags = ["--no-mtp"]                   # 35B-A3B MoE requires it (lse-profiles.xml)

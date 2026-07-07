@@ -226,3 +226,18 @@ GET GOETHE TOKEN
 
 (base) sy5@LUCIFER:~$ grep GOETHE_MCP_TOKEN ~/.lse/secrets
 export GOETHE_MCP_TOKEN=5fa5643ec02d0d62f1e0609dcc780a12
+
+
+PowerShell 7.6.3
+PS C:\Windows\System32> # 4. Relaunch Claude, then verify exactly one stdio instance:
+PS C:\Windows\System32> wsl -d Ubuntu-24.04 -- bash -c "pgrep -af goethe_mcp.py | grep -vc 'transport http'"   # expect 1
+0
+PS C:\Windows\System32>
+
+
+LSE: Done. Vault item confirmed:
+
+GOETHE_MCP_TOKEN — present in vault, updated with new token. Notes set with rotation date and provenance.
+
+
+Phase 1: PROVE-2 contract tests" — the ROADMAP and debrief will brief a fresh me, and we start by pinning the KB's current behavior in tests/test_kb_contracts.py before giving Goethe v0.3.0 its demotion mechanics. Good session — exciting times indeed.

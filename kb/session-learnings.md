@@ -761,3 +761,100 @@ Cumulative KB entries from post-session debriefs.
 - `~/projects/local-system-engineer` is a symlink to `/mnt/c/Users/SY5/Claude/Projects/local-system-engineer` — same privileged-path block applies through the symlink for goethe's write_file, but Claude's own mounted-folder file tools (Read/Write/Edit) can write there directly since it's the Cowork workspace folder
 - Three different version strings currently coexist for "Goethe": `tools/goethe.py` title/version = v0.3.8 (live, matches CURRENT-STATE.md changelog line), `goethe_mcp` startup banner = v1.9.3, and the `eval_goethe_rules.py` harness banner prints "Goethe v0.2.2" — none of these were reconciled this session, flagged in eval-report-v7.md instead
 - Run 8 baseline (7/9, rules scope only) recorded in CURRENT-STATE.md and eval/eval-report-v7.md — commit e84eeb1
+
+## Session 2026-07-06 — pfSense context-blowup: wrong hypothesis, real mechanism, and an unconfirmed write
+
+### What worked
+- Intercept-only MCP harness test: send a natural-language prompt straight to llama-server's
+  OpenAI-compatible chat API with the real tool schema, capture the model's proposed tool_call,
+  and never actually execute it. Safe way to test a wrong-tool-selection hypothesis against a
+  live production model without touching the real backend — 9/9 probes came back clean, which
+  in hindsight correctly indicated the log-routing hypothesis was wrong, not that the system was safe.
+
+### What failed and why
+- **Attempted:** hypothesized (from Joe's partial recollection) that the context-blowup incident
+  was `pfsense_graphql` called with a logs-shaped query, and designed a fix around that.
+  **Failed because:** the actual, confirmed vector was `queryDiagnosticsTables` — a GraphQL type
+  that returns every built-in pfSense alias table inline, including `bogons` (a several-thousand-
+  entry CIDR blocklist), with no pagination or size cap. Nothing logs-related about it at all.
+  goethe.py's LOG ENDPOINT PROHIBITION guidance only names firewall logs — diagnostics tables
+  aren't mentioned anywhere, so neither the model nor the docstrings had any reason to expect this.
+  **Fix:** a content-based regex guard targeting known-bad query shapes can never cover this class
+  of bug (there's no way to enumerate every huge built-in table in advance) — the only fix that
+  generalizes is a response-size cap on every `pfsense_graphql` call, applied uniformly regardless
+  of which field/table produced the size.
+- **Attempted:** local agent tasked with "find these two IPs in the pfSense config" (read-only intent).
+  **Failed because:** it executed a real `pfsense_query` write deleting both IPs from System DNS
+  Server Settings, with no explicit removal instruction and no confirmation — a direct miss of
+  `pfsense_query`'s own docstring "CONFIRMATION PROTOCOL — mandatory for ALL writes." This broke
+  Unbound's DNS forwarding (pfSense's own resolver stopped answering queries) until manually fixed.
+  **Fix:** the confirmation rule needs to be a code-level gate (e.g. a `confirmed: bool = False`
+  parameter the model must explicitly flip), not prose alone — prose was already there and didn't hold.
+
+### Key facts
+- `queryDiagnosticsTables` (GraphQL) returns ALL built-in pfSense alias/table contents inline,
+  unbounded — `bogons` alone is several thousand CIDR entries. Treat it as equally dangerous as
+  raw firewall logs for context size, despite not being logs-related.
+- pfSense's Config History (`Diagnostics → Backup & Restore → Config History`) logs the source of
+  API-driven changes, e.g. `admin@192.168.1.57: Modified System DNS via API` — useful forensic
+  check for confirming whether an agent (vs. a human) made a given change.
+- pfSense's Unbound resolver in "forwarding" mode uses System DNS Server Settings
+  (`readSystemDns` / `/api/v2/system/dns`) as its upstream targets — wiping all external entries
+  there breaks Unbound resolution entirely, confirmable with `dig @<pfsense-lan-ip> <domain>`.
+- pfSense REST API read-only mode is a one-way lock via API: can be re-enabled programmatically
+  (`PATCH /api/v2/system/restapi/settings` → `{"read_only": true}`) but can only be *disabled*
+  through the web UI — explains why a manual UI toggle was needed mid-session here.
+
+## Session 2026-07-06 — pfSense Phase 2 extraction: docstring drift and a same-day regression
+
+### What worked
+- Grep `self\.<method_name>` across the *entire* file before extracting any method out of a
+  monolithic Tools class — `pfsense_query` looked self-contained (three call sites, all inside
+  its own definition) until a repo-wide grep turned up a fourth: `wake_node()` calling
+  `self.pfsense_query(...)` internally, ~3500 lines away from the pfsense_* block.
+- Standalone-loading the extracted module with the real venv python
+  (`/home/sy5/owui/bin/python3`, not system `/usr/bin/python3` — the latter has no `pydantic`)
+  to unit-test the new guards before wiring `--also`, including one live call that reached the
+  real pfSense and got a real auth error back (proof the network path still works post-move).
+- `goethe_mcp.py --list --also <file>` as a zero-risk dry run for `--also` wiring changes —
+  loads and registers tools from all modules, prints the full exposed-tool list and any name
+  collisions, without binding a port or touching the live running server.
+
+### What failed and why
+- **Attempted (found, not caused this session):** `pfsense_query`'s inline docstring example
+  used `src`/`dst`/`dstport` and a lowercase bare `interface` string.
+  **Failed because:** this skill's own KB doc (`pfsense-firewall-rules-api.md`) had documented a
+  v2.8.0+ breaking schema change since 2026-06-27 — `source`/`destination`/`destination_port`,
+  `interface` as an uppercase array — but the docstring the model actually reads was never
+  updated to match. The KB being correct doesn't mean the thing the model copies from is.
+  **Fix:** corrected the inline example to the current schema; added a `FIELD NAMES` callout in
+  the docstring itself so the correction can't silently drift again unnoticed.
+- **Attempted (found, not caused this session):** extracting `pfsense_query` into a separate
+  module/instance without checking internal callers first.
+  **Failed because:** `wake_node()` called `self.pfsense_query(...)` with no `confirmed=True` —
+  meaning the confirmed-gate commit from *earlier the same day* (64a3376) had already silently
+  broken WoL node-wake before this extraction even started (every call returned an unconfirmed-
+  write error). Extraction would have turned that into an unhandled `AttributeError` instead,
+  since `--also` modules are separate `Tools()` instances — one instance cannot call a method
+  living on another.
+  **Fix:** decoupled `wake_node` entirely — it now makes its own minimal direct pfSense POST
+  instead of calling into the pfsense skill's `pfsense_query`. `goethe.py` keeps its own
+  `PFSENSE_URL`/`PFSENSE_API_KEY`/`PFSENSE_CA_CERT` valves for this one purpose (vault's
+  extraction removed `BW_*` entirely because nothing internal depended on it — pfsense couldn't
+  do the same).
+
+### Key facts
+- Real venv for goethe/MCP work: `/home/sy5/owui/bin/python3` (has pydantic, requests, etc).
+  System `/usr/bin/python3` does not — a "ModuleNotFoundError: pydantic" from a quick script
+  doesn't mean the code is wrong, it means the wrong interpreter was used.
+- `--also` modules registered by `goethe_mcp.py` are separate `Tools()` instances from
+  `goethe.py`'s own instance and from each other — no method on one is callable via `self.` from
+  another. Any pre-extraction internal cross-call must be rewritten to not depend on the
+  extracted instance, not just left as `self.<method>` and hoped to work.
+- The entire `lse/` directory is gitignored (`.gitignore:29: lse/`) — `lse/skills/vault/tools.py`
+  and now `lse/skills/pfsense/tools.py`/`kb/`/`skill.toml` exist on disk but are NOT tracked by
+  git. The runtime-loaded copy that actually matters for `--also` wiring lives in `tools/` (e.g.
+  `tools/pfsense_tools_v1.0.0.py`, `tools/vaultwarden_tools_v1.3.0.py`) and IS tracked; the `lse/`
+  copy is a manually-kept-identical mirror for the future `bin/lse` monorepo loader (Phase 3, not
+  started). Don't assume a `git commit` captured an `lse/skills/*` change — check `git status`
+  against the actual path, it will show nothing even when files changed on disk.
