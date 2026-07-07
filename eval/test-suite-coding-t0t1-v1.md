@@ -651,5 +651,20 @@ the tier a second node (independent reviewer) is actually supposed to help with.
       the fed-back failure text actually reaching the next `propose_fn` call (history
       length 1 -> 3), T0's single-shot/no-retry behavior, and the K=0 edge case.
       Full `tests/` suite still green after adding these (118 passed).
-      **Still open, deferred:** wiring `propose_fn` to a real MCP client + live model
-      -- that's the actual harness-reconstruction work, out of scope for this pass.
+      **Update 2026-07-08:** the deferred piece above is now also done. Built
+      `eval/t1_mcp_harness.py` (real MCP client against goethe_mcp + real
+      OpenAI-compatible chat-completions loop against llama-server) and verified
+      it live end-to-end against node3090: real tool schema (52 tools) pulled
+      live via MCP, a real `execute_command` round-trip, and one full C1a-shaped
+      task (`is_palindrome`) run through `run_t1_task` against the actual
+      `Qwen3.6-35B-A3B` model -- passed on the first attempt (iterations_used=0),
+      using the real `write_file` tool (confirmed by its `.lse-backups/` side
+      effect appearing in the task dir, not just a plausible-looking result).
+      Each `propose_fn` call is deliberately self-contained (doesn't replay the
+      cross-round `history` as a full transcript -- see the module's docstring
+      for why) to avoid a contract mismatch with `run_t1_task`'s existing,
+      already-tested history bookkeeping. Also found and fixed a real
+      operational gap along the way: Vaultwarden's `GOETHE_MCP_TOKEN` item does
+      NOT match node3090's actual running token (confirmed by testing both) --
+      worth fixing in the vault separately, not done here. The corpus is now
+      genuinely runnable end-to-end, not just fully specified.
