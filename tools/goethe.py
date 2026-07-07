@@ -32,7 +32,7 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
               no confirmed parameter added to either. See
               lse/skills/pfsense/DESIGN.md and the 2026-07-06 entry in
               kb/session-learnings.md for the full incident writeup.
-    Goethe v0.3.8: PH3-2 retrieval decision (data-driven, gold set n=50).
+    Goethe v0.4.0: Episteme MCP integration (9 tools via REST API :58302) (data-driven, gold set n=50).
               --compare verdict: LINEAR wins (recall@3 0.84, MRR 0.800) over
               RRF (0.84, 0.735; recall@1 −0.12) — search_kb ranking unchanged,
               null result recorded. Threshold finding: the 0.72 default was
