@@ -1057,6 +1057,14 @@ class Tools:
             "verify_source_claims (v1.7.10). Re-fetches after expiry. "
             "Set to 0 to always re-fetch.",
         )
+        EPISTEME_API_URL: str = Field(
+            default="http://localhost:58302",
+            description="Episteme REST API base URL (for episteme_* tools).",
+        )
+        EPISTEME_API_TOKEN: str = Field(
+            default="",
+            description="Bearer token for Episteme API auth. Auto-loaded from Vaultwarden if empty.",
+        )
 
     # ── Hard-coded permission lists ───────────────────────────────────────────
 
@@ -6867,3 +6875,163 @@ tail -5 /tmp/goethe-node3090.log
             "---\n"
         )
         return header + step["packaged_prompt"]
+    # ── Episteme MCP Tools ────────────────────────────────────────────────────
+    # Proxies to the Episteme REST API (localhost:58302).
+    # 9 tools: search_knowledge, get_entity, get_neighbors, find_path,
+    # analyze_code, suggest_refactorings, add_insight, search_insights, confirm_links
+
+    def _episteme_get(self, path: str, params: dict = None) -> dict:
+        """Internal: GET request to Episteme API."""
+        import urllib.request, urllib.error, json
+        base = getattr(self.valves, "EPISTEME_API_URL", "http://localhost:58302")
+        url = f"{base}{path}"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url)
+        token = getattr(self.valves, "EPISTEME_API_TOKEN", "")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read())
+        except urllib.error.URLError as e:
+            return {"error": f"Episteme API error: {e}"}
+
+    def _episteme_post(self, path: str, payload: dict) -> dict:
+        """Internal: POST request to Episteme API."""
+        import urllib.request, urllib.error, json
+        base = getattr(self.valves, "EPISTEME_API_URL", "http://localhost:58302")
+        url = f"{base}{path}"
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Content-Type", "application/json")
+        token = getattr(self.valves, "EPISTEME_API_TOKEN", "")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read())
+        except urllib.error.URLError as e:
+            return {"error": f"Episteme API error: {e}"}
+
+    def episteme_search_knowledge(self, query: str) -> str:
+        """Semantic search across all Episteme entities (patterns, laws, smells, refactorings).
+        Use this to find relevant engineering knowledge before making architectural decisions."""
+        res = self._episteme_get("/search", {"q": query})
+        if "error" in res:
+            return res["error"]
+        # Format results
+        results = res.get("results", [])
+        if not results:
+            return f"No results for '{query}'"
+        lines = [f"Episteme search for '{query}':"]
+        for r in results[:8]:  # cap at 8
+            lines.append(f"  • {r.get('id', '?')} ({r.get('type', '?')}): {r.get('title', r.get('summary', ''))[:120]}")
+        return "\n".join(lines)
+
+    def episteme_get_entity(self, entity_id: str) -> str:
+        """Get details for a specific Episteme entity by ID (e.g., DP-005, RF-018, LAW-001).
+        Use this to get full context on a pattern, law, or refactoring."""
+        res = self._episteme_get(f"/graph/{entity_id}")
+        if "error" in res:
+            return res["error"]
+        return json.dumps(res, indent=2)
+
+    def episteme_get_neighbors(self, entity_id: str) -> str:
+        """Get related entities for a given Episteme entity ID.
+        Use this to explore connections (e.g., 'what refactorings solve this smell?')."""
+        res = self._episteme_get(f"/graph/{entity_id}/neighbors")
+        if "error" in res:
+            return res["error"]
+        neighbors = res.get("neighbors", [])
+        if not neighbors:
+            return f"No neighbors for {entity_id}"
+        lines = [f"Neighbors of {entity_id}:"]
+        for n in neighbors:
+            lines.append(f"  • {n.get('id', '?')} ({n.get('type', '?')}): {n.get('relation', '?')} → {n.get('title', '')[:80]}")
+        return "\n".join(lines)
+
+    def episteme_find_path(self, from_id: str, to_id: str) -> str:
+        """Find the reasoning path between two Episteme entities.
+        Use this to trace connections (e.g., 'how does SRP relate to Extract Class?')."""
+        res = self._episteme_post("/graph/path", {"from": from_id, "to": to_id})
+        if "error" in res:
+            return res["error"]
+        path = res.get("path", [])
+        if not path:
+            return f"No path found between {from_id} and {to_id}"
+        lines = [f"Path from {from_id} to {to_id}:"]
+        for step in path:
+            lines.append(f"  → {step.get('id', '?')} ({step.get('type', '?')}) [{step.get('relation', '?')}]")
+        return "\n".join(lines)
+
+    def episteme_analyze_code(self, file_path: str) -> str:
+        """Analyze a source file for code smells using Episteme.
+        Returns detected smells with ranked refactoring suggestions."""
+        import os
+        if not os.path.isfile(file_path):
+            return f"File not found: {file_path}"
+        try:
+            with open(file_path, "r", errors="ignore") as f:
+                code = f.read()
+        except Exception as e:
+            return f"Cannot read file: {e}"
+        res = self._episteme_post("/analyze", {"code": code, "file": os.path.basename(file_path)})
+        if "error" in res:
+            return res["error"]
+        smells = res.get("smells", [])
+        if not smells:
+            return f"No smells detected in {file_path}"
+        lines = [f"Code smells in {file_path}:"]
+        for s in smells:
+            lines.append(f"  • {s.get('id', '?')} ({s.get('name', '?')}): {s.get('description', '')[:80]}")
+            for fix in s.get("refactorings", [])[:3]:
+                lines.append(f"    → {fix.get('id', '?')} {fix.get('name', '?')} (priority {fix.get('priority', '?')})")
+        return "\n".join(lines)
+
+    def episteme_suggest_refactorings(self, code_snippet: str) -> str:
+        """Suggest ranked refactorings for a code snippet.
+        Returns prioritized list of refactorings with effort estimates."""
+        res = self._episteme_post("/refactor", {"code": code_snippet})
+        if "error" in res:
+            return res["error"]
+        refactors = res.get("refactorings", [])
+        if not refactors:
+            return "No refactoring suggestions."
+        lines = ["Refactoring suggestions:"]
+        for r in refactors[:5]:
+            lines.append(f"  • {r.get('id', '?')} {r.get('name', '?')} (priority {r.get('priority', '?')}, effort: {r.get('effort', '?')})")
+            lines.append(f"    {r.get('description', '')[:100]}")
+        return "\n".join(lines)
+
+    def episteme_add_insight(self, insight: str, tags: str = "") -> str:
+        """Record a team insight or lesson learned into Episteme's tacit knowledge layer.
+        Auto-links to relevant canonical entities (patterns, laws, smells)."""
+        res = self._episteme_post("/insights", {"insight": insight, "tags": tags.split(",") if tags else []})
+        if "error" in res:
+            return res["error"]
+        return f"Insight recorded: {res.get('id', '?')}"
+
+    def episteme_search_insights(self, query: str) -> str:
+        """Search past team insights and tacit knowledge.
+        Use this to find 'what did we decide about X?' or 'have we solved this before?'."""
+        res = self._episteme_get("/insights", {"q": query})
+        if "error" in res:
+            return res["error"]
+        insights = res.get("insights", [])
+        if not insights:
+            return f"No insights found for '{query}'"
+        lines = [f"Team insights for '{query}':"]
+        for i in insights[:5]:
+            lines.append(f"  • {i.get('id', '?')}: {i.get('text', '')[:100]}")
+            if i.get("links"):
+                lines.append(f"    Linked to: {', '.join(i['links'][:3])}")
+        return "\n".join(lines)
+
+    def episteme_confirm_links(self, insight_id: str, links: str) -> str:
+        """Validate or confirm auto-detected links between an insight and canonical entities.
+        Use this to verify that an insight is correctly connected to the knowledge graph."""
+        res = self._episteme_post("/insights/confirm", {"id": insight_id, "links": links.split(",")})
+        if "error" in res:
+            return res["error"]
+        return f"Links confirmed for {insight_id}"
