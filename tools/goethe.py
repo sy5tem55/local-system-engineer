@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.3.9
+title: LSE Goethe v0.4.0
 author: local-system-engineer
-version: 0.3.9
+version: 0.4.0
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
