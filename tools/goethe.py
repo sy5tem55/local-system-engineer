@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.4.0
+title: LSE Goethe v0.4.1
 author: local-system-engineer
-version: 0.4.0
+version: 0.4.1
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -2691,7 +2691,7 @@ tail -5 /tmp/goethe-node3090.log
                     f"  )"
                 )
 
-        # ── Background / daemon mode (v0.3.0) ─────────────────────────────────
+        # ── Background / daemon mode (v0.4.1) ─────────────────────────────────
         # Long-running servers (e.g. 'epis api start', uvicorn, npm run dev,
         # anything that serves and never exits) must NOT run in the foreground:
         # subprocess would block until COMMAND_TIMEOUT and, because the server
