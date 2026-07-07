@@ -2314,7 +2314,7 @@ tail -5 /tmp/goethe-node3090.log
                     capture_output=True, timeout=10,
                 )
 
-    def execute_command(self, command: str, working_dir: str = "") -> str:
+    def execute_command(self, command: str, working_dir: str = "", background: bool = False) -> str:
         """
         Execute a read-only or write-safe shell command in the WSL Ubuntu environment.
         Use for: ls, cat, grep, find, ps, df, uname, systemctl status, apt list,
@@ -2339,6 +2339,17 @@ tail -5 /tmp/goethe-node3090.log
           is code-enforced: execute_command REFUSES a download-initiating command
           while a downloader process is already running (see _active_download_guard).
           Start a new download only after the current one finishes or is killed.
+
+        SERVER / DAEMON RULE — mandatory for long-running processes:
+          A command that starts a server and never returns on its own
+          (e.g. 'epis api start', 'uvicorn ...', 'npm run dev', anything that
+          serves or listens) MUST be called with background=True. Run in the
+          foreground it blocks until COMMAND_TIMEOUT and can hang the call
+          because the server keeps its output pipe open. background=True
+          detaches it into its own session, redirects output to a
+          /tmp/goethe-bg/*.log file, and returns the PID immediately. Then
+          verify readiness by polling the service or reading the log — never
+          treat the start command as "completed".
 
         CONFIG GROUND-TRUTH RULE — mandatory:
           Tokens, passwords, paths, ports, and config values you state or use
@@ -2680,19 +2691,88 @@ tail -5 /tmp/goethe-node3090.log
                     f"  )"
                 )
 
-        # ── Execute ───────────────────────────────────────────────────────────
+        # ── Background / daemon mode (v0.3.0) ─────────────────────────────────
+        # Long-running servers (e.g. 'epis api start', uvicorn, npm run dev,
+        # anything that serves and never exits) must NOT run in the foreground:
+        # subprocess would block until COMMAND_TIMEOUT and, because the server
+        # keeps the stdout pipe open, the read can hang well past the timeout.
+        # background=True detaches the command into its own session, redirects
+        # output to a log file, and returns immediately with the PID.
+        if background:
+            import time as _time_bg, shlex as _shlex_bg
+            _log_dir = "/tmp/goethe-bg"
+            try:
+                os.makedirs(_log_dir, exist_ok=True)
+                _logfile = (
+                    f"{_log_dir}/{_time_bg.strftime('%Y%m%d-%H%M%S')}"
+                    f"-{os.getpid()}.log"
+                )
+                _wrapped = (
+                    f"setsid bash -c {_shlex_bg.quote(command)} "
+                    f"</dev/null >{_shlex_bg.quote(_logfile)} 2>&1 & echo $!"
+                )
+                self._log(f"BG-CMD: {command}  (cwd={cwd}, log={_logfile})")
+                _bg = subprocess.run(
+                    _wrapped,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    cwd=cwd,
+                )
+                _pid = (_bg.stdout or "").strip() or "?"
+                self._log(f"BG-STARTED pid={_pid} log={_logfile}")
+                return (
+                    f"[BACKGROUND] started pid {_pid}\n"
+                    f"log: {_logfile}\n"
+                    "Detached in its own session — it keeps running after this "
+                    "call returns.\n"
+                    "Verify readiness by polling the service (e.g. curl -sf its "
+                    f"health endpoint) or: tail -n 40 {_logfile}\n"
+                    f"Stop it with: kill {_pid}   "
+                    f"(or kill -TERM -{_pid} to kill the whole group)"
+                ) + _fp_note
+            except Exception as _e_bg:
+                self._log(f"BG-ERROR: {_e_bg}")
+                return f"ERROR: failed to start background command: {_e_bg}"
+
+        # ── Execute (foreground) ──────────────────────────────────────────────
+        # Runs in a new session (start_new_session=True) so that on timeout the
+        # ENTIRE process group can be killed. Otherwise a child that inherits and
+        # holds the stdout pipe open keeps the read blocking long past
+        # COMMAND_TIMEOUT — the classic "tool call hangs forever" symptom.
         self._log(f"CMD: {command}  (cwd={cwd})")
+        import signal as _signal_fg
+        proc = None
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 command,
                 shell=True,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=self.valves.COMMAND_TIMEOUT,
                 cwd=cwd,
+                start_new_session=True,
             )
-            output = result.stdout or result.stderr or "(no output)"
-            rc = result.returncode
+            try:
+                output, _ = proc.communicate(timeout=self.valves.COMMAND_TIMEOUT)
+                rc = proc.returncode
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), _signal_fg.SIGKILL)
+                except Exception:
+                    proc.kill()
+                try:
+                    proc.communicate(timeout=5)
+                except Exception:
+                    pass
+                self._log(f"TIMEOUT: {command}")
+                return (
+                    f"ERROR: Command timed out after {self.valves.COMMAND_TIMEOUT} "
+                    "seconds (process group killed). If this starts a server or "
+                    "daemon, re-run with background=True instead."
+                )
+            output = output or "(no output)"
             if len(output) > self.valves.MAX_OUTPUT_CHARS:
                 output = (
                     output[: self.valves.MAX_OUTPUT_CHARS]
@@ -2702,13 +2782,13 @@ tail -5 /tmp/goethe-node3090.log
             self._log(f"DONE rc={rc} len={len(output)}")
             result_str = output if rc == 0 else f"[exit {rc}]\n{output}"
             return result_str + _fp_note
-        except subprocess.TimeoutExpired:
-            self._log(f"TIMEOUT: {command}")
-            return (
-                f"ERROR: Command timed out after {self.valves.COMMAND_TIMEOUT} seconds."
-            )
         except Exception as e:
             self._log(f"ERROR: {e}")
+            if proc is not None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), _signal_fg.SIGKILL)
+                except Exception:
+                    pass
             return f"ERROR: {str(e)}"
 
     def read_file(self, path: str, max_lines: int = 100, offset_lines: int = 0) -> str:
