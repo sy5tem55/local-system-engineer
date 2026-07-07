@@ -518,6 +518,59 @@ or edits the test file.
 
 ---
 
+## K rationale (finalized 2026-07-07)
+
+**Definition, made explicit (was ambiguous before):** K is the number of *retry* rounds
+after the first attempt, not the total attempt count. K=1 means the model gets its
+initial try plus one feedback round (2 attempts total, max); K=4 means initial try plus
+up to 4 feedback rounds (5 attempts total, max). The loop stops early on the first clean
+pass regardless of K, so K is a ceiling, not a target — most tasks should resolve well
+under budget if T1 is doing its job.
+
+**Final values: 1 / 2 / 2 / 3 / 2 / 4 (C1-C6) — the original starting guesses, kept
+as-is.** Reasoning per tier, and why this sequence is deliberately non-monotonic (C5's 2
+is lower than C4's 3 despite C5 being nominally harder):
+
+- **C1 (K=1):** one clear function from a docstring. If two total attempts (with the
+  literal failing assert shown) doesn't fix it, more retries are measuring stubbornness
+  or a wrong mental model, not genuine convergence — no reason to pay for more.
+- **C2 (K=2):** a single, localized bug (off-by-one / wrong operator). One retry buffer
+  covers the realistic failure mode called out in the pass criteria itself: fix #1
+  patches the wrong case and breaks one that was already passing (e.g. the remainder
+  chunk, or the no-match case) — that's a one-round correction, not a multi-round search.
+- **C3 (K=2):** same shape as C2 — usually one-shot, occasional second round needed to
+  match an exact exception type/message rather than just "raises something."
+- **C4 (K=3):** small stateful classes have 2+ independent correctness dimensions (LRU:
+  eviction AND recency-on-get; debouncer: fires-when-due AND doesn't-update-state-on-
+  false; rate limiter: allows-up-to-max AND slides-the-window). The C4a spec's own
+  Partial(2) case describes fixing one dimension, still failing the other, fixing that
+  next — that's 2 rounds; K=3 leaves one round of margin beyond the expected path.
+- **C5 (K=2), deliberately LOWER than C4 despite being one tier "harder":** this tier
+  isn't measuring multi-round convergence at all — it's measuring whether the model
+  correctly recognizes "nothing is actually broken" and refactors without touching the
+  test file. That's a first-turn judgment call, not something that improves by giving it
+  more tries. K=2 exists only to let a model that broke its own refactor self-correct
+  once; a bigger budget wouldn't change what this tier is actually testing, so there's no
+  reason to pay for it. Difficulty tier and retry-budget need are different axes.
+- **C6 (K=4), the deliberately generous one:** this is the tier the Treatment Ladder's
+  N=2 decision gate cares about most (see "Scoring rollup" below), specifically because
+  cross-file bugs plausibly need several rounds to converge via test feedback alone: round
+  1 might land in the wrong file, round 2 the right file but wrong exact fix, round 3-4
+  refine. A tight budget here would conflate "ran out of iterations" with "can't solve
+  it," which would corrupt the exact signal (does single-node + verification close the
+  gap, or does it plateau) this suite exists to produce.
+
+**Worst-case compute sanity check:** node3090 runs `Qwen3.6-35B-A3B` with `--parallel 1`
+(one request at a time, no concurrency) — every call is fully serial wall-clock time.
+Worst case (every task exhausts its full K with zero early passes, which should not
+happen in practice if T1 works at all): T0 = 18 calls (1 per task). T1 = sum over tiers
+of `3 tasks x (1 + K)` = C1 3x2=6, C2 3x3=9, C3 3x3=9, C4 3x4=12, C5 3x3=9, C6 3x5=15 =
+60 calls. Combined worst case = 78 model calls across the full suite. This is a ceiling,
+not an estimate — early passes (the entire point of T1 existing) should bring the real
+number well below it.
+
+---
+
 ## Scoring rollup
 
 | Tier | T0 pass@1 (of 3) | T1 pass@K (of 3) | T0→T1 delta | Avg tool calls (T0 / T1) | Avg iterations used (T1) |
@@ -567,6 +620,14 @@ the tier a second node (independent reviewer) is actually supposed to help with.
       full file:line/assertion detail, exit 1; real implementation -> exit 0, "2 passed").
       This is the same subprocess pattern `run_tests`'s own `harness` scope uses
       internally, just pointed at the task directory instead of the fixed repo path.
-- [ ] Decide K (max T1 iterations) per tier — values above are a starting guess (1/2/2/3/2/4).
+- [x] Decide K (max T1 iterations) per tier -- done 2026-07-07. Finalized at the
+      original starting guess (1/2/2/3/2/4), kept as-is after review rather than
+      changed for its own sake. Clarified the ambiguous definition (K = retry
+      rounds after the first attempt, not total attempts) and wrote up the
+      per-tier reasoning -- including why the sequence is intentionally non-
+      monotonic (C5's budget is lower than C4's despite being nominally harder,
+      because C5 tests a first-turn judgment call, not iterative convergence) --
+      plus a worst-case compute ceiling (78 model calls total). See "K rationale"
+      above "Scoring rollup".
 - [ ] Extend `v35_harness.py`'s `run_one()` pattern with a `feedback_loop=True` mode
       rather than writing a second harness from scratch.
