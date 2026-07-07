@@ -1,8 +1,20 @@
 # LSE Evaluation Test Suite — Coding v1 (Treatment Ladder: T0 / T1 legs)
 > Model: Qwen3.6-35B-A3B (agentic-coding launch config, temp 0.2) · Node: node3090
 > Harness: `v35_harness.py` pattern (real MCP client → goethe_mcp → real tool execution),
-> extended with a test-runner feedback loop for T1. `mcp__goethe__run_tests` is the
-> existing hook for this — no new tool needed.
+> extended with a test-runner feedback loop for T1. **Correction, 2026-07-07:**
+> `mcp__goethe__run_tests` is NOT the hook for this — confirmed by reading its
+> implementation and by an empirical rejection (`run_tests(scope="/tmp/...")` →
+> `"unknown scope"`). It's a hardcoded 5-value allowlist (kb/retrieval/rules/harness/all)
+> mapped to fixed commands rooted at the LSE repo itself, by design (same "exec surface,
+> model supplies only a keyword" pattern used elsewhere for other privileged-command
+> allowlists) — there is no parameter to point it at an arbitrary task directory, and it
+> additionally gates to "at most once per scope per session," which would break T1's
+> multi-iteration retry loop even if the path problem didn't exist. The actual hook is
+> `execute_command("cd <task_dir> && python3 -m pytest -q --tb=short")` — verified
+> working against a scratch task directory, returns the same kind of raw pytest failure
+> text (file:line, assertion, exception) that `run_tests`'s own `harness` scope surfaces
+> internally via the identical subprocess pattern, just parameterized to the right
+> directory instead of a fixed one. See "Open items" below for the corrected write-up.
 >
 > Purpose: this suite exists because test-suite-v3.5.md has zero coding-specific
 > coverage. It runs the T0 and T1 legs of the Treatment Ladder ONLY. T2/T3
@@ -39,12 +51,13 @@ buying a solution before measuring the problem.
 2. **T0 protocol (single-shot, zero scaffold):** give the model the task prompt, let it
    read/write files and call `execute_command` freely, but do **not** run the test file
    or feed results back. The model must decide for itself when it's done. Harness runs
-   `run_tests` exactly once, after the model stops, for scoring only — the model never
-   sees that result.
+   `execute_command("cd <task_dir> && python3 -m pytest -q --tb=short")` exactly once,
+   after the model stops, for scoring only — the model never sees that result.
 3. **T1 protocol (scaffold + verification loop):** same task, but after the model
-   declares done, the harness calls `mcp__goethe__run_tests` and feeds the pass/fail +
-   failure output back to the model as the next turn. Repeat up to the task's max
-   iteration budget (K, given per task). Stop early on a clean pass.
+   declares done, the harness runs `execute_command("cd <task_dir> && python3 -m pytest
+   -q --tb=short")` and feeds the exit code + raw pytest output back to the model as the
+   next turn. Repeat up to the task's max iteration budget (K, given per task). Stop
+   early on a clean pass (exit 0).
 4. **Reset between tasks.** Fresh conversation, fresh copy of the starting files —
    T1's iteration history must not leak into the next task.
 5. Record per task: pass/fail, iterations used (T1), tool-call count, wall-clock time,
@@ -544,9 +557,16 @@ the tier a second node (independent reviewer) is actually supposed to help with.
       done 2026-07-06. Every sibling's starting code + test file was actually run
       through pytest (buggy version fails as described, fixed version passes clean)
       before being written into this doc.
-- [ ] Confirm `mcp__goethe__run_tests` (already in the live tool schema) returns
-      structured pass/fail + failure text suitable to feed back verbatim as the T1
-      harness's next user turn — check its actual return shape before wiring the loop.
+- [x] Confirm the test-runner hook's actual return shape -- done 2026-07-07. Finding:
+      `mcp__goethe__run_tests` does NOT work for this (hardcoded 5-scope allowlist,
+      no arbitrary-path parameter, and a once-per-scope-per-session gate that would
+      break T1's retry loop even if the path problem didn't exist -- confirmed both by
+      reading its implementation in goethe.py and by an empirical rejection). Use
+      `execute_command("cd <task_dir> && python3 -m pytest -q --tb=short")` instead --
+      verified against a live scratch task (stub -> NotImplementedError failures with
+      full file:line/assertion detail, exit 1; real implementation -> exit 0, "2 passed").
+      This is the same subprocess pattern `run_tests`'s own `harness` scope uses
+      internally, just pointed at the task directory instead of the fixed repo path.
 - [ ] Decide K (max T1 iterations) per tier — values above are a starting guess (1/2/2/3/2/4).
 - [ ] Extend `v35_harness.py`'s `run_one()` pattern with a `feedback_loop=True` mode
       rather than writing a second harness from scratch.
