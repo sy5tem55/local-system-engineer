@@ -1,6 +1,11 @@
 # LSE Evaluation Test Suite — Coding v1 (Treatment Ladder: T0 / T1 legs)
 > Model: Qwen3.6-35B-A3B (agentic-coding launch config, temp 0.2) · Node: node3090
-> Harness: `v35_harness.py` pattern (real MCP client → goethe_mcp → real tool execution),
+> Harness: originally described as the "`v35_harness.py` pattern" (real MCP client
+> → goethe_mcp → real tool execution). **Correction, 2026-07-07:** that file never
+> existed in this repo -- it lived only in `/tmp/lse/` (confirmed not version-
+> controlled per CURRENT-STATE.md's own "Outstanding" note) and that scratch copy has
+> since been cleared. Only a prose description of its behavior survives, in
+> `eval/eval-report-v8.md`. There was nothing to literally extend.
 > extended with a test-runner feedback loop for T1. **Correction, 2026-07-07:**
 > `mcp__goethe__run_tests` is NOT the hook for this — confirmed by reading its
 > implementation and by an empirical rejection (`run_tests(scope="/tmp/...")` →
@@ -629,5 +634,22 @@ the tier a second node (independent reviewer) is actually supposed to help with.
       because C5 tests a first-turn judgment call, not iterative convergence) --
       plus a worst-case compute ceiling (78 model calls total). See "K rationale"
       above "Scoring rollup".
-- [ ] Extend `v35_harness.py`'s `run_one()` pattern with a `feedback_loop=True` mode
-      rather than writing a second harness from scratch.
+- [x] Build the T1 feedback-loop logic -- done 2026-07-07, scoped down from the
+      original item (see harness note above for why "extend v35_harness.py" wasn't
+      possible). Wrote `eval/t1_feedback_loop.py`: `run_pytest()` (the concrete,
+      verified half -- subprocess wrapper around `python3 -m pytest -q --tb=short`
+      in a task directory) plus `run_t1_task()`/`run_t0_task()` (the retry-loop
+      control flow itself), deliberately decoupled from any specific model-driving
+      harness via an injected `propose_fn(history) -> TurnResult` callback -- so the
+      loop logic is real and unit-testable today without a live MCP/model connection,
+      and slots into whatever harness eventually replaces the lost one without
+      changes to this file. 8 real tests in `tests/test_t1_feedback_loop.py`
+      (propose_fn implementations actually write files into a scratch task dir each
+      round; nothing about pass/fail is mocked) -- all passing, covering: pass on
+      first attempt (iterations_used=0), pass after a retry (iterations_used=1,
+      confirms the failing round's test output is real), budget exhaustion at K,
+      the fed-back failure text actually reaching the next `propose_fn` call (history
+      length 1 -> 3), T0's single-shot/no-retry behavior, and the K=0 edge case.
+      Full `tests/` suite still green after adding these (118 passed).
+      **Still open, deferred:** wiring `propose_fn` to a real MCP client + live model
+      -- that's the actual harness-reconstruction work, out of scope for this pass.
