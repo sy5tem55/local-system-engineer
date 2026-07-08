@@ -2024,6 +2024,8 @@ class Tools:
             ln.strip()
             for ln in ps.stdout.splitlines()
             if ln.strip() and "pgrep" not in ln and qualify.search(ln)
+            and "/dev/null" not in ln  # health-probe curls, not downloads
+            and not _re.search(r"-o\s+-(?:\s|$)", ln)
         ]
         if not active:
             return ""
@@ -2535,13 +2537,24 @@ tail -5 /tmp/goethe-node3090.log
                 )
 
         # ── Block writes to privileged system paths ───────────────────────────
-        if any(p in command for p in self._PRIVILEGED_WRITE_PATHS):
-            if any(op in command for op in self._WRITE_OPS):
-                self._log(f"WRITE-BLOCKED: {command}")
-                return (
-                    "BLOCKED: Write to a privileged system path detected. "
-                    "Use sudo_delegation_block to delegate this to the user."
-                )
+        # Only block when a write op TARGETS a privileged path; reads (cat/tr/grep
+        # < /proc, ps, etc.) are allowed. /mnt/ dropped (legit user data lives there).
+        import re as _re_pw  # noqa: PLC0415
+        _priv_re = r"(?:/etc/|/usr/|/boot/|/sys/|/proc/)"
+        _write_to_priv = _re_pw.search(
+            r">>?\s*" + _priv_re
+            + r"|\btee\s+(?:-a\s+)?" + _priv_re
+            + r"|\b(?:cp|mv|dd|truncate)\b[^|;&\n]*\s" + _priv_re
+            + r"|\bsed\s+-i\b[^|;&\n]*" + _priv_re
+            + r"|\brm\s+[^|;&\n]*" + _priv_re,
+            command,
+        )
+        if _write_to_priv:
+            self._log(f"WRITE-BLOCKED: {command}")
+            return (
+                "BLOCKED: Write to a privileged system path detected. "
+                "Use sudo_delegation_block to delegate this to the user."
+            )
 
         # ── Block clobbering an in-progress download (v0.2.0) ─────────────────
         # If a download is already running, refuse a new one and route the model
@@ -6978,7 +6991,7 @@ tail -5 /tmp/goethe-node3090.log
         req = urllib.request.Request(url)
         token = getattr(self.valves, "EPISTEME_API_TOKEN", "")
         if token:
-            req.add_header("Authorization", f"Bearer {token}")
+            req.add_header("X-API-Key", token)
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return json.loads(resp.read())
@@ -6995,7 +7008,7 @@ tail -5 /tmp/goethe-node3090.log
         req.add_header("Content-Type", "application/json")
         token = getattr(self.valves, "EPISTEME_API_TOKEN", "")
         if token:
-            req.add_header("Authorization", f"Bearer {token}")
+            req.add_header("X-API-Key", token)
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return json.loads(resp.read())
