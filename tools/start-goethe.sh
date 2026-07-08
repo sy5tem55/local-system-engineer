@@ -35,6 +35,7 @@ BW_PASSWORD="${BW_PASSWORD:-}" \
   --goethe "$LSE_DIR/goethe.py" \
   --also  "$LSE_DIR/vaultwarden_tools_v1.3.0.py" \
   --also  "$LSE_DIR/pfsense_tools_v1.0.0.py" \
+  --also  "$LSE_DIR/net_discovery_tools_v1.0.0.py" \
   --transport http \
   --port 9700 \
   --host 127.0.0.1 \
