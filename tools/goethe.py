@@ -1063,7 +1063,7 @@ class Tools:
         )
         EPISTEME_API_TOKEN: str = Field(
             default="",
-            description="Bearer token for Episteme API auth. Auto-loaded from Vaultwarden if empty.",
+            description="X-API-Key token for Episteme REST API auth. Auto-loaded from Vaultwarden if empty.",
         )
 
     # ── Hard-coded permission lists ───────────────────────────────────────────
@@ -7007,10 +7007,20 @@ tail -5 /tmp/goethe-node3090.log
         except urllib.error.URLError as e:
             return {"error": f"Episteme API error: {e}"}
 
-    def episteme_search_knowledge(self, query: str) -> str:
+    def episteme_search_knowledge(self, query: str, top_k: int | None = None, filter_type: str | None = None) -> str:
         """Semantic search across all Episteme entities (patterns, laws, smells, refactorings).
-        Use this to find relevant engineering knowledge before making architectural decisions."""
-        res = self._episteme_get("/search", {"q": query})
+        Use this to find relevant engineering knowledge before making architectural decisions.
+        Args:
+            query: Natural language query
+            top_k: Number of results to return (default: server default)
+            filter_type: Filter by entity type - "pattern", "law", "refactoring", "smell"
+        """
+        params = {"q": query}
+        if top_k is not None:
+            params["top_k"] = top_k
+        if filter_type is not None:
+            params["filter_type"] = filter_type
+        res = self._episteme_get("/search", params)
         if "error" in res:
             return res["error"]
         # Format results
@@ -7031,10 +7041,20 @@ tail -5 /tmp/goethe-node3090.log
         res.setdefault("entity_id", res.get("id", "?"))
         return json.dumps(res, indent=2)
 
-    def episteme_get_neighbors(self, entity_id: str) -> str:
+    def episteme_get_neighbors(self, entity_id: str, relation_type: str | None = None, max_depth: int | None = None) -> str:
         """Get related entities for a given Episteme entity ID.
-        Use this to explore connections (e.g., 'what refactorings solve this smell?')."""
-        res = self._episteme_get(f"/graph/{entity_id}/neighbors")
+        Use this to explore connections (e.g., 'what refactorings solve this smell?').
+        Args:
+            entity_id: Entity ID (e.g. DP-023, SMELL-01)
+            relation_type: Filter by relation - "solves", "enforces", "violates", "relates_to"
+            max_depth: Maximum graph traversal depth (default: server default)
+        """
+        params = {}
+        if relation_type is not None:
+            params["relation_type"] = relation_type
+        if max_depth is not None:
+            params["max_depth"] = max_depth
+        res = self._episteme_get(f"/graph/{entity_id}/neighbors", params or None)
         if "error" in res:
             return res["error"]
         neighbors = res.get("neighbors", [])
@@ -7046,10 +7066,18 @@ tail -5 /tmp/goethe-node3090.log
             lines.append(f"  • {n.get('id', '?')} ({n.get('type', '?')}): {rel} → {n.get('title', '')[:80]}")
         return "\n".join(lines)
 
-    def episteme_find_path(self, from_id: str, to_id: str) -> str:
+    def episteme_find_path(self, from_id: str, to_id: str, max_depth: int | None = None) -> str:
         """Find the reasoning path between two Episteme entities.
-        Use this to trace connections (e.g., 'how does SRP relate to Extract Class?')."""
-        res = self._episteme_post("/graph/path", {"from_id": from_id, "to_id": to_id})
+        Use this to trace connections (e.g., 'how does SRP relate to Extract Class?').
+        Args:
+            from_id: Starting entity ID
+            to_id: Target entity ID
+            max_depth: Maximum graph traversal depth (default: server default)
+        """
+        payload = {"from_id": from_id, "to_id": to_id}
+        if max_depth is not None:
+            payload["max_depth"] = max_depth
+        res = self._episteme_post("/graph/path", payload)
         if "error" in res:
             return res["error"]
         path = res.get("path", [])
@@ -7060,34 +7088,75 @@ tail -5 /tmp/goethe-node3090.log
             lines.append(f"  → {step.get('id', '?')} ({step.get('type', '?')}) [{step.get('relation', '?')}]")
         return "\n".join(lines)
 
-    def episteme_analyze_code(self, file_path: str) -> str:
-        """Analyze a source file for code smells using Episteme.
-        Returns detected smells with ranked refactoring suggestions."""
+    def episteme_analyze_code(self, file_path: str | None = None, code_snippet: str | None = None, language: str | None = None, min_confidence: float | None = None) -> str:
+        """Analyze source code for code smells using Episteme.
+        Returns detected smells with ranked refactoring suggestions.
+        Args:
+            file_path: Path to a source file (mutually exclusive with code_snippet)
+            code_snippet: Inline source code to analyze (mutually exclusive with file_path)
+            language: Programming language hint - "python", "java", "typescript", etc.
+            min_confidence: Minimum confidence threshold (default: server default)
+        """
         import os
-        if not os.path.isfile(file_path):
-            return f"File not found: {file_path}"
-        try:
-            with open(file_path, "r", errors="ignore") as f:
-                code = f.read()
-        except Exception as e:
-            return f"Cannot read file: {e}"
-        res = self._episteme_post("/analyze", {"code": code, "file": os.path.basename(file_path)})
+        if file_path and code_snippet:
+            return "Error: provide either file_path or code_snippet, not both"
+        if file_path:
+            if not os.path.isfile(file_path):
+                return f"File not found: {file_path}"
+            try:
+                with open(file_path, "r", errors="ignore") as f:
+                    code = f.read()
+            except Exception as e:
+                return f"Cannot read file: {e}"
+            if language is None:
+                ext = os.path.splitext(file_path)[1].lstrip(".")
+                lang_map = {"py": "python", "js": "javascript", "ts": "typescript", "java": "java",
+                            "go": "go", "rs": "rust", "cpp": "cpp", "cc": "cpp", "c": "c",
+                            "rb": "ruby", "php": "php", "cs": "csharp", "kt": "kotlin"}
+                language = lang_map.get(ext)
+            filename = os.path.basename(file_path)
+        elif code_snippet:
+            code = code_snippet
+            filename = None
+        else:
+            return "Error: provide either file_path or code_snippet"
+        payload = {"code": code}
+        if filename:
+            payload["file"] = filename
+        if language is not None:
+            payload["language"] = language
+        if min_confidence is not None:
+            payload["min_confidence"] = min_confidence
+        res = self._episteme_post("/analyze", payload)
         if "error" in res:
             return res["error"]
         smells = res.get("smells", [])
         if not smells:
-            return f"No smells detected in {file_path}"
-        lines = [f"Code smells in {file_path}:"]
+            return f"No smells detected in {filename or "inline code"}"
+        lines = [f"Code smells in {filename or "inline code"}:"]
         for s in smells:
             lines.append(f"  • {s.get('smell_id', '?')} ({s.get('smell_name', '?')}): {s.get('description', '')[:80]}")
             for fix in s.get("refactorings", [])[:3]:
                 lines.append(f"    → {fix.get('refactoring_id', '?')} {fix.get('title', '?')} (priority {fix.get('priority_score', '?')})")
         return "\n".join(lines)
 
-    def episteme_suggest_refactorings(self, code_snippet: str) -> str:
+    def episteme_suggest_refactorings(self, code_snippet: str, language: str | None = None, top_k: int | None = None, min_confidence: float | None = None) -> str:
         """Suggest ranked refactorings for a code snippet.
-        Returns prioritized list of refactorings with effort estimates."""
-        res = self._episteme_post("/refactor", {"code": code_snippet})
+        Returns prioritized list of refactorings with effort estimates.
+        Args:
+            code_snippet: Source code to analyze
+            language: Programming language - "python", "java", "typescript", etc.
+            top_k: Number of suggestions per smell (default: server default)
+            min_confidence: Minimum confidence threshold (default: server default)
+        """
+        payload = {"code": code_snippet}
+        if language is not None:
+            payload["language"] = language
+        if top_k is not None:
+            payload["top_k"] = top_k
+        if min_confidence is not None:
+            payload["min_confidence"] = min_confidence
+        res = self._episteme_post("/refactor", payload)
         if "error" in res:
             return res["error"]
         analyses = res.get("analyses", [])
