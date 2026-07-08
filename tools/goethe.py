@@ -7036,6 +7036,7 @@ tail -5 /tmp/goethe-node3090.log
         res = self._episteme_get(f"/graph/{entity_id}")
         if "error" in res:
             return res["error"]
+        res.setdefault("entity_id", res.get("id", "?"))
         return json.dumps(res, indent=2)
 
     def episteme_get_neighbors(self, entity_id: str) -> str:
