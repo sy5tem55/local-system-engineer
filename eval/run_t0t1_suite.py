@@ -684,36 +684,86 @@ def materialize(task, leg):
     return task_dir
 
 
+def make_task_aware_propose_fn(base_propose_fn, task_dir):
+    """Wrap propose_fn (from t1_mcp_harness.make_propose_fn) for one task+leg,
+    without modifying t1_feedback_loop.py or t1_mcp_harness.py.
+
+    Fixes a real gap found in the 2026-07-08 run: propose_fn only reads the
+    LATEST user-turn content from history (by design -- see t1_mcp_harness.py's
+    docstring), and on T1 retry rounds that latest turn is just the pytest
+    failure text built by t1_feedback_loop.build_feedback_turn(), which never
+    mentions the task directory or repeats the original task prompt. Round 0
+    gets the real task prompt (no path either, per the doc's literal task
+    prompt spec) and evidently sometimes fails to locate the right file too.
+    Net effect: C1a/C1c passed T0 but failed T1 with the original stub
+    untouched -- the model never found the file on some calls. This wrapper
+    appends an explicit directory reminder to whichever user turn is latest,
+    every call, so every attempt (initial or retry) has it.
+
+    Also captures each call's TurnResult.meta (tool_calls, hit_tool_round_cap)
+    into an externally-readable list, since run_t0_task/run_t1_task discard
+    everything but turn.done -- meta never reaches T0Outcome/T1Outcome.
+    """
+    calls_meta = []
+    note = (
+        f"\n\n(You are working in directory: {task_dir}. "
+        "Use this exact absolute path for every file and shell operation -- "
+        "do not assume a different working directory.)"
+    )
+
+    def wrapped(history):
+        patched = list(history)
+        for i in range(len(patched) - 1, -1, -1):
+            if patched[i].get("role") == "user":
+                if note not in patched[i]["content"]:
+                    entry = dict(patched[i])
+                    entry["content"] = entry["content"] + note
+                    patched[i] = entry
+                break
+        turn = base_propose_fn(patched)
+        calls_meta.append(dict(turn.meta))
+        return turn
+
+    return wrapped, calls_meta
+
+
 def run_task(task, propose_fn, results):
     tid, tier, k = task["id"], task["tier"], task["k"]
 
     log(f"=== {tid} (tier {tier}, K={k}) : T0 leg ===")
     t0_dir = materialize(task, "t0")
+    t0_fn, t0_calls = make_task_aware_propose_fn(propose_fn, t0_dir)
     t0_start = time.time()
     t0_outcome = None
     try:
-        t0_outcome = run_t0_task(t0_dir, task["prompt"], propose_fn)
-        log(f"{tid} T0: passed={t0_outcome.passed} elapsed={time.time()-t0_start:.1f}s")
+        t0_outcome = run_t0_task(t0_dir, task["prompt"], t0_fn)
+        log(f"{tid} T0: passed={t0_outcome.passed} elapsed={time.time()-t0_start:.1f}s tool_calls={sum(c.get('tool_calls', 0) for c in t0_calls)}")
     except Exception as e:
         log(f"{tid} T0: EXCEPTION {e}\n{traceback.format_exc()}")
     t0_elapsed = time.time() - t0_start
 
     log(f"=== {tid} (tier {tier}, K={k}) : T1 leg ===")
     t1_dir = materialize(task, "t1")
+    t1_fn, t1_calls = make_task_aware_propose_fn(propose_fn, t1_dir)
     t1_start = time.time()
     t1_outcome = None
     try:
-        t1_outcome = run_t1_task(t1_dir, task["prompt"], propose_fn, max_iterations=k)
-        log(f"{tid} T1: passed={t1_outcome.passed} iterations_used={t1_outcome.iterations_used} elapsed={time.time()-t1_start:.1f}s")
+        t1_outcome = run_t1_task(t1_dir, task["prompt"], t1_fn, max_iterations=k)
+        log(f"{tid} T1: passed={t1_outcome.passed} iterations_used={t1_outcome.iterations_used} elapsed={time.time()-t1_start:.1f}s tool_calls_per_round={[c.get('tool_calls', 0) for c in t1_calls]}")
     except Exception as e:
         log(f"{tid} T1: EXCEPTION {e}\n{traceback.format_exc()}")
     t1_elapsed = time.time() - t1_start
+
+    t0_tool_calls = sum(c.get("tool_calls", 0) for c in t0_calls)
+    t1_tool_calls_per_round = [c.get("tool_calls", 0) for c in t1_calls]
+    t1_tool_calls_total = sum(t1_tool_calls_per_round)
 
     result = {
         "id": tid, "tier": tier, "k": k,
         "t0": {
             "passed": t0_outcome.passed if t0_outcome else None,
             "elapsed_s": round(t0_elapsed, 1),
+            "tool_calls": t0_tool_calls,
             "final_test_output": t0_outcome.test_output if t0_outcome else None,
             "error": None if t0_outcome else "exception, see log",
         },
@@ -722,6 +772,8 @@ def run_task(task, propose_fn, results):
             "iterations_used": t1_outcome.iterations_used if t1_outcome else None,
             "hit_budget": t1_outcome.hit_budget if t1_outcome else None,
             "elapsed_s": round(t1_elapsed, 1),
+            "tool_calls_total": t1_tool_calls_total,
+            "tool_calls_per_round": t1_tool_calls_per_round,
             "final_test_output": t1_outcome.final_test_output if t1_outcome else None,
             "error": None if t1_outcome else "exception, see log",
         },
