@@ -28,4 +28,5 @@ export BW_PASSWORD="${BW_PASSWORD:-}"
 exec /home/sy5/owui/bin/python3 "$LSE_DIR/goethe_mcp.py" \
   --goethe "$LSE_DIR/goethe.py" \
   --also   "$LSE_DIR/vaultwarden_tools_v1.3.0.py" \
-  --also   "$LSE_DIR/pfsense_tools_v1.0.0.py"
+  --also   "$LSE_DIR/pfsense_tools_v1.0.0.py" \
+  --also   "$LSE_DIR/net_discovery_tools_v1.0.0.py"
