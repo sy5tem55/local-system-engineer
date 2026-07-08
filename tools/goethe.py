@@ -7108,7 +7108,7 @@ tail -5 /tmp/goethe-node3090.log
     def episteme_add_insight(self, insight: str, tags: str = "") -> str:
         """Record a team insight or lesson learned into Episteme's tacit knowledge layer.
         Auto-links to relevant canonical entities (patterns, laws, smells)."""
-        res = self._episteme_post("/insights", {"insight": insight, "tags": tags.split(",") if tags else []})
+        res = self._episteme_post("/insights", {"text": insight, "tags": tags.split(",") if tags else []})
         if "error" in res:
             return res["error"]
         return f"Insight recorded: {res.get('id', '?')}"
