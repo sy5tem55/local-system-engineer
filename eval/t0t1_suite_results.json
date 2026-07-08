@@ -1,0 +1,344 @@
+[
+  {
+    "id": "C1a",
+    "tier": "C1",
+    "k": 1,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 102.5,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.01s",
+      "error": null
+    },
+    "t1": {
+      "passed": false,
+      "iterations_used": 1,
+      "hit_budget": true,
+      "elapsed_s": 71.1,
+      "final_test_output": "FFF                                                                      [100%]\n=================================== FAILURES ===================================\n_________________________________ test_simple __________________________________\ntest_strings_utils.py:4: in test_simple\n    assert is_palindrome(\"racecar\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^\nstrings_utils.py:4: in is_palindrome\n    raise NotImplementedError\nE   NotImplementedError\n__________________________ test_case_and_punctuation ___________________________\ntest_strings_utils.py:7: in test_case_and_punctuation\n    assert is_palindrome(\"A man, a plan, a canal: Panama\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nstrings_utils.py:4: in is_palindrome\n    raise NotImplementedError\nE   NotImplementedError\n_______________________________ test_false_case ________________________________\ntest_strings_utils.py:10: in test_false_case\n    assert not is_palindrome(\"hello\")\n               ^^^^^^^^^^^^^^^^^^^^^^\nstrings_utils.py:4: in is_palindrome\n    raise NotImplementedError\nE   NotImplementedError\n=========================== short test summary info ============================\nFAILED test_strings_utils.py::test_simple - NotImplementedError\nFAILED test_strings_utils.py::test_case_and_punctuation - NotImplementedError\nFAILED test_strings_utils.py::test_false_case - NotImplementedError\n3 failed in 0.01s",
+      "error": null
+    }
+  },
+  {
+    "id": "C1b",
+    "tier": "C1",
+    "k": 1,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 78.6,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.01s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 37.8,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C1c",
+    "tier": "C1",
+    "k": 1,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 17.0,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.01s",
+      "error": null
+    },
+    "t1": {
+      "passed": false,
+      "iterations_used": 1,
+      "hit_budget": true,
+      "elapsed_s": 29.2,
+      "final_test_output": "FFF                                                                      [100%]\n=================================== FAILURES ===================================\n_________________________________ test_simple __________________________________\ntest_text_utils.py:4: in test_simple\n    assert word_frequency(\"the cat sat on the mat\") == {\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntext_utils.py:5: in word_frequency\n    raise NotImplementedError\nE   NotImplementedError\n__________________________ test_case_and_punctuation ___________________________\ntest_text_utils.py:9: in test_case_and_punctuation\n    assert word_frequency(\"Hello, hello! HELLO.\") == {\"hello\": 3}\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntext_utils.py:5: in word_frequency\n    raise NotImplementedError\nE   NotImplementedError\n__________________________________ test_empty __________________________________\ntest_text_utils.py:12: in test_empty\n    assert word_frequency(\"\") == {}\n           ^^^^^^^^^^^^^^^^^^\ntext_utils.py:5: in word_frequency\n    raise NotImplementedError\nE   NotImplementedError\n=========================== short test summary info ============================\nFAILED test_text_utils.py::test_simple - NotImplementedError\nFAILED test_text_utils.py::test_case_and_punctuation - NotImplementedError\nFAILED test_text_utils.py::test_empty - NotImplementedError\n3 failed in 0.01s",
+      "error": null
+    }
+  },
+  {
+    "id": "C2a",
+    "tier": "C2",
+    "k": 2,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 12.0,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.01s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 15.5,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C2b",
+    "tier": "C2",
+    "k": 2,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 18.0,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.01s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 14.6,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.01s",
+      "error": null
+    }
+  },
+  {
+    "id": "C2c",
+    "tier": "C2",
+    "k": 2,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 8.8,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.01s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 14.6,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C3a",
+    "tier": "C3",
+    "k": 2,
+    "t0": {
+      "passed": false,
+      "elapsed_s": 45.6,
+      "final_test_output": ".F                                                                       [100%]\n=================================== FAILURES ===================================\n________________________ test_empty_raises_value_error _________________________\ntest_stats.py:10: in test_empty_raises_value_error\n    average([])\nstats.py:3: in average\n    return sum(nums) / len(nums)\n           ^^^^^^^^^^^^^^^^^^^^^\nE   ZeroDivisionError: division by zero\n=========================== short test summary info ============================\nFAILED test_stats.py::test_empty_raises_value_error - ZeroDivisionError: divi...\n1 failed, 1 passed in 0.01s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 2,
+      "hit_budget": false,
+      "elapsed_s": 129.7,
+      "final_test_output": "..                                                                       [100%]\n2 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C3b",
+    "tier": "C3",
+    "k": 2,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 15.9,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 47.3,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C3c",
+    "tier": "C3",
+    "k": 2,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 43.4,
+      "final_test_output": ".....                                                                    [100%]\n5 passed in 0.00s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 2,
+      "hit_budget": false,
+      "elapsed_s": 127.2,
+      "final_test_output": ".....                                                                    [100%]\n5 passed in 0.01s",
+      "error": null
+    }
+  },
+  {
+    "id": "C4a",
+    "tier": "C4",
+    "k": 3,
+    "t0": {
+      "passed": null,
+      "elapsed_s": 50.9,
+      "final_test_output": null,
+      "error": "exception, see log"
+    },
+    "t1": {
+      "passed": false,
+      "iterations_used": 3,
+      "hit_budget": true,
+      "elapsed_s": 112.8,
+      "final_test_output": "FF                                                                       [100%]\n=================================== FAILURES ===================================\n_____________________________ test_eviction_order ______________________________\ntest_lru_cache.py:9: in test_eviction_order\n    assert c.get(2) is None\nE   assert 2 is None\nE    +  where 2 = get(2)\nE    +    where get = <lru_cache.LRUCache object at 0x7e98e0bd6600>.get\n__________________ test_update_existing_key_refreshes_recency __________________\ntest_lru_cache.py:21: in test_update_existing_key_refreshes_recency\n    assert c.get(2) is None\nE   assert 2 is None\nE    +  where 2 = get(2)\nE    +    where get = <lru_cache.LRUCache object at 0x7e98e0bd6db0>.get\n=========================== short test summary info ============================\nFAILED test_lru_cache.py::test_eviction_order - assert 2 is None\nFAILED test_lru_cache.py::test_update_existing_key_refreshes_recency - assert...\n2 failed in 0.02s",
+      "error": null
+    }
+  },
+  {
+    "id": "C4b",
+    "tier": "C4",
+    "k": 3,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 14.3,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 21.7,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C4c",
+    "tier": "C4",
+    "k": 3,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 11.2,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.01s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 49.8,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C5a",
+    "tier": "C5",
+    "k": 2,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 28.3,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 29.8,
+      "final_test_output": "...                                                                      [100%]\n3 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C5b",
+    "tier": "C5",
+    "k": 2,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 96.2,
+      "final_test_output": "....                                                                     [100%]\n4 passed in 0.00s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 235.8,
+      "final_test_output": "....                                                                     [100%]\n4 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C5c",
+    "tier": "C5",
+    "k": 2,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 28.6,
+      "final_test_output": "..                                                                       [100%]\n2 passed in 0.00s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 58.8,
+      "final_test_output": "..                                                                       [100%]\n2 passed in 0.01s",
+      "error": null
+    }
+  },
+  {
+    "id": "C6a",
+    "tier": "C6",
+    "k": 4,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 14.3,
+      "final_test_output": ".                                                                        [100%]\n1 passed in 0.00s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 23.2,
+      "final_test_output": ".                                                                        [100%]\n1 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C6b",
+    "tier": "C6",
+    "k": 4,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 15.7,
+      "final_test_output": ".                                                                        [100%]\n1 passed in 0.00s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 18.4,
+      "final_test_output": ".                                                                        [100%]\n1 passed in 0.00s",
+      "error": null
+    }
+  },
+  {
+    "id": "C6c",
+    "tier": "C6",
+    "k": 4,
+    "t0": {
+      "passed": true,
+      "elapsed_s": 13.2,
+      "final_test_output": "..                                                                       [100%]\n2 passed in 0.00s",
+      "error": null
+    },
+    "t1": {
+      "passed": true,
+      "iterations_used": 0,
+      "hit_budget": false,
+      "elapsed_s": 42.8,
+      "final_test_output": "..                                                                       [100%]\n2 passed in 0.00s",
+      "error": null
+    }
+  }
+]
