@@ -7055,7 +7055,7 @@ tail -5 /tmp/goethe-node3090.log
     def episteme_find_path(self, from_id: str, to_id: str) -> str:
         """Find the reasoning path between two Episteme entities.
         Use this to trace connections (e.g., 'how does SRP relate to Extract Class?')."""
-        res = self._episteme_post("/graph/path", {"from": from_id, "to": to_id})
+        res = self._episteme_post("/graph/path", {"from_id": from_id, "to_id": to_id})
         if "error" in res:
             return res["error"]
         path = res.get("path", [])
