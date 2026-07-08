@@ -31,6 +31,7 @@ fi
 
 GOETHE_MCP_TOKEN="$GOETHE_MCP_TOKEN" \
 BW_PASSWORD="${BW_PASSWORD:-}" \
+GOETHE_EPISTEME_API_TOKEN="${GOETHE_EPISTEME_API_TOKEN:-}" \
   /home/sy5/owui/bin/python3 "$LSE_DIR/goethe_mcp.py" \
   --goethe "$LSE_DIR/goethe.py" \
   --also  "$LSE_DIR/vaultwarden_tools_v1.3.0.py" \
