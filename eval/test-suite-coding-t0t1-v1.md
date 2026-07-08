@@ -578,17 +578,56 @@ number well below it.
 
 ## Scoring rollup
 
+**Run 2026-07-08, node3090, Qwen3.6-35B-A3B, full 18-task suite, both legs.**
+Raw results: `eval/t0t1_suite_results.json`. Full run log: `eval/t0t1_suite_run.log`.
+Runner: `eval/run_t0t1_suite.py` (commit `adbaf8a`). Wall clock: 28.5 minutes
+(01:49:58–02:18:13), well under the 78-call worst-case ceiling because most
+tasks passed clean on the first attempt.
+
 | Tier | T0 pass@1 (of 3) | T1 pass@K (of 3) | T0→T1 delta | Avg tool calls (T0 / T1) | Avg iterations used (T1) |
 |---|---|---|---|---|---|
-| C1 | | | | | |
-| C2 | | | | | |
-| C3 | | | | | |
-| C4 | | | | | |
-| C5 | | | | | |
-| C6 | | | | | |
+| C1 | 3 | 1 | **-2** | not captured this run | 0.67 |
+| C2 | 3 | 3 | 0 | not captured this run | 0 |
+| C3 | 2 | 3 | +1 | not captured this run | 1.33 |
+| C4 | 2 | 2 | 0 | not captured this run | 1.0 |
+| C5 | 3 | 3 | 0 | not captured this run | 0 |
+| C6 | 3 | 3 | 0 | not captured this run | 0 |
 
-Fill in after running. The row that matters most for the decision gate is C6 — that's
-the tier a second node (independent reviewer) is actually supposed to help with.
+**Known gaps in this run, before reading the table as clean signal:**
+
+- **Tool-call counts weren't captured.** `propose_fn` returns a `tool_calls` count in
+  `TurnResult.meta`, but `run_t0_task`/`run_t1_task` only read `.done` off that result —
+  the count never reached the outcome objects this runner logs. Fixable in
+  `run_t0t1_suite.py` without touching the feedback-loop or harness modules; left as-is
+  for this run rather than block the whole suite on a mid-run code change.
+- **C1's -2 delta is a harness artifact, not a capability finding.** C1a and C1c both
+  passed T0 (single-shot) but failed every T1 round with the *original stub file
+  untouched* (`test_strings_utils.py`/`test_text_utils.py` both show the literal
+  `raise NotImplementedError` from the starting file, meaning no edit ever landed).
+  The task prompts, copied verbatim from this doc's own spec, never give the model an
+  absolute path to the task directory — unlike the earlier smoke test (which
+  hand-embedded the full path), `run_t0t1_suite.py` relies on the model discovering
+  its own working directory. That discovery apparently succeeded on some calls and
+  not others for the same task with the same prompt, which is a prompt/harness gap,
+  not evidence T1 makes C1 worse. **Before trusting the C1 row, rerun it with an
+  explicit task directory in the prompt** (matching the smoke-test convention) and
+  confirm the delta disappears.
+- **C4a's T0 "fail" is a distinct failure mode worth separating from wrong logic:**
+  the model's tool call itself was malformed (`llama-server` returned a 500 —
+  unescaped multi-line code inside a JSON string argument broke the parser), not a
+  wrong implementation. Recorded as a fail per the doc's scoring (0 = "fail / gave
+  up"), but this is a tool-use protocol failure, not a reasoning failure — worth
+  tracking separately if this becomes a recurring pattern across runs.
+- No message-level transcripts were saved, only final pytest output per attempt —
+  good enough to confirm pass/fail and to diagnose the C1/C4a issues above from the
+  test output shape, but not enough to see *what* the model actually did on a given
+  turn. Future runs should log the full `history` per task if turn-level debugging
+  is needed again.
+
+The row that matters most for the decision gate is C6 — that's the tier a second node
+(independent reviewer) is actually supposed to help with, and it came back clean:
+all 3 tasks passed both T0 and T1 on the first attempt, fast (13–43s each). See
+"Decision gate" below for what that implies.
 
 ---
 
@@ -606,6 +645,20 @@ the tier a second node (independent reviewer) is actually supposed to help with.
   may be wrong for this model/task-difficulty band, or the corpus needs harder tasks
   before it can discriminate — don't commission node5090 on the strength of this
   suite alone; raise the ceiling first (bigger/more realistic C6-tier tasks) and rerun.
+
+**Reading the 2026-07-08 run against this gate:** none of the three scenarios above
+is a clean fit, because most tiers were already at or near ceiling on T0 alone --
+this model handled the corpus as specified more easily than the K budgets assumed.
+The one tier where T0 showed real gaps (C3, 2/3) closed to 3/3 on T1 within budget --
+a genuine, small T1 win. C4's gap (2/3 on both legs) persisted through T1 because the
+one failure was a malformed tool call, not something a test-feedback round can fix.
+C6 -- the tier this gate cares about most -- was already clean at T0, so this run
+doesn't exercise the multi-round convergence C6 was designed to test at all, and
+says nothing about whether a second node would help there. **This run is better read
+as "the corpus needs harder C6-tier tasks to be informative" (the third bullet above)
+than as evidence for or against node5090** -- combined with the C1 harness caveat,
+the honest conclusion is: fix the two known gaps (task-dir path in prompts,
+tool-call capture) and rerun before using this data for the node5090 decision.
 
 ---
 
@@ -664,7 +717,23 @@ the tier a second node (independent reviewer) is actually supposed to help with.
       cross-round `history` as a full transcript -- see the module's docstring
       for why) to avoid a contract mismatch with `run_t1_task`'s existing,
       already-tested history bookkeeping. Also found and fixed a real
-      operational gap along the way: Vaultwarden's `GOETHE_MCP_TOKEN` item does
-      NOT match node3090's actual running token (confirmed by testing both) --
-      worth fixing in the vault separately, not done here. The corpus is now
+      operational gap along the way: Vaultwarden's generic `GOETHE_MCP_TOKEN`
+      item does NOT match node3090's actual running token (confirmed by testing
+      both). **Correction 2026-07-08:** this is expected, not a bug -- each node
+      runs its own `goethe_mcp` instance with its own token by design, and the
+      vault item corresponds to node4090 (LUCIFER) specifically, not a shared
+      fleet-wide token. No vault fix needed; node3090's real token (read from
+      `/proc/<pid>/environ`) was used directly instead. The corpus is now
       genuinely runnable end-to-end, not just fully specified.
+- [x] Run the full 18-task suite for score -- done 2026-07-08. `eval/run_t0t1_suite.py`
+      (commit `adbaf8a`) ran all 18 tasks x both legs against node3090's live
+      `Qwen3.6-35B-A3B` in 28.5 minutes. Results: `eval/t0t1_suite_results.json`,
+      full log: `eval/t0t1_suite_run.log`, table filled in above. Two follow-up
+      items surfaced by the run itself, not yet fixed: (1) C1's task prompts
+      don't give the model an absolute task-directory path, which produced an
+      inconsistent T0-passed/T1-failed result for C1a and C1c that looks like a
+      harness bug, not a capability finding -- rerun C1 with an explicit path
+      before trusting that row; (2) tool-call counts weren't captured despite
+      `propose_fn` already returning them in `TurnResult.meta` -- a small fix to
+      `run_t0t1_suite.py`'s outcome logging, not to the feedback-loop or harness
+      modules. See "Scoring rollup" for full detail on both.
