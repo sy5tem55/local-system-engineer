@@ -7027,7 +7027,7 @@ tail -5 /tmp/goethe-node3090.log
             return f"No results for '{query}'"
         lines = [f"Episteme search for '{query}':"]
         for r in results[:8]:  # cap at 8
-            lines.append(f"  • {r.get('id', '?')} ({r.get('type', '?')}): {r.get('title', r.get('summary', ''))[:120]}")
+            lines.append(f"  • {r.get('entity_id', '?')} ({r.get('category', '?')}): {r.get('title', r.get('summary', ''))[:120]}")
         return "\n".join(lines)
 
     def episteme_get_entity(self, entity_id: str) -> str:
