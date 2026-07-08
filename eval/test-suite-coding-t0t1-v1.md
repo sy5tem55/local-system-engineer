@@ -578,56 +578,49 @@ number well below it.
 
 ## Scoring rollup
 
-**Run 2026-07-08, node3090, Qwen3.6-35B-A3B, full 18-task suite, both legs.**
-Raw results: `eval/t0t1_suite_results.json`. Full run log: `eval/t0t1_suite_run.log`.
-Runner: `eval/run_t0t1_suite.py` (commit `adbaf8a`). Wall clock: 28.5 minutes
-(01:49:58–02:18:13), well under the 78-call worst-case ceiling because most
-tasks passed clean on the first attempt.
+**Authoritative run: 2026-07-08 (run 2), node3090, Qwen3.6-35B-A3B, full 18-task
+suite, both legs, after fixing the two gaps run 1 surfaced** (task-directory context
+missing from every model call, tool-call counts not captured -- see
+`eval/run_t0t1_suite.py` commit `9f1273b`). Raw results:
+`eval/t0t1_suite_results.run2.json`. Log: `eval/t0t1_suite_run.log`. Wall clock:
+**5.6 minutes** (02:39:01\u201302:44:40) -- an order of magnitude faster than run 1's
+28.5 minutes, consistent with the model no longer burning tool calls rediscovering
+its own working directory. Run 1's raw data is kept as
+`eval/t0t1_suite_results.run1.json` for comparison but is superseded below.
 
-| Tier | T0 pass@1 (of 3) | T1 pass@K (of 3) | T0→T1 delta | Avg tool calls (T0 / T1) | Avg iterations used (T1) |
+| Tier | T0 pass@1 (of 3) | T1 pass@K (of 3) | T0\u2192T1 delta | Avg tool calls (T0 / T1) | Avg iterations used (T1) |
 |---|---|---|---|---|---|
-| C1 | 3 | 1 | **-2** | not captured this run | 0.67 |
-| C2 | 3 | 3 | 0 | not captured this run | 0 |
-| C3 | 2 | 3 | +1 | not captured this run | 1.33 |
-| C4 | 2 | 2 | 0 | not captured this run | 1.0 |
-| C5 | 3 | 3 | 0 | not captured this run | 0 |
-| C6 | 3 | 3 | 0 | not captured this run | 0 |
+| C1 | 3 | 3 | 0 | 3.00 / 3.00 | 0.00 |
+| C2 | 3 | 3 | 0 | 3.00 / 3.00 | 0.00 |
+| C3 | 3 | 3 | 0 | 4.67 / 4.00 | 0.00 |
+| C4 | 3 | 3 | 0 | 3.67 / 4.67 | 0.33 |
+| C5 | 3 | 3 | 0 | 4.67 / 5.33 | 0.00 |
+| C6 | 3 | 3 | 0 | 8.67 / 8.33 | 0.00 |
 
-**Known gaps in this run, before reading the table as clean signal:**
+**18/18 tasks passed both legs.** Both run-1 anomalies are resolved and now
+understood as harness bugs, not model behavior:
 
-- **Tool-call counts weren't captured.** `propose_fn` returns a `tool_calls` count in
-  `TurnResult.meta`, but `run_t0_task`/`run_t1_task` only read `.done` off that result —
-  the count never reached the outcome objects this runner logs. Fixable in
-  `run_t0t1_suite.py` without touching the feedback-loop or harness modules; left as-is
-  for this run rather than block the whole suite on a mid-run code change.
-- **C1's -2 delta is a harness artifact, not a capability finding.** C1a and C1c both
-  passed T0 (single-shot) but failed every T1 round with the *original stub file
-  untouched* (`test_strings_utils.py`/`test_text_utils.py` both show the literal
-  `raise NotImplementedError` from the starting file, meaning no edit ever landed).
-  The task prompts, copied verbatim from this doc's own spec, never give the model an
-  absolute path to the task directory — unlike the earlier smoke test (which
-  hand-embedded the full path), `run_t0t1_suite.py` relies on the model discovering
-  its own working directory. That discovery apparently succeeded on some calls and
-  not others for the same task with the same prompt, which is a prompt/harness gap,
-  not evidence T1 makes C1 worse. **Before trusting the C1 row, rerun it with an
-  explicit task directory in the prompt** (matching the smoke-test convention) and
-  confirm the delta disappears.
-- **C4a's T0 "fail" is a distinct failure mode worth separating from wrong logic:**
-  the model's tool call itself was malformed (`llama-server` returned a 500 —
-  unescaped multi-line code inside a JSON string argument broke the parser), not a
-  wrong implementation. Recorded as a fail per the doc's scoring (0 = "fail / gave
-  up"), but this is a tool-use protocol failure, not a reasoning failure — worth
-  tracking separately if this becomes a recurring pattern across runs.
-- No message-level transcripts were saved, only final pytest output per attempt —
-  good enough to confirm pass/fail and to diagnose the C1/C4a issues above from the
-  test output shape, but not enough to see *what* the model actually did on a given
-  turn. Future runs should log the full `history` per task if turn-level debugging
-  is needed again.
+- **C1a/C1c's run-1 failure is gone.** Both pass T0 and T1 clean (iters=0) now that
+  every model call -- including T1 retry rounds, which previously saw only the raw
+  pytest failure text with no path or task context at all -- gets an explicit
+  working-directory reminder. Confirms the run-1 diagnosis: the model wasn't failing
+  the coding task, it was occasionally failing to find the file.
+- **C4a's malformed-tool-call failure didn't recur.** Passed T0 clean this run (5 tool
+  calls); needed one T1 retry round (the only iters>0 result in the whole run) but
+  still closed clean within K=3. Consistent with the run-1 failure being a one-off
+  JSON-escaping glitch rather than a systematic weakness on this task.
+- **Every other tier was already clean in run 1 and stayed clean here** -- C2, C5, C6
+  in particular show near-identical shape across both runs, which is a decent
+  cross-check that the directory-context fix didn't change behavior on tasks that
+  weren't broken by its absence.
 
-The row that matters most for the decision gate is C6 — that's the tier a second node
-(independent reviewer) is actually supposed to help with, and it came back clean:
-all 3 tasks passed both T0 and T1 on the first attempt, fast (13–43s each). See
-"Decision gate" below for what that implies.
+**What this means for the decision gate:** the corpus is fully saturated for this
+model at these six tiers -- 18/18 on both legs, only one retry round used across the
+entire suite. That's a genuinely different conclusion than run 1's mixed picture
+implied, and it's a cleaner one: this isn't \"T1 barely helps\" or \"C6 needs a second
+node,\" it's \"this corpus doesn't currently have a task hard enough to make this model
+fail, so it can't discriminate T0 from T1, let alone argue for or against node5090.\"
+See \"Decision gate\" below.
 
 ---
 
@@ -646,19 +639,21 @@ all 3 tasks passed both T0 and T1 on the first attempt, fast (13–43s each). Se
   before it can discriminate — don't commission node5090 on the strength of this
   suite alone; raise the ceiling first (bigger/more realistic C6-tier tasks) and rerun.
 
-**Reading the 2026-07-08 run against this gate:** none of the three scenarios above
-is a clean fit, because most tiers were already at or near ceiling on T0 alone --
-this model handled the corpus as specified more easily than the K budgets assumed.
-The one tier where T0 showed real gaps (C3, 2/3) closed to 3/3 on T1 within budget --
-a genuine, small T1 win. C4's gap (2/3 on both legs) persisted through T1 because the
-one failure was a malformed tool call, not something a test-feedback round can fix.
-C6 -- the tier this gate cares about most -- was already clean at T0, so this run
-doesn't exercise the multi-round convergence C6 was designed to test at all, and
-says nothing about whether a second node would help there. **This run is better read
-as "the corpus needs harder C6-tier tasks to be informative" (the third bullet above)
-than as evidence for or against node5090** -- combined with the C1 harness caveat,
-the honest conclusion is: fix the two known gaps (task-dir path in prompts,
-tool-call capture) and rerun before using this data for the node5090 decision.
+**Reading run 1 (2026-07-08, superseded):** none of the three scenarios above was a
+clean fit -- most tiers looked near-ceiling but two results (C1a/C1c, C4a) turned out
+to be harness bugs rather than real signal, so the data wasn't trustworthy enough to
+read against this gate at all yet.
+
+**Reading run 2 (2026-07-08, authoritative, after the harness fixes):** this is now a
+clean fit for the **third bullet**. 18/18 on both legs, only one retry round used in
+the entire suite (C4a) -- the model isn't struggling anywhere in this corpus,
+including C6. That's not "T1 barely helps" (bullet one) or "T1 helps most on the hard
+tiers" (bullet two) -- there's no headroom left for either pattern to show up in.
+**Conclusion: don't commission node5090 on the strength of this suite.** The corpus
+needs meaningfully harder C6-tier tasks (bigger multi-file traces, more ambiguous
+bugs, more files) before a T0/T1 comparison here can say anything about whether a
+second independent-reviewer node would help. Building that harder tier is the
+concrete next step if the node5090 question stays live -- not re-running this one.
 
 ---
 
