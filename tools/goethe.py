@@ -7086,9 +7086,9 @@ tail -5 /tmp/goethe-node3090.log
             return f"No smells detected in {file_path}"
         lines = [f"Code smells in {file_path}:"]
         for s in smells:
-            lines.append(f"  • {s.get('id', '?')} ({s.get('name', '?')}): {s.get('description', '')[:80]}")
+            lines.append(f"  • {s.get('smell_id', '?')} ({s.get('smell_name', '?')}): {s.get('description', '')[:80]}")
             for fix in s.get("refactorings", [])[:3]:
-                lines.append(f"    → {fix.get('id', '?')} {fix.get('name', '?')} (priority {fix.get('priority', '?')})")
+                lines.append(f"    → {fix.get('refactoring_id', '?')} {fix.get('title', '?')} (priority {fix.get('priority_score', '?')})")
         return "\n".join(lines)
 
     def episteme_suggest_refactorings(self, code_snippet: str) -> str:
