@@ -7135,7 +7135,7 @@ tail -5 /tmp/goethe-node3090.log
     def episteme_confirm_links(self, insight_id: str, links: str) -> str:
         """Validate or confirm auto-detected links between an insight and canonical entities.
         Use this to verify that an insight is correctly connected to the knowledge graph."""
-        res = self._episteme_post("/insights/confirm", {"id": insight_id, "links": links.split(",")})
+        res = self._episteme_post("/insights/confirm", {"insight_id": insight_id, "links": links.split(",")})
         if "error" in res:
             return res["error"]
         return f"Links confirmed for {insight_id}"
