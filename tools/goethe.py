@@ -7049,7 +7049,8 @@ tail -5 /tmp/goethe-node3090.log
             return f"No neighbors for {entity_id}"
         lines = [f"Neighbors of {entity_id}:"]
         for n in neighbors:
-            lines.append(f"  • {n.get('id', '?')} ({n.get('type', '?')}): {n.get('relation', '?')} → {n.get('title', '')[:80]}")
+            rel = n.get('relation_type', res.get('relation_type', '?'))
+            lines.append(f"  • {n.get('id', '?')} ({n.get('type', '?')}): {rel} → {n.get('title', '')[:80]}")
         return "\n".join(lines)
 
     def episteme_find_path(self, from_id: str, to_id: str) -> str:
