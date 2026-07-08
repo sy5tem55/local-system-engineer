@@ -7097,13 +7097,15 @@ tail -5 /tmp/goethe-node3090.log
         res = self._episteme_post("/refactor", {"code": code_snippet})
         if "error" in res:
             return res["error"]
-        refactors = res.get("refactorings", [])
-        if not refactors:
+        analyses = res.get("analyses", [])
+        if not analyses:
             return "No refactoring suggestions."
         lines = ["Refactoring suggestions:"]
-        for r in refactors[:5]:
-            lines.append(f"  • {r.get('id', '?')} {r.get('name', '?')} (priority {r.get('priority', '?')}, effort: {r.get('effort', '?')})")
-            lines.append(f"    {r.get('description', '')[:100]}")
+        for a in analyses[:5]:
+            smell = a.get("smell", {})
+            lines.append(f"  • {smell.get('smell_id', '?')} ({smell.get('smell_name', '?')}):")
+            for s in a.get("suggestions", [])[:3]:
+                lines.append(f"    → {s.get('refactoring_id', '?')} {s.get('title', '?')} (priority {s.get('priority_score', '?')}, effort: {s.get('effort', '?')})")
         return "\n".join(lines)
 
     def episteme_add_insight(self, insight: str, tags: str = "") -> str:
