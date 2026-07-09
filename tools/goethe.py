@@ -5748,6 +5748,34 @@ tail -5 /tmp/goethe-node3090.log
             self._log(f"SKILL-SEARCH ERROR: {e}")
             return f"SKILL search error: {e}\nFall back to search_kb()."
 
+    @staticmethod
+    def _build_skill_doc(
+        skill_id: str, occupation: str, task: str,
+        sr: SkillRecord, procedure_steps: list, verification: str,
+        embedding: list, quality: float, now: str,
+    ) -> dict:
+        """Build an ES document dict for a skill from core fields + SkillRecord.
+        Replaces the inline dict literal that repeated 5 metadata fields."""
+        return {
+            "skill_id": skill_id,
+            "occupation": occupation,
+            "task": task,
+            "preconditions": sr.preconditions.split(";") if sr.preconditions else [],
+            "procedure": procedure_steps,
+            "verification": verification,
+            "failure_modes": sr.failure_modes.split(";") if sr.failure_modes else [],
+            "provenance": sr.provenance.split(";") if sr.provenance else ["UNATTRIBUTED"],
+            "embedding": embedding,
+            "quality": quality,
+            "stats": {"uses": 0, "episode_successes": 0, "episode_failures": 0, "last_used": None},
+            "pinned": False,
+            "archived": False,
+            "created_at": now,
+            "updated_at": now,
+            "version": 1,
+            "source_tier": sr.source_tier,
+        }
+
     def skill_record(
         self,
         task: str,
@@ -5865,34 +5893,12 @@ tail -5 /tmp/goethe-node3090.log
             slug = re.sub(r"[^a-z0-9]+", "-", task.lower()).strip("-")[:60]
             skill_id = f"{occupation}/{slug}"
             doc_id = hashlib.sha256(skill_id.encode()).hexdigest()[:16]
-            es.index(
-                index="lse-skills",
-                id=doc_id,
-                document={
-                    "skill_id": skill_id,
-                    "occupation": occupation,
-                    "task": task,
-                    "preconditions": _split(preconditions),
-                    "procedure": steps,
-                    "verification": verification,
-                    "failure_modes": _split(failure_modes),
-                    "provenance": _split(provenance) or ["UNATTRIBUTED"],
-                    "embedding": embedding,
-                    "quality": quality,
-                    "stats": {
-                        "uses": 0,
-                        "episode_successes": 0,
-                        "episode_failures": 0,
-                        "last_used": None,
-                    },
-                    "pinned": False,
-                    "archived": False,
-                    "created_at": now,
-                    "updated_at": now,
-                    "version": 1,
-                    "source_tier": sk_tier,
-                },
+            sr = SkillRecord(
+                preconditions=preconditions, failure_modes=failure_modes,
+                provenance=provenance, source_tier=sk_tier,
             )
+            doc = self._build_skill_doc(skill_id, occupation, task, sr, steps, verification, embedding, quality, now)
+            es.index(index="lse-skills", id=doc_id, document=doc)
             flag = "" if provenance.strip() else " | FLAGGED: no provenance"
             return f"SKILL created: {skill_id} | quality={quality:.2f}{flag}"
         except Exception as e:
