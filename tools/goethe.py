@@ -912,6 +912,13 @@ class TaskClass(str, Enum):
     GENERAL = "general"
 
 
+class TaskSize(str, Enum):
+    """Size classification for Gemma model selection."""
+    SMALL = "small"
+    MEDIUM = "medium"
+    LARGE = "large"
+
+
 @dataclass
 class EpistemeResponse:
     """Typed wrapper for Episteme API responses — replaces raw dict + 'error' key check."""
@@ -1445,14 +1452,14 @@ class Tools:
 
     # ── Gemma planner helpers (v0.2.8) ───────────────────────────────────────
 
-    def _planner_task_class(self, task: str) -> str:
+    def _planner_task_class(self, task: str) -> TaskSize:
         """Classify task size for Gemma model selection: 'small' / 'medium' / 'large'."""
         n = len(task)
         if n < 400:
-            return "small"
+            return TaskSize.SMALL
         if n < 1500:
-            return "medium"
-        return "large"
+            return TaskSize.MEDIUM
+        return TaskSize.LARGE
 
     def _planner_free_vram_mb(self) -> int:
         """Return the largest free VRAM (MiB) across all GPUs via nvidia-smi, or 0 on error."""
@@ -1491,8 +1498,8 @@ class Tools:
 
         tc = self._planner_task_class(task)
         order = (
-            ["E4B", "26B", "31B"] if tc == "small"
-            else ["26B", "31B", "E4B"] if tc == "medium"
+            ["E4B", "26B", "31B"] if tc == TaskSize.SMALL
+            else ["26B", "31B", "E4B"] if tc == TaskSize.MEDIUM
             else ["31B", "26B", "E4B"]
         )
 
