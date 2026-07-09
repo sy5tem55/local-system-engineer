@@ -875,6 +875,68 @@ import json
 import urllib.request
 import urllib.error
 from datetime import datetime
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+
+# ── P1: Primitive Obsession fixes ──────────────────────────────────────────
+# Replace raw tuples/strings with named, typed data structures.
+
+@dataclass
+class GemmaSelection:
+    """Result of _planner_gemma_select — which Gemma model to spawn."""
+    model: str      # "4b" or "31b"
+    vision: bool     # whether to load mmproj companion
+
+
+@dataclass
+class TaskRecord:
+    """Row from the tasks.db ledger — replaces raw SQLite tuples."""
+    id: str
+    goal: str
+    plan: str
+    done: str
+    findings: str
+    next_prompt: str
+    status: str
+    updated_at: str
+
+
+class TaskClass(str, Enum):
+    """Classification of planner tasks for routing decisions."""
+    LLM = "llm"
+    INFRA = "infra"
+    SYSADMIN = "sysadmin"
+    GENERAL = "general"
+
+
+@dataclass
+class EpistemeResponse:
+    """Typed wrapper for Episteme API responses — replaces raw dict + 'error' key check."""
+    ok: bool
+    data: Any = None
+    error: str | None = None
+
+
+@dataclass
+class SSHResult:
+    """Result of ssh_run / ssh_script — replaces magic string prefixes."""
+    success: bool
+    output: str = ""
+    exit_code: int | None = None
+    failure_type: str | None = None  # "ssh_failure" | "timeout" | None
+
+
+@dataclass
+class CommandResult:
+    """Result of execute_command — replaces magic string prefixes."""
+    success: bool
+    output: str = ""
+    exit_code: int | None = None
+    failure_type: str | None = None  # "timeout" | None
+
+
 
 
 class Tools:
@@ -6971,7 +7033,7 @@ tail -5 /tmp/goethe-node3090.log
     # ── Episteme MCP Tools ────────────────────────────────────────────────────
     # Proxies to the Episteme REST API (localhost:58302).
     # 9 tools: search_knowledge, get_entity, get_neighbors, find_path,
-    # analyze_code, suggest_refactorings, add_insight, search_insights, confirm_links
+    # analyze_code, suggest_refactorings, add_insight, search_insights
 
     def _episteme_get(self, path: str, params: dict = None) -> dict:
         """Internal: GET request to Episteme API."""
@@ -7194,10 +7256,3 @@ tail -5 /tmp/goethe-node3090.log
                 lines.append(f"    Linked to: {', '.join(i['links'][:3])}")
         return "\n".join(lines)
 
-    def episteme_confirm_links(self, insight_id: str, links: str) -> str:
-        """Validate or confirm auto-detected links between an insight and canonical entities.
-        Use this to verify that an insight is correctly connected to the knowledge graph."""
-        res = self._episteme_post("/insights/confirm", {"insight_id": insight_id, "links": links.split(",")})
-        if "error" in res:
-            return res["error"]
-        return f"Links confirmed for {insight_id}"
