@@ -875,7 +875,7 @@ import json
 import urllib.request
 import urllib.error
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any
 
@@ -1843,25 +1843,18 @@ class Tools:
                 n = (row[0] + 1) if row else 1
                 created = row[1] if row else now
                 steps_json = row[2] if row else None  # carry the v0.3.2 step ledger
+                rec = TaskRecord(
+                    id=tid, goal=goal, status=status, plan=plan,
+                    done=done, findings=findings, unverified=unverified,
+                    next_prompt=next_prompt, checkpoints=n,
+                    created_at=created, updated_at=now,
+                )
                 conn.execute(
                     "INSERT OR REPLACE INTO task_blocks "
                     "(task_id, goal, status, plan, done_steps, findings, unverified, "
                     "next_prompt, checkpoints, created_at, updated_at, steps_json) "
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        tid,
-                        goal,
-                        status,
-                        plan,
-                        done,
-                        findings,
-                        unverified,
-                        next_prompt,
-                        n,
-                        created,
-                        now,
-                        steps_json,
-                    ),
+                    (*asdict(rec).values(), steps_json),
                 )
             conn.close()
             return (
