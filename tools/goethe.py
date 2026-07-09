@@ -2104,6 +2104,30 @@ class Tools:
             "after you intentionally kill it AND delete the partial file."
         )
 
+    @staticmethod
+    def _ssh_result_to_str(result: SSHResult) -> str:
+        """Convert SSHResult dataclass to the established string contract."""
+        if result.failure_type == "timeout":
+            return f"[TIMEOUT]"
+        elif result.failure_type == "ssh_failure":
+            return f"[SSH FAILURE] exit 255"
+        elif result.exit_code is not None and result.exit_code != 0:
+            out = result.output.strip() or "(no output)"
+            return f"[exit {result.exit_code}]\n{out}"
+        else:
+            return result.output.strip() if result.output else "(no output)"
+
+    @staticmethod
+    def _command_result_to_str(result: CommandResult) -> str:
+        """Convert CommandResult dataclass to the established string contract."""
+        if result.failure_type == "timeout":
+            return f"[TIMEOUT]"
+        elif result.exit_code is not None and result.exit_code != 0:
+            out = result.output.strip() or "(no output)"
+            return f"[exit {result.exit_code}]\n{out}"
+        else:
+            return result.output.strip() if result.output else "(no output)"
+
     def ssh_run(
         self,
         host: str,
