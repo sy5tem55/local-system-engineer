@@ -4842,6 +4842,33 @@ tail -5 /tmp/goethe-node3090.log
             return True
         return False
 
+    @staticmethod
+    def _build_kb_doc(
+        content: str, title: str, topic: str,
+        meta: KBDocumentMeta, embedding: list, now: str, doc_hash: str,
+    ) -> dict:
+        """Build an ES document dict from core fields + KBDocumentMeta.
+        Replaces the inline dict literal that repeated 6 metadata fields."""
+        return {
+            "doc_id": doc_hash,
+            "title": title,
+            "content": content,
+            "source_path": None,
+            "source_url": meta.source_url or None,
+            "topic": topic,
+            "tags": [topic],
+            "quality_score": meta.quality_score,
+            "refinement_count": 0,
+            "embedding": embedding,
+            "created_at": now,
+            "updated_at": now,
+            "version": 1,
+            "source_tier": meta.source_tier,
+            "evidence": (meta.evidence or "").strip()[:1000] or None,
+            "verified_against": (meta.verified_against or "").strip() or None,
+            "volatility": meta.volatility,
+        }
+
     def index_to_kb(
         self,
         content: str,
@@ -5011,25 +5038,12 @@ tail -5 /tmp/goethe-node3090.log
                     f"refinements={existing['_source']['refinement_count'] + 1} | "
                     f"tier={tier}{tier_warn}{wf_warn}"
                 )
-            doc = {
-                "doc_id": doc_hash,
-                "title": title,
-                "content": content,
-                "source_path": None,
-                "source_url": source_url or None,
-                "topic": topic,
-                "tags": [topic],
-                "quality_score": quality_score,
-                "refinement_count": 0,
-                "embedding": embedding,
-                "created_at": now,
-                "updated_at": now,
-                "version": 1,
-                "source_tier": tier,
-                "evidence": (evidence or "").strip()[:1000] or None,
-                "verified_against": (verified_against or "").strip() or None,
-                "volatility": volatility,
-            }
+            meta = KBDocumentMeta(
+                source_url=source_url, quality_score=quality_score,
+                source_tier=tier, evidence=evidence,
+                verified_against=verified_against, volatility=volatility,
+            )
+            doc = self._build_kb_doc(content, title, topic, meta, embedding, now, doc_hash)
             es.index(index="lse-kb", id=doc_hash, document=doc)
             return (
                 f"KB created: doc_id={doc_hash} | title='{title}' | "
