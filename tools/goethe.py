@@ -896,11 +896,14 @@ class TaskRecord:
     """Row from the tasks.db ledger — replaces raw SQLite tuples."""
     id: str
     goal: str
+    status: str
     plan: str
     done: str
     findings: str
+    unverified: str
     next_prompt: str
-    status: str
+    checkpoints: int
+    created_at: str
     updated_at: str
 
 
@@ -1727,6 +1730,16 @@ class Tools:
             conn.execute("ALTER TABLE task_blocks ADD COLUMN steps_json TEXT")
         return conn
 
+    @staticmethod
+    def _row_to_task_record(row) -> TaskRecord:
+        """Convert a SQLite row (11-tuple) to a TaskRecord dataclass."""
+        return TaskRecord(
+            id=row[0], goal=row[1], status=row[2], plan=row[3],
+            done=row[4], findings=row[5], unverified=row[6],
+            next_prompt=row[7], checkpoints=row[8],
+            created_at=row[9], updated_at=row[10],
+        )
+
     def task_checkpoint(
         self,
         goal: str,
@@ -1874,27 +1887,15 @@ class Tools:
                     "No matching task block. Either the id is wrong or there is "
                     "no open carried-over work — ask the user what to do next."
                 )
-            (
-                tid,
-                goal,
-                status,
-                plan,
-                done,
-                findings,
-                unverified,
-                next_prompt,
-                n,
-                created,
-                updated,
-            ) = row
+            rec = self._row_to_task_record(row)
             return (
-                f"TASK BLOCK {tid} [{status}] — checkpoint #{n}, updated {updated}\n"
-                f"GOAL: {goal}\n"
-                f"DONE: {done or '(none)'}\n"
-                f"REMAINING PLAN: {plan or '(none)'}\n"
-                f"VERIFIED FINDINGS: {findings or '(none)'}\n"
-                f"UNVERIFIED (re-verify before use): {unverified or '(none)'}\n"
-                f"NEXT PROMPT: {next_prompt}\n"
+                f"TASK BLOCK {rec.id} [{rec.status}] — checkpoint #{rec.checkpoints}, updated {rec.updated_at}\n"
+                f"GOAL: {rec.goal}\n"
+                f"DONE: {rec.done or '(none)'}\n"
+                f"REMAINING PLAN: {rec.plan or '(none)'}\n"
+                f"VERIFIED FINDINGS: {rec.findings or '(none)'}\n"
+                f"UNVERIFIED (re-verify before use): {rec.unverified or '(none)'}\n"
+                f"NEXT PROMPT: {rec.next_prompt}\n"
                 f"(open blocks total: {open_count})"
             )
         except Exception as e:
