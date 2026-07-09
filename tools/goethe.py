@@ -948,6 +948,38 @@ class CommandResult:
     failure_type: str | None = None  # "timeout" | None
 
 
+# ── P2: Data Clumps fixes ──────────────────────────────────────────────────
+# Bundle recurring parameter groups into named dataclasses.
+
+@dataclass
+class KBDocumentMeta:
+    """Metadata for KB documents — replaces 6-parameter tail of index_to_kb."""
+    source_url: str = ""
+    quality_score: float = 0.5
+    source_tier: str = "inferred"
+    evidence: str = ""
+    verified_against: str = ""
+    volatility: str = "slow"
+
+
+@dataclass
+class SkillRecord:
+    """Metadata for skill records — replaces 5-parameter tail of skill_record."""
+    preconditions: str = ""
+    failure_modes: str = ""
+    provenance: str = ""
+    quality: float = 0.5
+    source_tier: str = "inferred"
+
+
+@dataclass
+class ErrorReport:
+    """Error pattern for record_error — bundles the 3 error fields."""
+    error_text: str
+    context: str
+    resolution: str
+
+
 
 
 class Tools:
