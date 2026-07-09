@@ -886,8 +886,9 @@ from typing import Any
 @dataclass
 class GemmaSelection:
     """Result of _planner_gemma_select — which Gemma model to spawn."""
-    model: str      # "4b" or "31b"
-    vision: bool     # whether to load mmproj companion
+    gguf: str | None       # path to the GGUF model file
+    mmproj: str | None     # path to mmproj companion (vision tasks)
+    model_key: str | None  # "E4B" | "26B" | "31b" | None
 
 
 @dataclass
@@ -1426,18 +1427,18 @@ class Tools:
             for kw in ("image", "screenshot", "photo", "visual",
                        "png", "jpg", "jpeg", "picture")
         )
-        gguf, mmproj, model_key = self._planner_gemma_select(task, vision=vision)
-        if gguf is None:
+        sel = self._planner_gemma_select(task, vision=vision)
+        if sel.gguf is None:
             return (
                 "ERROR: all planner paths exhausted (llama-server, Ollama, Gemma) — "
                 "insufficient VRAM or model files not found under PLANNER_MODEL_DIR"
             )
         planner_port = self.valves.PLANNER_PORT
-        proc = self._spawn_gemma_server(gguf, mmproj, planner_port)
+        proc = self._spawn_gemma_server(sel.gguf, sel.mmproj, planner_port)
         if proc is None:
-            return f"ERROR: Gemma server (model_key={model_key}) failed to start within 60s"
+            return f"ERROR: Gemma server (model_key={sel.model_key}) failed to start within 60s"
         try:
-            self._log(f"NODE-PLAN: Gemma path — model_key={model_key} vision={vision}")
+            self._log(f"NODE-PLAN: Gemma path — model_key={sel.model_key} vision={vision}")
             return _llm_call(f"http://127.0.0.1:{planner_port}", model="", timeout=180)
         finally:
             self._stop_gemma_server(proc)
@@ -1469,7 +1470,7 @@ class Tools:
             pass
         return 0
 
-    def _planner_gemma_select(self, task: str, vision: bool = False) -> tuple:
+    def _planner_gemma_select(self, task: str, vision: bool = False) -> GemmaSelection:
         """
         Select the best-fit Gemma GGUF from PLANNER_MODEL_DIR given available VRAM.
 
@@ -1511,9 +1512,9 @@ class Tools:
                 self._log(f"PLANNER-GEMMA: skip {key} — mmproj missing: {mmproj}")
                 continue
             self._log(f"PLANNER-GEMMA: selected {key} (task_class={tc}, vision={vision})")
-            return gguf, mmproj, key
+            return GemmaSelection(gguf=gguf, mmproj=mmproj, model_key=key)
 
-        return None, None, None
+        return GemmaSelection(gguf=None, mmproj=None, model_key=None)
 
     def _spawn_gemma_server(self, gguf_path: str, mmproj_path, port: int):
         """
