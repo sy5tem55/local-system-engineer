@@ -5106,16 +5106,13 @@ tail -5 /tmp/goethe-node3090.log
                     },
                 )
                 return f"Error KB updated: known error now seen {new_count}x. Resolution updated.{wf_note}"
-            doc = {
-                "error_hash": error_hash,
-                "error_text": error_text,
-                "context": context,
-                "resolution": resolution,
-                "embedding": embedding,
-                "occurrence_count": 1,
-                "first_seen": now,
-                "last_seen": now,
-            }
+            err = ErrorReport(
+                error_text=error_text,
+                context=context,
+                resolution=resolution,
+            )
+            doc = {**asdict(err), "error_hash": error_hash, "embedding": embedding,
+                    "occurrence_count": 1, "first_seen": now, "last_seen": now}
             es.index(index="lse-errors", id=error_hash, document=doc)
             return f"Error KB created: new error pattern recorded (hash={error_hash}).{wf_note}"
         except Exception as e:
