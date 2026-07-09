@@ -662,7 +662,7 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
               pfsense_log_summary()— logs only. Routing triangle added to all three docstrings.
               KB indexing cap: 4000 → 50000 chars (full docs stored).
               KB embed cap: 8000 chars (nomic-embed-text token limit respected separately).
-              search_kb return: 8000 chars per hit (preview_chars param, default 8000) (meaningful content per result).
+              search_kb return: 200 → 5000 chars per hit (meaningful content per result).
               fetch_url default: 3000 → 20000 chars (full pages fetched by default).
               pfsense_log_summary: per-request api_key forwarded to gateway (?api_key=).
               Fixed _ensure_gateway() UnboundLocalError (pf_key → api_key).
@@ -4617,7 +4617,6 @@ tail -5 /tmp/goethe-node3090.log
         min_score: float = 4.2,
         max_results: int = 5,
         topic_filter: str = "",
-        preview_chars: int = 8000,
     ) -> str:
         """
         Search the LSE knowledge base using semantic + keyword hybrid search.
@@ -4657,10 +4656,6 @@ tail -5 /tmp/goethe-node3090.log
             max_results:  Max results to return. Default 5.
             topic_filter: Optional topic tag: 'comfyui', 'wan2.1', 'searxng',
                           'llama-cpp', 'pfsense', 'infrastructure', 'openwebui'.
-            preview_chars: Max chars of content per result. Default 8000 (matches
-                          nomic-embed-text embedding boundary). 95% of KB docs
-                          are <= 8000 chars. Docs exceeding this are truncated
-                          with a note; use kb_get(doc_id) for full content.
         """
         self._log(f"SEARCH-KB: {query}")
         _tb = self._consume_time_banner()  # CHRONOS-2 (v0.3.1)
@@ -4781,8 +4776,7 @@ tail -5 /tmp/goethe-node3090.log
                     f"{_flags}"
                     f"    source: {src}\n"
                     f"    (pass doc_id above to record_outcome/mentor_correct)\n"
-                    f"    {s['content'][:preview_chars].strip()}"
-                    f"\n    [TRUNCATED — {len(s['content'])} chars, limit {preview_chars}; search_kb with higher preview_chars or use kb_get] \n" if len(s['content']) > preview_chars else "\n"
+                    f"    {s['content'][:5000].strip()}\n"
                 )
             return _tb + "\n".join(lines)
         except Exception as e:
