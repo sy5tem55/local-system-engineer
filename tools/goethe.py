@@ -7044,8 +7044,8 @@ tail -5 /tmp/goethe-node3090.log
     # 9 tools: search_knowledge, get_entity, get_neighbors, find_path,
     # analyze_code, suggest_refactorings, add_insight, search_insights
 
-    def _episteme_get(self, path: str, params: dict = None) -> dict:
-        """Internal: GET request to Episteme API."""
+    def _episteme_get(self, path: str, params: dict = None) -> EpistemeResponse:
+        """Internal: GET request to Episteme API. Returns EpistemeResponse."""
         import urllib.request, urllib.error, json
         base = getattr(self.valves, "EPISTEME_API_URL", "http://localhost:58302")
         url = f"{base}{path}"
@@ -7057,12 +7057,12 @@ tail -5 /tmp/goethe-node3090.log
             req.add_header("X-API-Key", token)
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
-                return json.loads(resp.read())
+                return EpistemeResponse(ok=True, data=json.loads(resp.read()))
         except urllib.error.URLError as e:
-            return {"error": f"Episteme API error: {e}"}
+            return EpistemeResponse(ok=False, error=f"Episteme API error: {e}")
 
-    def _episteme_post(self, path: str, payload: dict) -> dict:
-        """Internal: POST request to Episteme API."""
+    def _episteme_post(self, path: str, payload: dict) -> EpistemeResponse:
+        """Internal: POST request to Episteme API. Returns EpistemeResponse."""
         import urllib.request, urllib.error, json
         base = getattr(self.valves, "EPISTEME_API_URL", "http://localhost:58302")
         url = f"{base}{path}"
@@ -7074,9 +7074,9 @@ tail -5 /tmp/goethe-node3090.log
             req.add_header("X-API-Key", token)
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
-                return json.loads(resp.read())
+                return EpistemeResponse(ok=True, data=json.loads(resp.read()))
         except urllib.error.URLError as e:
-            return {"error": f"Episteme API error: {e}"}
+            return EpistemeResponse(ok=False, error=f"Episteme API error: {e}")
 
     def episteme_search_knowledge(self, query: str, top_k: int | None = None, filter_type: str | None = None) -> str:
         """Semantic search across all Episteme entities (patterns, laws, smells, refactorings).
@@ -7092,10 +7092,10 @@ tail -5 /tmp/goethe-node3090.log
         if filter_type is not None:
             params["filter_type"] = filter_type
         res = self._episteme_get("/search", params)
-        if "error" in res:
-            return res["error"]
+        if not res.ok:
+            return res.error
         # Format results
-        results = res.get("results", [])
+        results = (res.data or {}).get("results", [])
         if not results:
             return f"No results for '{query}'"
         lines = [f"Episteme search for '{query}':"]
@@ -7107,10 +7107,11 @@ tail -5 /tmp/goethe-node3090.log
         """Get details for a specific Episteme entity by ID (e.g., DP-005, RF-018, LAW-001).
         Use this to get full context on a pattern, law, or refactoring."""
         res = self._episteme_get(f"/graph/{entity_id}")
-        if "error" in res:
-            return res["error"]
-        res.setdefault("entity_id", res.get("id", "?"))
-        return json.dumps(res, indent=2)
+        if not res.ok:
+            return res.error
+        d = res.data or {}
+        d.setdefault("entity_id", d.get("id", "?"))
+        return json.dumps(d, indent=2)
 
     def episteme_get_neighbors(self, entity_id: str, relation_type: str | None = None, max_depth: int | None = None) -> str:
         """Get related entities for a given Episteme entity ID.
@@ -7126,9 +7127,9 @@ tail -5 /tmp/goethe-node3090.log
         if max_depth is not None:
             params["max_depth"] = max_depth
         res = self._episteme_get(f"/graph/{entity_id}/neighbors", params or None)
-        if "error" in res:
-            return res["error"]
-        neighbors = res.get("neighbors", [])
+        if not res.ok:
+            return res.error
+        neighbors = (res.data or {}).get("neighbors", [])
         if not neighbors:
             return f"No neighbors for {entity_id}"
         lines = [f"Neighbors of {entity_id}:"]
@@ -7149,9 +7150,9 @@ tail -5 /tmp/goethe-node3090.log
         if max_depth is not None:
             payload["max_depth"] = max_depth
         res = self._episteme_post("/graph/path", payload)
-        if "error" in res:
-            return res["error"]
-        path = res.get("path", [])
+        if not res.ok:
+            return res.error
+        path = (res.data or {}).get("path", [])
         if not path:
             return f"No path found between {from_id} and {to_id}"
         lines = [f"Path from {from_id} to {to_id}:"]
@@ -7199,9 +7200,9 @@ tail -5 /tmp/goethe-node3090.log
         if min_confidence is not None:
             payload["min_confidence"] = min_confidence
         res = self._episteme_post("/analyze", payload)
-        if "error" in res:
-            return res["error"]
-        smells = res.get("smells", [])
+        if not res.ok:
+            return res.error
+        smells = (res.data or {}).get("smells", [])
         if not smells:
             return f"No smells detected in {filename or "inline code"}"
         lines = [f"Code smells in {filename or "inline code"}:"]
@@ -7228,8 +7229,8 @@ tail -5 /tmp/goethe-node3090.log
         if min_confidence is not None:
             payload["min_confidence"] = min_confidence
         res = self._episteme_post("/refactor", payload)
-        if "error" in res:
-            return res["error"]
+        if not res.ok:
+            return res.error
         analyses = res.get("analyses", [])
         if not analyses:
             return "No refactoring suggestions."
@@ -7245,17 +7246,17 @@ tail -5 /tmp/goethe-node3090.log
         """Record a team insight or lesson learned into Episteme's tacit knowledge layer.
         Auto-links to relevant canonical entities (patterns, laws, smells)."""
         res = self._episteme_post("/insights", {"text": insight, "tags": tags.split(",") if tags else []})
-        if "error" in res:
-            return res["error"]
-        return f"Insight recorded: {res.get('id', '?')}"
+        if not res.ok:
+            return res.error
+        return f"Insight recorded: {(res.data or {}).get('id', '?')}"
 
     def episteme_search_insights(self, query: str) -> str:
         """Search past team insights and tacit knowledge.
         Use this to find 'what did we decide about X?' or 'have we solved this before?'."""
         res = self._episteme_get("/insights", {"q": query})
-        if "error" in res:
-            return res["error"]
-        insights = res.get("insights", [])
+        if not res.ok:
+            return res.error
+        insights = (res.data or {}).get("insights", [])
         if not insights:
             return f"No insights found for '{query}'"
         lines = [f"Team insights for '{query}':"]
