@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.4.1
+title: LSE Goethe v0.3.9
 author: local-system-engineer
-version: 0.4.1
+version: 0.3.9
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -32,7 +32,7 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
               no confirmed parameter added to either. See
               lse/skills/pfsense/DESIGN.md and the 2026-07-06 entry in
               kb/session-learnings.md for the full incident writeup.
-    Goethe v0.4.0: Episteme MCP integration (9 tools via REST API :58302) (data-driven, gold set n=50).
+    Goethe v0.3.8: PH3-2 retrieval decision (data-driven, gold set n=50).
               --compare verdict: LINEAR wins (recall@3 0.84, MRR 0.800) over
               RRF (0.84, 0.735; recall@1 −0.12) — search_kb ranking unchanged,
               null result recorded. Threshold finding: the 0.72 default was
@@ -875,111 +875,6 @@ import json
 import urllib.request
 import urllib.error
 from datetime import datetime
-from dataclasses import asdict, dataclass
-from enum import Enum
-from typing import Any
-
-
-# ── P1: Primitive Obsession fixes ──────────────────────────────────────────
-# Replace raw tuples/strings with named, typed data structures.
-
-@dataclass
-class GemmaSelection:
-    """Result of _planner_gemma_select — which Gemma model to spawn."""
-    gguf: str | None       # path to the GGUF model file
-    mmproj: str | None     # path to mmproj companion (vision tasks)
-    model_key: str | None  # "E4B" | "26B" | "31b" | None
-
-
-@dataclass
-class TaskRecord:
-    """Row from the tasks.db ledger — replaces raw SQLite tuples."""
-    id: str
-    goal: str
-    status: str
-    plan: str
-    done: str
-    findings: str
-    unverified: str
-    next_prompt: str
-    checkpoints: int
-    created_at: str
-    updated_at: str
-
-
-class TaskClass(str, Enum):
-    """Classification of planner tasks for routing decisions."""
-    LLM = "llm"
-    INFRA = "infra"
-    SYSADMIN = "sysadmin"
-    GENERAL = "general"
-
-
-class TaskSize(str, Enum):
-    """Size classification for Gemma model selection."""
-    SMALL = "small"
-    MEDIUM = "medium"
-    LARGE = "large"
-
-
-@dataclass
-class EpistemeResponse:
-    """Typed wrapper for Episteme API responses — replaces raw dict + 'error' key check."""
-    ok: bool
-    data: Any = None
-    error: str | None = None
-
-
-@dataclass
-class SSHResult:
-    """Result of ssh_run / ssh_script — replaces magic string prefixes."""
-    success: bool
-    output: str = ""
-    exit_code: int | None = None
-    failure_type: str | None = None  # "ssh_failure" | "timeout" | None
-
-
-@dataclass
-class CommandResult:
-    """Result of execute_command — replaces magic string prefixes."""
-    success: bool
-    output: str = ""
-    exit_code: int | None = None
-    failure_type: str | None = None  # "timeout" | None
-
-
-# ── P2: Data Clumps fixes ──────────────────────────────────────────────────
-# Bundle recurring parameter groups into named dataclasses.
-
-@dataclass
-class KBDocumentMeta:
-    """Metadata for KB documents — replaces 6-parameter tail of index_to_kb."""
-    source_url: str = ""
-    quality_score: float = 0.5
-    source_tier: str = "inferred"
-    evidence: str = ""
-    verified_against: str = ""
-    volatility: str = "slow"
-
-
-@dataclass
-class SkillRecord:
-    """Metadata for skill records — replaces 5-parameter tail of skill_record."""
-    preconditions: str = ""
-    failure_modes: str = ""
-    provenance: str = ""
-    quality: float = 0.5
-    source_tier: str = "inferred"
-
-
-@dataclass
-class ErrorReport:
-    """Error pattern for record_error — bundles the 3 error fields."""
-    error_text: str
-    context: str
-    resolution: str
-
-
 
 
 class Tools:
@@ -1016,6 +911,11 @@ class Tools:
             default="http://localhost:8088/search",
             description="SearxNG JSON search endpoint (for search_web).",
         )
+        CAMOUFOX_URL: str = Field(
+            default="http://192.168.5.41:9377",
+            description="Camoufox browser server URL on node3090 (for Reddit scraping).",
+        )
+
         EXTRA_WRITE_PATHS: str = Field(
             default="",
             description="Colon-separated extra paths the agent may write to.",
@@ -1161,14 +1061,6 @@ class Tools:
             description="TTL in seconds for the fetch_url content cache used by "
             "verify_source_claims (v1.7.10). Re-fetches after expiry. "
             "Set to 0 to always re-fetch.",
-        )
-        EPISTEME_API_URL: str = Field(
-            default="http://localhost:58302",
-            description="Episteme REST API base URL (for episteme_* tools).",
-        )
-        EPISTEME_API_TOKEN: str = Field(
-            default="",
-            description="X-API-Key token for Episteme REST API auth. Auto-loaded from Vaultwarden if empty.",
         )
 
     # ── Hard-coded permission lists ───────────────────────────────────────────
@@ -1469,32 +1361,32 @@ class Tools:
             for kw in ("image", "screenshot", "photo", "visual",
                        "png", "jpg", "jpeg", "picture")
         )
-        sel = self._planner_gemma_select(task, vision=vision)
-        if sel.gguf is None:
+        gguf, mmproj, model_key = self._planner_gemma_select(task, vision=vision)
+        if gguf is None:
             return (
                 "ERROR: all planner paths exhausted (llama-server, Ollama, Gemma) — "
                 "insufficient VRAM or model files not found under PLANNER_MODEL_DIR"
             )
         planner_port = self.valves.PLANNER_PORT
-        proc = self._spawn_gemma_server(sel.gguf, sel.mmproj, planner_port)
+        proc = self._spawn_gemma_server(gguf, mmproj, planner_port)
         if proc is None:
-            return f"ERROR: Gemma server (model_key={sel.model_key}) failed to start within 60s"
+            return f"ERROR: Gemma server (model_key={model_key}) failed to start within 60s"
         try:
-            self._log(f"NODE-PLAN: Gemma path — model_key={sel.model_key} vision={vision}")
+            self._log(f"NODE-PLAN: Gemma path — model_key={model_key} vision={vision}")
             return _llm_call(f"http://127.0.0.1:{planner_port}", model="", timeout=180)
         finally:
             self._stop_gemma_server(proc)
 
     # ── Gemma planner helpers (v0.2.8) ───────────────────────────────────────
 
-    def _planner_task_class(self, task: str) -> TaskSize:
+    def _planner_task_class(self, task: str) -> str:
         """Classify task size for Gemma model selection: 'small' / 'medium' / 'large'."""
         n = len(task)
         if n < 400:
-            return TaskSize.SMALL
+            return "small"
         if n < 1500:
-            return TaskSize.MEDIUM
-        return TaskSize.LARGE
+            return "medium"
+        return "large"
 
     def _planner_free_vram_mb(self) -> int:
         """Return the largest free VRAM (MiB) across all GPUs via nvidia-smi, or 0 on error."""
@@ -1512,7 +1404,7 @@ class Tools:
             pass
         return 0
 
-    def _planner_gemma_select(self, task: str, vision: bool = False) -> GemmaSelection:
+    def _planner_gemma_select(self, task: str, vision: bool = False) -> tuple:
         """
         Select the best-fit Gemma GGUF from PLANNER_MODEL_DIR given available VRAM.
 
@@ -1533,8 +1425,8 @@ class Tools:
 
         tc = self._planner_task_class(task)
         order = (
-            ["E4B", "26B", "31B"] if tc == TaskSize.SMALL
-            else ["26B", "31B", "E4B"] if tc == TaskSize.MEDIUM
+            ["E4B", "26B", "31B"] if tc == "small"
+            else ["26B", "31B", "E4B"] if tc == "medium"
             else ["31B", "26B", "E4B"]
         )
 
@@ -1554,9 +1446,9 @@ class Tools:
                 self._log(f"PLANNER-GEMMA: skip {key} — mmproj missing: {mmproj}")
                 continue
             self._log(f"PLANNER-GEMMA: selected {key} (task_class={tc}, vision={vision})")
-            return GemmaSelection(gguf=gguf, mmproj=mmproj, model_key=key)
+            return gguf, mmproj, key
 
-        return GemmaSelection(gguf=None, mmproj=None, model_key=None)
+        return None, None, None
 
     def _spawn_gemma_server(self, gguf_path: str, mmproj_path, port: int):
         """
@@ -1762,16 +1654,6 @@ class Tools:
             conn.execute("ALTER TABLE task_blocks ADD COLUMN steps_json TEXT")
         return conn
 
-    @staticmethod
-    def _row_to_task_record(row) -> TaskRecord:
-        """Convert a SQLite row (11-tuple) to a TaskRecord dataclass."""
-        return TaskRecord(
-            id=row[0], goal=row[1], status=row[2], plan=row[3],
-            done=row[4], findings=row[5], unverified=row[6],
-            next_prompt=row[7], checkpoints=row[8],
-            created_at=row[9], updated_at=row[10],
-        )
-
     def task_checkpoint(
         self,
         goal: str,
@@ -1843,18 +1725,25 @@ class Tools:
                 n = (row[0] + 1) if row else 1
                 created = row[1] if row else now
                 steps_json = row[2] if row else None  # carry the v0.3.2 step ledger
-                rec = TaskRecord(
-                    id=tid, goal=goal, status=status, plan=plan,
-                    done=done, findings=findings, unverified=unverified,
-                    next_prompt=next_prompt, checkpoints=n,
-                    created_at=created, updated_at=now,
-                )
                 conn.execute(
                     "INSERT OR REPLACE INTO task_blocks "
                     "(task_id, goal, status, plan, done_steps, findings, unverified, "
                     "next_prompt, checkpoints, created_at, updated_at, steps_json) "
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (*asdict(rec).values(), steps_json),
+                    (
+                        tid,
+                        goal,
+                        status,
+                        plan,
+                        done,
+                        findings,
+                        unverified,
+                        next_prompt,
+                        n,
+                        created,
+                        now,
+                        steps_json,
+                    ),
                 )
             conn.close()
             return (
@@ -1912,15 +1801,27 @@ class Tools:
                     "No matching task block. Either the id is wrong or there is "
                     "no open carried-over work — ask the user what to do next."
                 )
-            rec = self._row_to_task_record(row)
+            (
+                tid,
+                goal,
+                status,
+                plan,
+                done,
+                findings,
+                unverified,
+                next_prompt,
+                n,
+                created,
+                updated,
+            ) = row
             return (
-                f"TASK BLOCK {rec.id} [{rec.status}] — checkpoint #{rec.checkpoints}, updated {rec.updated_at}\n"
-                f"GOAL: {rec.goal}\n"
-                f"DONE: {rec.done or '(none)'}\n"
-                f"REMAINING PLAN: {rec.plan or '(none)'}\n"
-                f"VERIFIED FINDINGS: {rec.findings or '(none)'}\n"
-                f"UNVERIFIED (re-verify before use): {rec.unverified or '(none)'}\n"
-                f"NEXT PROMPT: {rec.next_prompt}\n"
+                f"TASK BLOCK {tid} [{status}] — checkpoint #{n}, updated {updated}\n"
+                f"GOAL: {goal}\n"
+                f"DONE: {done or '(none)'}\n"
+                f"REMAINING PLAN: {plan or '(none)'}\n"
+                f"VERIFIED FINDINGS: {findings or '(none)'}\n"
+                f"UNVERIFIED (re-verify before use): {unverified or '(none)'}\n"
+                f"NEXT PROMPT: {next_prompt}\n"
                 f"(open blocks total: {open_count})"
             )
         except Exception as e:
@@ -2112,8 +2013,6 @@ class Tools:
             ln.strip()
             for ln in ps.stdout.splitlines()
             if ln.strip() and "pgrep" not in ln and qualify.search(ln)
-            and "/dev/null" not in ln  # health-probe curls, not downloads
-            and not _re.search(r"-o\s+-(?:\s|$)", ln)
         ]
         if not active:
             return ""
@@ -2128,30 +2027,6 @@ class Tools:
             "  • Start a new download ONLY after the current one COMPLETES, or "
             "after you intentionally kill it AND delete the partial file."
         )
-
-    @staticmethod
-    def _ssh_result_to_str(result: SSHResult) -> str:
-        """Convert SSHResult dataclass to the established string contract."""
-        if result.failure_type == "timeout":
-            return f"[TIMEOUT]"
-        elif result.failure_type == "ssh_failure":
-            return f"[SSH FAILURE] exit 255"
-        elif result.exit_code is not None and result.exit_code != 0:
-            out = result.output.strip() or "(no output)"
-            return f"[exit {result.exit_code}]\n{out}"
-        else:
-            return result.output.strip() if result.output else "(no output)"
-
-    @staticmethod
-    def _command_result_to_str(result: CommandResult) -> str:
-        """Convert CommandResult dataclass to the established string contract."""
-        if result.failure_type == "timeout":
-            return f"[TIMEOUT]"
-        elif result.exit_code is not None and result.exit_code != 0:
-            out = result.output.strip() or "(no output)"
-            return f"[exit {result.exit_code}]\n{out}"
-        else:
-            return result.output.strip() if result.output else "(no output)"
 
     def ssh_run(
         self,
@@ -2428,7 +2303,7 @@ tail -5 /tmp/goethe-node3090.log
                     capture_output=True, timeout=10,
                 )
 
-    def execute_command(self, command: str, working_dir: str = "", background: bool = False) -> str:
+    def execute_command(self, command: str, working_dir: str = "") -> str:
         """
         Execute a read-only or write-safe shell command in the WSL Ubuntu environment.
         Use for: ls, cat, grep, find, ps, df, uname, systemctl status, apt list,
@@ -2453,17 +2328,6 @@ tail -5 /tmp/goethe-node3090.log
           is code-enforced: execute_command REFUSES a download-initiating command
           while a downloader process is already running (see _active_download_guard).
           Start a new download only after the current one finishes or is killed.
-
-        SERVER / DAEMON RULE — mandatory for long-running processes:
-          A command that starts a server and never returns on its own
-          (e.g. 'epis api start', 'uvicorn ...', 'npm run dev', anything that
-          serves or listens) MUST be called with background=True. Run in the
-          foreground it blocks until COMMAND_TIMEOUT and can hang the call
-          because the server keeps its output pipe open. background=True
-          detaches it into its own session, redirects output to a
-          /tmp/goethe-bg/*.log file, and returns the PID immediately. Then
-          verify readiness by polling the service or reading the log — never
-          treat the start command as "completed".
 
         CONFIG GROUND-TRUTH RULE — mandatory:
           Tokens, passwords, paths, ports, and config values you state or use
@@ -2649,24 +2513,13 @@ tail -5 /tmp/goethe-node3090.log
                 )
 
         # ── Block writes to privileged system paths ───────────────────────────
-        # Only block when a write op TARGETS a privileged path; reads (cat/tr/grep
-        # < /proc, ps, etc.) are allowed. /mnt/ dropped (legit user data lives there).
-        import re as _re_pw  # noqa: PLC0415
-        _priv_re = r"(?:/etc/|/usr/|/boot/|/sys/|/proc/)"
-        _write_to_priv = _re_pw.search(
-            r">>?\s*" + _priv_re
-            + r"|\btee\s+(?:-a\s+)?" + _priv_re
-            + r"|\b(?:cp|mv|dd|truncate)\b[^|;&\n]*\s" + _priv_re
-            + r"|\bsed\s+-i\b[^|;&\n]*" + _priv_re
-            + r"|\brm\s+[^|;&\n]*" + _priv_re,
-            command,
-        )
-        if _write_to_priv:
-            self._log(f"WRITE-BLOCKED: {command}")
-            return (
-                "BLOCKED: Write to a privileged system path detected. "
-                "Use sudo_delegation_block to delegate this to the user."
-            )
+        if any(p in command for p in self._PRIVILEGED_WRITE_PATHS):
+            if any(op in command for op in self._WRITE_OPS):
+                self._log(f"WRITE-BLOCKED: {command}")
+                return (
+                    "BLOCKED: Write to a privileged system path detected. "
+                    "Use sudo_delegation_block to delegate this to the user."
+                )
 
         # ── Block clobbering an in-progress download (v0.2.0) ─────────────────
         # If a download is already running, refuse a new one and route the model
@@ -2816,88 +2669,19 @@ tail -5 /tmp/goethe-node3090.log
                     f"  )"
                 )
 
-        # ── Background / daemon mode (v0.4.1) ─────────────────────────────────
-        # Long-running servers (e.g. 'epis api start', uvicorn, npm run dev,
-        # anything that serves and never exits) must NOT run in the foreground:
-        # subprocess would block until COMMAND_TIMEOUT and, because the server
-        # keeps the stdout pipe open, the read can hang well past the timeout.
-        # background=True detaches the command into its own session, redirects
-        # output to a log file, and returns immediately with the PID.
-        if background:
-            import time as _time_bg, shlex as _shlex_bg
-            _log_dir = "/tmp/goethe-bg"
-            try:
-                os.makedirs(_log_dir, exist_ok=True)
-                _logfile = (
-                    f"{_log_dir}/{_time_bg.strftime('%Y%m%d-%H%M%S')}"
-                    f"-{os.getpid()}.log"
-                )
-                _wrapped = (
-                    f"setsid bash -c {_shlex_bg.quote(command)} "
-                    f"</dev/null >{_shlex_bg.quote(_logfile)} 2>&1 & echo $!"
-                )
-                self._log(f"BG-CMD: {command}  (cwd={cwd}, log={_logfile})")
-                _bg = subprocess.run(
-                    _wrapped,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                    cwd=cwd,
-                )
-                _pid = (_bg.stdout or "").strip() or "?"
-                self._log(f"BG-STARTED pid={_pid} log={_logfile}")
-                return (
-                    f"[BACKGROUND] started pid {_pid}\n"
-                    f"log: {_logfile}\n"
-                    "Detached in its own session — it keeps running after this "
-                    "call returns.\n"
-                    "Verify readiness by polling the service (e.g. curl -sf its "
-                    f"health endpoint) or: tail -n 40 {_logfile}\n"
-                    f"Stop it with: kill {_pid}   "
-                    f"(or kill -TERM -{_pid} to kill the whole group)"
-                ) + _fp_note
-            except Exception as _e_bg:
-                self._log(f"BG-ERROR: {_e_bg}")
-                return f"ERROR: failed to start background command: {_e_bg}"
-
-        # ── Execute (foreground) ──────────────────────────────────────────────
-        # Runs in a new session (start_new_session=True) so that on timeout the
-        # ENTIRE process group can be killed. Otherwise a child that inherits and
-        # holds the stdout pipe open keeps the read blocking long past
-        # COMMAND_TIMEOUT — the classic "tool call hangs forever" symptom.
+        # ── Execute ───────────────────────────────────────────────────────────
         self._log(f"CMD: {command}  (cwd={cwd})")
-        import signal as _signal_fg
-        proc = None
         try:
-            proc = subprocess.Popen(
+            result = subprocess.run(
                 command,
                 shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                capture_output=True,
                 text=True,
+                timeout=self.valves.COMMAND_TIMEOUT,
                 cwd=cwd,
-                start_new_session=True,
             )
-            try:
-                output, _ = proc.communicate(timeout=self.valves.COMMAND_TIMEOUT)
-                rc = proc.returncode
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(os.getpgid(proc.pid), _signal_fg.SIGKILL)
-                except Exception:
-                    proc.kill()
-                try:
-                    proc.communicate(timeout=5)
-                except Exception:
-                    pass
-                self._log(f"TIMEOUT: {command}")
-                return (
-                    f"ERROR: Command timed out after {self.valves.COMMAND_TIMEOUT} "
-                    "seconds (process group killed). If this starts a server or "
-                    "daemon, re-run with background=True instead."
-                )
-            output = output or "(no output)"
+            output = result.stdout or result.stderr or "(no output)"
+            rc = result.returncode
             if len(output) > self.valves.MAX_OUTPUT_CHARS:
                 output = (
                     output[: self.valves.MAX_OUTPUT_CHARS]
@@ -2907,13 +2691,13 @@ tail -5 /tmp/goethe-node3090.log
             self._log(f"DONE rc={rc} len={len(output)}")
             result_str = output if rc == 0 else f"[exit {rc}]\n{output}"
             return result_str + _fp_note
+        except subprocess.TimeoutExpired:
+            self._log(f"TIMEOUT: {command}")
+            return (
+                f"ERROR: Command timed out after {self.valves.COMMAND_TIMEOUT} seconds."
+            )
         except Exception as e:
             self._log(f"ERROR: {e}")
-            if proc is not None:
-                try:
-                    os.killpg(os.getpgid(proc.pid), _signal_fg.SIGKILL)
-                except Exception:
-                    pass
             return f"ERROR: {str(e)}"
 
     def read_file(self, path: str, max_lines: int = 100, offset_lines: int = 0) -> str:
@@ -3343,6 +3127,105 @@ tail -5 /tmp/goethe-node3090.log
         except Exception as e:
             return f"ERROR searching SearxNG: {str(e)}"
 
+    # ── CAMOUFOX REDDIT SCRAPING (v0.3.10) ──────────────────────────────────
+
+    def _camoufox_scrape(self, url: str, wait_s: int = 8) -> str:
+        """Use Camoufox on node3090 to scrape a URL. Returns accessibility tree text."""
+        import requests  # noqa: PLC0415
+        import time  # noqa: PLC0415
+
+        base = self.valves.CAMOUFOX_URL.rstrip("/")
+        try:
+            # Step 1: Open tab
+            resp = requests.post(
+                f"{base}/tabs",
+                json={"userId": "lse", "sessionKey": "lse", "url": url},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            tab_id = resp.json().get("tabId")
+            if not tab_id:
+                return ""
+
+            # Step 2: Wait for page load
+            time.sleep(wait_s)
+
+            # Step 3: Get snapshot
+            snap_resp = requests.get(
+                f"{base}/tabs/{tab_id}/snapshot",
+                params={"userId": "lse", "sessionKey": "lse"},
+                timeout=10,
+            )
+            snap_resp.raise_for_status()
+            snapshot = snap_resp.json().get("snapshot", "")
+
+            # Close tab
+            try:
+                requests.delete(
+                    f"{base}/tabs/{tab_id}",
+                    params={"userId": "lse", "sessionKey": "lse"},
+                    timeout=5,
+                )
+            except Exception:
+                pass  # Non-critical cleanup
+
+            return snapshot
+        except Exception as e:
+            self._log(f"CAMOUFOX-ERROR: {e}")
+            return ""
+
+    def _parse_reddit_posts(self, snapshot: str) -> list:
+        """Extract Reddit posts from Camoufox accessibility tree.
+        Returns list of dicts: {title, url, votes, comments, author, time}"""
+        import re  # noqa: PLC0415
+
+        posts = []
+        # Pattern: link "Title" [eN]:
+        #   - /url: /r/Subreddit/comments/...
+        #   - heading "Title" [level=2]
+        #   - text: "N votes • N comments"
+        lines = snapshot.split("\n")
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            # Look for article/link with heading level=2 (Reddit post titles)
+            if 'heading "' in line and '[level=2]' in line:
+                # Extract title
+                m = re.search(r'heading "([^"]+)"', line)
+                if m:
+                    title = m.group(1)
+                    post = {"title": title, "url": "", "votes": "", "comments": "", "author": "", "time": ""}
+
+                    # Look for URL in previous/next lines
+                    for j in range(max(0, i-3), min(len(lines), i+10)):
+                        url_m = re.search(r'/url: (https?://www\.reddit\.com/r/[^\s]+)', lines[j])
+                        if url_m:
+                            post["url"] = url_m.group(1)
+                            break
+
+                    # Look for votes/comments
+                    for j in range(i, min(len(lines), i+15)):
+                        vc_m = re.search(r'\d+ votes • \d+ comments', lines[j])
+                        if vc_m:
+                            post["votes"], post["comments"] = lines[j].strip().split(" • ")
+                            break
+
+                    # Look for author and time
+                    for j in range(i, min(len(lines), i+20)):
+                        author_m = re.search(r'Author: u/([^"]+)', lines[j])
+                        if author_m:
+                            post["author"] = author_m.group(1)
+                        time_m = re.search(r'time: (.+)', lines[j])
+                        if time_m:
+                            post["time"] = time_m.group(1).strip()
+                        if post["author"] and post["time"]:
+                            break
+
+                    posts.append(post)
+            i += 1
+
+        return posts
+
     def search_reddit(
         self,
         query: str,
@@ -3350,10 +3233,11 @@ tail -5 /tmp/goethe-node3090.log
         max_results: int = 5,
     ) -> str:
         """
-        Search Reddit for posts and discussions via SearxNG.
+        Search Reddit for posts and discussions.
 
-        Uses the site:reddit.com operator through the existing SearxNG instance on the VPS.
-        No Reddit API, no OAuth, no account footprint required.
+        PRIMARY: Camoufox browser on node3090 — renders JS, bypasses Reddit anti-bot,
+        returns structured post data (title, URL, votes, comments, author, time).
+        FALLBACK: SearxNG site:reddit.com search if Camoufox is unavailable.
 
         KB-FIRST RULE — mandatory:
           Call search_kb() before this function. Only call search_reddit() on a KB miss.
@@ -3366,9 +3250,6 @@ tail -5 /tmp/goethe-node3090.log
           Step 4: Synthesise in ≤3 sentences. Do NOT paste raw results verbatim.
           Step 5: Call index_to_kb() with the synthesised result.
 
-        Implementation note — Reddit engine is blocked on VPS IP (settings.yml line 39).
-        This wrapper correctly routes through Google/Bing via site: operator instead.
-
         Args:
             query:       Search terms (e.g. "RTX 3090 thermal paste replacement")
             subreddit:   Optional subreddit without r/ prefix (e.g. "homelab", "hardware")
@@ -3376,11 +3257,40 @@ tail -5 /tmp/goethe-node3090.log
             max_results: Number of results to return (default 5)
 
         Returns:
-            Formatted search results string from SearxNG, same format as search_web().
+            Formatted search results string.
         """
+        self._log(f"SEARCH-REDDIT: subreddit={subreddit!r} query={query!r}")
+
+        # ── PRIMARY: Camoufox on node3090 ──────────────────────────────────
+        try:
+            url = f"https://www.reddit.com/r/{subreddit}/search/?q={query}&sort=hot" if subreddit else f"https://www.reddit.com/search/?q={query}&sort=hot"
+            snapshot = self._camoufox_scrape(url, wait_s=8)
+            if snapshot:
+                posts = self._parse_reddit_posts(snapshot)[:max_results]
+                if posts:
+                    lines = []
+                    for p in posts:
+                        title = p.get("title", "Untitled")
+                        url = p.get("url", "")
+                        votes = p.get("votes", "")
+                        comments = p.get("comments", "")
+                        author = p.get("author", "")
+                        time_ = p.get("time", "")
+                        snippet = f"{votes} • {comments}" if votes and comments else ""
+                        if author:
+                            snippet += f" • u/{author}"
+                        if time_:
+                            snippet += f" • {time_}"
+                        snippet = snippet.lstrip(" • ")
+                        lines.append(f"**{title}**\n{url}\n{snippet}")
+                    return "\n---\n".join(lines) if lines else "No posts found."
+        except Exception as e:
+            self._log(f"CAMOUFOX-FAIL: {e}")
+
+        # ── FALLBACK: SearxNG ─────────────────────────────────────────────
+        self._log("SEARCH-REDDIT: falling back to SearxNG")
         site = f"site:reddit.com/r/{subreddit}" if subreddit else "site:reddit.com"
         full_query = f"{site} {query}"
-        self._log(f"SEARCH-REDDIT: subreddit={subreddit!r} query={query!r}")
         return self.search_web(full_query, max_results=max_results)
 
     # ── CHRONOS — enforced sense of time (v0.3.1, Workstream B) ─────────────
@@ -4835,33 +4745,6 @@ tail -5 /tmp/goethe-node3090.log
             return True
         return False
 
-    @staticmethod
-    def _build_kb_doc(
-        content: str, title: str, topic: str,
-        meta: KBDocumentMeta, embedding: list, now: str, doc_hash: str,
-    ) -> dict:
-        """Build an ES document dict from core fields + KBDocumentMeta.
-        Replaces the inline dict literal that repeated 6 metadata fields."""
-        return {
-            "doc_id": doc_hash,
-            "title": title,
-            "content": content,
-            "source_path": None,
-            "source_url": meta.source_url or None,
-            "topic": topic,
-            "tags": [topic],
-            "quality_score": meta.quality_score,
-            "refinement_count": 0,
-            "embedding": embedding,
-            "created_at": now,
-            "updated_at": now,
-            "version": 1,
-            "source_tier": meta.source_tier,
-            "evidence": (meta.evidence or "").strip()[:1000] or None,
-            "verified_against": (meta.verified_against or "").strip() or None,
-            "volatility": meta.volatility,
-        }
-
     def index_to_kb(
         self,
         content: str,
@@ -5031,12 +4914,25 @@ tail -5 /tmp/goethe-node3090.log
                     f"refinements={existing['_source']['refinement_count'] + 1} | "
                     f"tier={tier}{tier_warn}{wf_warn}"
                 )
-            meta = KBDocumentMeta(
-                source_url=source_url, quality_score=quality_score,
-                source_tier=tier, evidence=evidence,
-                verified_against=verified_against, volatility=volatility,
-            )
-            doc = self._build_kb_doc(content, title, topic, meta, embedding, now, doc_hash)
+            doc = {
+                "doc_id": doc_hash,
+                "title": title,
+                "content": content,
+                "source_path": None,
+                "source_url": source_url or None,
+                "topic": topic,
+                "tags": [topic],
+                "quality_score": quality_score,
+                "refinement_count": 0,
+                "embedding": embedding,
+                "created_at": now,
+                "updated_at": now,
+                "version": 1,
+                "source_tier": tier,
+                "evidence": (evidence or "").strip()[:1000] or None,
+                "verified_against": (verified_against or "").strip() or None,
+                "volatility": volatility,
+            }
             es.index(index="lse-kb", id=doc_hash, document=doc)
             return (
                 f"KB created: doc_id={doc_hash} | title='{title}' | "
@@ -5106,13 +5002,16 @@ tail -5 /tmp/goethe-node3090.log
                     },
                 )
                 return f"Error KB updated: known error now seen {new_count}x. Resolution updated.{wf_note}"
-            err = ErrorReport(
-                error_text=error_text,
-                context=context,
-                resolution=resolution,
-            )
-            doc = {**asdict(err), "error_hash": error_hash, "embedding": embedding,
-                    "occurrence_count": 1, "first_seen": now, "last_seen": now}
+            doc = {
+                "error_hash": error_hash,
+                "error_text": error_text,
+                "context": context,
+                "resolution": resolution,
+                "embedding": embedding,
+                "occurrence_count": 1,
+                "first_seen": now,
+                "last_seen": now,
+            }
             es.index(index="lse-errors", id=error_hash, document=doc)
             return f"Error KB created: new error pattern recorded (hash={error_hash}).{wf_note}"
         except Exception as e:
@@ -5738,34 +5637,6 @@ tail -5 /tmp/goethe-node3090.log
             self._log(f"SKILL-SEARCH ERROR: {e}")
             return f"SKILL search error: {e}\nFall back to search_kb()."
 
-    @staticmethod
-    def _build_skill_doc(
-        skill_id: str, occupation: str, task: str,
-        sr: SkillRecord, procedure_steps: list, verification: str,
-        embedding: list, quality: float, now: str,
-    ) -> dict:
-        """Build an ES document dict for a skill from core fields + SkillRecord.
-        Replaces the inline dict literal that repeated 5 metadata fields."""
-        return {
-            "skill_id": skill_id,
-            "occupation": occupation,
-            "task": task,
-            "preconditions": sr.preconditions.split(";") if sr.preconditions else [],
-            "procedure": procedure_steps,
-            "verification": verification,
-            "failure_modes": sr.failure_modes.split(";") if sr.failure_modes else [],
-            "provenance": sr.provenance.split(";") if sr.provenance else ["UNATTRIBUTED"],
-            "embedding": embedding,
-            "quality": quality,
-            "stats": {"uses": 0, "episode_successes": 0, "episode_failures": 0, "last_used": None},
-            "pinned": False,
-            "archived": False,
-            "created_at": now,
-            "updated_at": now,
-            "version": 1,
-            "source_tier": sr.source_tier,
-        }
-
     def skill_record(
         self,
         task: str,
@@ -5883,12 +5754,34 @@ tail -5 /tmp/goethe-node3090.log
             slug = re.sub(r"[^a-z0-9]+", "-", task.lower()).strip("-")[:60]
             skill_id = f"{occupation}/{slug}"
             doc_id = hashlib.sha256(skill_id.encode()).hexdigest()[:16]
-            sr = SkillRecord(
-                preconditions=preconditions, failure_modes=failure_modes,
-                provenance=provenance, source_tier=sk_tier,
+            es.index(
+                index="lse-skills",
+                id=doc_id,
+                document={
+                    "skill_id": skill_id,
+                    "occupation": occupation,
+                    "task": task,
+                    "preconditions": _split(preconditions),
+                    "procedure": steps,
+                    "verification": verification,
+                    "failure_modes": _split(failure_modes),
+                    "provenance": _split(provenance) or ["UNATTRIBUTED"],
+                    "embedding": embedding,
+                    "quality": quality,
+                    "stats": {
+                        "uses": 0,
+                        "episode_successes": 0,
+                        "episode_failures": 0,
+                        "last_used": None,
+                    },
+                    "pinned": False,
+                    "archived": False,
+                    "created_at": now,
+                    "updated_at": now,
+                    "version": 1,
+                    "source_tier": sk_tier,
+                },
             )
-            doc = self._build_skill_doc(skill_id, occupation, task, sr, steps, verification, embedding, quality, now)
-            es.index(index="lse-skills", id=doc_id, document=doc)
             flag = "" if provenance.strip() else " | FLAGGED: no provenance"
             return f"SKILL created: {skill_id} | quality={quality:.2f}{flag}"
         except Exception as e:
@@ -7105,230 +6998,3 @@ tail -5 /tmp/goethe-node3090.log
             "---\n"
         )
         return header + step["packaged_prompt"]
-    # ── Episteme MCP Tools ────────────────────────────────────────────────────
-    # Proxies to the Episteme REST API (localhost:58302).
-    # 9 tools: search_knowledge, get_entity, get_neighbors, find_path,
-    # analyze_code, suggest_refactorings, add_insight, search_insights
-
-    def _episteme_get(self, path: str, params: dict = None) -> EpistemeResponse:
-        """Internal: GET request to Episteme API. Returns EpistemeResponse."""
-        import urllib.request, urllib.error, json
-        base = getattr(self.valves, "EPISTEME_API_URL", "http://localhost:58302")
-        url = f"{base}{path}"
-        if params:
-            url += "?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url)
-        token = getattr(self.valves, "EPISTEME_API_TOKEN", "")
-        if token:
-            req.add_header("X-API-Key", token)
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                return EpistemeResponse(ok=True, data=json.loads(resp.read()))
-        except urllib.error.URLError as e:
-            return EpistemeResponse(ok=False, error=f"Episteme API error: {e}")
-
-    def _episteme_post(self, path: str, payload: dict) -> EpistemeResponse:
-        """Internal: POST request to Episteme API. Returns EpistemeResponse."""
-        import urllib.request, urllib.error, json
-        base = getattr(self.valves, "EPISTEME_API_URL", "http://localhost:58302")
-        url = f"{base}{path}"
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=data, method="POST")
-        req.add_header("Content-Type", "application/json")
-        token = getattr(self.valves, "EPISTEME_API_TOKEN", "")
-        if token:
-            req.add_header("X-API-Key", token)
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                return EpistemeResponse(ok=True, data=json.loads(resp.read()))
-        except urllib.error.URLError as e:
-            return EpistemeResponse(ok=False, error=f"Episteme API error: {e}")
-
-    def episteme_search_knowledge(self, query: str, top_k: int | None = None, filter_type: str | None = None) -> str:
-        """Semantic search across all Episteme entities (patterns, laws, smells, refactorings).
-        Use this to find relevant engineering knowledge before making architectural decisions.
-        Args:
-            query: Natural language query
-            top_k: Number of results to return (default: server default)
-            filter_type: Filter by entity type - "pattern", "law", "refactoring", "smell"
-        """
-        params = {"q": query}
-        if top_k is not None:
-            params["top_k"] = top_k
-        if filter_type is not None:
-            params["filter_type"] = filter_type
-        res = self._episteme_get("/search", params)
-        if not res.ok:
-            return res.error
-        # Format results
-        results = (res.data or {}).get("results", [])
-        if not results:
-            return f"No results for '{query}'"
-        lines = [f"Episteme search for '{query}':"]
-        for r in results[:8]:  # cap at 8
-            lines.append(f"  • {r.get('entity_id', '?')} ({r.get('category', '?')}): {r.get('title', r.get('summary', ''))[:120]}")
-        return "\n".join(lines)
-
-    def episteme_get_entity(self, entity_id: str) -> str:
-        """Get details for a specific Episteme entity by ID (e.g., DP-005, RF-018, LAW-001).
-        Use this to get full context on a pattern, law, or refactoring."""
-        res = self._episteme_get(f"/graph/{entity_id}")
-        if not res.ok:
-            return res.error
-        d = res.data or {}
-        d.setdefault("entity_id", d.get("id", "?"))
-        return json.dumps(d, indent=2)
-
-    def episteme_get_neighbors(self, entity_id: str, relation_type: str | None = None, max_depth: int | None = None) -> str:
-        """Get related entities for a given Episteme entity ID.
-        Use this to explore connections (e.g., 'what refactorings solve this smell?').
-        Args:
-            entity_id: Entity ID (e.g. DP-023, SMELL-01)
-            relation_type: Filter by relation - "solves", "enforces", "violates", "relates_to"
-            max_depth: Maximum graph traversal depth (default: server default)
-        """
-        params = {}
-        if relation_type is not None:
-            params["relation_type"] = relation_type
-        if max_depth is not None:
-            params["max_depth"] = max_depth
-        res = self._episteme_get(f"/graph/{entity_id}/neighbors", params or None)
-        if not res.ok:
-            return res.error
-        neighbors = (res.data or {}).get("neighbors", [])
-        if not neighbors:
-            return f"No neighbors for {entity_id}"
-        lines = [f"Neighbors of {entity_id}:"]
-        for n in neighbors:
-            rel = n.get('relation_type', res.get('relation_type', '?'))
-            lines.append(f"  • {n.get('id', '?')} ({n.get('type', '?')}): {rel} → {n.get('title', '')[:80]}")
-        return "\n".join(lines)
-
-    def episteme_find_path(self, from_id: str, to_id: str, max_depth: int | None = None) -> str:
-        """Find the reasoning path between two Episteme entities.
-        Use this to trace connections (e.g., 'how does SRP relate to Extract Class?').
-        Args:
-            from_id: Starting entity ID
-            to_id: Target entity ID
-            max_depth: Maximum graph traversal depth (default: server default)
-        """
-        payload = {"from_id": from_id, "to_id": to_id}
-        if max_depth is not None:
-            payload["max_depth"] = max_depth
-        res = self._episteme_post("/graph/path", payload)
-        if not res.ok:
-            return res.error
-        path = (res.data or {}).get("path", [])
-        if not path:
-            return f"No path found between {from_id} and {to_id}"
-        lines = [f"Path from {from_id} to {to_id}:"]
-        for step in path:
-            lines.append(f"  → {step.get('id', '?')} ({step.get('type', '?')}) [{step.get('relation', '?')}]")
-        return "\n".join(lines)
-
-    def episteme_analyze_code(self, file_path: str | None = None, code_snippet: str | None = None, language: str | None = None, min_confidence: float | None = None) -> str:
-        """Analyze source code for code smells using Episteme.
-        Returns detected smells with ranked refactoring suggestions.
-        Args:
-            file_path: Path to a source file (mutually exclusive with code_snippet)
-            code_snippet: Inline source code to analyze (mutually exclusive with file_path)
-            language: Programming language hint - "python", "java", "typescript", etc.
-            min_confidence: Minimum confidence threshold (default: server default)
-        """
-        import os
-        if file_path and code_snippet:
-            return "Error: provide either file_path or code_snippet, not both"
-        if file_path:
-            if not os.path.isfile(file_path):
-                return f"File not found: {file_path}"
-            try:
-                with open(file_path, "r", errors="ignore") as f:
-                    code = f.read()
-            except Exception as e:
-                return f"Cannot read file: {e}"
-            if language is None:
-                ext = os.path.splitext(file_path)[1].lstrip(".")
-                lang_map = {"py": "python", "js": "javascript", "ts": "typescript", "java": "java",
-                            "go": "go", "rs": "rust", "cpp": "cpp", "cc": "cpp", "c": "c",
-                            "rb": "ruby", "php": "php", "cs": "csharp", "kt": "kotlin"}
-                language = lang_map.get(ext)
-            filename = os.path.basename(file_path)
-        elif code_snippet:
-            code = code_snippet
-            filename = None
-        else:
-            return "Error: provide either file_path or code_snippet"
-        payload = {"code": code}
-        if filename:
-            payload["file"] = filename
-        if language is not None:
-            payload["language"] = language
-        if min_confidence is not None:
-            payload["min_confidence"] = min_confidence
-        res = self._episteme_post("/analyze", payload)
-        if not res.ok:
-            return res.error
-        smells = (res.data or {}).get("smells", [])
-        if not smells:
-            return f"No smells detected in {filename or "inline code"}"
-        lines = [f"Code smells in {filename or "inline code"}:"]
-        for s in smells:
-            lines.append(f"  • {s.get('smell_id', '?')} ({s.get('smell_name', '?')}): {s.get('description', '')[:80]}")
-            for fix in s.get("refactorings", [])[:3]:
-                lines.append(f"    → {fix.get('refactoring_id', '?')} {fix.get('title', '?')} (priority {fix.get('priority_score', '?')})")
-        return "\n".join(lines)
-
-    def episteme_suggest_refactorings(self, code_snippet: str, language: str | None = None, top_k: int | None = None, min_confidence: float | None = None) -> str:
-        """Suggest ranked refactorings for a code snippet.
-        Returns prioritized list of refactorings with effort estimates.
-        Args:
-            code_snippet: Source code to analyze
-            language: Programming language - "python", "java", "typescript", etc.
-            top_k: Number of suggestions per smell (default: server default)
-            min_confidence: Minimum confidence threshold (default: server default)
-        """
-        payload = {"code": code_snippet}
-        if language is not None:
-            payload["language"] = language
-        if top_k is not None:
-            payload["top_k"] = top_k
-        if min_confidence is not None:
-            payload["min_confidence"] = min_confidence
-        res = self._episteme_post("/refactor", payload)
-        if not res.ok:
-            return res.error
-        analyses = res.get("analyses", [])
-        if not analyses:
-            return "No refactoring suggestions."
-        lines = ["Refactoring suggestions:"]
-        for a in analyses[:5]:
-            smell = a.get("smell", {})
-            lines.append(f"  • {smell.get('smell_id', '?')} ({smell.get('smell_name', '?')}):")
-            for s in a.get("suggestions", [])[:3]:
-                lines.append(f"    → {s.get('refactoring_id', '?')} {s.get('title', '?')} (priority {s.get('priority_score', '?')}, effort: {s.get('effort', '?')})")
-        return "\n".join(lines)
-
-    def episteme_add_insight(self, insight: str, tags: str = "") -> str:
-        """Record a team insight or lesson learned into Episteme's tacit knowledge layer.
-        Auto-links to relevant canonical entities (patterns, laws, smells)."""
-        res = self._episteme_post("/insights", {"text": insight, "tags": tags.split(",") if tags else []})
-        if not res.ok:
-            return res.error
-        return f"Insight recorded: {(res.data or {}).get('id', '?')}"
-
-    def episteme_search_insights(self, query: str) -> str:
-        """Search past team insights and tacit knowledge.
-        Use this to find 'what did we decide about X?' or 'have we solved this before?'."""
-        res = self._episteme_get("/insights", {"q": query})
-        if not res.ok:
-            return res.error
-        insights = (res.data or {}).get("insights", [])
-        if not insights:
-            return f"No insights found for '{query}'"
-        lines = [f"Team insights for '{query}':"]
-        for i in insights[:5]:
-            lines.append(f"  • {i.get('id', '?')}: {i.get('text', '')[:100]}")
-            if i.get("links"):
-                lines.append(f"    Linked to: {', '.join(i['links'][:3])}")
-        return "\n".join(lines)
-
