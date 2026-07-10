@@ -3176,49 +3176,52 @@ tail -5 /tmp/goethe-node3090.log
 
     def _parse_reddit_posts(self, snapshot: str) -> list:
         """Extract Reddit posts from Camoufox accessibility tree.
-        Returns list of dicts: {title, url, votes, comments, author, time}"""
+        Returns list of dicts: {title, url, votes, comments, author, time}
+        
+        Actual format from Reddit search:
+          heading "Title" [level=2]:
+            link "Title" [eN]:
+              /url: /r/subreddit/comments/...
+          text: ·
+          time: Xh ago
+          link "Title" [eN]:
+            /url: /r/subreddit/comments/...
+          text: N votes·N comments
+        """
         import re  # noqa: PLC0415
 
         posts = []
-        # Pattern: link "Title" [eN]:
-        #   - /url: /r/Subreddit/comments/...
-        #   - heading "Title" [level=2]
-        #   - text: "N votes • N comments"
         lines = snapshot.split("\n")
         i = 0
         while i < len(lines):
             line = lines[i]
-            # Look for article/link with heading level=2 (Reddit post titles)
+            # Look for heading level=2 (Reddit post titles)
             if 'heading "' in line and '[level=2]' in line:
-                # Extract title
                 m = re.search(r'heading "([^"]+)"', line)
                 if m:
                     title = m.group(1)
                     post = {"title": title, "url": "", "votes": "", "comments": "", "author": "", "time": ""}
 
-                    # Look for URL in previous/next lines
-                    for j in range(max(0, i-3), min(len(lines), i+10)):
+                    # Look for URL in next 10 lines
+                    for j in range(i+1, min(len(lines), i+15)):
                         url_m = re.search(r'/url: (https?://www\.reddit\.com/r/[^\s]+)', lines[j])
                         if url_m:
                             post["url"] = url_m.group(1)
                             break
 
-                    # Look for votes/comments
-                    for j in range(i, min(len(lines), i+15)):
-                        vc_m = re.search(r'\d+ votes • \d+ comments', lines[j])
-                        if vc_m:
-                            post["votes"], post["comments"] = lines[j].strip().split(" • ")
-                            break
-
-                    # Look for author and time
-                    for j in range(i, min(len(lines), i+20)):
-                        author_m = re.search(r'Author: u/([^"]+)', lines[j])
-                        if author_m:
-                            post["author"] = author_m.group(1)
+                    # Look for time in next 15 lines
+                    for j in range(i+1, min(len(lines), i+20)):
                         time_m = re.search(r'time: (.+)', lines[j])
                         if time_m:
                             post["time"] = time_m.group(1).strip()
-                        if post["author"] and post["time"]:
+                            break
+
+                    # Look for votes·comments in next 20 lines
+                    for j in range(i+1, min(len(lines), i+25)):
+                        vc_m = re.search(r'(\d+) votes·(\d+) comments', lines[j])
+                        if vc_m:
+                            post["votes"] = vc_m.group(1)
+                            post["comments"] = vc_m.group(2)
                             break
 
                     posts.append(post)
