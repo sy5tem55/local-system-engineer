@@ -1,12 +1,12 @@
 # Local System Engineer (LSE): Your AI Sysadmin That Actually Works
 
-Forget chatbots that give you advice. LSE is a locally-hosted AI system administrator that acts, executing commands, managing services, rotating credentials, and deploying fixes across your homelab infrastructure. Built on a private inference stack (Qwen 27B, 64k context), it operates within strict permission boundaries: no silent privilege escalation, no cloud dependencies, no hallucinated commands.
+Forget chatbots that give you advice. LSE is a locally-hosted AI system administrator that acts, executing commands, managing services, rotating credentials, and deploying fixes across your networking infrastructure. Built on a private inference stack (Qwen 27B, 64k context), it operates within strict permission boundaries: no silent privilege escalation, no cloud dependencies, no hallucinated commands.
 
 LSE doesn't just answer questions, it enforces protocols. Every operation follows a KB-first discipline: check documented procedures before acting, verify outcomes with ground-truth probes, and record failures for continuous improvement. It manages a living knowledge base of empirically tested runbooks, an RFC authority index for protocol-level diagnosis, and a challenge arena where LLMs compete on real sysadmin problems drawn from live infrastructure.
 
 The stack spans WSL2/Ubuntu, remote GPU nodes (node3090/node5090), pfSense firewalls, Grafana monitoring, Vaultwarden secrets management, and self-hosted web search. LSE orchestrates them all through a unified MCP gateway with 45 tools, from SSH orchestration and Docker management to network discovery and firewall log analysis. It delegates privilege escalation to you, never runs it silently.
 
-Built for homelab operators who want AI that respects their infrastructure. No SaaS lock-in, no data leaving your network, no "let me think about that", just precise, verified actions with evidence trails you can audit.
+Built for networking infrastructure operators who want AI that respects their infrastructure. No SaaS lock-in, no data leaving your network, no "let me think about that", just precise, verified actions with evidence trails you can audit.
 
 **Key capabilities:**
 - Multi-node orchestration (WSL2 + remote GPU nodes via SSH)
