@@ -58,7 +58,12 @@ is bookkeeping/tagging, never a semantic decision (what changes, by how
 much) — that always flows through the same Tools method a human would call.
 skill_record already accepts a real `provenance` argument, so no
 supplementary provenance stamp is needed there; only `origin` gets the same
-one-line es.update() afterward.
+one-line es.update() afterward. index_to_kb (the "kb-fact" proposal type,
+Thread 1 Prompt 1.5's SCRIBE-1 format, reused verbatim per DESIGN.md §6.2)
+has NEITHER provenance NOR origin — it gets the same full stamp as
+mentor_correct/record_outcome (both fields), located via the doc_id it
+returns in its own "KB created: doc_id=..." / "KB updated (refined):
+doc_id=..." result string, not skill_record's origin-only special case.
 
 CONFIRM-GATE: DESIGN.md §6.4's exact block shape, with the file-write header
 replaced per §6.4's own dream_apply.py note — a TARGET: <doc_id> header for
@@ -417,6 +422,20 @@ def render_group(group: list, dream_dir: str) -> str:
         elif call == "kb_verify":
             lines = [("doc_id:", args.get("doc_id", "")),
                      ("note:", "READ-ONLY phase-1 probe suggestion — writes nothing")]
+        elif call == "index_to_kb":
+            # DESIGN.md §6.4's exact index_to_kb confirm-gate block shape.
+            lines = [
+                ("title:", args.get("title", "")),
+                ("topic:", args.get("topic", "")),
+                ("source_tier:", args.get("source_tier", "")),
+                ("quality_score:", args.get("quality_score", "")),
+                ("verified_against:", args.get("verified_against", "") or "(not applicable)"),
+                ("volatility:", args.get("volatility", "slow")),
+            ]
+            multiline = {
+                "evidence": args.get("evidence", "") or "(none — source_tier is not ground_truth)",
+                "content": args.get("content", ""),
+            }
         elif call == "skill_record":
             lines = [
                 ("task:", args.get("task", "")),
@@ -535,6 +554,26 @@ def apply_group(tools, group: list, dry_run: bool) -> list:
                 except Exception as exc:
                     print(f"[dream_apply] WARNING: origin stamp on lse-skills failed ({exc}) "
                           "-- skill_record's own write still succeeded", file=sys.stderr)
+            results.append({"proposal": p, "result": result})
+
+        elif call == "index_to_kb":
+            # "kb-fact" proposals (DESIGN.md §6.2, reused verbatim from
+            # Thread 1's SCRIBE-1 debrief format) -- a NEW doc, never an
+            # existing doc_id, so none of the doc_id-gated checks above
+            # apply; check_ground_truth already ran on args.source_tier at
+            # the top of validate_proposal_for_apply.
+            result = tools.index_to_kb(
+                content=args["content"], title=args["title"], topic=args.get("topic", "general"),
+                source_url=args.get("source_url", ""), quality_score=args.get("quality_score", 0.5),
+                source_tier=args.get("source_tier", "inferred"), evidence=args.get("evidence", ""),
+                verified_against=args.get("verified_against", ""), volatility=args.get("volatility", "slow"),
+            )
+            doc_id_match = re.search(r"doc_id=(\S+)", result or "")
+            if doc_id_match:
+                _stamp_dream_fields(es, doc_id_match.group(1), today)
+            else:
+                print(f"[dream_apply] WARNING: could not parse doc_id from index_to_kb result "
+                      f"({result!r}) -- origin/provenance NOT stamped", file=sys.stderr)
             results.append({"proposal": p, "result": result})
 
         else:

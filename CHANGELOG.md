@@ -3,6 +3,118 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-07-11 (Cowork, cont'd): TRAUM Thread 2 (TRAUM-ENGINE) CLOSED — `tools/dream_apply.py` v0.1.0 apply gate (2.5), auto-apply policy (2.6, DESIGN.md §7, still empty), first supervised dream + calibration (2.7-2.8), invariant tests (2.9, `tests/test_dream_engine.py`), thread close (2.10)
+
+Closes out the same-day Thread 2 entry below (dream_runner.py 2.1-2.4). Every
+proposal Thread 2 has ever generated has now passed through a human
+confirm-gate at least once, live, on the real ~368-doc `lse-kb` — this is
+Thread 2's own dogfood run, not a synthetic exercise.
+
+- **`tools/dream_apply.py`** (2.5, new, v0.1.0) — the apply gate. Re-validates
+  every proposal against the code-enforced invariants fail-closed (never
+  raise quality, never `source_tier=ground_truth`, never touch a quarantined
+  doc except the named exception, evidence ≥20 chars) using the doc's LIVE
+  state at apply time, not the proposal's generation-time snapshot. Renders
+  the exact SCRIBE-1 confirm-gate block shape (`docs/dreaming/DESIGN.md` §6.4)
+  and asks a per-proposal yes/no; dedup pairs (`pair_id`-linked) are
+  confirmed and applied as one unit. Applies through `goethe.py`'s own
+  `Tools` class, dynamically loaded exactly the way `goethe_mcp.py` does it
+  — one write path regardless of caller. Logs every rejection (invariant or
+  human "no") with reason to `applied.jsonl`/`rejected.jsonl`.
+- **`index_to_kb` ("kb-fact") dispatch — completed this close, not new in
+  2.5.** DESIGN.md §6.2 (Thread 1, Prompt 1.5) already specified `kb-fact` as
+  the fifth proposal type dream_apply.py "reuses verbatim" from the SCRIBE-1
+  debrief format, but Prompt 2.5's original `apply_group()`/`render_group()`
+  only wired up the four Thread-2-pass call types (`mentor_correct`,
+  `record_outcome`, `kb_verify`, `skill_record`) — a real gap, silently
+  present since 2.5, only surfaced while preparing this close's own
+  kb-fact debrief proposal (see below). Fixed: `index_to_kb` now has a full
+  apply-time dispatch branch and a DESIGN.md §6.4-shaped confirm-gate render
+  (title/topic/source_tier/quality_score/verified_against/volatility/
+  evidence/content). Like `mentor_correct`/`record_outcome`, `index_to_kb`
+  has neither `provenance` nor `origin` — it gets the same full stamp
+  (both fields), located via the `doc_id=...` parsed out of its own "KB
+  created"/"KB updated (refined)" return string. `tests/test_dream_engine.py`
+  gained a `TestKbFactProposal` class (4 tests) covering this path;
+  `FakeES.index()` in that suite was corrected from an unconditional-raise
+  to a real recording stub once this surfaced that `index_to_kb`/
+  `skill_record` legitimately call `es.index()` for a brand-new doc (only
+  `es.delete()` is truly forbidden — no hard-delete tool exists anywhere in
+  this codebase).
+- **Auto-apply allowlist (2.6, design only)** — added `docs/dreaming/DESIGN.md`
+  §7: `dedup` is eligible only for the identical-pair subcase (cosine ≥0.99
+  AND `verified_against` populated and character-identical on both sides);
+  `reverify` is eligible (a `kb_verify` tag changes no content); `demote`,
+  `skill-candidate`, and `kb-fact` are permanently or provisionally excluded
+  (each creates or removes trust rather than just tagging). This closes a
+  dangling reference — `docs/dreaming/calibration-run-1.md` (written during
+  2.8) already cited "DESIGN.md §7.1"/"§7.2" before §7 existed; the section
+  now matches what those citations assumed. `GOETHE_DREAM_AUTO_APPLY` stays
+  `""` (empty) — the promotion bar (2 consecutive weeks, zero
+  rejected-in-hindsight, per type) is Thread 4's to measure, not earned yet
+  off one calibration run.
+- **First supervised dream (2.7)** — full backlog: 13/13 previously-undreamed
+  sessions, full `lse-kb` (368 docs), full `lse-errors` (32 docs). `dedup`:
+  3/3 pairs applied (cosine 0.98–1.00, all genuine same-claim duplicates,
+  none had `verified_against` set so none qualified for the new §7.2
+  auto-apply subcase anyway — correctly stayed human-gated). `stale-
+  contradiction` reverify: 0 TTL-expired docs, valid null result. `stale-
+  contradiction` contradiction: **0/7 valuable — 100% false-positive rate**
+  on verbatim-evidence review (non-sequitur pairings, category mismatches,
+  historical-vs-live claim confusion, a self-contradictory proposal, a
+  hostname/IP conflation) — the concrete, first-run demonstration of why
+  DESIGN.md's threat model rules `demote` out of auto-apply permanently.
+  `error-cluster`: 0/1 — the one skill-candidate was built entirely from a
+  `tests/test_dream_corpus.py` fixture that leaks into the real episode
+  corpus (missing `GOETHE_EPISODE_DIR` monkeypatch — flagged, not fixed
+  this run, see Known issues below). See `docs/dreaming/dream-run-2026-07-11.md`
+  for the full per-item breakdown. Also surfaced: `dream_runner.py`/
+  `dream_apply.py` must run under `/home/sy5/owui/bin/python3` on LUCIFER
+  (bare `python3` has an incompatible `elasticsearch==9.4.1`) — undocumented
+  until now.
+- **Calibration measurement (2.8)** — `docs/dreaming/calibration-run-1.md`.
+  Production `linear` retrieval mode is **bit-for-bit identical**
+  (recall@1=0.76, recall@3=0.84, MRR=0.800) before vs after the dream despite
+  ~84% corpus growth (≈200→368 docs) since the last recorded sweep.
+  `min_score=4.2` re-swept per its own maintenance rule ("re-sweep after
+  major KB growth") and holds: 38/38 correct top-1 hits kept at the 4.020
+  cut, 0 correct lost — same shape as the v0.3.8 finding. `lse-kb` doc count
+  unchanged at 368 (dedup demotes, never deletes). 3 demotions applied,
+  quality 0.50→0.35. **Verdict: no regression — clear to open Thread 3.**
+  Two non-blocking findings carried forward (see Known issues below).
+- **Invariant tests (2.9)** — `tests/test_dream_engine.py`, 16 tests, fully
+  mock-based (no live ES/Ollama/goethe.py needed): proposal-validator
+  rejection of the three hard invariants (quality-raise, `ground_truth`,
+  quarantine-touch, plus the `quarantine-delete-request` exception),
+  origin/provenance stamping against a disposable in-memory doc, dedup
+  trust-field union (keep-doc only, retire-doc untouched), dream_runner's
+  ES-read-only boundary, dream_apply's dry-run-makes-zero-ES-calls
+  guarantee, and (added during this close) the `kb-fact`/`index_to_kb`
+  path. Written to run alongside `tests/test_kb_contracts.py` (live-ES
+  contracts) without conflict — different fixtures, no shared state.
+
+**Known issues carried forward (recorded, not fixed this close):**
+- `dream_apply.py` has **no code path that sets `manifest.db`'s
+  `dreamed_at`** despite `episode_index.py`'s own comment claiming it is
+  "set by Thread 2's dream_apply.py" — the 2.7 run marked all 13 sessions
+  by hand (`sqlite3 UPDATE`). A real gap between the two files; whichever of
+  dream_runner.py (knows the session list) or dream_apply.py (knows what
+  was actually reviewed) should own this is a design call for Thread 3's
+  first prompt, not made unilaterally in this closing pass.
+- The dedup pass's candidate query (`match_all` over `lse-kb`) doesn't
+  exclude docs already demoted by a prior dedup merge, so a resolved pair
+  keeps re-surfacing on every subsequent run (confirmed live: the same 3
+  pairs re-detected in 2.8's fresh dry-run). Harmless if a human keeps
+  saying yes, but wasteful and a "why is this here again" trap.
+- `tests/test_dream_corpus.py::test_tool_exception_still_propagates_after_journaling`
+  doesn't monkeypatch `GOETHE_EPISODE_DIR`, so its real `_journal()` call
+  writes synthetic `method_raises` episodes into the live corpus on every
+  test run — traced as the root cause of 2.7's one false error-cluster
+  proposal.
+- No ES snapshot mechanism exists for a true same-day before/after
+  retrieval comparison (2.8 used the last recorded baseline, 7 days stale,
+  as "before"). Thread 4 Prompt 4.5 (A/B eval design) should specify one.
+
 ## 2026-07-11 (Cowork, cont'd): TRAUM Thread 2 (TRAUM-ENGINE) — `tools/dream_runner.py` dedup (2.2), stale/contradiction (2.3), and error-cluster (2.4) passes shipped and verified live; Goethe v0.3.9 → v0.4.0
 
 Continues the same-day Thread 1 entry below. Thread 2 is the offline dream
