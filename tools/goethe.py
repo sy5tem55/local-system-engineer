@@ -6716,7 +6716,7 @@ tail -5 /tmp/goethe-node3090.log
         # Strip Qwen3 / DeepSeek thinking blocks before JSON extraction.
         import re as _re  # noqa: PLC0415
         import json as _json  # noqa: PLC0415
-        clean = _re.sub(r"</think>", "", reply, flags=_re.DOTALL).strip()
+        clean = _re.sub(r"<think>.*?</think>", "", reply, flags=_re.DOTALL).strip()
         # Strip markdown code fences (```json ... ```) some models wrap JSON in.
         clean = _re.sub(r"^```[a-z]*\n?", "", clean).rstrip("`").strip()
         # raw_decode parses the FIRST valid JSON object, stopping cleanly at
@@ -6729,9 +6729,9 @@ tail -5 /tmp/goethe-node3090.log
             if env_c.get("steps"):
                 return env_c, ""
             return None, "envelope has no 'steps' array"
-        except Exception as exc:
+        except Exception as _exc:
             return None, (
-                f"JSON parse failed ({exc}). "
+                f"JSON parse failed ({_exc}). "
                 f"RAW: {clean[idx : idx + 200]!r}"
             )
 
