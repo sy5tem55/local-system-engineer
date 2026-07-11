@@ -565,3 +565,133 @@ file per Prompt 2.1) must `search_kb`/check the doc's current
 quality/`stale` fields before assuming it's still an open item; treat this
 paragraph as a worked example of the SCRIBE-3 mechanism, not as a standing
 task tracker.
+
+---
+
+## 7. Auto-apply allowlist policy (Thread 2, Prompt 2.6 — design only)
+
+> This section fixes what §2 row 2 and §5's "auto-apply scope creep"
+> mitigation only gestured at: the finite list of proposal *types* that
+> could ever legitimately skip the human confirm-gate, and the exact bar
+> each one has to clear before it does. Nothing in this section changes
+> `dream_apply.py`'s behavior today — every proposal type still requires a
+> yes. This is the design contract Thread 4 (Prompt 4.8) executes against
+> when it actually decides autonomy tuning from eval evidence.
+
+### 7.1 The allowlist is closed, not open-ended
+
+Of the five proposal types this workstream defines (`dedup`, `reverify`,
+`demote`, `skill-candidate`, `kb-fact` — §6.2, plus the not-yet-produced
+`quarantine-delete-request`, §2 row 3(c)), only **two** are candidates for
+auto-apply, ever. The other three/four are permanently human-gated by
+design, not just by current policy:
+
+| Type | Auto-apply candidate? | Why |
+|---|---|---|
+| `dedup` (exact-duplicate subcase only — see §7.2) | **Yes** | The specific tight variant below changes no semantic content, only which of two byte-for-byte-equivalent records is canonical. |
+| `reverify` (TTL tagging) | **Yes** | Per Prompt 2.3, this proposal type calls `kb_verify` — DESIGN.md §6.4's own render notes it as a "READ-ONLY phase-1 probe suggestion — writes nothing." Auto-applying it means the probe runs sooner, not that any KB content changes unattended. |
+| `demote` (`record_outcome(success=False)`) | No, permanently | Changes a doc's trust state (`stale`, effectively its future retrieval ranking) based on the dreamer's own contradiction judgment — exactly the "poisoning via dreamed content" headline threat from §5. A human must see the verbatim-quoted contradiction before that stands. |
+| `skill-candidate` (`skill_record`) | No, permanently | Mints new procedural content from an inferred error cluster. New content from an inference chain is the highest-poisoning-risk category in §5 and must always be reviewed once, full stop. |
+| `kb-fact` (`index_to_kb`, new doc) | No, permanently | Same reasoning as `skill-candidate` — new asserted content, never mechanical. |
+| `quarantine-delete-request` | No, permanently | Touches a quarantined doc; §2 row 3(c)'s whole point is that this is the one action allowed on a quarantined doc, and it still has to go through a human — quarantine is already the "something looked wrong here" state. |
+
+The rule this table encodes: a proposal type is auto-apply-eligible only if
+applying it **cannot change what the KB asserts** — it can change *which
+record is canonical* (dedup) or *trigger a read-only check sooner*
+(reverify), but never introduce, retire, or reweight a claim. `demote`,
+`skill-candidate`, and `kb-fact` all change what the KB asserts by
+definition; they are excluded on that basis, not because today's eval
+evidence happens to be thin. No future prompt should add a type to this
+table without re-deriving it from this same test — "does applying this
+change what the KB asserts" — not just "did Thread 4's numbers look okay
+this time."
+
+### 7.2 The exact-duplicate `dedup` subcase
+
+The *default* `dedup` proposal (merge threshold 0.92, per
+`dream_runner.py`'s `GOETHE_DREAM_DEDUP_THRESHOLD`, Prompt 2.2's
+labeling-derived cutoff) is semantic judgment — "these two docs say the same
+thing" — and stays human-gated regardless of what Thread 4 finds, because
+0.92 was chosen to accept some false-merge risk in exchange for catching
+paraphrased duplicates (Prompt 2.2: "pick the threshold with zero false
+merges" was the *goal*, not a guarantee the production threshold achieves
+zero at scale).
+
+The narrower subcase that is auto-apply-eligible is a **different, stricter
+condition**, not the same `dedup` type at the same threshold:
+
+- cosine similarity ≥ **0.99** between the two docs' embeddings (near-total
+  vector identity, well above the 0.92 production merge threshold and the
+  0.75 candidate-generation floor) — reserved for content that is the same
+  fact restated with cosmetic differences (whitespace, a reworded clause),
+  not merely closely related; **and**
+- `verified_against` **identical** on both docs (same probed
+  version/config string, non-empty) — so the merge can never collapse two
+  facts that are each individually true but scoped to different versions of
+  the same system into one record that silently drops the version
+  distinction.
+
+Both conditions must hold together. A pair at cosine 0.995 with differing
+`verified_against` is still a normal (human-gated) `dedup` proposal, not
+auto-apply-eligible — the `verified_against` mismatch is exactly the kind of
+distinction a human, not a threshold, should confirm isn't load-bearing.
+
+### 7.3 Promotion rule
+
+A proposal type moves from "candidate" (§7.1's table) to actually listed in
+`DREAM_AUTO_APPLY` only after all of the following, per type, independently
+— promoting `dedup`'s exact-duplicate subcase says nothing about `reverify`,
+and vice versa:
+
+1. The type has been running gate-reviewed (human yes/no on every instance)
+   for at least 2 consecutive weeks.
+2. Thread 4's A/B eval (Prompt 4.5–4.6) instruments the pre-registered
+   rejected-in-hindsight count for that type: of everything a human approved
+   at the gate, how many were later found to have been wrong applies (a
+   `demote`/correction reversing an earlier dream-applied change counts
+   against the type that caused it).
+3. That count is **zero** across the full 2-week window — not "low," not
+   "one outlier we can explain," zero. Prompt 4.8's own framing: "enable in
+   `DREAM_AUTO_APPLY` only types with zero."
+4. The decision (and the evidence it rests on) is recorded in this
+   document's decision log (§7.4) before the valve is actually changed in
+   any running deployment — a config change, but not one made without a
+   written record of why.
+
+If the 2-week window shows even one rejected-in-hindsight apply, the clock
+does not partially credit — it restarts. There is no partial autonomy within
+a type (e.g. "auto-apply dedup pairs above 0.995 but not 0.99–0.995"); the
+threshold in §7.2 is fixed at design time, and the eval either clears the
+whole subcase or it doesn't.
+
+### 7.4 Decision log
+
+*Empty as of this writing (Thread 2, Prompt 2.6) — populated by Thread 4,
+Prompt 4.8, once eval evidence exists. Until an entry is added here,
+`DREAM_AUTO_APPLY` stays `""` and every proposal type requires a human yes,
+with no exceptions.*
+
+### 7.5 Current implementation status
+
+Code is human-gated for all types today, with the valve already wired,
+disabled, and load-bearing for that "no exceptions" claim — this prompt adds
+no new code:
+
+- `dream_apply.py` (Prompt 2.5) reads `GOETHE_DREAM_AUTO_APPLY`
+  (`--auto-apply-types` CLI override), a comma-separated set of proposal
+  `type` values. Default: `""` — the design-level name for this valve is
+  `DREAM_AUTO_APPLY` (§2 row 2), consistent with the `GOETHE_`-prefix,
+  design-name-without-prefix convention `EPISODE_DIR`/`GOETHE_EPISODE_DIR`
+  already established (Prompt 1.3).
+- A group's proposal type is checked against that set (`ptype in
+  auto_apply_types`) only *after* it has already passed every invariant
+  check in §2 row 3 — auto-apply, if ever enabled for a type, skips the
+  interactive `ask_yes_no()` prompt, never the invariant validation. An
+  invariant rejection is not gate-able by any valve setting.
+- Because the set is empty by default, every proposal type — including the
+  §7.2 exact-duplicate `dedup` subcase and `reverify` — is confirmed
+  interactively today. §2 row 2's invariant test ("a proposal of a type not
+  in `DREAM_AUTO_APPLY` cannot reach a `Tools` write call without an
+  intervening confirm") already covers this; §7 adds no new test
+  obligation, only the policy the eventual `DREAM_AUTO_APPLY` value must be
+  justified against.

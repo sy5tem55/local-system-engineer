@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# start-goethe.sh — canonical startup for the Goethe MCP Gateway (HTTP, LUCIFER)
+# Usage: bash ~/projects/local-system-engineer/tools/start-goethe.sh
+# Python: owui venv (/home/sy5/owui/bin/python3) is retained as the LSE MCP runtime.
+#
+# v2.1.1 — corrections to the v2.1 proposal:
+#   * ss checks use -H: without it ss prints a header even for a free port,
+#     making "port free" impossible (Step 2 aborted every run) and
+#     "is listening" vacuous (Step 4 passed even on crash).
+#   * Positive process gate: verify zero gateway PROCESSES after kill and
+#     exactly ONE after launch — port state alone proves neither.
+#   * Pattern uses goethe_mcp[.]py so ad-hoc pgrep/pkill of this pattern
+#     never self-matches a shell carrying the pattern in its cmdline.
+#   * Real daemon PID: backgrounded setsid forks, so $! is the dead wrapper.
+#     PID is read back post-bind and written to a pidfile — a SIGHUP-proof
+#     daemon must stay findable.
+set -euo pipefail
+
+LSE_DIR="$HOME/projects/local-system-engineer/tools"
+PAT='goethe_mcp[.]py.*--transport http'
+PIDFILE=/tmp/goethe-gateway.pid
+LOG=/tmp/goethe-gateway.log
+
+source ~/.lse/secrets
+: "${GOETHE_MCP_TOKEN:?GOETHE_MCP_TOKEN not set — add 'export GOETHE_MCP_TOKEN=<openssl rand -hex 16>' to ~/.lse/secrets}"
+
+# ── Step 1: kill any existing HTTP gateway instances ────────────────────────
+if pkill -9 -f "$PAT" 2>/dev/null; then
+  echo "[start-goethe] killed existing HTTP gateway instance(s)"
+fi
+
+# ── Step 2: verify ZERO gateway processes remain (up to 5s) ─────────────────
+for attempt in $(seq 1 10); do
+  if ! pgrep -f "$PAT" >/dev/null; then
+    break
+  fi
+  if [ "$attempt" -eq 10 ]; then
+    echo "[start-goethe] ERROR: gateway process(es) still alive after 5s — aborting"
+    pgrep -af "$PAT" || true
+    exit 1
+  fi
+  sleep 0.5
+done
+
+# ── Step 3: verify port 9700 is free (up to 5s) ─────────────────────────────
+for attempt in $(seq 1 10); do
+  if ! ss -tlnH sport = :9700 | grep -q .; then
+    break
+  fi
+  if [ "$attempt" -eq 10 ]; then
+    echo "[start-goethe] ERROR: port 9700 still occupied after 5s — aborting"
+    ss -tlnpH sport = :9700 || true
+    exit 1
+  fi
+  sleep 0.5
+done
+
+# ── Step 4: launch with setsid + nohup (SIGHUP-proof) ───────────────────────
+env GOETHE_MCP_TOKEN="$GOETHE_MCP_TOKEN" \
+    BW_PASSWORD="${BW_PASSWORD:-}" \
+  setsid nohup /home/sy5/owui/bin/python3 "$LSE_DIR/goethe_mcp.py" \
+  --goethe "$LSE_DIR/goethe.py" \
+  --also  "$LSE_DIR/vaultwarden_tools_v1.3.0.py" \
+  --also  "$LSE_DIR/pfsense_tools_v1.0.0.py" \
+  --also  "$LSE_DIR/net_discovery_tools_v1.0.0.py" \
+  --transport http \
+  --port 9700 \
+  --host 127.0.0.1 \
+  --cors-origin 'http://127.0.0.1:8080' \
+  </dev/null >"$LOG" 2>&1 &
+# NOTE: $! here is the setsid wrapper, which forks and exits — not the daemon.
+
+# ── Step 5: verify the gateway is listening (up to 10s) ─────────────────────
+for attempt in $(seq 1 20); do
+  if ss -tlnH sport = :9700 | grep -q .; then
+    break
+  fi
+  if [ "$attempt" -eq 20 ]; then
+    echo "[start-goethe] ERROR: gateway did not bind port 9700"
+    tail -20 "$LOG" 2>/dev/null || true
+    exit 1
+  fi
+  sleep 0.5
+done
+
+# ── Step 6: verify EXACTLY ONE instance; record its real PID ────────────────
+COUNT=$(pgrep -cf "$PAT" || true)
+if [ "$COUNT" -ne 1 ]; then
+  echo "[start-goethe] ERROR: expected exactly 1 gateway instance, found $COUNT — investigate"
+  pgrep -af "$PAT" || true
+  exit 1
+fi
+REAL_PID=$(pgrep -f "$PAT")
+echo "$REAL_PID" > "$PIDFILE"
+
+echo "[start-goethe] PID $REAL_PID — listening on http://127.0.0.1:9700/mcp"
+echo "[start-goethe] log: $LOG   pidfile: $PIDFILE"
