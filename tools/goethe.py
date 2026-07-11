@@ -182,7 +182,7 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
               JSON extraction fix: strip <think>...</think> blocks from the
               planner reply BEFORE applying the envelope regex. Qwen3 models
               emit thinking inside <think> tags even on structured-output
-              requests; the greedy \{.*\} (DOTALL) regex was matching from
+              requests; the greedy \\{.*\\} (DOTALL) regex was matching from
               the first { inside the think block to the last } of the JSON,
               producing unparseable mixed content. Stripping tags first
               isolates the clean JSON envelope reliably.
@@ -876,6 +876,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
+from typing import Optional
 
 class Tools:
 
