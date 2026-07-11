@@ -858,3 +858,13 @@ Cumulative KB entries from post-session debriefs.
   copy is a manually-kept-identical mirror for the future `bin/lse` monorepo loader (Phase 3, not
   started). Don't assume a `git commit` captured an `lse/skills/*` change — check `git status`
   against the actual path, it will show nothing even when files changed on disk.
+
+## Session 2026-07-11 — TRAUM Thread 1 close: docstring gate-conflict audit + run_tests(scope) boundary
+
+### What worked
+- Auditing a multi-step skill file for v0.3.4-class gate conflicts by grepping for words reused in two different behavioral senses (e.g. "skip" meaning both "never ran a required check" and "the check ran and correctly produced a no-op result") surfaced a real ambiguity in `skills/lse-session-debrief/SKILL.md` before deploy, not after a field failure.
+
+### Key facts
+- `run_tests(scope=all)` does NOT run the legacy `scripts/` pytest harness — its "harness/tests" bucket is `pytest tests/` only. Only `run_tests(scope=harness)` reports both `tests/` (harness/tests) and `scripts/` (harness/scripts) as separate buckets. "All green" from `scope=all` does not mean `scope=harness` is fully clean.
+- Two `scripts/` legacy harness collection errors are pre-existing and unrelated to any TRAUM Thread 1 work: missing `gymnasium` module (breaks `scripts/test_challenge_env.py`, `scripts/test_escalation_wrapper.py`) and missing `tools/cogitator-v1.7.15.py` (breaks `scripts/test_hermes_inbox.py`).
+- A skill file's worked examples that cite specific live, mutable system state (e.g. "doc X is currently unaddressed") go stale the moment that state changes, since the whole file is re-read verbatim on every future invocation — worked examples referencing live state need an explicit "verify current state before trusting this" caveat.
