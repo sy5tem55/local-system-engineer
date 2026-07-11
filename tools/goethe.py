@@ -6705,6 +6705,37 @@ tail -5 /tmp/goethe-node3090.log
         """
         return "kanban retired (v0.2.7)"
 
+    def _parse_planner_envelope(self, reply: str) -> tuple[dict | None, str]:
+        """Parse planner reply into JSON envelope.
+
+        Strips thinking blocks and code fences, finds and parses the first
+        JSON object, validates it has a 'steps' array.
+
+        Returns (envelope_dict, "") on success, (None, fail_reason) on failure.
+        """
+        # Strip Qwen3 / DeepSeek thinking blocks before JSON extraction.
+        import re as _re  # noqa: PLC0415
+        import json as _json  # noqa: PLC0415
+        clean = _re.sub(r"</think>", "", reply, flags=_re.DOTALL).strip()
+        # Strip markdown code fences (```json ... ```) some models wrap JSON in.
+        clean = _re.sub(r"^```[a-z]*\n?", "", clean).rstrip("`").strip()
+        # raw_decode parses the FIRST valid JSON object, stopping cleanly at
+        # its closing brace regardless of trailing prose or garbage.
+        idx = clean.find("{")
+        if idx == -1:
+            return None, f"no JSON object in reply. RAW: {clean[:200]!r}"
+        try:
+            env_c, _ = _json.JSONDecoder().raw_decode(clean, idx)
+            if env_c.get("steps"):
+                return env_c, ""
+            return None, "envelope has no 'steps' array"
+        except Exception as exc:
+            return None, (
+                f"JSON parse failed ({exc}). "
+                f"RAW: {clean[idx : idx + 200]!r}"
+            )
+
+
     def planner(
         self,
         task: str,
@@ -6848,27 +6879,9 @@ tail -5 /tmp/goethe-node3090.log
                     "PLANNER UNAVAILABLE — proceed with default budgets, "
                     f"checkpoint early. ({(reply or 'no reply')[:160]})"
                 )
-            # Strip Qwen3 / DeepSeek thinking blocks before JSON extraction.
-            clean = _re.sub(r"<think>.*?</think>", "", reply, flags=_re.DOTALL).strip()
-            # Strip markdown code fences (```json ... ```) some models wrap JSON in.
-            clean = _re.sub(r"^```[a-z]*\n?", "", clean).rstrip("`").strip()
-            # raw_decode parses the FIRST valid JSON object, stopping cleanly at
-            # its closing brace regardless of trailing prose or garbage.
-            idx = clean.find("{")
-            if idx == -1:
-                fail_reason = f"no JSON object in reply. RAW: {clean[:200]!r}"
-            else:
-                try:
-                    env_c, _ = _json.JSONDecoder().raw_decode(clean, idx)
-                    if env_c.get("steps"):
-                        env = env_c
-                        break
-                    fail_reason = "envelope has no 'steps' array"
-                except Exception as _exc:
-                    fail_reason = (
-                        f"JSON parse failed ({_exc}). "
-                        f"RAW: {clean[idx : idx + 200]!r}"
-                    )
+            env, fail_reason = self._parse_planner_envelope(reply)
+            if env is not None:
+                break
             self._log(f"NODE-PLAN: attempt {attempt} rejected — {fail_reason[:120]}")
             plan_ctx = (
                 (context + "\n\n" if context else "")
