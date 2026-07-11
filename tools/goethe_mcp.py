@@ -25,6 +25,18 @@ VALVES
   Override any goethe valve via env GOETHE_<FIELD>, e.g.
     GOETHE_COMMAND_TIMEOUT=200  GOETHE_PFSENSE_API_KEY=...  GOETHE_ES_URL=...
 
+EPISODE JOURNALING  (TRAUM Thread 1 — docs/dreaming/DESIGN.md)
+  Every tool call appends one redacted, size-capped JSONL line to
+    $GOETHE_EPISODE_DIR/YYYY-MM-DD/<session>.jsonl
+  ON by default (GOETHE_EPISODE_DIR defaults to /opt/local-se/episodes). Set
+  GOETHE_EPISODE_DIR="" to disable entirely (mirrors the GOETHE_MCP_TOKEN
+  off-by-empty convention above). A journaling failure never breaks the
+  underlying tool call — see _safe_journal().
+  Size hygiene: a day-dir stops accepting new journal lines once it reaches
+  GOETHE_EPISODE_DAY_CAP_MB (default 500) — loud stderr warning, tool call
+  itself is unaffected. Rotation (gzip day-dirs older than 7 days) and the
+  manifest.db build are a separate periodic job: tools/episode_index.py.
+
 SECURITY  (read this - goethe runs shell + SSH + pfSense writes)
   Over HTTP this is a remote-code-execution surface. This server:
     * binds 127.0.0.1 by default (warns loudly if you change it),
@@ -41,13 +53,48 @@ REQUIRES:  pip install "mcp"  (+ uvicorn/starlette, pulled in for HTTP)
 """
 
 import argparse
+import datetime
 import importlib.util
 import inspect
+import json
 import os
+import re
 import sys
+import time
 import typing
 
-__version__ = "1.9.3"
+__version__ = "1.11.1"
+# 1.11.1 — fix a real redaction gap Prompt 1.8's contract tests caught: the
+#           RESULT of a _SENSITIVE_TOOLS call (get_vault_secret, etc.) was only
+#           run through the generic value/pattern redaction in _redact_text,
+#           same as any other tool's result — meaning the actual secret
+#           get_vault_secret returns would sail straight into the episode
+#           JSONL untouched unless it happened to match a known valve value or
+#           a Bearer/pattern regex. _journal() now blanket-redacts the result
+#           for _SENSITIVE_TOOLS the same way _redact_args already blanket-
+#           redacts the args (DESIGN.md §4 rule 1), before the
+#           exception/string/json branches even run.
+# 1.11.0 — episode journaling size hygiene (TRAUM Thread 1, Prompt 1.4): refuse
+#           to journal (loud stderr warning, tool call itself still succeeds)
+#           once a day-dir reaches GOETHE_EPISODE_DAY_CAP_MB (default 500MB).
+#           Day-dir size is cached for 30s (_DAY_SIZE_CACHE_TTL) so the cap
+#           check doesn't turn into a directory walk on every single tool call;
+#           the cache is nudged forward on each successful write rather than
+#           re-scanned. Actual rotation (gzip day-dirs older than 7 days) and
+#           the manifest.db build live in the new tools/episode_index.py,
+#           run periodically — this valve is the write-time half only.
+# 1.10.0 — episode journaling: every tool call appends one redacted, capped JSONL
+#           line to $GOETHE_EPISODE_DIR/YYYY-MM-DD/<session>.jsonl (TRAUM Thread 1,
+#           Prompt 1.3; schema + redaction rules from docs/dreaming/DESIGN.md).
+#           Session id prefers real MCP connection identity — read via the SDK's
+#           request_ctx contextvar (mcp.server.lowlevel.server), no wrapper-schema
+#           changes required — and falls back to gateway-PID + first-call-timestamp
+#           when unavailable (stdio transport, or an older/newer SDK that doesn't
+#           expose it the same way). Every tool call is wrapped in try/except/
+#           finally so a journal failure can never break the tool call itself —
+#           it's caught and logged to stderr instead. Default
+#           GOETHE_EPISODE_DIR=/opt/local-se/episodes; set to "" to disable
+#           (mirrors the GOETHE_MCP_TOKEN off-by-empty pattern already in this file).
 # 1.9.3 — _TokenGuard accepts both "Bearer <token>" and raw "<token>" — normalises
 #          auth header before comparison so llama-ui client format doesn't matter.
 # 1.9.2 — remove all OpenWebUI/OWUI references from comments and docstrings;
@@ -250,6 +297,265 @@ class _ToolSchemaFixer:
         await self.app(scope, receive, send)
 
 
+# --- Episode journaling (TRAUM Thread 1, Prompt 1.3) -----------------------
+# Schema and redaction rules are fixed by docs/dreaming/DESIGN.md — this is the
+# implementation of that design, not a new design. Keep them in sync if either
+# changes.
+
+EPISODE_MAX_RESULT_CHARS = 2000  # the 2026-07-06 token-bomb lesson: cap at write time
+
+# Tools whose entire call (args AND result) is inherently secret material —
+# blanket-redacted rather than pattern-matched, since pattern-matching could
+# miss a secret that happens not to look like a KEY/TOKEN/SECRET shape.
+_SENSITIVE_TOOLS = {"get_vault_secret", "set_vault_secret", "vault_unlock", "list_vault_items"}
+
+# Valve field names ending in these words are treated as secret-valued for
+# redaction purposes (DESIGN.md §4 rules 2 + 4) — covers PFSENSE_API_KEY and
+# any future *_KEY/*_TOKEN/*_SECRET/*_PASSWORD/*_API_KEY valve automatically,
+# by naming convention rather than a hand-maintained list. (HERMES_API_KEY is
+# decommissioned and intentionally not named here — this catch-all covers its
+# replacement, if any, without needing an edit.)
+_SECRET_FIELD_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD)$", re.IGNORECASE)
+
+_BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9\-_.]+")
+_TIMEOUT_RE = re.compile(r"\[TIMEOUT\]|timed out", re.IGNORECASE)
+# Last-line-of-defense sweep for high-confidence secret shapes that slip past
+# the valve-value and Bearer-token rules (DESIGN.md §4 rule 5). Matches any
+# identifier CONTAINING key/token/secret/password (not just starting with it —
+# aws_secret_access_key=... and PFSENSE_API_KEY=... both need to match) followed
+# by an assignment and a long opaque blob.
+_PATTERN_SECRET_RE = re.compile(
+    r"(?i)([\w]*(?:key|token|secret|password)[\w]*)([\"']?\s*[:=]\s*[\"']?)[A-Za-z0-9\-_./+]{12,}"
+)
+
+_fallback_session_id_cache = None
+
+# --- Size hygiene (TRAUM Thread 1, Prompt 1.4 — write-time half) -----------
+# Rotation (gzip old day-dirs) and the manifest.db build are a periodic batch
+# job — see tools/episode_index.py. This is the other half: refuse to keep
+# writing into a day-dir that's already blown past the cap, so one runaway day
+# can't fill the disk between maintenance runs.
+_DAY_CAP_BYTES = int(os.environ.get("GOETHE_EPISODE_DAY_CAP_MB", "500")) * 1024 * 1024
+_DAY_SIZE_CACHE_TTL = 30.0  # seconds — bounds scandir overhead under call bursts
+_day_size_cache = {}  # day_dir path -> (checked_at_monotonic, size_bytes)
+
+
+def _day_dir_size(day_dir: str) -> int:
+    """Total bytes of files directly under day_dir, cached briefly."""
+    now = time.monotonic()
+    cached = _day_size_cache.get(day_dir)
+    if cached is not None and (now - cached[0]) < _DAY_SIZE_CACHE_TTL:
+        return cached[1]
+    total = 0
+    try:
+        with os.scandir(day_dir) as it:
+            for entry in it:
+                try:
+                    if entry.is_file():
+                        total += entry.stat().st_size
+                except OSError:
+                    continue
+    except OSError:
+        total = 0
+    _day_size_cache[day_dir] = (now, total)
+    return total
+
+
+def _note_bytes_written(day_dir: str, n: int) -> None:
+    """Nudge the cached day-dir size forward after a successful write, instead
+    of invalidating it — keeps the cap check cheap even under sustained load."""
+    cached = _day_size_cache.get(day_dir)
+    if cached is not None:
+        _day_size_cache[day_dir] = (cached[0], cached[1] + n)
+
+
+def _episode_dir() -> str:
+    """Root directory for episode journaling — the EPISODE_DIR valve. Re-read
+    from the environment on every call (not cached) so tests can point it at a
+    tmp dir via GOETHE_EPISODE_DIR without needing to thread state through
+    register(). Empty string disables journaling entirely."""
+    return os.environ.get("GOETHE_EPISODE_DIR", "/opt/local-se/episodes")
+
+
+def _iso_now() -> str:
+    return datetime.datetime.now().astimezone().isoformat(timespec="microseconds")
+
+
+def _fallback_session_id() -> str:
+    """gateway-PID + first-call timestamp, memoized for the life of this process.
+    Used when real MCP connection identity isn't available (see _mcp_session_id)."""
+    global _fallback_session_id_cache
+    if _fallback_session_id_cache is None:
+        _fallback_session_id_cache = f"gw-{os.getpid()}-{int(time.time())}"
+    return _fallback_session_id_cache
+
+
+def _mcp_session_id() -> typing.Optional[str]:
+    """Best-effort REAL per-connection identity, read from the SDK's own
+    request-context contextvar. This requires no changes to the exposed tool
+    schema (unlike adding a `ctx: Context` parameter, which would touch the
+    same fragile anyOf-null schema pipeline _annotation()/_flatten_anyof_null()
+    exist to work around) — it just reads ambient state the low-level Server
+    already sets around every request via request_ctx.set() before dispatch.
+
+    id(session) is stable for the life of one MCP connection (the ServerSession
+    object persists for the connection's duration) but is only process-unique,
+    so it's paired with the PID for safety. Returns None — triggering the
+    _fallback_session_id() fallback — when unavailable: stdio transport has no
+    per-connection session concept, and older/newer SDK versions may not expose
+    this the same way.
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        session = getattr(request_ctx.get(), "session", None)
+        if session is not None:
+            return f"sess-{os.getpid()}-{id(session):x}"
+    except Exception:
+        pass
+    return None
+
+
+def _session_id() -> str:
+    return _mcp_session_id() or _fallback_session_id()
+
+
+def _secret_values(inst) -> set:
+    """Current secret-looking valve values on a Tools instance, for value-match
+    redaction. Computed once per register() call (valves don't change mid-run)
+    and reused across every wrapper closure created in that call."""
+    values = set()
+    valves = getattr(inst, "valves", None)
+    if valves is None:
+        return values
+    for fname, fval in _valve_dump(valves).items():
+        if isinstance(fval, str) and len(fval) >= 6 and _SECRET_FIELD_RE.search(fname):
+            values.add(fval)
+    return values
+
+
+def _redact_text(text: str, secret_values: set) -> str:
+    if not text:
+        return text
+    for val in secret_values:
+        if val in text:
+            text = text.replace(val, "[REDACTED:valve-secret]")
+    text = _BEARER_RE.sub("[REDACTED:bearer-token]", text)
+    text = _PATTERN_SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED:pattern-match]", text)
+    return text
+
+
+def _redact_args(tool_name: str, kwargs: dict, secret_values: set) -> dict:
+    if tool_name in _SENSITIVE_TOOLS:
+        # Whole-call redaction: every arg to a vault-secret tool either IS the
+        # secret or identifies which secret to fetch/set — DESIGN.md §4 rule 1.
+        return {k: "[REDACTED:vault-tool-arg]" for k in kwargs}
+    out = {}
+    for k, v in kwargs.items():
+        if isinstance(v, str):
+            out[k] = _redact_text(v, secret_values)
+        else:
+            try:
+                json.dumps(v)
+                out[k] = v  # already JSON-safe, structure preserved for the dreamer
+            except TypeError:
+                out[k] = _redact_text(str(v), secret_values)
+    return out
+
+
+def _classify_exit(result, exc) -> str:
+    """Heuristic exit_class classification. goethe.py Tools methods don't carry
+    a structured status field — they signal failure/denial via free-text string
+    conventions ("BLOCKED: ...", "[TIMEOUT] ...", "ERROR: ...") that are already
+    consistent across the codebase, so we classify on those rather than
+    inventing a second status channel goethe.py methods would need to adopt."""
+    if exc is not None:
+        return "error"
+    text = result if isinstance(result, str) else ("" if result is None else str(result))
+    if text.startswith("BLOCKED:"):
+        return "denied"
+    if _TIMEOUT_RE.search(text):
+        return "timeout"
+    if text.startswith(("ERROR", "[SSH FAILURE]", "[SCP FAILED]")):
+        return "error"
+    return "ok"
+
+
+def _journal(tool_name: str, kwargs: dict, result, exc, secret_values: set) -> None:
+    """Append one episode JSONL line per docs/dreaming/DESIGN.md's schema.
+    Called from a `finally` block so it fires exactly once per tool call
+    regardless of outcome. Allowed to raise — the caller (_safe_journal) is
+    responsible for making sure that never reaches the tool call."""
+    ep_dir = _episode_dir()
+    if not ep_dir:
+        return  # GOETHE_EPISODE_DIR="" — journaling disabled
+
+    session_id = _session_id()
+    day = datetime.date.today().isoformat()
+    day_dir = os.path.join(ep_dir, day)
+    path = os.path.join(day_dir, f"{session_id}.jsonl")
+
+    if os.path.isdir(day_dir) and _day_dir_size(day_dir) >= _DAY_CAP_BYTES:
+        print(
+            f"[goethe_mcp] WARNING: episode day-dir {day_dir} has reached the "
+            f"{_DAY_CAP_BYTES // (1024 * 1024)}MB cap — REFUSING to journal this "
+            f"call (tool={tool_name}). The tool call itself is unaffected. Run "
+            "tools/episode_index.py to rotate old sessions, or raise "
+            "GOETHE_EPISODE_DAY_CAP_MB.",
+            file=sys.stderr,
+        )
+        return
+
+    os.makedirs(day_dir, exist_ok=True)
+
+    exit_class = _classify_exit(result, exc)
+    if tool_name in _SENSITIVE_TOOLS:
+        # DESIGN.md §4 rule 1: every arg to a vault-secret tool is blanket-
+        # redacted because it either IS the secret or identifies which one to
+        # fetch/set — but the RESULT of get_vault_secret is even more clearly
+        # secret: it's the tool's entire purpose to return the value. Without
+        # this, a caught RuntimeError could still leak it via the exception
+        # message path below, or a dict/JSON result could leak it via the
+        # json.dumps path — blanket-redact before any of those branches run,
+        # not just the plain-string case.
+        result_text = "[REDACTED:vault-tool-result]"
+    elif exc is not None:
+        result_text = f"{type(exc).__name__}: {exc}"
+    elif isinstance(result, str):
+        result_text = result
+    else:
+        try:
+            result_text = json.dumps(result, default=str)
+        except Exception:
+            result_text = str(result)
+
+    result_text = _redact_text(result_text, secret_values)
+    if len(result_text) > EPISODE_MAX_RESULT_CHARS:
+        result_text = result_text[:EPISODE_MAX_RESULT_CHARS] + "…[truncated]"
+
+    line = {
+        "ts": _iso_now(),
+        "session_id": session_id,
+        "tool": tool_name,
+        "args_redacted": _redact_args(tool_name, kwargs, secret_values),
+        "result_truncated": result_text,
+        "exit_class": exit_class,
+    }
+    payload = json.dumps(line, ensure_ascii=False, default=str) + "\n"
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(payload)
+    _note_bytes_written(day_dir, len(payload.encode("utf-8")))
+
+
+def _safe_journal(tool_name: str, kwargs: dict, result, exc, secret_values: set) -> None:
+    """Journal one episode line; NEVER let a journaling failure affect the
+    caller. This is the only entry point the register() wrappers call."""
+    try:
+        _journal(tool_name, kwargs, result, exc, secret_values)
+    except Exception as e:
+        print(f"[goethe_mcp] episode journal failed (tool={tool_name}): {e}", file=sys.stderr)
+
+
 def register(mcp, inst, seen=None) -> list:
     """Wrap each model-callable Tools method as an MCP tool. Returns names exposed.
     `seen` (a set) dedupes across multiple modules — a name already registered by an
@@ -257,6 +563,7 @@ def register(mcp, inst, seen=None) -> list:
     if seen is None:
         seen = set()
     exposed_names = []
+    secret_values = _secret_values(inst)  # for episode-journal redaction, computed once
     for name in sorted(dir(inst)):
         if name.startswith("_") or name in SKIP_TOOLS or name in seen:
             continue
@@ -278,15 +585,31 @@ def register(mcp, inst, seen=None) -> list:
 
         is_async = inspect.iscoroutinefunction(member)
         if is_async:
-            async def wrapper(__m=member, **kwargs):
-                return await __m(**kwargs)
+            async def wrapper(__m=member, __tool_name=name, **kwargs):
+                result, exc = None, None
+                try:
+                    result = await __m(**kwargs)
+                    return result
+                except BaseException as e:
+                    exc = e
+                    raise
+                finally:
+                    _safe_journal(__tool_name, kwargs, result, exc, secret_values)
         else:
             # Run sync tools in a thread so they don't block the uvicorn event loop.
             # Without this, a slow execute_command stalls ALL pending requests and
             # prevents SSE keepalives from being sent, causing clients to see hangs.
-            async def wrapper(__m=member, **kwargs):
+            async def wrapper(__m=member, __tool_name=name, **kwargs):
                 import asyncio
-                return await asyncio.to_thread(__m, **kwargs)
+                result, exc = None, None
+                try:
+                    result = await asyncio.to_thread(__m, **kwargs)
+                    return result
+                except BaseException as e:
+                    exc = e
+                    raise
+                finally:
+                    _safe_journal(__tool_name, kwargs, result, exc, secret_values)
 
         wrapper.__name__ = name
         wrapper.__doc__ = (member.__doc__ or name).strip()

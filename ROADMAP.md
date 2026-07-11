@@ -149,9 +149,16 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 
 - [ ] **PH4-1** — DATA-1..4 (self-harvested gold sets — no HF/Kaggle; `dataset_lint.py`;
       sha256-frozen datasets; reseed preserves trust fields).
-- [ ] **PH4-2** — SCRIBE-1..4 (debrief→ES unified write path with human gate; backfill distiller
-      over `kb/session-learnings.md`; "contradicts existing KB?" step feeding KB-DECAY;
-      monthly retrieval self-measurement).
+- [→] **PH4-2** — SCRIBE-1..4 **ABSORBED INTO TRAUM** (2026-07-11): the dreaming
+      workstream subsumes the self-writing loop — SCRIBE-1/-2/-3 are TRAUM Thread 1
+      prompts 1.5–1.7, SCRIBE-4 is Thread 3 prompt 3.7, SCRIBE-5 stays a standing
+      discipline. Execute via `docs/traum-dreaming-plan.md` (4 threads × 10 prompts).
+      **Thread 1 (TRAUM-CORPUS) ✅ COMPLETE (2026-07-11):** SCRIBE-1/2/3 shipped
+      for real (see Workstream E below) — episode journaling live on the
+      gateway (goethe_mcp v1.11.1), manifest/rotation built, 137 backfill
+      facts applied to production `lse-kb`. Still [→] not [x]: Threads 2–4
+      (offline dream runner, apply gate + SCRIBE-4, A/B eval) have not
+      started — the corpus is being collected but nothing dreams over it yet.
 - [ ] **PH4-3** — RFC KB verdict (carried P21): still ZERO `search_rfc` calls. Either wire it
       into episode prompts (topology/DNS challenges cite RFC 8375 etc.) or retire the index.
       Decide with usage-log data, not sentiment.
@@ -327,27 +334,49 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 
 ### Workstream E — SCRIBE: self-improving + auto-writing skill, next stage
 
+> **⟶ ABSORBED INTO TRAUM (2026-07-11).** SCRIBE items below are retained for
+> traceability but execute inside the TRAUM dreaming workstream —
+> `docs/traum-dreaming-plan.md`. TRAUM adds what SCRIBE lacked: out-of-band
+> post-session reflection (episode capture at the goethe_mcp gateway, an offline
+> local-model dream runner for dedup/demotion/insight mining, gated apply path,
+> nightly timer, and an A/B learning-lift eval). Mapping: SCRIBE-1→T1.5,
+> SCRIBE-2→T1.7, SCRIBE-3→T1.6, SCRIBE-4→T3.7, SCRIBE-5→standing discipline.
+
 > Today: `lse-session-debrief` (markdown append to session-learnings.md, human-
 > confirmed, good format discipline) and the lse-skills loop
 > (skill_record/skill_search/skill_outcome — evidence-gated, deduped, decays,
 > auto-archives) are TWO disconnected memories. The debrief writes prose no
 > retrieval loop consumes; the skills index never learns from debriefs.
 
-- [ ] **SCRIBE-1** — Unify the write path: debrief Step 4 additionally proposes
-      structured calls — facts → `index_to_kb(source_tier=..., verified_against=...)`,
-      procedures → `skill_record(provenance="debrief YYYY-MM-DD")` — shown in the
-      same human-confirm gate (one yes commits file + ES atomically; file remains
-      the human-readable journal, ES the retrieval surface).
-- [ ] **SCRIBE-2** — Backfill distiller: one-shot script proposing
+- [x] **SCRIBE-1** ✅ DONE (2026-07-11, TRAUM Thread 1 Prompt 1.5) — Unify the
+      write path: debrief Step 4 additionally proposes structured calls —
+      facts → `index_to_kb(source_tier=..., verified_against=...)`,
+      procedures → `skill_record(provenance="debrief YYYY-MM-DD")` — shown in
+      the same human-confirm gate (one yes commits file + ES together; file
+      remains the human-readable journal, ES the retrieval surface). Live in
+      `skills/lse-session-debrief/SKILL.md`; format contract mirrored in
+      `docs/dreaming/DESIGN.md` §6 for Thread 2's `dream_apply.py` to reuse.
+- [x] **SCRIBE-2** ✅ DONE (2026-07-11, TRAUM Thread 1 Prompt 1.7) — Backfill
+      distiller (`scripts/distill_learnings.py`): one-shot script proposing
       index_to_kb/skill_record candidates from the existing
-      `kb/session-learnings.md` corpus; human reviews a diff-style list, approves
-      per-entry. No auto-commit — the confirm gate is the skill's load-bearing
-      safety property, keep it (Shostack: repudiation — every ES write carries
-      `provenance=debrief-<date>` so bad entries trace back).
-- [ ] **SCRIBE-3** — Close the loop with decay: debrief template gains a
-      "Contradicts existing KB?" step — if the session disproved a KB entry, the
-      proposal includes `record_outcome(doc_id, success=False, evidence=...)`
-      (uses KB-DECAY-1) instead of only writing the new truth alongside the old.
+      `kb/session-learnings.md` corpus; human reviewed a diff-style list
+      (`docs/dreaming/backfill-review.md`), approved per-tier. **Run for real**
+      against the live corpus — 197 candidates generated, 137 high-confidence
+      approved and applied to production `lse-kb` (234 → 364 docs); 39 medium
+      + 21 low confidence explicitly not approved this pass. Every applied
+      entry carries `provenance=debrief-backfill-YYYY-MM-DD` (repudiation
+      trace per Shostack).
+- [x] **SCRIBE-3** ✅ DONE (2026-07-11, TRAUM Thread 1 Prompt 1.6) — Close the
+      loop with decay: debrief template gains a "Contradicts existing KB?"
+      step — before finalizing any `index_to_kb` proposal, `search_kb` for
+      conflict (not just duplication); a genuine contradiction pairs
+      `record_outcome(doc_id, success=False, evidence=...)` (uses KB-DECAY-1)
+      with the correcting fact, never demotes alone. Live in
+      `skills/lse-session-debrief/SKILL.md`. A real, live contradiction
+      (`lse-kb` doc `a9361df7b6b60bb8`, Hermes port/auth doc still asserting
+      decommissioned key-based auth) was found while writing this step and
+      documented as the worked example — not yet applied, still requires
+      going through the normal confirm gate like any other proposal.
 - [ ] **SCRIBE-4** — Skill self-measurement: monthly `run_tests(scope=retrieval)`
       + skills-index report (uses/successes/failures/archived count — data already
       in `stats`) appended to the debrief; the skill that writes learnings should
@@ -362,6 +391,14 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       run_tests/assert_state when they land (PH3-1), and opportunistic passes on
       older docstrings. The v0.3.4 planner-gate conflict is a live example of why
       this audit must run BEFORE deploy, not after a field failure.
+      **FURTHER ✅ (2026-07-11, TRAUM Thread 1 Prompt 1.9):** ran the audit over
+      `skills/lse-session-debrief/SKILL.md` and `docs/dreaming/DESIGN.md` §6
+      (the SCRIBE-1/3 text). Found and fixed a v0.3.4-class gate conflict
+      (overloaded "skip" — a legitimate no-write result of running Step 1's
+      duplicate check read the same as the forbidden "skipped a step") and a
+      staleness risk in a worked example referencing live, mutable KB state.
+      Standing discipline continues into Thread 2/3's new tool surfaces
+      (`dream_runner.py`, `dream_apply.py`) when they land.
 
 ### Workstream F — REFACTOR: pay down before the next 1000 lines (Fowler/Ousterhout)
 

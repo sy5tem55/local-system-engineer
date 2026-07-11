@@ -1,5 +1,5 @@
 # LSE Current State
-> Last updated: 2026-07-02 (Cowork)
+> Last updated: 2026-07-11 (Cowork)
 > Source of truth for deployed versions. Update this file at the end of every session.
 
 ---
@@ -10,7 +10,8 @@
 |---|---|---|---|
 | **LSE Tool (LUCIFER)** | **Goethe v0.3.6** | `tools/goethe.py` | ✅ **DEPLOYED** (2026-07-03, 45 tools) — planner v2 + PROVE-IT (run_tests, assert_state) + CHRONOS + KB trust lifecycle; 105/105 tests green. Cutoff 2026-01 in gateway env. REMINDER: llama-ui threads snapshot the tool schema — start a FRESH thread after any gateway deploy |
 | **LSE Tool (node3090)** | **Goethe v0.3.6** | `tools/goethe.py` (rsynced via start-goethe-node3090.sh) | ✅ **DEPLOYED** (2026-07-03) — Gemma-4-31B serving on :8080 (unified Q4 cache) as cross-family planner backend. run_tests scopes needing rag//tests/ report SKIP there (assets not rsynced; REPO_DIR valve). Swap/restore scripts in tools/ |
-| **MCP Gateway** | **goethe_mcp v1.9.3** | `tools/goethe_mcp.py` | ✅ **DEPLOYED** — `_TokenGuard` accepts `Bearer <token>` or raw token; port 9700; started via `bash tools/start-goethe.sh` |
+| **MCP Gateway** | **goethe_mcp v1.11.1** | `tools/goethe_mcp.py` | ✅ **DEPLOYED** (2026-07-11, restarted PID confirmed, 48 tools) — `_TokenGuard` accepts `Bearer <token>` or raw token; port 9700; started via `bash tools/start-goethe.sh`. TRAUM episode journaling live (see TRAUM row below): every tool call appends a redacted, capped JSONL line; day-dir cap 500MB default; blanket-redacts `_SENSITIVE_TOOLS` results (v1.11.1 fix), not just args |
+| **TRAUM (dreaming workstream)** | **Thread 1/4 complete** | `docs/traum-dreaming-plan.md`, `docs/dreaming/` | 🟡 **IN PROGRESS** — Thread 1 (TRAUM-CORPUS) shipped 2026-07-11: episode journaling + manifest/rotation (`tools/episode_index.py`) live on the gateway; SCRIBE-1 unified debrief write path + SCRIBE-3 contradiction check live in `skills/lse-session-debrief/SKILL.md`; SCRIBE-2 backfill distiller run for real (137/197 candidates applied to `lse-kb`, 234→364 docs). Threads 2 (dream_runner.py, offline dreamer), 3 (dream_apply.py, apply gate + SCRIBE-4), 4 (A/B learning-lift eval) **NOT STARTED** — no dream currently runs; the corpus is being collected but nothing reads it yet |
 | **System Prompt (LUCIFER)** | **node4090-v0.6.0** | `prompts/node4090-v0.6.0.md` | ✅ **CANONICAL** (P0-5 reconciled 2026-07-04; prompts/ is the canonical dir, tools/system-prompt-v0.5.x superseded) — REQUEST-SHAPE MAPPINGS, ledger-first task loop, all v0.3.x tools. **Paste into llama-ui system prompt field + start fresh threads.** |
 | **System Prompt (node3090)** | **v0.1.0** | `tools/system-prompt-node3090-v0.1.0.md` | ✅ deployed — node3090-specific identity/environment/tool section |
 | Routing Filter | v1.2.0 | `tools/lse-routing-filter-v1.2.0.py` | ✅ deployed — model-aware passthrough; Qwen3 preset only |
@@ -30,11 +31,11 @@
 - **Run 7 (2026-06-04, `eval-report-v6.md`) — 63/63** certified the retired OpenWebUI stack on the full S/A/W/P suite. **NOT comparable to Run 9** — different frontend, different (smaller, 60-max) suite version scored then.
 - **Outstanding:** commit `v35_harness.py` into the repo proper (currently in `/tmp/lse/`, not version-controlled) if it'll be reused; re-test P5 now that auth.log is readable; consider adding path-based scoping to the confirmation-gate rule in the system prompt (pattern #1 in eval-report-v8.md).
 
-### Goethe MCP Stack Inventory (recorded 2026-07-02, operator-verified)
+### Goethe MCP Stack Inventory (recorded 2026-07-02, operator-verified; goethe_mcp row updated 2026-07-11)
 
 | Component | Version | Details |
 |---|---|---|
-| goethe_mcp.py | 1.9.3 | MCP server wrapper |
+| goethe_mcp.py | 1.11.1 | MCP server wrapper — TRAUM Thread 1 episode journaling (see TRAUM row in Deployed Versions above) |
 | goethe.py | 0.2.9 | Core toolset (title: "LSE Goethe v0.2.9") |
 | llama-server | 1 (a6647b1) | Built with GCC 14.2.0, symlinked from `/opt/llama.cpp/bin/` |
 | Ollama | 0.22.1 | CPU-only, 5 models loaded |
