@@ -4038,6 +4038,22 @@ tail -5 /tmp/goethe-node3090.log
                     return ("[browser-rendered] " + _br + _br_mandate) + _gate
             return f"ERROR fetching {url}: {e}"
 
+    def _extract_pdf_text(self, pdf_bytes: bytes) -> str:
+        """Extract text from PDF. Tries pdfminer, falls back to pypdf."""
+        try:
+            import io  # noqa: PLC0415
+            from pdfminer.high_level import extract_text as _pe  # noqa: PLC0415
+            return _pe(io.BytesIO(pdf_bytes)) or ""
+        except Exception:
+            try:
+                import io  # noqa: PLC0415
+                from pypdf import PdfReader as _PR  # noqa: PLC0415
+                rdr = _PR(io.BytesIO(pdf_bytes))
+                return "\n".join(
+                    (p.extract_text() or "") for p in rdr.pages)
+            except Exception:
+                return ""
+
     def verify_source_claims(self, url: str, claims: str) -> str:
         """
         Re-fetch a source URL and check whether specific factual claims appear in
@@ -4119,25 +4135,7 @@ tail -5 /tmp/goethe-node3090.log
                 ctype = resp.headers.get("Content-Type", "").lower()
                 is_pdf = "application/pdf" in ctype or resp.content[:5] == b"%PDF-"
                 if is_pdf:
-                    text = ""
-                    try:
-                        import io  # noqa: PLC0415
-                        from pdfminer.high_level import (
-                            extract_text as _pe,
-                        )  # noqa: PLC0415
-
-                        text = _pe(io.BytesIO(resp.content)) or ""
-                    except Exception:
-                        try:
-                            import io  # noqa: PLC0415
-                            from pypdf import PdfReader as _PR  # noqa: PLC0415
-
-                            rdr = _PR(io.BytesIO(resp.content))
-                            text = "\n".join(
-                                (p.extract_text() or "") for p in rdr.pages
-                            )
-                        except Exception:
-                            text = ""
+                    text = self._extract_pdf_text(resp.content)
                 else:
                     p = _TE()
                     p.feed(resp.text)
