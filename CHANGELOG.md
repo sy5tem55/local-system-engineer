@@ -3,6 +3,104 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-07-11 (Cowork): TRAUM Thread 1 (TRAUM-CORPUS) complete — goethe_mcp v1.10.0 → v1.11.1, SCRIBE-1/2/3 shipped as the unified debrief write path
+
+Closes `docs/traum-dreaming-plan.md` Thread 1 (Prompts 1.1–1.10). TRAUM is the
+out-of-band "dreaming"/reflection workstream absorbing SCRIBE-1..5 (ROADMAP
+Workstream E) — this thread builds the corpus side (episode journaling +
+manifest) and the human-facing half of the unified write path; Threads 2–4
+(offline dream runner, apply gate, eval) are not yet started.
+
+- **`docs/dreaming/corpus-audit.md`** (1.1) — per-surface readiness verdict on
+  `agent_commands.log`, `tasks.db`, `lse-kb`/`lse-errors`/`lse-skills`,
+  `session-learnings.md`. Key finding: `stale`/`volatility` fields absent
+  (not `false`) on 79–88% of `lse-kb` docs pre-dating CHRONOS-3/KB-DECAY.
+- **`docs/dreaming/DESIGN.md`** (1.2) — dataflow diagram, §2 architecture
+  invariants as testable assertions, episode JSONL schema, redaction rule
+  list, Shostack 4-question threat model on the dream write path, §6 SCRIBE-1
+  confirm-gate proposal format (the contract Thread 2's `dream_apply.py` must
+  reuse verbatim). `HERMES_API_KEY` explicitly excluded from the redaction
+  rule list (decommissioned, not a live secret) — a generic `*_API_KEY`
+  catch-all covers any replacement.
+- **`tools/goethe_mcp.py` v1.10.0 → v1.11.1** (1.3, 1.4, 1.8) — every tool
+  call now appends one redacted, size-capped JSONL line to
+  `$GOETHE_EPISODE_DIR/YYYY-MM-DD/<session>.jsonl`, written even on failure,
+  never blocking the underlying call (wrapped try/except/finally in
+  `register()`). v1.10.0: journaling + redaction (vault secrets, Bearer
+  tokens, `*_KEY`/`*_TOKEN`/`*_SECRET`/`*_PASSWORD` valve pattern, last-resort
+  regex sweep) + real MCP session identity via the SDK's `request_ctx`
+  contextvar (fallback `gw-<pid>-<epoch>` only when unavailable). v1.11.0:
+  size hygiene — day-dir refuses new lines past `GOETHE_EPISODE_DAY_CAP_MB`
+  (default 500MB, loud stderr warning, tool call itself unaffected);
+  30s-cached size check to avoid a directory walk per call. v1.11.1: **bugfix**
+  — `_SENSITIVE_TOOLS` (`get_vault_secret`/`set_vault_secret`/`vault_unlock`/
+  `list_vault_items`) were blanket-redacting args but not the RESULT, meaning
+  a vault secret's actual return value could reach the episode log unredacted
+  unless it happened to match a known valve value. Caught by a new contract
+  test (`test_journal_redacts_vault_tool_call_entirely`), not by inspection —
+  fixed by adding a result-side blanket-redaction branch ahead of the
+  string/JSON branches.
+- **`tools/episode_index.py`** (1.4, new) — manifest builder
+  (`/opt/local-se/episodes/manifest.db`: session_id, start_ts, end_ts,
+  n_calls, n_errors, tools_used, bytes, `dreamed_at`) + rotation (gzip
+  day-dirs older than 7 days). UPSERT preserves `dreamed_at` across re-scans
+  so a manifest rebuild never un-marks episodes Thread 2 already consumed.
+- **`skills/lse-session-debrief/SKILL.md`** (1.5, 1.6) — SCRIBE-1: Step 4 now
+  additionally classifies the entry's own bullets into structured
+  `index_to_kb`/`skill_record` proposals, rendered in the SAME confirm block
+  as the file write and committed on ONE human yes (no separate per-call
+  confirmation). SCRIBE-3: before finalizing any `index_to_kb` proposal,
+  `search_kb` for conflict (not just duplication) — a genuine contradiction
+  pairs a `record_outcome(success=False, ...)` demotion with the correcting
+  fact, never demotes alone, never leaves two disagreeing entries both live.
+  Both features mirrored into `docs/dreaming/DESIGN.md` §6 as the fixed
+  contract Thread 2 (`dream_apply.py`) must reuse byte-for-byte.
+- **`scripts/distill_learnings.py`** (1.7, new — SCRIBE-2 backfill) — one-shot
+  distiller over the existing `kb/session-learnings.md` corpus. Two-pass CLI:
+  pass 1 writes `docs/dreaming/backfill-proposals.jsonl` +
+  `backfill-review.md` (no ES writes); pass 2 (`--apply <approved-ids-file>`)
+  calls `index_to_kb`/`skill_record` directly. **Run for real** against the
+  live corpus: 197 candidates generated, 137 high-confidence approved and
+  applied to production `lse-kb` (234 → 364 docs). 39 medium- and
+  21 low-confidence candidates reviewed and explicitly not approved this
+  pass — see `docs/dreaming/backfill-review.md`.
+- **Contract tests** (1.8) — `tests/test_dream_corpus.py` grew to 47 tests:
+  end-to-end redaction, result-cap boundary tests, provenance-format
+  validators (`"debrief YYYY-MM-DD"` vs `"debrief-backfill-YYYY-MM-DD"` vs
+  `"dream-YYYY-MM-DD"` — fixed, non-interchangeable strings), and
+  journal-failure-never-raises-into-tool-call tests (sync + async). Full
+  contract suite 165/165 green.
+- **Docstring/skill audit** (1.9, SCRIBE-5) — ran the `lse-docstring-optimizer`
+  discipline over `skills/lse-session-debrief/SKILL.md` and
+  `docs/dreaming/DESIGN.md` §6, checking specifically for the v0.3.4
+  planner-GATE-conflict failure class (two individually-reasonable MUST rules
+  that combine into a forbidden action). Found and fixed one: Step 1's "if a
+  duplicate exists, skip writing" used the same word "skip" as the WRITE
+  SEQUENCE's "skipping any step is a protocol violation" — reworded both so a
+  legitimate no-write/no-propose *result* of running a check can't be misread
+  as a forbidden skipped step. Also fixed a staleness risk: the Hermes
+  contradiction worked example asserted a live KB doc was "still
+  unaddressed" — since SKILL.md is re-read on every future invocation, this
+  goes stale the moment the doc is actually demoted; added a
+  verify-current-state-via-search_kb caveat in both files.
+- **Thread close** (1.10) — `run_tests(scope=all)` on LUCIFER: kb=PASS,
+  retrieval=PASS, harness/tests=PASS (165/165). `run_tests(scope=harness)`
+  separately still shows the 2 pre-existing, unrelated `scripts/` legacy
+  harness collection errors documented in 1.8 (missing `gymnasium`; missing
+  `tools/cogitator-v1.7.15.py`) — confirmed not caused by Thread 1's work.
+  Gateway restarted via `tools/start-goethe.sh` — v1.11.1, 48 tools, clean
+  process-count/port checks. Episode journaling confirmed live immediately
+  post-restart (`/opt/local-se/episodes/2026-07-11/sess-*.jsonl` growing with
+  real per-connection session ids, redaction/cap/exit_class fields intact).
+  **OPERATOR NOTE:** llama-ui snapshots the tool schema per thread — start a
+  FRESH llama-ui thread to pick up any schema-relevant change from this
+  deploy (this thread's changes are journaling-only, no tool signatures
+  changed, but the reminder is unconditional per standing practice).
+  ROADMAP.md Workstream E SCRIBE-1/2/3 ticked done; SCRIBE-4 remains open
+  (Thread 3). This debrief itself was written through the new unified path —
+  see `kb/session-learnings.md`.
+
+---
 ## 2026-07-04 (Cowork): P0-5 done — canonical system prompt `prompts/node4090-v0.6.0.md`
 
 Lineage reconciled: v0.5.21 (prompts/) confirmed as the newer line (v0.5.19 in tools/ is a
