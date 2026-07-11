@@ -2343,8 +2343,8 @@ tail -5 /tmp/goethe-node3090.log
         if _write_to_priv:
             self._log(f"WRITE-BLOCKED: {command}")
             return (
-                "BLOCKED: Write to a privileged system path detected. "
-                "Use sudo_delegation_block to delegate this to the user."
+                f"BLOCKED: write targeting a privileged path — matched {_write_to_priv.group(0)!r}. "
+                "Use sudo_delegation_block to delegate this to the user, or report a false positive."
             )
 
         # ── Block clobbering an in-progress download (v0.2.0) ─────────────────
