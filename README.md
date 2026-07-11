@@ -1,6 +1,6 @@
 # Local System Engineer (LSE): Your AI Sysadmin That Actually Works
 
-Forget chatbots that give you advice. LSE is a locally-hosted AI system administrator that acts, executing commands, managing services, rotating credentials, and deploying fixes across your networking infrastructure. Built on a private inference stack (Qwen 27B, 64k context), it operates within strict permission boundaries: no silent privilege escalation, no cloud dependencies, no hallucinated commands.
+Forget chatbots that give you advice. LSE is a locally-hosted AI system administrator that acts, executing commands, managing services, rotating credentials, and deploying fixes across your networking infrastructure. Built on a private inference stack (Qwen 27B), it operates within strict permission boundaries: no silent privilege escalation, no cloud dependencies, no hallucinated commands.
 
 LSE doesn't just answer questions, it enforces protocols. Every operation follows a KB-first discipline: check documented procedures before acting, verify outcomes with ground-truth probes, and record failures for continuous improvement. It manages a living knowledge base of empirically tested runbooks, an RFC authority index for protocol-level diagnosis, and a challenge arena where LLMs compete on real sysadmin problems drawn from live infrastructure.
 
@@ -32,7 +32,7 @@ A locally-hosted AI system administrator running on a private inference stack. O
 |---|---|
 | Host | Windows 11 → WSL2 → Ubuntu 24.04 (hostname: LUCIFER) |
 | Inference | llama.cpp `llama-server` |
-| Model | Qwen3.6-27B-Q4_K_M (64k ctx · KV:q8_0 · think:3072) |
+| Model | Qwen3.6-27B-Q4_K_M (KV:q8_0 · think:3072) |
 | Frontend | llama-ui (built into llama-server, localhost:8080) |
 | MCP Gateway | goethe_mcp.py v1.9.3 · port 9700 · `bash tools/start-goethe.sh` |
 | Web search | SearxNG (self-hosted, localhost:8088) |
