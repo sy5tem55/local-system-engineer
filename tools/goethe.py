@@ -2550,8 +2550,7 @@ tail -5 /tmp/goethe-node3090.log
         """
         cwd = working_dir.strip() or self.valves.DEFAULT_WORKING_DIR
 
-        err = self._validate_command_safety(command, cwd)
-        if err:
+        if (err := self._validate_command_safety(command, cwd)):
             return err
 
         # ── SSH device auto-fingerprint (v1.7.12) ──────────────────────────────
@@ -3948,23 +3947,10 @@ tail -5 /tmp/goethe-node3090.log
             # garbage — it pollutes context AND breaks OWUI <details> rendering.
             is_pdf = "application/pdf" in ctype or head == b"%PDF-"
             if is_pdf:
-                text = ""
-                try:
-                    import io  # noqa: PLC0415
-                    from pdfminer.high_level import extract_text  # noqa: PLC0415
-
-                    text = extract_text(io.BytesIO(resp.content)) or ""
-                except Exception:
-                    try:
-                        import io  # noqa: PLC0415
-                        from pypdf import PdfReader  # noqa: PLC0415
-
-                        rdr = PdfReader(io.BytesIO(resp.content))
-                        text = "\n".join((p.extract_text() or "") for p in rdr.pages)
-                    except Exception:
-                        text = ""
+                text = self._extract_pdf_text(resp.content)
                 if text.strip():
-                    out = _sanitize(" ".join(text.split()))[:max_chars]
+                    import re as _re  # noqa: PLC0415
+                    out = _re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", " ".join(text.split()))[:max_chars]
                     self._fetch_cache[url] = {
                         "text": out,
                         "ts": datetime.now().timestamp(),
@@ -4102,29 +4088,6 @@ tail -5 /tmp/goethe-node3090.log
             source_note = "(cached)"
         else:
             import requests as _req  # noqa: PLC0415
-            from html.parser import HTMLParser as _HP  # noqa: PLC0415
-
-            class _TE(_HP):
-                def __init__(self):
-                    super().__init__()
-                    self._t = []
-                    self._skip = False
-
-                def handle_starttag(self, tag, attrs):
-                    if tag in ("script", "style", "nav", "footer", "head"):
-                        self._skip = True
-
-                def handle_endtag(self, tag):
-                    if tag in ("script", "style", "nav", "footer", "head"):
-                        self._skip = False
-
-                def handle_data(self, data):
-                    if not self._skip and data.strip():
-                        self._t.append(data.strip())
-
-                def get_text(self):
-                    return " ".join(self._t)
-
             self._log(f"VERIFY-FETCH: {url}")
             try:
                 resp = _req.get(
@@ -4138,9 +4101,7 @@ tail -5 /tmp/goethe-node3090.log
                 if is_pdf:
                     text = self._extract_pdf_text(resp.content)
                 else:
-                    p = _TE()
-                    p.feed(resp.text)
-                    text = p.get_text()
+                    text = self._extract_text_from_html(resp.text, 80000)
                 text = _re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)[:80000]
                 self._fetch_cache[url] = {
                     "text": text,
