@@ -6814,6 +6814,40 @@ tail -5 /tmp/goethe-node3090.log
         return new_steps
 
 
+    def _request_plan_envelope(self, task: str, context: str) -> tuple[dict | None, str]:
+        """Fetch plan envelope from node planner with two-attempt retry.
+
+        Returns (envelope_dict, "") on success,
+        or (None, error_message) on failure.
+        """
+        env = None
+        fail_reason = ""
+        plan_ctx = context
+        for attempt in (1, 2):
+            reply = self._call_node_planner(task, context=plan_ctx, no_think=True)
+            if not reply or reply.startswith("ERROR:"):
+                return None, (
+                    "PLANNER UNAVAILABLE — proceed with default budgets, "
+                    f"checkpoint early. ({(reply or 'no reply')[:160]})"
+                )
+            env, fail_reason = self._parse_planner_envelope(reply)
+            if env is not None:
+                break
+            self._log(f"NODE-PLAN: attempt {attempt} rejected — {fail_reason[:120]}")
+            plan_ctx = (
+                (context + "\n\n" if context else "")
+                + "PREVIOUS REPLY REJECTED: " + fail_reason[:200]
+                + "\nReturn ONLY the v2 JSON envelope object — no thinking, no "
+                "prose, no code fences. Keep each packaged_prompt under 80 words."
+            )
+        if env is None:
+            return None, (
+                f"PLANNER UNAVAILABLE — {fail_reason} (after retry). "
+                "Proceed with default budgets, checkpoint early."
+            )
+        return env, None
+
+
     def planner(
         self,
         task: str,
@@ -6922,31 +6956,9 @@ tail -5 /tmp/goethe-node3090.log
         # ── v0.3.3: two-attempt envelope loop — truncated/malformed envelopes
         # (long thinking + tight completion budget) were the dominant
         # "PLANNER UNAVAILABLE" cause; one corrective retry recovers most.
-        env = None
-        fail_reason = ""
-        plan_ctx = context
-        for attempt in (1, 2):
-            reply = self._call_node_planner(task, context=plan_ctx, no_think=True)
-            if not reply or reply.startswith("ERROR:"):
-                return (
-                    "PLANNER UNAVAILABLE — proceed with default budgets, "
-                    f"checkpoint early. ({(reply or 'no reply')[:160]})"
-                )
-            env, fail_reason = self._parse_planner_envelope(reply)
-            if env is not None:
-                break
-            self._log(f"NODE-PLAN: attempt {attempt} rejected — {fail_reason[:120]}")
-            plan_ctx = (
-                (context + "\n\n" if context else "")
-                + "PREVIOUS REPLY REJECTED: " + fail_reason[:200]
-                + "\nReturn ONLY the v2 JSON envelope object — no thinking, no "
-                "prose, no code fences. Keep each packaged_prompt under 80 words."
-            )
-        if env is None:
-            return (
-                f"PLANNER UNAVAILABLE — {fail_reason} (after retry). "
-                "Proceed with default budgets, checkpoint early."
-            )
+        env, error = self._request_plan_envelope(task, context)
+        if error:
+            return error
         raw_steps = env.get("steps") or []
         legacy_packaged = str(env.get("packaged_prompt", "")).strip()
         goal = str(env.get("goal_summary") or task.strip()[:300])
