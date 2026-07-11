@@ -1244,6 +1244,81 @@ class Tools:
 
     # ── Node planner (v0.2.7) ─────────────────────────────────────────────────
 
+    def _try_forced_planner_endpoint(
+        self, task: str, context: str = "", no_think: bool = False
+    ) -> str | None:
+        """Try the forced planner endpoint if configured and healthy.
+
+        Returns the LLM result string if successful, None to continue cascade.
+        """
+        import json as _json
+        import urllib.request as _ureq  # noqa: PLC0415
+        force_url = (self.valves.PLANNER_FORCE_URL or "").strip().rstrip("/")
+        if not force_url:
+            return None
+        force_ok = False
+        try:
+            with _ureq.urlopen(f"{force_url}/health", timeout=3) as r:
+                force_ok = r.status == 200
+        except Exception:
+            force_ok = False
+        if force_ok:
+            self._log(f"NODE-PLAN: PLANNER_FORCE_URL healthy → {force_url}")
+            messages = [{"role": "system", "content": self._PLANNER_CONTRACT}]
+            user_content = task.strip()
+            if context:
+                user_content = f"CONTEXT:\n{context.strip()}\n\nTASK:\n{user_content}"
+            if no_think:
+                user_content += " /no_think"
+            messages.append({"role": "user", "content": user_content})
+            payload_obj: dict = {
+                "messages": messages,
+                "max_tokens": 8192,
+                "temperature": 0.3,
+                "response_format": {"type": "json_object"},
+                "thinking_budget_tokens": 0,
+            }
+            fm = self.valves.PLANNER_FORCE_MODEL
+            if fm:
+                payload_obj["model"] = fm
+            payload = _json.dumps(payload_obj).encode()
+            result = self._post_chat_completion(force_url, payload, 180)
+            if not result.startswith("ERROR:"):
+                return result
+            self._log(
+                f"NODE-PLAN: forced endpoint failed ({result[:80]}), "
+                "falling back to cascade"
+            )
+        else:
+            self._log(f"NODE-PLAN: PLANNER_FORCE_URL down ({force_url}) — cascade")
+        return None
+
+
+    def _post_chat_completion(
+        self, base_url: str, payload: bytes, timeout: int
+    ) -> str:
+        """POST payload to /v1/chat/completions. Returns content or 'ERROR: ...'"""
+        import json as _json
+        import urllib.request as _ureq
+        import urllib.error as _uerr
+
+        req = _ureq.Request(
+            f"{base_url.rstrip('/')}/v1/chat/completions",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with _ureq.urlopen(req, timeout=timeout) as resp:
+                data = _json.loads(resp.read().decode())
+                return data["choices"][0]["message"]["content"]
+        except _uerr.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:200]
+            return f"ERROR: HTTP {exc.code} — {body}"
+        except Exception as exc:
+            return f"ERROR: {exc}"
+
+
     def _call_node_planner(
         self, task: str, context: str = "", no_think: bool = False
     ) -> str:
@@ -1290,46 +1365,14 @@ class Tools:
             if model:
                 payload_obj["model"] = model
             payload = _json.dumps(payload_obj).encode()
-            req = _ureq.Request(
-                f"{base_url.rstrip('/')}/v1/chat/completions",
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            try:
-                with _ureq.urlopen(req, timeout=timeout) as resp:
-                    data = _json.loads(resp.read().decode())
-                    return data["choices"][0]["message"]["content"]
-            except _uerr.HTTPError as exc:
-                body = exc.read().decode(errors="replace")[:200]
-                return f"ERROR: HTTP {exc.code} — {body}"
-            except Exception as exc:
-                return f"ERROR: {exc}"
+            return self._post_chat_completion(base_url, payload, timeout)
 
         # ── Step 0: forced endpoint (v0.3.2 — cross-family planner experiments) ─
         # Health-probed: the valve can stay set permanently (e.g. the Gemma-31B
         # swap port on node3090) — used when up, silently skipped when down.
-        force_url = (self.valves.PLANNER_FORCE_URL or "").strip().rstrip("/")
-        if force_url:
-            force_ok = False
-            try:
-                with _ureq.urlopen(f"{force_url}/health", timeout=3) as r:
-                    force_ok = r.status == 200
-            except Exception:
-                force_ok = False
-            if force_ok:
-                self._log(f"NODE-PLAN: PLANNER_FORCE_URL healthy → {force_url}")
-                result = _llm_call(
-                    force_url, model=self.valves.PLANNER_FORCE_MODEL, timeout=180
-                )
-                if not result.startswith("ERROR:"):
-                    return result
-                self._log(
-                    f"NODE-PLAN: forced endpoint failed ({result[:80]}), "
-                    "falling back to cascade"
-                )
-            else:
-                self._log(f"NODE-PLAN: PLANNER_FORCE_URL down ({force_url}) — cascade")
+        result = self._try_forced_planner_endpoint(task, context=context, no_think=no_think)
+        if result is not None:
+            return result
 
         # ── Step 1: probe node3090 llama-server ──────────────────────────────
         llm_url = self.valves.NODE3090_LLM_URL.rstrip("/")
@@ -6814,10 +6857,10 @@ tail -5 /tmp/goethe-node3090.log
         return new_steps
 
 
-    def _request_plan_envelope(self, task: str, context: str) -> tuple[dict | None, str]:
+    def _request_plan_envelope(self, task: str, context: str) -> tuple[dict | None, str | None]:
         """Fetch plan envelope from node planner with two-attempt retry.
 
-        Returns (envelope_dict, "") on success,
+        Returns (envelope_dict, None) on success,
         or (None, error_message) on failure.
         """
         env = None
