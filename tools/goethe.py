@@ -6837,6 +6837,30 @@ tail -5 /tmp/goethe-node3090.log
         return prior_done_steps, context
 
 
+    def _synthesize_packaged_prompt(
+        self,
+        is_first_step: bool,
+        goal: str,
+        step_n: int,
+        what: str,
+        step_data: dict,
+        legacy_packaged: str,
+    ) -> str:
+        """Generate a packaged_prompt when the planner omitted one.
+
+        Uses the legacy packaged prompt for the first step (if available),
+        otherwise synthesizes a defensive prompt from goal + step metadata.
+        """
+        if is_first_step and legacy_packaged:
+            return legacy_packaged
+        return (
+            f"GOAL: {goal}\n"
+            f"YOU ARE EXECUTING STEP {step_n} ONLY: {what}\n"
+            f"INPUTS: {step_data.get('inputs', '(see ledger summary)')}\n"
+            f"VERIFY: {step_data.get('verify', '')}\n"
+            "STOP after this step and report the verify output."
+        )
+
     def _normalize_plan_steps(self, raw_steps: list, goal: str, legacy_packaged: str) -> list:
         """Normalize raw planner steps into ledger entries.
 
@@ -6851,11 +6875,13 @@ tail -5 /tmp/goethe-node3090.log
                 continue
             pkg = str(s.get("packaged_prompt", "")).strip()
             if not pkg:
-                pkg = legacy_packaged if (len(new_steps) == 0 and legacy_packaged) else (
-                    f"GOAL: {goal}\nYOU ARE EXECUTING STEP {n} ONLY: {what}\n"
-                    f"INPUTS: {s.get('inputs', '(see ledger summary)')}\n"
-                    f"VERIFY: {s.get('verify', '')}\n"
-                    "STOP after this step and report the verify output."
+                pkg = self._synthesize_packaged_prompt(
+                    is_first_step=len(new_steps) == 0,
+                    goal=goal,
+                    step_n=n,
+                    what=what,
+                    step_data=s,
+                    legacy_packaged=legacy_packaged,
                 )
             new_steps.append(
                 {
