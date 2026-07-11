@@ -2305,6 +2305,60 @@ tail -5 /tmp/goethe-node3090.log
                     capture_output=True, timeout=10,
                 )
 
+    def _validate_command_safety(self, command: str, cwd: str) -> Optional[str]:
+        """Validate command safety. Returns error string if blocked, None if safe."""
+        # ── Block permanently forbidden commands ──────────────────────────────
+        cmd_lower = command.lower().strip()
+        for blocked in self._BLOCKED_COMMANDS:
+            if blocked in cmd_lower:
+                self._log(f"HARD-BLOCKED: {command}")
+                return (
+                    f"BLOCKED: '{blocked}' is permanently forbidden. "
+                    "This operation cannot be performed by the agent under any circumstances."
+                )
+
+        # ── Block privilege escalation anywhere in the command (v1.4.2 fix) ──
+        for priv in self._PRIVILEGED_PREFIXES:
+            if priv in cmd_lower:
+                self._log(f"PRIV-BLOCKED: {command}")
+                return (
+                    f"BLOCKED: '{priv.strip()}' detected in command. "
+                    "Use sudo_delegation_block instead."
+                )
+
+        # ── Block writes to privileged system paths ───────────────────────────
+        # Only block when a write op TARGETS a privileged path; reads (cat/tr/grep
+        # < /proc, ps, etc.) are allowed. /mnt/ dropped (legit user data lives there).
+        import re as _re_pw  # noqa: PLC0415
+        _priv_re = r"(?:/etc/|/usr/|/boot/|/sys/|/proc/)"
+        _write_to_priv = _re_pw.search(
+            r">>?\s*" + _priv_re
+            + r"|\btee\s+(?:-a\s+)?" + _priv_re
+            + r"|\b(?:cp|mv|dd|truncate)\b[^|;&\n]*\s" + _priv_re
+            + r"|\bsed\s+-i\b[^|;&\n]*" + _priv_re
+            + r"|\brm\s+[^|;&\n]*" + _priv_re,
+            command,
+        )
+        if _write_to_priv:
+            self._log(f"WRITE-BLOCKED: {command}")
+            return (
+                "BLOCKED: Write to a privileged system path detected. "
+                "Use sudo_delegation_block to delegate this to the user."
+            )
+
+        # ── Block clobbering an in-progress download (v0.2.0) ─────────────────
+        # If a download is already running, refuse a new one and route the model
+        # to monitor_download instead. Prevents the partial-file corruption from
+        # the LSE re-issuing curl/hf download to "check progress".
+        _dl_block = self._active_download_guard(command)
+        if _dl_block:
+            return _dl_block
+
+        # ── Validate working directory ────────────────────────────────────────
+        if not self._is_allowed_read(cwd):
+            return f"BLOCKED: working_dir '{cwd}' is outside allowed read paths."
+        return None
+
     def execute_command(self, command: str, working_dir: str = "") -> str:
         """
         Execute a read-only or write-safe shell command in the WSL Ubuntu environment.
@@ -2495,56 +2549,9 @@ tail -5 /tmp/goethe-node3090.log
         """
         cwd = working_dir.strip() or self.valves.DEFAULT_WORKING_DIR
 
-        # ── Block permanently forbidden commands ──────────────────────────────
-        cmd_lower = command.lower().strip()
-        for blocked in self._BLOCKED_COMMANDS:
-            if blocked in cmd_lower:
-                self._log(f"HARD-BLOCKED: {command}")
-                return (
-                    f"BLOCKED: '{blocked}' is permanently forbidden. "
-                    "This operation cannot be performed by the agent under any circumstances."
-                )
-
-        # ── Block privilege escalation anywhere in the command (v1.4.2 fix) ──
-        for priv in self._PRIVILEGED_PREFIXES:
-            if priv in cmd_lower:
-                self._log(f"PRIV-BLOCKED: {command}")
-                return (
-                    f"BLOCKED: '{priv.strip()}' detected in command. "
-                    "Use sudo_delegation_block instead."
-                )
-
-        # ── Block writes to privileged system paths ───────────────────────────
-        # Only block when a write op TARGETS a privileged path; reads (cat/tr/grep
-        # < /proc, ps, etc.) are allowed. /mnt/ dropped (legit user data lives there).
-        import re as _re_pw  # noqa: PLC0415
-        _priv_re = r"(?:/etc/|/usr/|/boot/|/sys/|/proc/)"
-        _write_to_priv = _re_pw.search(
-            r">>?\s*" + _priv_re
-            + r"|\btee\s+(?:-a\s+)?" + _priv_re
-            + r"|\b(?:cp|mv|dd|truncate)\b[^|;&\n]*\s" + _priv_re
-            + r"|\bsed\s+-i\b[^|;&\n]*" + _priv_re
-            + r"|\brm\s+[^|;&\n]*" + _priv_re,
-            command,
-        )
-        if _write_to_priv:
-            self._log(f"WRITE-BLOCKED: {command}")
-            return (
-                "BLOCKED: Write to a privileged system path detected. "
-                "Use sudo_delegation_block to delegate this to the user."
-            )
-
-        # ── Block clobbering an in-progress download (v0.2.0) ─────────────────
-        # If a download is already running, refuse a new one and route the model
-        # to monitor_download instead. Prevents the partial-file corruption from
-        # the LSE re-issuing curl/hf download to "check progress".
-        _dl_block = self._active_download_guard(command)
-        if _dl_block:
-            return _dl_block
-
-        # ── Validate working directory ────────────────────────────────────────
-        if not self._is_allowed_read(cwd):
-            return f"BLOCKED: working_dir '{cwd}' is outside allowed read paths."
+        err = self._validate_command_safety(command, cwd)
+        if err:
+            return err
 
         # ── SSH device auto-fingerprint (v1.7.12) ──────────────────────────────
         _fp_note = ""
