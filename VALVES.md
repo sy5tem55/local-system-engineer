@@ -1,7 +1,7 @@
 # LSE Valve Registry
 > Single source of truth for all MCP/tool valve configuration across LSE tools.
 > Update this file whenever a valve is added, removed, or its security posture changes.
-> Last updated: 2026-06-30 (Cowork)
+> Last updated: 2026-07-11 (Cowork) — added §4 TRAUM dreaming valves (Thread 2 close)
 > **Note:** OpenWebUI retired (2026-06-21). Valves are now env vars passed to goethe_mcp.py
 > via `GOETHE_<FIELD>` env vars or directly inside the tool's `Valves` class.
 > Override pattern: `GOETHE_ES_URL=http://... bash tools/start-goethe.sh`
@@ -89,6 +89,38 @@ OpenWebUI stores all valve values as plaintext JSON in `webui.db` (SQLite). A ma
 **v1.2.0 rationale:** OpenWebUI filters are global — there is no per-model or per-preset enable toggle in the UI. Without `target_model_pattern`, the Qwen3-specific tail-routing hint fires for Claude presets too. With `target_model_pattern="qwen"` (default), `claude-opus-4-6` and `claude-sonnet-4-6` pass through the filter untouched.
 
 No sensitive data. No action required.
+
+---
+
+### 4. TRAUM dreaming — `goethe_mcp.py` journaling + `tools/dream_runner.py` + `tools/dream_apply.py`
+
+TRAUM Thread 1/2 (`docs/traum-dreaming-plan.md`, `docs/dreaming/DESIGN.md`).
+No secrets — every valve here is a path, URL, or numeric threshold. All use
+the same `GOETHE_<FIELD>` env-var convention as the rest of the stack.
+
+| Valve | Default | Sensitive | Storage | Notes |
+|---|---|---|---|---|
+| `EPISODE_DIR` | `/opt/local-se/episodes` | No | Env var OK | `goethe_mcp.py`'s own journaling root (v1.10.0+) — every tool call appends a redacted, 2,000-char-capped JSONL line to `$EPISODE_DIR/YYYY-MM-DD/<session>.jsonl`. **ON by default.** Set `GOETHE_EPISODE_DIR=""` to disable entirely (mirrors the `GOETHE_MCP_TOKEN` empty-disables convention). Also read by `dream_runner.py` (same env var, same directory — it's the corpus the dreamer scans). |
+| `DREAM_DIR` | `/opt/local-se/dreams` | No | Env var OK | `dream_runner.py` output root — `$DREAM_DIR/YYYY-MM-DD/{report.md,proposals.jsonl}`, then `dream_apply.py`'s `applied.jsonl`/`rejected.jsonl` alongside them. |
+| `TASKS_DB` (dream) | `/opt/local-se/tasks.db` | No | Env var OK | `dream_runner.py`'s own read of the planner ledger. Same variable name as `goethe.py`'s `TASKS_DB` valve (VALVES.md §1) but a distinct env var (`GOETHE_TASKS_DB`) — don't conflate the two paths if they ever diverge per-host. |
+| `AGENT_COMMANDS_LOG` | `/opt/local-se/agent_commands.log` | No | Env var OK | `dream_runner.py`'s read of the audit log (Thread 3's audit-log-miner pass will use this too). |
+| `DREAM_LLM_URL` | `` (empty) | No | Env var OK | Forced dreamer endpoint, `PLANNER_FORCE_URL`-style — health-probed first; falls through to `NODE3090_LLM_URL` → `NODE3090_OLLAMA_URL` on failure or when unset. Empty = always use the normal cascade. |
+| `NODE3090_LLM_URL` (dream) | `http://node3090.home.arpa:8080` | No | Env var OK | Primary llama-server the dreamer drives — same host as the cross-family planner backend, different env var (`GOETHE_NODE3090_LLM_URL`) from `goethe.py`'s own planner valve. |
+| `NODE3090_OLLAMA_URL` (dream) | `http://node3090.home.arpa:11434` | No | Env var OK | Ollama CPU fallback for the dreamer cascade. |
+| `NODE3090_PLANNER_FALLBACK_MODEL` | `qwen3:4b` | No | Env var OK | Ollama fallback model when both llama-server and any forced `DREAM_LLM_URL` are down. |
+| `DREAM_RUNNER_SESSION_PREFIX` | `` (empty) | No | Env var OK | If set, sessions whose `session_id` starts with this are excluded from selection — DESIGN.md §2 invariant 3(e), "no dream-of-dreams." Empty = no filter (the dreamer doesn't run through the MCP gateway today, so it has no `session_id` of its own yet). |
+| `DREAM_DEDUP_FLOOR` | `0.75` | No | Env var OK | Candidate-pair cosine floor for the dedup pass — deliberately below the merge threshold so `--sample-labels` has real borderline pairs to show. Provisional pending a full-corpus `--sample-labels` run (see `dream_runner.py`'s own calibration note). |
+| `DREAM_DEDUP_THRESHOLD` | `0.92` | No | Env var OK | Merge cosine cutoff for real (non-labeling) dedup runs. Matches `index_to_kb`'s live dedup threshold as a placeholder. |
+| `DREAM_ERROR_CLUSTER_THRESHOLD` | `0.80` | No | Env var OK | Cosine floor for grouping error/timeout occurrences into one cluster (error-cluster pass). |
+| `DREAM_AUTO_APPLY` | `` (empty) | No | Env var OK | Comma-separated proposal `type`s allowed to skip `dream_apply.py`'s interactive confirm prompt. **Still empty as of TRAUM Thread 2's close (2026-07-11)** — see `docs/dreaming/DESIGN.md` §7 for the full eligibility table and the 2-consecutive-week zero-rejected-in-hindsight promotion bar (Thread 4's to earn, not set by hand). |
+| `PATH` (dream_apply) | alongside `dream_apply.py` | No | Env var OK | `GOETHE_PATH` — where `dream_apply.py` dynamically loads `goethe.py`'s `Tools` class from (same mechanism `goethe_mcp.py` uses). |
+
+`ES_URL` / `OLLAMA_URL` / `EMBED_MODEL` are shared with `goethe.py`'s own
+valves (§1 above) — `dream_runner.py` and `dream_apply.py` read the same
+`GOETHE_ES_URL`/`GOETHE_OLLAMA_URL`/`GOETHE_EMBED_MODEL` env vars, not
+separate dream-specific copies.
+
+No action required for any valve in this section — none carry secrets.
 
 ---
 

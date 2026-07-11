@@ -566,6 +566,60 @@ quality/`stale` fields before assuming it's still an open item; treat this
 paragraph as a worked example of the SCRIBE-3 mechanism, not as a standing
 task tracker.
 
+## 7. Auto-apply allowlist (Thread 2, Prompt 2.6)
+
+> Design only — no code changes in this section. `DREAM_AUTO_APPLY`
+> (`dream_apply.py --auto-apply-types`, §2 invariant #2) already exists and
+> already defaults to `""` (Prompt 2.5); this section is the policy for
+> what may EVER be added to it, and under what evidence. Written
+> retroactively during Thread 2's close (Prompt 2.10) after
+> `docs/dreaming/calibration-run-1.md` (Prompt 2.8) and
+> `docs/dreaming/dream-run-2026-07-11.md` (Prompt 2.7) had already cited
+> "§7.1"/"§7.2" — this section now matches what those citations assumed.
+
+### 7.1 Per-type eligibility
+
+| Proposal type | Ever auto-appliable? | Condition |
+|---|---|---|
+| `dedup` | Only the identical-pair subcase (§7.2) | Cosine ≥0.99 AND both docs' `verified_against` non-empty and character-identical. Every other dedup (the common case — no `verified_against` set on either side, or cosine 0.92–0.99) stays human-gated permanently. |
+| `reverify` | Yes | A `kb_verify` probe suggestion changes no content and raises nothing — lowest-risk type by construction. |
+| `demote` | **Never** | Removes trust from a live doc on the strength of a model-judged contradiction. Prompt 2.7's first live run found **0/7 (0%)** genuine among the persisted contradiction proposals — non-sequitur pairings, category mismatches, a self-contradictory proposal — precisely the "poisoning via dreamed content" threat this design names (§5). Permanently excluded, not "excluded until eval says otherwise." |
+| `skill-candidate` | Not yet — Thread 4 evidence required | Creates new procedural knowledge from an inferred pattern; needs a real accepted/rejected track record before this door even opens. |
+| `kb-fact` | Not yet — Thread 4 evidence required | Creates new factual knowledge from narrative or inferred pattern; same bar as `skill-candidate`. A *human* debrief's own `kb-fact` proposals (Thread 1) are a different write path (person directly verifying something in their own session) and are not subject to this table at all — see §6.2's provenance-form note. |
+
+### 7.2 The dedup identical-pair subcase, precisely
+
+A `dedup` pair is eligible for `DREAM_AUTO_APPLY` inclusion only when ALL of:
+1. Cosine similarity ≥0.99 (near byte-identical, not merely "same claim").
+2. BOTH docs have `verified_against` set (non-empty).
+3. Both docs' `verified_against` values are character-identical.
+
+Rationale: `verified_against` identity means both docs were checked against
+the same live system/version snapshot — the highest-confidence signal this
+corpus has that "these two entries are the same fact, not just similarly
+worded." Prompt 2.7's first live run found 3 genuine dedup pairs, cosine
+0.98–1.00, but **none had `verified_against` set on either side** (corpus-
+wide: `verified_against` is populated on a small minority of `lse-kb` docs
+as of this writing) — so none qualified for this subcase even though all
+three were correctly merged by a human at the confirm-gate. This subcase is
+therefore still purely theoretical against the current corpus; it is
+recorded as the target condition, not as something already exercised.
+
+### 7.3 Promotion rule
+
+Per §2 invariant #2's testable form: a type may be added to
+`DREAM_AUTO_APPLY` only after **2 consecutive weeks of zero
+rejected-in-hindsight applies** for that type specifically — a human
+reviewing the applied.jsonl log after the fact and finding no application
+they'd have declined, sustained across two full weeks of real runs.
+Thread 4 (`docs/traum-dreaming-plan.md` Prompt 4.8) owns measuring this and
+making the promotion call; this document only fixes what's eligible to be
+promoted at all (§7.1) and the bar height (this rule), not a promotion
+timeline. **Status as of Thread 2's close (2026-07-11): `DREAM_AUTO_APPLY`
+is still `""`.** One calibration run (Prompt 2.7-2.8) is nowhere near two
+weeks of data, and is not itself grounds for promoting anything — the dedup
+subcase in particular has zero real occurrences to date (§7.2).
+
 ---
 
 ## 7. Auto-apply allowlist policy (Thread 2, Prompt 2.6 — design only)
