@@ -6775,6 +6775,45 @@ tail -5 /tmp/goethe-node3090.log
         return prior_done_steps, context
 
 
+    def _normalize_plan_steps(self, raw_steps: list, goal: str, legacy_packaged: str) -> list:
+        """Normalize raw planner steps into ledger entries.
+
+        Synthesizes a defensive packaged_prompt fallback when the model
+        omitted it. Returns a list of step dicts ready for the ledger.
+        """
+        new_steps = []
+        for s in raw_steps:
+            n = s.get("n")
+            what = str(s.get("what", "")).strip()
+            if n is None or not what:
+                continue
+            pkg = str(s.get("packaged_prompt", "")).strip()
+            if not pkg:
+                pkg = legacy_packaged if (len(new_steps) == 0 and legacy_packaged) else (
+                    f"GOAL: {goal}\nYOU ARE EXECUTING STEP {n} ONLY: {what}\n"
+                    f"INPUTS: {s.get('inputs', '(see ledger summary)')}\n"
+                    f"VERIFY: {s.get('verify', '')}\n"
+                    "STOP after this step and report the verify output."
+                )
+            new_steps.append(
+                {
+                    "n": int(n),
+                    "what": what,
+                    "depends_on": s.get("depends_on") or [],
+                    "inputs": str(s.get("inputs", "")),
+                    "output": str(s.get("output", "")),
+                    "web_calls": s.get("web_calls", 0),
+                    "tool_calls": s.get("tool_calls", 0),
+                    "verify": str(s.get("verify", "")),
+                    "packaged_prompt": pkg,
+                    "status": "pending",
+                    "evidence": "",
+                    "done_at": None,
+                }
+            )
+        return new_steps
+
+
     def planner(
         self,
         task: str,
@@ -6913,36 +6952,7 @@ tail -5 /tmp/goethe-node3090.log
         goal = str(env.get("goal_summary") or task.strip()[:300])
         # Normalize steps into ledger entries; per-step packaged_prompt is v2 —
         # synthesize a defensive fallback when the model omitted it.
-        new_steps = []
-        for s in raw_steps:
-            n = s.get("n")
-            what = str(s.get("what", "")).strip()
-            if n is None or not what:
-                continue
-            pkg = str(s.get("packaged_prompt", "")).strip()
-            if not pkg:
-                pkg = legacy_packaged if (len(new_steps) == 0 and legacy_packaged) else (
-                    f"GOAL: {goal}\nYOU ARE EXECUTING STEP {n} ONLY: {what}\n"
-                    f"INPUTS: {s.get('inputs', '(see ledger summary)')}\n"
-                    f"VERIFY: {s.get('verify', '')}\n"
-                    "STOP after this step and report the verify output."
-                )
-            new_steps.append(
-                {
-                    "n": int(n),
-                    "what": what,
-                    "depends_on": s.get("depends_on") or [],
-                    "inputs": str(s.get("inputs", "")),
-                    "output": str(s.get("output", "")),
-                    "web_calls": s.get("web_calls", 0),
-                    "tool_calls": s.get("tool_calls", 0),
-                    "verify": str(s.get("verify", "")),
-                    "packaged_prompt": pkg,
-                    "status": "pending",
-                    "evidence": "",
-                    "done_at": None,
-                }
-            )
+        new_steps = self._normalize_plan_steps(raw_steps, goal, legacy_packaged)
         if not new_steps:
             return (
                 "PLANNER UNAVAILABLE — no usable steps in envelope. "
