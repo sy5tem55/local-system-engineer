@@ -1,0 +1,6 @@
+[dream_runner] [dry-run] pass=dedup undreamed-sessions-selected=13 (limit=50, since=(none))
+[dream_runner] WARNING: ES read failed (BadRequestError(400, 'media_type_header_exception', 'Invalid media-type value on headers [Accept, Content-Type]', Accept version must be either version 8 or 7, but found 9. Accept=application/vnd.elasticsearch+json; compatible-with=9)) — proceeding with empty index view
+[dream_runner] [dry-run] would write:
+  /opt/local-se/dreams/2026-07-11/report.md
+  /opt/local-se/dreams/2026-07-11/proposals.jsonl
+[dream_runner] [dry-run] done. report=/opt/local-se/dreams/2026-07-11/report.md proposals=/opt/local-se/dreams/2026-07-11/proposals.jsonl n_proposals=0

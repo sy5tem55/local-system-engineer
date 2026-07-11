@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.3.9
+title: LSE Goethe v0.4.0
 author: local-system-engineer
-version: 0.3.9
+version: 0.4.0
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -15,6 +15,25 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
+    Goethe v0.4.0: TRAUM Thread 2 (TRAUM-ENGINE) begins consuming this file's
+              existing Tools methods from a SECOND caller for the first time —
+              no code in this file changed for this bump; recorded here because
+              the write-path trust model now has to hold for two callers, not
+              one. `tools/dream_runner.py` (new, offline, read-only over
+              episodes/lse-kb/lse-errors) proposes `mentor_correct` +
+              `record_outcome(success=False)` calls (dedup pass, Prompt 2.2,
+              verified against the live ~365-doc lse-kb corpus) and is about to
+              add `kb_verify`-probe suggestions + `record_outcome` demotions
+              (stale/contradiction pass, Prompt 2.3). dream_runner.py itself
+              NEVER calls these methods directly — it only ever writes
+              proposals to `dreams/YYYY-MM-DD/proposals.jsonl`; only the
+              not-yet-built `dream_apply.py` (Prompt 2.5), gated by a human
+              confirm per proposal, will actually invoke them. Minor bump
+              (0.3.9→0.4.0) rather than a patch: this is the first time this
+              file's write surface has a second, non-interactive consumer in
+              its design, not a bugfix to existing behavior. See
+              docs/dreaming/DESIGN.md and CHANGELOG.md 2026-07-11 (TRAUM
+              Thread 2 entry) for the full writeup.
     Goethe v0.3.9: pfSense hardening (2026-07-06 confirmed incident: an
               unbounded queryDiagnosticsTables/bogons response reached
               2,966,261 tokens against a 131,072 context window, and a
