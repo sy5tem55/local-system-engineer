@@ -3846,6 +3846,49 @@ tail -5 /tmp/goethe-node3090.log
             url, "http://node3090.home.arpa:3002", max_chars
         )
 
+    def _extract_text_from_html(self, html: str, max_chars: int) -> str:
+        """Extract plain text from HTML, stripping tags and control chars."""
+        from html.parser import HTMLParser
+        import re as _re  # noqa: PLC0415
+
+        def _sanitize(s):
+            # Strip control chars so stray binary bytes are removed
+            return _re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", s)
+
+        import re as _re
+
+        class _TextExtractor(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self._text = []
+                self._skip = False
+
+            def handle_starttag(self, tag, attrs):
+                if tag in ("script", "style", "nav", "footer", "head"):
+                    self._skip = True
+
+            def handle_endtag(self, tag):
+                if tag in ("script", "style", "nav", "footer", "head"):
+                    self._skip = False
+
+            def handle_data(self, data):
+                if not self._skip and data.strip():
+                    self._text.append(data.strip())
+
+            def get_text(self):
+                return " ".join(self._text)
+
+        import re as _re  # noqa: PLC0415
+
+        def _sanitize(s):
+            # Strip control chars (except \n\t) so a stray binary byte can never
+            # derail the OWUI markdown/HTML renderer downstream (v1.7.7).
+            return _re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", s)
+
+        parser = _TextExtractor()
+        parser.feed(html)
+        return _sanitize(parser.get_text())[:max_chars]
+
     def fetch_url(self, url: str, max_chars: int = 20000) -> str:
         """
         Fetch the full text content of a URL. Use as Step 3 of the SEARCH-THEN-FETCH
@@ -3885,34 +3928,6 @@ tail -5 /tmp/goethe-node3090.log
             return _gate
         import requests  # noqa: PLC0415
         from html.parser import HTMLParser
-
-        class _TextExtractor(HTMLParser):
-            def __init__(self):
-                super().__init__()
-                self._text = []
-                self._skip = False
-
-            def handle_starttag(self, tag, attrs):
-                if tag in ("script", "style", "nav", "footer", "head"):
-                    self._skip = True
-
-            def handle_endtag(self, tag):
-                if tag in ("script", "style", "nav", "footer", "head"):
-                    self._skip = False
-
-            def handle_data(self, data):
-                if not self._skip and data.strip():
-                    self._text.append(data.strip())
-
-            def get_text(self):
-                return " ".join(self._text)
-
-        import re as _re  # noqa: PLC0415
-
-        def _sanitize(s):
-            # Strip control chars (except \n\t) so a stray binary byte can never
-            # derail the OWUI markdown/HTML renderer downstream (v1.7.7).
-            return _re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", s)
 
         self._log(f"FETCH: {url}")
         try:
@@ -3977,9 +3992,7 @@ tail -5 /tmp/goethe-node3090.log
                     "source. Do NOT retry this URL."
                 ) + _gate
 
-            parser = _TextExtractor()
-            parser.feed(resp.text)
-            text = _sanitize(parser.get_text())[:max_chars]
+            text = self._extract_text_from_html(resp.text, max_chars)
             if text:
                 self._fetch_cache[url] = {
                     "text": text,
