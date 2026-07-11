@@ -6736,6 +6736,45 @@ tail -5 /tmp/goethe-node3090.log
             )
 
 
+    def _load_ledger_for_revise(self, task_id: str, context: str) -> tuple[list, str] | str:
+        """Load ledger history for revise mode.
+
+        Returns (prior_done_steps, updated_context) on success,
+        or an error string on failure.
+        """
+        import json as _json  # noqa: PLC0415
+        if not task_id.strip():
+            return "planner: mode='revise' requires task_id from the original plan."
+        try:
+            conn = self._tasks_db()
+            row = conn.execute(
+                "SELECT goal, steps_json FROM task_blocks WHERE task_id=?",
+                (task_id.strip(),),
+            ).fetchone()
+            conn.close()
+        except Exception as e:
+            return f"planner revise: ledger read failed: {e}"
+        if not row:
+            return f"planner revise: no task block '{task_id}' in the ledger."
+        old_steps = _json.loads(row[1]) if row[1] else []
+        prior_done_steps = [s for s in old_steps if s.get("status") == "done"]
+        ledger_lines = []
+        for s in old_steps:
+            st = s.get("status", "pending")
+            mark = {"done": "COMPLETED", "failed": "FAILED"}.get(st, "pending")
+            line = f"step {s.get('n')}: [{mark}] {s.get('what', '')}"
+            if st in ("done", "failed") and s.get("evidence"):
+                line += f" | evidence: {str(s['evidence'])[:150]}"
+            ledger_lines.append(line)
+        context = (
+            (context + "\n\n" if context else "")
+            + "LEDGER (completed/failed steps of the existing plan — re-plan "
+            "ONLY the remaining work, number new steps after the highest "
+            "completed step):\n" + "\n".join(ledger_lines)
+        )
+        return prior_done_steps, context
+
+
     def planner(
         self,
         task: str,
@@ -6835,35 +6874,10 @@ tail -5 /tmp/goethe-node3090.log
         # ── v0.3.2 revise mode: feed the ledger back to the planner ──────────
         prior_done_steps: list = []
         if mode == "revise":
-            if not task_id.strip():
-                return "planner: mode='revise' requires task_id from the original plan."
-            try:
-                conn = self._tasks_db()
-                row = conn.execute(
-                    "SELECT goal, steps_json FROM task_blocks WHERE task_id=?",
-                    (task_id.strip(),),
-                ).fetchone()
-                conn.close()
-            except Exception as e:
-                return f"planner revise: ledger read failed: {e}"
-            if not row:
-                return f"planner revise: no task block '{task_id}' in the ledger."
-            old_steps = _json.loads(row[1]) if row[1] else []
-            prior_done_steps = [s for s in old_steps if s.get("status") == "done"]
-            ledger_lines = []
-            for s in old_steps:
-                st = s.get("status", "pending")
-                mark = {"done": "COMPLETED", "failed": "FAILED"}.get(st, "pending")
-                line = f"step {s.get('n')}: [{mark}] {s.get('what', '')}"
-                if st in ("done", "failed") and s.get("evidence"):
-                    line += f" | evidence: {str(s['evidence'])[:150]}"
-                ledger_lines.append(line)
-            context = (
-                (context + "\n\n" if context else "")
-                + "LEDGER (completed/failed steps of the existing plan — re-plan "
-                "ONLY the remaining work, number new steps after the highest "
-                "completed step):\n" + "\n".join(ledger_lines)
-            )
+            result = self._load_ledger_for_revise(task_id, context)
+            if isinstance(result, str):
+                return result
+            prior_done_steps, context = result
         elif mode != "new":
             return "planner: mode must be 'new' or 'revise'."
         # ── v0.3.3: two-attempt envelope loop — truncated/malformed envelopes
