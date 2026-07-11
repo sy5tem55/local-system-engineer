@@ -3,6 +3,114 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-07-11 (Cowork, cont'd): TRAUM Thread 2 (TRAUM-ENGINE) — `tools/dream_runner.py` dedup (2.2), stale/contradiction (2.3), and error-cluster (2.4) passes shipped and verified live; Goethe v0.3.9 → v0.4.0
+
+Continues the same-day Thread 1 entry below. Thread 2 is the offline dream
+runner itself (`docs/traum-dreaming-plan.md`) — reads the corpus Thread 1
+built, proposes but never applies (`dream_apply.py`, Prompt 2.5, is still
+not started; every proposal below requires a human confirm before anything
+touches ES).
+
+- **`tools/dream_runner.py`** (2.1, new) — offline, read-only runner.
+  Scans `manifest.db` for `dreamed_at IS NULL` sessions, reads their episode
+  JSONL, drives the local model through the same endpoint cascade as
+  `goethe.py`'s node planner (`DREAM_LLM_URL` forced endpoint →
+  `NODE3090_LLM_URL` → `NODE3090_OLLAMA_URL`, `thinking_budget_tokens=0`,
+  two-attempt envelope retry). Writes `dreams/YYYY-MM-DD/{report.md,
+  proposals.jsonl}`, gated by `--dry-run` (default true). Zero
+  `es.index/update/delete` call sites in the file by construction — dedup
+  and stale-contradiction passes below only ever *propose* calling
+  `mentor_correct`/`record_outcome`/`kb_verify`, never call them directly.
+- **Dedup pass (2.2)** — embeds every `lse-kb` doc (Ollama nomic-embed-text,
+  same `search_query:` prefix quirk as `search_kb`/`index_to_kb` so fresh
+  embeddings are comparable to what's already indexed), pairwise cosine,
+  filters out same-source-document chunk pairs (titles differing only by
+  a `(part N)` suffix — a real false-positive class found live: adjacent
+  chunks of one big doc, not independent duplicates), then has the model
+  confirm each remaining candidate is a genuine same-claim duplicate
+  before proposing a merge. Each confirmed pair becomes one
+  `mentor_correct` proposal (keep-doc, merged text, quality raised) +
+  one `record_outcome(success=False)` proposal (retire-doc, nudges toward
+  the existing KB-DECAY quarantine path — no hard-delete tool exists, so
+  retirement reuses the demotion primitive). **Calibration finding, run
+  live against Ollama:** a genuine near-duplicate pair scored cosine=0.82,
+  well under `index_to_kb`'s inherited 0.92 dedup threshold — defaults
+  lowered (floor 0.75, sample thresholds 0.78/0.82/0.86) so the
+  `--sample-labels` worksheet mode has real pairs to show. Ran for real
+  against the live ~365-doc `lse-kb`: 988 candidate pairs (after dropping
+  88 same-chunk pairs); worksheet saved to
+  `eval/dedup-threshold-labels-2026-07-11.md`, human labeling in progress.
+- **Stale/contradiction pass (2.3)** — two independent sub-passes. (a)
+  **reverify**: deterministic CHRONOS TTL check reusing `search_kb`'s own
+  `_TTL_DAYS`/`_is_expired` math verbatim; eligible only with volatility
+  *explicitly* set (absent ≠ hands-off per corpus-audit.md's 79%-unscored
+  finding), `verified_against` non-empty (else `kb_verify` phase 1 is a
+  no-op), and not already quarantined. Zero candidates in the live corpus
+  right now — real null result, not a bug (the 34 volatility+verified
+  docs are all ≤8 days old). (b) **demote**: for each undreamed session,
+  doc_ids surfaced via `search_kb` are parsed straight out of its own
+  return text (`doc_id=<_id>` per hit), then cross-checked against that
+  session's other tool results for a genuine, model-judged contradiction.
+  Both sides must be quoted verbatim; the validator re-checks each quote
+  is a REAL substring of its claimed source (code-enforced, not just
+  prompted) — proven live with a fabricated-quote unit test (2/3
+  synthetic candidates correctly rejected). One demote per `doc_id` per
+  run (a single finding surfaced via 3 separate evidence lines was, before
+  this fix, about to triple-demote the same doc — caught on the first
+  live run). Ran for real against 12 live sessions: 3 sessions had both a
+  high-quality surfaced doc and other evidence to check; 5 confirmed
+  contradictions, including a real `[llama-server]` JSON parse failure
+  (control character in a reply) correctly recovered by the two-attempt
+  retry loop.
+- **`tools/goethe.py` v0.3.9 → v0.4.0** — no code changed in this file for
+  the bump. Recorded because its write surface (`mentor_correct`,
+  `record_outcome`, `kb_verify`) now has a second, non-interactive
+  consumer in its design (`dream_runner.py`'s proposals) for the first
+  time — see the v0.4.0 changelog entry in the file's own docstring.
+- **Error-cluster pass (2.4)** — groups `lse-errors` docs + episode
+  error/timeout occurrences by embedding similarity (union-find over the
+  cosine≥0.80 graph); clusters with ≥3 episode occurrences spanning ≥2
+  sessions get a drafted `skill-candidate` proposal (`skill_record` body:
+  task/procedure/verification/preconditions/failure_modes,
+  `provenance=dream-YYYY-MM-DD`, `source_tier=inferred` so it can never
+  self-grant `ground_truth`). `skill_record` has no `trigger` parameter
+  (DESIGN.md §6.3), so the drafted trigger text is folded into
+  `procedure`'s own opening line and kept as a separate top-level
+  `trigger` field on the proposal for confirm-gate readability; the
+  cluster's full episode-id list rides as a top-level `evidence` field
+  (skill_record itself has no evidence arg either). A matching
+  `lse-errors` doc contributes prior-art context (its `resolution` text)
+  but never counts toward the occurrence/session bar — it's an aggregate
+  with no verifiable per-session breakdown of its own. Ran for real: 45
+  items embedded (13 episode occurrences + 32 `lse-errors` docs), 35
+  clusters, 1 qualified (6 occurrences across 6 sessions — a
+  `method_raises` contract-test artifact from Thread 1's own journaling
+  test suite, correctly clustered and drafted, though not a genuine
+  production incident; a human at the confirm-gate would reasonably
+  reject it as noise, which is exactly what the gate is for).
+  **Archetype retrospective (per the prompt's explicit ask):** would the
+  corpus have caught the exit-255 ControlMaster storm (2026-07-04, 11
+  failed attempts) or the Grafana `GF_ADMIN_PASSWORD` env-var confusion
+  (2026-06-07)? **No, for two different reasons.** The exit-255 storm
+  *is* in `lse-errors` (doc `f9f1e7f511ca19d3`), but as one aggregate
+  occurrence (`occurrence_count=1`) — episode journaling (the only source
+  of per-session occurrence data this pass counts) didn't exist until
+  today, a week after the incident, so there was never more than one
+  timestamped occurrence to cluster. Notably, the *exact same* failure
+  class recurred twice, live, during this build-out session (two
+  `ssh_run exit 255 ... node3090 ControlMaster` episodes, different
+  sessions) — one more occurrence and this pass would flag it for real.
+  The Grafana env-var confusion has zero footprint in either `lse-errors`
+  or episode JSONL — it lives only as unindexed prose in
+  `kb/session-learnings.md` (2026-06-07, pre-dates SCRIBE-1's structured
+  backfill by over a month), which this pass doesn't read; it's invisible
+  to this pass's inputs categorically, not merely under-clustered.
+- **Not yet done:** `dream_apply.py` (2.5, the only code allowed to
+  actually write ES — Thread 2's last prompt) and the dedup threshold
+  labeling exercise's human sign-off (worksheet generated, awaiting Joe's
+  labels on the sampled pairs).
+
+---
 ## 2026-07-11 (Cowork): TRAUM Thread 1 (TRAUM-CORPUS) complete — goethe_mcp v1.10.0 → v1.11.1, SCRIBE-1/2/3 shipped as the unified debrief write path
 
 Closes `docs/traum-dreaming-plan.md` Thread 1 (Prompts 1.1–1.10). TRAUM is the
