@@ -32,3 +32,13 @@ lse/
 *session*.md
 Backups/
 hermes-skill/
+# Sanitation: never track these (removed from repo, kept on disk)
+*.log
+*.docx
+searxng_settings.yaml
+ha-agent.py
+lse_agent.py
+pfsense-agent.py
+pfsense-agent.conf.example
+backups/
+eval/
