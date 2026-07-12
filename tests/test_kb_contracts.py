@@ -935,6 +935,101 @@ class TestChronosTimeBanner:
         assert "model cutoff UNSET" in tools._time_banner()
 
 
+class TestDreamBanner:
+    """TRAUM Thread 3, Prompt 3.5 (v0.4.0-a) — Tools._dream_banner(), the
+    [DREAM] half of _consume_time_banner()'s first-search_kb injection.
+    Added by Prompt 3.9's own named test: "[DREAM] injection <=200 chars".
+    _dream_banner() touches no ES/Ollama (pure valve read + local file
+    parse), so these tests need the `tools` fixture only for its
+    Tools()+tmp_path wiring, not for anything ES-shaped underneath it."""
+
+    def test_empty_valve_disables_banner(self, tools):
+        tools.valves.DREAM_DIGEST_PATH = ""
+        assert tools._dream_banner() == ""
+
+    def test_missing_file_degrades_to_empty(self, tools, tmp_path):
+        tools.valves.DREAM_DIGEST_PATH = str(tmp_path / "does-not-exist.md")
+        assert tools._dream_banner() == ""
+
+    def test_unparseable_digest_degrades_to_empty(self, tools, tmp_path):
+        """Missing the 'generated <date>' header, the '## Pending
+        human-gate (N)' header, or both -- any one missing match is a
+        legitimate null result (docstring: 'a digest whose header we can't
+        parse'), not a partial/garbled banner."""
+        path = tmp_path / "bad-digest.md"
+        path.write_text("not a real digest file\n", encoding="utf-8")
+        tools.valves.DREAM_DIGEST_PATH = str(path)
+        assert tools._dream_banner() == ""
+
+    def test_valid_digest_parses_date_and_pending_count(self, tools, tmp_path):
+        path = tmp_path / "latest-digest.md"
+        path.write_text(
+            "# TRAUM dream digest — generated 2026-07-12 (cycle: 2026-07-12)\n\n"
+            "## Pending human-gate (3)\n- x\n",
+            encoding="utf-8",
+        )
+        tools.valves.DREAM_DIGEST_PATH = str(path)
+        banner = tools._dream_banner()
+        assert banner.startswith("[DREAM] digest=2026-07-12 | pending-gate=3 | read ")
+        assert str(path) in banner
+        assert banner.endswith("for details")
+
+    def test_cap_enforced_at_200_chars(self, tools, tmp_path):
+        """A long DREAM_DIGEST_PATH (the path itself is embedded in the
+        rendered line) pushes the un-capped line past 200 chars -- the
+        banner must be truncated to EXACTLY 200, matching
+        full_line[:self._DREAM_DIGEST_MAX_CHARS] verbatim, not merely
+        'shorter than before'."""
+        long_dir = tmp_path / ("x" * 150)
+        long_dir.mkdir()
+        path = long_dir / "latest-digest.md"
+        path.write_text(
+            "# TRAUM dream digest — generated 2026-07-12 (cycle: 2026-07-12)\n\n"
+            "## Pending human-gate (7)\n",
+            encoding="utf-8",
+        )
+        tools.valves.DREAM_DIGEST_PATH = str(path)
+        banner = tools._dream_banner()
+        full_would_be = f"[DREAM] digest=2026-07-12 | pending-gate=7 | read {path} for details"
+        assert len(full_would_be) > tools._DREAM_DIGEST_MAX_CHARS  # sanity: fixture DOES overflow
+        assert len(banner) == tools._DREAM_DIGEST_MAX_CHARS == 200
+        assert banner == full_would_be[:200]
+
+    def test_short_path_digest_is_not_truncated(self, tools, tmp_path):
+        """Sanity control: a normal-length path must NOT be cut -- the cap
+        only bites when the rendered line is actually long."""
+        path = tmp_path / "latest-digest.md"
+        path.write_text(
+            "# TRAUM dream digest — generated 2026-07-12 (cycle: 2026-07-12)\n\n"
+            "## Pending human-gate (1)\n",
+            encoding="utf-8",
+        )
+        tools.valves.DREAM_DIGEST_PATH = str(path)
+        banner = tools._dream_banner()
+        full_would_be = f"[DREAM] digest=2026-07-12 | pending-gate=1 | read {path} for details"
+        assert len(full_would_be) < tools._DREAM_DIGEST_MAX_CHARS
+        assert banner == full_would_be
+
+    def test_appended_to_time_banner_on_first_search_kb_only(self, tools, es, tmp_path):
+        """End-to-end through _consume_time_banner()/search_kb, matching
+        TestChronosTimeBanner.test_banner_on_first_search_kb_only's shape:
+        [DREAM] rides along with [TIME] on the SAME once-per-session gate,
+        never on its own separate one."""
+        path = tmp_path / "latest-digest.md"
+        path.write_text(
+            "# TRAUM dream digest — generated 2026-07-12 (cycle: 2026-07-12)\n\n"
+            "## Pending human-gate (2)\n",
+            encoding="utf-8",
+        )
+        tools.valves.DREAM_DIGEST_PATH = str(path)
+        tools.index_to_kb(content=PLAIN, title="dream banner doc", topic="general")
+        r1 = tools.search_kb("resolver home.arpa", min_score=0.1)
+        assert "[TIME] now=" in r1
+        assert "[DREAM] digest=2026-07-12 | pending-gate=2" in r1
+        r2 = tools.search_kb("resolver home.arpa", min_score=0.1)
+        assert "[TIME]" not in r2 and "[DREAM]" not in r2
+
+
 class TestChronosYearStrip:
     @pytest.mark.parametrize(
         "raw,expected",
@@ -1056,3 +1151,37 @@ class TestChronosTimeCheck:
         tools.time_check()
         r = tools.search_kb("resolver home.arpa", min_score=0.1)
         assert "[TIME]" not in r  # banner already delivered by time_check
+
+    def test_time_check_first_still_carries_dream_banner(self, tools, es, monkeypatch, tmp_path):
+        """TRAUM Thread 3 close (v0.4.0-a) live-deploy finding, 2026-07-12:
+        time_check() sets the SAME _time_banner_emitted flag
+        _consume_time_banner() gates on. Before this fix, a session that
+        called time_check() first (exactly what the system prompt's own
+        TIME DISCIPLINE section tells the model to do for "date-sensitive
+        work" -- a TRAUM digest-review session qualifies) would trip the
+        flag via time_check() alone, and _consume_time_banner()'s later
+        first-search_kb call would see the flag already True and return
+        "" -- silently losing the [DREAM] banner for the rest of the
+        session, every time. Caught by live-testing the real redeploy on
+        LUCIFER, not by the pre-existing (pre-fix) test suite, since
+        test_time_check_marks_banner_emitted above never configured a
+        digest file. Fixed by having time_check() append the same
+        _dream_banner() line _consume_time_banner() would have."""
+        path = tmp_path / "latest-digest.md"
+        path.write_text(
+            "# TRAUM dream digest — generated 2026-07-12 (cycle: 2026-07-12)\n\n"
+            "## Pending human-gate (4)\n",
+            encoding="utf-8",
+        )
+        tools.valves.DREAM_DIGEST_PATH = str(path)
+        self._patch_sources(
+            monkeypatch, tools,
+            {"pool.ntp.org": 0.0, "time.cloudflare.com": 0.0}, tls=0.0,
+        )
+        tools.index_to_kb(content=PLAIN, title="dream after timecheck", topic="general")
+        r_tc = tools.time_check()
+        assert "[TIME] now=" in r_tc
+        assert "[DREAM] digest=2026-07-12 | pending-gate=4" in r_tc
+        # And the flag is still consumed -- search_kb must not repeat either banner.
+        r_kb = tools.search_kb("resolver home.arpa", min_score=0.1)
+        assert "[TIME]" not in r_kb and "[DREAM]" not in r_kb
