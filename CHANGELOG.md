@@ -3,6 +3,675 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-07-12 (Cowork, cont'd x3): TRAUM Thread 3 (TRAUM-INSIGHT) CLOSED — v0.4.0-a deployed live to LUCIFER, `[DREAM]`/`time_check()` desync fixed, first real dream cycle, security + data-loss findings, debrief
+
+Closes Thread 3. Unlike every prior TRAUM entry this thread, this one ran
+against LUCIFER for real via live `mcp__goethe__*` tool access (this Cowork
+session turned out to be running on LUCIFER itself — `~/projects/local-
+system-engineer` on WSL2 is the same repo this Windows-side session edits,
+confirmed via `git log` matching and `/mnt/c/Users/SY5/...` in the WSL2
+`pytest` rootdir). That changed what "full test pass" and "verify" could
+mean this close: not simulated, not sandboxed — the real gateway, the real
+`lse-kb` (372 docs), the real `agent_commands.log`, the real `tasks.db`.
+
+- **Full test pass — live, not sandboxed.** `python3 -m pytest tests/ -q`
+  run directly on LUCIFER (`/usr/bin/python3`, pytest 9.1.1, against real
+  Elasticsearch): **306 passed, 0 failed** — the complete suite, not just
+  the dream-related files. This supersedes Prompt 3.9's own CHANGELOG entry,
+  which had explicitly flagged `test_kb_contracts.py::TestDreamBanner` as
+  traced-but-unexecuted because the Cowork bash sandbox's FUSE mount had
+  `goethe.py` truncated mid-file; run on LUCIFER's real filesystem, that
+  file is valid (confirmed `ast.parse` clean, 7210 lines) and all 7
+  `TestDreamBanner` tests pass for real, closing that gap.
+- **Deploy (v0.4.0-a → LUCIFER).** `bash tools/start-goethe.sh` — killed the
+  running HTTP gateway (was serving pre-3.5 code, PID 189793) and relaunched
+  it (new PID confirmed listening on `127.0.0.1:9700`); two unrelated stdio-
+  transport `goethe_mcp.py` processes on the same host were left untouched
+  (the start script's kill pattern only matches `--transport http`, so it
+  never touches non-gateway instances — confirmed by PID/port inspection
+  before and after). **Existing llama-ui threads have NOT picked this up —
+  a fresh thread is still required**, per the v0.4.0-a changelog's own
+  DEPLOY NOTE; that one step is the operator's to take, no tool here can
+  drive the llama-ui browser session.
+- **Live-deploy bug found and fixed: `time_check()` silently ate the
+  `[DREAM]` banner.** Verifying "banner appears on first search_kb" the
+  straightforward way (call `time_check()` first, since CHRONOS's own
+  docstring and the system prompt's TIME DISCIPLINE section both say to,
+  for date-sensitive work — and a TRAUM close is exactly that) exposed a
+  real design gap: `time_check()` sets the same `_time_banner_emitted` flag
+  `_consume_time_banner()` gates on, but only ever appends the `[TIME]`
+  banner, never `[DREAM]`. A session that calls `time_check()` before its
+  first `search_kb` gets `[TIME]` immediately and then **never** sees
+  `[DREAM]` for the rest of that session — the exact desync
+  `_consume_time_banner()`'s own docstring says reusing the flag was
+  supposed to prevent, except the docstring's reasoning only accounted for
+  `_consume_time_banner()` itself setting the flag, not `time_check()`
+  doing it independently. **Fix**: `tools/goethe.py`'s `time_check()` now
+  also calls `_dream_banner()` and appends the line on the same gate, so
+  both banners always arrive together regardless of which tool fires
+  first. New test `TestChronosTimeCheck::test_time_check_first_still_
+  carries_dream_banner` (`tests/test_kb_contracts.py`) pins this; the whole
+  suite re-run green (306/306) before redeploying a second time to ship the
+  fix. **This is a genuine correctness bug that would not have been caught
+  by any unit test written before this close** — every existing
+  `TestDreamBanner`/`TestChronosTimeCheck` test exercised each banner tool
+  in isolation; only calling them in the realistic order, live, surfaced
+  the interaction.
+- **`[DREAM]` banner verified live, end to end.** After the second redeploy,
+  a real `search_kb` call returned both banners together for real:
+  `[TIME] now=2026-07-12 ... | [DREAM] digest=2026-07-12 | pending-gate=6 |
+  read /opt/local-se/dreams/latest-digest.md for details`. Not a fixture,
+  not a mock — the actual deployed code, the actual digest file, the actual
+  gate count.
+- **First real dream cycle against live LUCIFER data.** `patterns` pass run
+  `--dry-run` (preview only, see security finding below): 8,431 events
+  mined from 50,000 windowed lines of the real `agent_commands.log`
+  (2026-07-03 .. 2026-07-12), 56 sessions inferred, 1 automation-candidate
+  sequence (4 commands, 3 sessions). `dedup` run `--no-dry-run` for real:
+  4 candidate pairs at/above the 0.92 merge threshold out of 917 above the
+  0.75 floor, out of 371 embedded docs — 6 proposals (3 `mentor_correct`
+  merges + 3 `record_outcome` demotions), all "exact character-for-character
+  duplicate." `stale-contradiction` and `error-cluster` both ran
+  `--no-dry-run` for real and came back genuine, structured null results
+  (`no_reverify_and_no_contradictions` / `no_cluster_cleared_bar`, both
+  `looked=True`) — the null-result discipline built in Prompt 3.8 working
+  exactly as designed on real data for the first time. `insights` was
+  deliberately **not** run for real this close (see security finding).
+  None of these proposals were applied — `dream_apply.py` (the human-gated
+  write path) was not invoked; the 6 dedup proposals sit in today's
+  `proposals.jsonl`/the digest's "Pending human-gate (6)" section for the
+  operator's own review, same as Thread 2's first run.
+- **Live-deploy finding, not fixed this close — flagged for Thread 4:
+  `proposals.jsonl` has no append-mode equivalent of `null-results.jsonl`,
+  and this cycle proved it's a real, not theoretical, data-loss risk.**
+  Running `dedup` (6 real proposals) followed by `stale-contradiction` and
+  `error-cluster` (both null) in the same day-dir silently **overwrote**
+  `dedup`'s 6 proposals out of `proposals.jsonl` — `report.md`/
+  `proposals.jsonl` are documented single-pass-per-invocation snapshots
+  (unchanged since before Prompt 3.8), and 3.8 only gave the null-result
+  side of that an append-mode file. The digest's "Pending human-gate" count
+  genuinely dropped from 6 to 0 after the two null passes ran — caught only
+  because this close happened to review the digest between each pass rather
+  than only at the end. Recovered by hand (re-ran `dedup` last, after the
+  null passes, so its output is what survives on disk); the underlying
+  gap — proposals need the same append-only persistence null_records got —
+  is real and should be Thread 4's first fix, not something patched
+  unilaterally in a closing pass.
+- **Live-deploy finding, security — flagged for Thread 4, credential
+  rotation recommended to the operator now.** The `patterns` pass's
+  `command_frequency()` mining reads `agent_commands.log` verbatim with
+  **no secret-redaction of any kind**. The real `--dry-run` preview above
+  surfaced a live plaintext password embedded in a repeated `sshpass -p
+  '...' ssh ...` command (6 occurrences, targeting a LAN host). Had this
+  pass been run `--no-dry-run`, that password would have been written
+  straight into a git-tracked `patterns.json`/`report.md`/`proposals.jsonl`
+  under `docs/dreaming/`; had `insights` then run against that
+  `patterns.json`, `_domain_command_frequency()` would have sent it
+  off-host in a prompt to node3090's LLM as "evidence." Neither happened —
+  `patterns` was kept at its `--dry-run` default specifically because of
+  this, and `insights` was not run at all this close. The password itself
+  is not repeated anywhere in this repo. **Recommended, not yet done**: the
+  operator should rotate that credential and move it to Vaultwarden
+  (matching how the pfSense API key is already handled), and `dream_runner.py`
+  should gain a redaction step (common patterns: `-p '...'`, `password=`,
+  `Authorization: Bearer`, etc.) over any raw-command text before it's
+  mined, written to disk, or handed to an LLM — this is squarely a
+  precondition for Thread 4 (TRAUM-AUTO) even being safe to build, since
+  auto-apply and scheduled runs would hit this same log on a timer with no
+  human dry-run preview in between.
+- **`docs/dreaming/2026-07-11-thread2-close/report.md`** — small
+  correction, not new work: its "Why this wasn't applied for real in this
+  session" section is now "## Applied" with the real
+  `dream_apply.py --no-dry-run` result from when that proposal was actually
+  applied live on LUCIFER (`applied=1`, `index_to_kb`'s own dedup path
+  fired and merged into an existing near-duplicate doc rather than creating
+  a new one) — this had already happened before this close; the doc just
+  hadn't been updated to say so.
+- **`CURRENT-STATE.md`** — TRAUM row rewritten for Thread 3 close (all of
+  3.1/3.2/3.4/3.5/3.6/3.8/3.9 + this close's live findings); 3.3
+  (ledger-mining) noted as done-as-a-one-off-analysis
+  (`kb/ledger-mining-proposals.md`, real findings against `tasks.db`'s 81
+  rows) rather than an automated `dream_runner.py` pass — it was never
+  coded as one, and this close doesn't change that. Goethe row bumped to
+  v0.4.0-a DEPLOYED. 3.7 (self-measurement) and 3.10's own remaining
+  scope beyond this close are folded in as "Thread 4 NOT STARTED."
+- **`kb/session-learnings.md`** — Thread 3 close debrief written via the
+  unified path, including the operator-judged non-obvious finding for this
+  close (see that file — not duplicated here to avoid two slightly-
+  diverging copies of the same judgment call).
+
+**Known issues carried forward (recorded, not fixed this close):**
+- Same three carried forward from Thread 2's close, still true: no
+  `dreamed_at` write path in `dream_apply.py` (done by hand); dedup
+  re-proposes already-merged pairs every run (harmless, wasteful); no ES
+  snapshot mechanism for true before/after retrieval comparison.
+- New this close: `proposals.jsonl` overwrite risk across a multi-pass
+  cycle (above) — Thread 4's first fix.
+- New this close: `patterns` pass has no secret-redaction (above) —
+  blocking for any Thread 4 auto-apply/scheduling work.
+
+---
+## 2026-07-12 (Cowork, cont'd x2): TRAUM Thread 3, Prompt 3.9 — test coverage extended (determinism, digest/banner caps, learned-rules target invariant, insight schema), `_dream_banner()`-adjacent docstring audit
+
+Still mid-thread — `CURRENT-STATE.md` untouched, per convention (only
+rewritten at thread-close prompts; Thread 3 closes at 3.10). No
+`dream_runner.py`/`dream_apply.py`/`dream_digest.py`/`goethe.py` behavior
+changed this prompt except one docstring (see below); this was a
+tests-and-audit prompt, not a features prompt.
+
+- **`tests/test_dream_patterns.py`** — new `TestPatternsJsonDeterminism`
+  class (3 tests): `mine_patterns()` is byte-identical across two calls on
+  the same parsed events (pins the module's own documented purity — "no
+  file I/O, no network, no randomness, no LLM call"); `write_patterns_json()`
+  output is identical run-to-run once the one legitimately non-deterministic
+  field (`generated_at`, a wall-clock write timestamp) is excluded; a control
+  test confirms a genuinely different fixture log mines a genuinely
+  different result, so the first two aren't vacuously true.
+- **`tests/test_dream_digest.py`** (new file, 191 lines) — `TestDigestLineCap`
+  (4 tests: digest stays at/under `MAX_DIGEST_LINES=30` with a large
+  synthetic corpus, is well under the cap on a small one, the cap holds
+  across `applied`/`insights`/`pending` entry mixes) and
+  `TestDigestOnEmptyCorpus` (2 tests: empty-corpus digest renders and stays
+  short).
+- **`tests/test_kb_contracts.py`** — new `TestDreamBanner` class (7 tests),
+  inserted between the existing `TestChronosTimeBanner` and
+  `TestChronosYearStrip` classes, reusing the file's existing fixtures:
+  empty valve disables the banner; missing digest file degrades to `""`;
+  an unparseable digest (missing either regex group) degrades to `""`;
+  a valid digest parses date + pending-gate count into the exact
+  `[DREAM] digest=<date> | pending-gate=<N> | read <path> for details`
+  format; the 200-char cap (`_DREAM_DIGEST_MAX_CHARS`) is enforced exactly
+  on a long path; a short-path digest is left untruncated; the banner is
+  appended to `[TIME]` only on `search_kb`'s first call in a session, never
+  again (reuses `_time_banner_emitted`, per `_consume_time_banner()`'s own
+  docstring — see the docstring fix below).
+- **`tests/test_dream_engine.py`** — new `TestPromptRuleTargetInvariant`
+  class (19 test methods, incl. parametrized cases), covering Prompt 3.9's
+  own named ask ("learned-rules.md never auto-merged: validator rejects
+  prompt-rule proposals targeting `prompts/node4090*`") end to end at both
+  validation layers: `dream_runner.validate_proposal_shape()` (generation-
+  time) rejects any `target_file` other than the exact
+  `dr.LEARNED_RULES_TARGET` constant — tested against `None`, empty string,
+  `prompts/node4090-v0.6.0.md`, a path-traversal attempt, and a
+  correctly-named-but-wrong-directory decoy; `dream_apply.check_prompt_rule_target()`
+  re-checks the same invariant at apply-time as defense-in-depth (a
+  proposal that only fails the apply-time check, not the shape check, is
+  still rejected); and one end-to-end `validate_proposal_for_apply()` test
+  confirming the rejection reason names the one allowed path. The
+  `_prompt_rule_proposal()` test helper deliberately treats an explicit
+  `target_file=None` override as "leave it None," not "unset, use the
+  default" — a first draft got this backwards (see below).
+- **`tests/test_dream_insights.py`** — closed two real, pre-existing
+  coverage gaps in `_validate_insight_item()`/`_insight_to_proposal()`:
+  `prompt_rule` sub-object handling had no kept-when-complete/dropped-when-
+  incomplete test pair (unlike `kb_fact`/`skill`, which both already had
+  one) — added `test_prompt_rule_detail_kept_when_complete`,
+  `_dropped_when_incomplete`, `_dropped_when_missing_entirely`,
+  `_section_hint_defaults_when_blank`, and
+  `test_prompt_rule_never_carries_a_target_file_key` (confirms a
+  model-supplied `target_file` inside `prompt_rule` is stripped, not
+  passed through — the write target is a fixed code constant, never model
+  output). `_insight_to_proposal`'s prompt-rule branch itself had zero
+  coverage of any kind before this prompt (the existing parametrized test
+  only ever exercised the "no `prompt_rule` key" `None`-returning path) —
+  added `test_prompt_rule_with_detail_becomes_append_learned_rule_proposal`
+  (asserts `call == "append_learned_rule"`, `args["target_file"] ==
+  dr.LEARNED_RULES_TARGET`, and that the resulting proposal passes the
+  shared `validate_proposal_shape()` gate) and
+  `test_prompt_rule_without_detail_is_none`.
+- **`tools/goethe.py`** — one docstring-only fix to
+  `Tools._consume_time_banner()`, staged by an `lse-docstring-optimizer`
+  audit (below): added one sentence explicitly prohibiting the most likely
+  future-editor mistake — adding a second, separate once-per-session gate
+  for `[DREAM]` instead of reusing `_time_banner_emitted`, which is what
+  guarantees the `[TIME]`/`[DREAM]` banners can never desync. No behavior
+  change; verified present at `tools/goethe.py:3546`.
+- **`docs/dreaming/docstring-audit-dream-banner-2026-07-12.md`** (new) —
+  full `lse-docstring-optimizer` audit of the four `[DREAM]`-banner-adjacent
+  artifacts: `_dream_banner()` and the `_consume_time_banner()` addition
+  (both private/maintainer-facing, so the skill's rubric scores them mostly
+  N/A per its own proportionality rule — one real WARN on
+  `_consume_time_banner()`, fixed above), the `DREAM_DIGEST_PATH` Valve
+  description (out of scope, admin UI text), and — recognizing the skill's
+  real purpose is catching *model*-compliance gaps — the rendered
+  `[DREAM]` banner line itself, the one artifact from this feature the
+  model actually reads at runtime. That audit surfaced two genuine FAILs
+  (Compliance language / Failure prohibitions, and Trigger gate): the
+  banner states a pending-review count with zero directive language and no
+  stated condition for when the model should act on or mention it, in a
+  system whose core invariant (DESIGN.md §2) is that dream proposals are
+  strictly human-gated. No behavioral fix was made this prompt — the
+  banner is already within a few characters of its 200-char cap in real
+  digests, so appending a directive risks silently truncating the
+  `read <path> for details` pointer — the doc instead recommends the
+  correct fix is a future `prompt-rule` insight through the existing
+  human-gated `append_learned_rule` path (Prompt 3.6), landing in
+  `prompts/learned-rules.md` for the operator to merge, not a direct
+  `goethe.py` edit.
+- **Verification, stated plainly:** `python3 -m pytest` run for real
+  (not just traced) against `tests/test_dream_corpus.py`,
+  `test_dream_digest.py`, `test_dream_engine.py`, `test_dream_insights.py`,
+  `test_dream_patterns.py` together: **180 passed, 0 failed.**
+  `tests/test_kb_contracts.py`'s new `TestDreamBanner` class was **not**
+  run through a live pytest process this prompt — importing it requires
+  the full 7211-line `tools/goethe.py`, and the sandbox's mounted repo copy
+  used for test execution has an unrelated FUSE staleness bug (see below)
+  that leaves its copy of `goethe.py` truncated mid-file (confirmed via
+  `ast.parse` raising `SyntaxError: unterminated string literal` at line
+  7207); reconstructing all 7211 lines through the file-read pipeline to
+  work around it was judged not worth the cost for one test class. Instead
+  `TestDreamBanner`'s assertions were independently confirmed by tracing
+  `_dream_banner()`'s actual behavior with a standalone live script
+  (empty valve, missing file, unparseable digest, valid digest, and the
+  exact 200-char cap all produced the documented output) before the test
+  class was written — the test class expresses the same checks that
+  script already ran live, but the test class itself is unexecuted. This
+  is flagged here rather than folded silently into "all green."
+- **Known infra issue, unresolved:** the Cowork bash sandbox's FUSE-mounted
+  copy of this repo continues to intermittently lag behind the true
+  (Windows-side) files for an unpredictable duration after an edit —
+  confirmed again this prompt for `test_dream_engine.py`,
+  `test_dream_insights.py`, `test_dream_patterns.py`, and `goethe.py`
+  (`dream_runner.py`/`dream_apply.py` had caught up by this prompt).
+  Workaround used: reconstruct each stale file's true content into
+  `outputs/repo_copy/tests/` via the file-read/file-write tools (which are
+  always correct, unlike the bash mount), symlink `outputs/repo_copy/tools`
+  to the mount's (confirmed-synced) `tools/` directory, and run pytest
+  there. This is a sandbox artifact, not a repo bug — noted here again so
+  a future session doesn't waste time assuming a real regression.
+
+---
+## 2026-07-12 (Cowork, cont'd): TRAUM Thread 3 (TRAUM-INSIGHT), Prompt 3.8 — null-result discipline formalized, `dream_runner.py` v0.7.0 → v0.8.0; first full dream cycle (all 5 passes)
+
+Thread 3 status update: 3.1 patterns, 3.2 insights, 3.4 digest, 3.5
+in-session banner, 3.6 prompt-rule proposals, and now 3.8 null-result
+discipline are implemented; 3.3 ledger-mining and 3.7/3.9/3.10 are not —
+still a mid-thread prompt, `CURRENT-STATE.md`'s TRAUM row stays as-is per
+the project's convention of only rewriting it at each thread's close
+prompt. (3.7, self-measurement, was skipped in plan order to do 3.8 first
+per the prompt actually run this session — no dependency between them.)
+
+- **`tools/dream_runner.py`** (v0.7.0 -> v0.8.0) — every `run_pass_*()`
+  (`dedup`, `stale-contradiction`, `error-cluster`, `patterns`, `insights`)
+  now returns a 3-tuple `(proposals, narrative, null_record)` instead of
+  2. `null_record` is a new structured dict (`_null_record()`, new
+  function ahead of `run_pass_dedup`) — `pass`, `result="null"`, `reason`
+  (short greppable code, e.g. `empty_kb`, `no_candidate_pairs`,
+  `all_domains_empty`), `looked` (bool), `corpus_size` (dict of plain
+  counts the pass actually examined), `thresholds` (dict of the config
+  values applied) — or `None` when the pass produced >=1 proposal or
+  otherwise has something non-null to show. This formalizes the "Null
+  result (PH3-2)" PROSE every pass has narrated since Prompt 2.2 into
+  something machine-readable: `looked=True` means the pass genuinely
+  inspected `corpus_size`-worth of data at `thresholds` and still found
+  nothing ("nothing there"); `looked=False` means an upstream gate — empty
+  index, unreachable Ollama, missing/empty log window — stopped it before
+  it could look at anything at all ("didn't look"). Each pass's early-return
+  gates were audited individually for which case applies (e.g. dedup's
+  "lse-kb returned zero docs" is `looked=False`, but "candidate pairs found
+  above the floor but none reached the merge threshold" is `looked=True`
+  since embeddings and pairwise cosine actually ran). The `patterns` pass
+  needed its own null definition since it never emits proposals in the
+  first place (raw-analytics pass, DESIGN.md §6.2 proposal types don't
+  include it): null is now "all four mechanical sub-passes (command
+  frequency, failure-retry, tool usage, automation candidates) came back
+  empty", distinct from the pre-existing "Null sub-result" partial-empty
+  narrative (kept, unchanged, no `null_record` attached — only genuinely
+  ALL-empty gets the structured record). `stale-contradiction` bundles its
+  two sub-passes (reverify + demote) into one `null_record` only when BOTH
+  are null this run.
+- **`write_report()`** gained an optional `null_record` parameter
+  (default `None` — every pre-3.8 2-positional-arg call site still works).
+  When set: report.md gets a new, dedicated "## Null result" section
+  (Prompt 3.8's "report.md says so plainly" — not left buried inside the
+  `## Narrative` prose above it) stating the looked/didn't-look verdict,
+  corpus size examined, and thresholds used; the SAME record is also
+  appended (`"at"` mode, never overwritten) to the new
+  `<dream-dir>/<date>/null-results.jsonl`. This is deliberate and
+  necessary: report.md and proposals.jsonl are both documented
+  single-pass-per-invocation snapshots (`write_report()`'s own module
+  comment, `dream_digest.py`'s `gather_top_insights()` docstring) — the
+  LAST pass run that day overwrites both. A full dream cycle runs five
+  passes in sequence against the same day-dir, so without an append-mode
+  file, only the final pass's null verdict (if any) would survive the day
+  — null-results.jsonl is the one artifact every pass's null verdict
+  for the day survives intact, same `"at"` convention `dream_apply.py`
+  already uses for `applied.jsonl`/`rejected.jsonl`.
+- **`main()`** unpacks the new 3-tuple, passes `null_record` through to
+  `write_report()`, and appends a `null_result=<reason> (looked=<bool>)`
+  suffix to its own stderr done-line when set.
+- **`tests/test_dream_patterns.py`** — the two existing null-result tests
+  (`test_null_result_when_log_missing`,
+  `test_null_result_when_log_has_only_bootstrap_lines`) updated for the
+  3-tuple return and now assert `null_record`'s shape directly (both are
+  `looked=False`, per the reasoning above). New
+  `test_null_result_when_all_domains_empty_but_events_present`: a
+  DONE-only log (no CMD ever) exercises the `all_domains_empty` /
+  `looked=True` branch specifically — verified by reading
+  `tool_usage_by_week()`'s own docstring ("DONE is CMD's own completion
+  marker, not a distinct tool" — DONE-tagged events are excluded from that
+  domain too) before picking the fixture, since a NOTE/other-tag line
+  would NOT trigger this branch (it would still populate
+  `tool_usage_by_week`). The other five `run_pass_patterns()` call sites
+  in this file fixed to 3-tuple unpacking (no behavior assertions added —
+  they weren't null-result tests).
+- **`tests/test_dream_insights.py`** — `test_null_result_when_nothing_to_feed`
+  updated for the 3-tuple return, now asserts `null_record` (`looked=False`,
+  `reason="no_data_to_feed"`); `test_end_to_end_with_mocked_llm` fixed to
+  3-tuple unpacking with an added `assert null_record is None` (a real
+  insight was accepted that run).
+- **`docs/dreaming/dream-run-2026-07-12-full-cycle.md`** (new) — the
+  Prompt 3.8 "run a full dream cycle now" deliverable: all five passes
+  traced against this sandbox's actual state (no `manifest.db`, no
+  reachable ES, no `agent_commands.log` — same constraint as every
+  2026-07-12 entry). Every pass correctly emits `looked=False` (a genuine
+  "didn't look", not "nothing there") rather than crashing or fabricating
+  a finding; `dream_digest.refresh_digest()` degrades the same way. Real
+  execution against the live LUCIFER corpus (near-duplicate `lse-kb`
+  docs, actual TTL expiry, actual repeated command sequences) remains the
+  next real dream cycle, not this session's.
+- **Verification note:** same constraint as every 2026-07-12 entry above —
+  no live `/opt/local-se`, ES, or Ollama in this sandbox this session.
+  Verified by full manual read-through of every edited function (all five
+  `run_pass_*`, `_null_record`, `write_report`, `main`) plus both edited
+  test files, region by region, checking return-arity consistency, paren/
+  quote balance, and control flow — the same method the 2026-07-12 Prompt
+  3.6 entry above used and explained why (`run_tests`/`py_compile` not
+  usable: this session's sandbox mount of the repo is stale, showing
+  `tools/dream_runner.py` truncated at 2,840 of its true (now) 3,194 lines
+  on every retry, a worse case of the same staleness the Prompt 3.6 entry
+  hit). `tests/test_dream_patterns.py` and `tests/test_dream_insights.py`
+  were NOT executed under pytest for the same reason (pytest itself isn't
+  installed in this sandbox either) — the new
+  `test_null_result_when_all_domains_empty_but_events_present` fixture was
+  traced by hand against `infer_sessions`/`session_command_lists`/
+  `tool_usage_by_week`/`command_frequency`/`find_failure_retries` to
+  confirm it actually lands on the `all_domains_empty` branch rather than
+  asserted by construction.
+
+---
+## 2026-07-12 (Cowork, cont'd): TRAUM Thread 3 (TRAUM-INSIGHT), Prompt 3.6 — `prompts/learned-rules.md` + `append_learned_rule`, `dream_runner.py` v0.7.0 / `dream_apply.py` v0.2.0
+
+Thread 3 status update: 3.1 patterns, 3.2 insights, 3.4 digest, 3.5
+in-session banner, and now 3.6 prompt-rule proposals are implemented; 3.3
+ledger-mining and 3.7-3.10 are not — still a mid-thread prompt,
+`CURRENT-STATE.md`'s TRAUM row stays as-is per the project's convention of
+only rewriting it at each thread's close prompt.
+
+- **`tools/dream_runner.py`** (v0.6.0 -> v0.7.0) — the insights pass
+  (Prompt 3.2) now handles `proposed_change: "prompt-rule"` as a real
+  proposal instead of report.md-only. `_INSIGHT_SCHEMA_BLOCK` gained a
+  `prompt_rule: {rule, rationale, section_hint}` sub-object (mirroring
+  `kb_fact`/`skill`'s own pattern); `_validate_insight_item` validates it
+  (non-empty `rule`/`rationale`, same discipline as the other two);
+  `_insight_to_proposal` emits `{"type": "prompt-rule", "call":
+  "append_learned_rule", "args": {"target_file": LEARNED_RULES_TARGET,
+  "rule", "rationale", "section_hint", "provenance", "source_tier":
+  "inferred"}, "evidence": [...]}`. The critical property (plan §3.6: "NEVER
+  direct edits to the canonical node4090 prompt"): `target_file` is a new
+  module constant, `LEARNED_RULES_TARGET = "prompts/learned-rules.md"`,
+  hard-coded in `_insight_to_proposal` — never read from the model's own
+  output at generation time, so there is no field through which an injected
+  episode could steer the write target. `KNOWN_PROPOSAL_TYPES` gained
+  `"prompt-rule"`; `validate_proposal_shape()` gained a structural check
+  (Prompt 3.9's own named test, done one prompt early since the type exists
+  now: rejects any `prompt-rule` proposal whose `args.target_file` isn't
+  exactly `LEARNED_RULES_TARGET`, or whose `rule`/`rationale` is empty)
+  ahead of `dream_apply.py`'s apply-time re-check of the same thing.
+  Updated three places that previously said "prompt-rule/tool-change are
+  report.md-only" (CLI help text, `_insight_to_proposal`'s docstring,
+  `run_pass_insights`' narrative) — only `tool-change` still has no write
+  path of any kind.
+- **`tools/dream_apply.py`** (v0.1.1 -> v0.2.0) — the apply-time half.
+  `check_prompt_rule_target()` re-validates `append_learned_rule` proposals'
+  `target_file` against the same `dr.LEARNED_RULES_TARGET` constant at
+  apply time (belt-and-suspenders against a hand-edited `proposals.jsonl`,
+  same reasoning as the existing `check_provenance_format()`), wired into
+  `validate_proposal_for_apply()` alongside the other invariant checks —
+  DESIGN.md §2 row 3 gained clause (f). `render_group()` gained an
+  `append_learned_rule` confirm-gate block (target_file/section_hint/
+  provenance/source_tier/evidence-refs, `rule`+`rationale` as multiline
+  fields) and its `TARGET:` header logic now also recognizes
+  `args.target_file`, not just `args.doc_id`. `apply_group()` gained a new
+  `append_learned_rule` branch calling the new `append_learned_rule()`
+  function — **the one call in this file that never touches ES**: it
+  appends one `## Pending` entry to `prompts/learned-rules.md` (creating
+  the file with a fixed header if it doesn't exist yet), resolved against a
+  new `--repo-root`/`GOETHE_REPO_ROOT` option (default: cwd) rather than
+  ES/Tools at all. Dry-run behavior is unchanged — the existing top-of-loop
+  `if dry_run: ... continue` already short-circuits before this branch,
+  same as every other call type, so no special-case was needed there.
+- **`prompts/learned-rules.md`** (new, seeded) — created with the header +
+  `## Pending`/`## Merged` structure DESIGN.md §8.4 specifies. Seeded with
+  one `## Pending` entry recording an explicit **null result** for "seed
+  learned-rules.md with any accepted insights from prompts 3.2-3.3" (the
+  plan's own Prompt 3.6 text): Prompt 3.2 has only ever been exercised
+  against synthetic fixtures in this Cowork session (no live
+  `/opt/local-se` corpus available, per the 2026-07-12 Prompt 3.4/3.5
+  entries above), and Prompt 3.3 (ledger-mining) is not implemented yet —
+  there is no real, evidence-backed `prompt-rule` insight to seed, so one
+  wasn't fabricated (PH3-2 null-result discipline, applied here one prompt
+  early since plan Prompt 3.8 is where that discipline is formally
+  generalized).
+- **`docs/dreaming/DESIGN.md`** — new §8 ("Prompt-rule proposals —
+  `prompts/learned-rules.md`"): why this proposal type gets its own write
+  path instead of reusing Tools (§8.1), the proposal shape (§8.2), the
+  target-fixed-in-code invariant enforced at both generation and apply time
+  (§8.3), the file's `## Pending`/`## Merged` structure (§8.4), the
+  operator's manual merge-into-next-node4090-version-bump workflow (§8.5),
+  and this prompt's own seeding status (§8.6, the null-result explanation
+  above). Noted but NOT fixed in this pass: the file already had two
+  differently-worded `## 7` sections (Thread 2 Prompt 2.6's auto-apply
+  policy, apparently drafted twice) before this edit — out of scope for
+  Prompt 3.6, flagged here so it isn't mistaken for something this entry
+  introduced.
+- **Verification note:** no live `/opt/local-se`, ES, or Ollama available
+  in this session (same constraint every 2026-07-12 entry above has noted);
+  changes verified by full manual read-through of every edited region in
+  both files (bracket/quote balance, control flow) rather than by
+  `run_tests`/`py_compile` — this session's sandbox mount of the repo
+  proved stale mid-session (showed a truncated, pre-edit byte count of
+  `tools/dream_runner.py`/`tools/dream_apply.py` on every retry), so
+  in-sandbox compilation wasn't usable as a check this time. Formal pytest
+  coverage (`learned-rules.md never auto-merged` etc.) is Prompt 3.9's job
+  per the plan, not this one — flagging the unusual verification method
+  here rather than silently asserting `run_tests` was green when it wasn't
+  run.
+
+---
+## 2026-07-12 (Cowork, cont'd): TRAUM Thread 3 (TRAUM-INSIGHT), Prompt 3.5 — `goethe.py` v0.4.0-a, [DREAM] banner surfaced in-session
+
+Thread 3 status update: 3.1 patterns, 3.2 insights, 3.4 digest, and now 3.5
+in-session banner are implemented; 3.3 ledger-mining and 3.6-3.10 are not —
+still a mid-thread prompt, `CURRENT-STATE.md`'s TRAUM row stays as-is per the
+project's convention of only rewriting it at each thread's close prompt.
+
+- **`tools/goethe.py`** (v0.4.0 -> v0.4.0-a) — wired `tools/dream_digest.py`'s
+  `latest-digest.md` into session start the CHRONOS way: server-injected, not
+  docstring-dependent. `_consume_time_banner()` was already the single
+  once-per-session gate for the `[TIME]` banner on the first `search_kb`
+  return (CHRONOS-2, v0.3.1); it now also calls a new `_dream_banner()` and
+  appends its result. `_dream_banner()` reads the new `DREAM_DIGEST_PATH`
+  valve (default `/opt/local-se/dreams/latest-digest.md`), regex-parses the
+  digest's own header date (`generated YYYY-MM-DD`) and its
+  `## Pending human-gate (N)` count, and renders
+  `[DREAM] digest=<date> | pending-gate=<N> | read <path> for details`,
+  hard-capped at 200 chars (`line[:200]`, defense-in-depth on top of the
+  format already being well under the cap). Missing valve, missing file, or
+  an unparseable digest all degrade to `""` (no `[DREAM]` line) rather than
+  raising — same non-fatal discipline as `dream_digest.py`'s own `gather_*`
+  steps; the `[TIME]` banner is never affected either way. Deliberately
+  minimal per the PH5-2 warning (plan §2, `docs/traum-dreaming-plan.md`):
+  one valve, one new private method, a 3-line change to an existing method —
+  no restructuring of this god-class (still ~7,100 lines; PH5-2 extraction
+  of `goethe_kb.py` remains undone and unblocked by this change).
+  Verified in-session (no live `/opt/local-se` available here): synthetic
+  `latest-digest.md` fixture -> correct `[DREAM]` line, appears alongside
+  `[TIME]` exactly once per session then goes silent on subsequent calls;
+  missing digest file and a malformed digest (no parseable header) both -> no
+  `[DREAM]` line and no exception; empty `DREAM_DIGEST_PATH` -> banner fully
+  disabled. Formal pytest coverage is Prompt 3.9's job, not this one.
+  **DEPLOY NOTE:** existing `llama-ui` threads do not pick up this change —
+  each needs a fresh thread after `goethe_mcp.py` restart for the `[DREAM]`
+  banner to appear, same as any other `Tools`-class behavior change.
+- **`VALVES.md`** — new `DREAM_DIGEST_PATH` row under the TRAUM dreaming
+  section (§4), same table as `EPISODE_DIR`/`DREAM_DIR`/etc.
+
+---
+## 2026-07-12 (Cowork): TRAUM Thread 3 (TRAUM-INSIGHT), Prompt 3.4 — `tools/dream_digest.py` v0.1.0 morning digest; `tools/dream_apply.py` v0.1.1 bug fix
+
+Thread 3 is still open (3.1 patterns, 3.2 insights, and now 3.4 digest are
+implemented; 3.3 ledger-mining, 3.5 in-session banner, and 3.6-3.10 are not
+— this is a mid-thread prompt, not a thread close, so `CURRENT-STATE.md`'s
+TRAUM row is intentionally left as-is per the project's own convention of
+only rewriting it at each thread's close prompt).
+
+- **`tools/dream_digest.py`** (3.4, new, v0.1.0) — generates
+  `/opt/local-se/dreams/latest-digest.md`, <=30 lines, hard-capped
+  deterministically (earliest content kept, one truncation-marker line if
+  cut). Four sections: (1) applied-overnight — real (non-`--dry-run`)
+  `applied.jsonl` entries from the current cycle's day-dir; (2) top 3
+  insights — parsed back out of `report.md`'s "## Cross-session insights"
+  heading (Prompt 3.2's own narrative format), searching backward across
+  day-dirs since `report.md` is one shared file per day-dir that the last
+  pass run that day overwrites; (3) pending human-gate items — proposals
+  whose content-hash isn't yet in that day's `applied.jsonl`/`rejected.jsonl`,
+  a lightweight preview of what Prompt 4.4's `dream_apply --queue` will
+  formalize later; (4) one-line corpus stats — `manifest.db` session counts
+  plus best-effort `lse-kb`/`lse-errors`/`lse-skills` ES doc counts. Every
+  gather step is independently exception-guarded (one bad file degrades one
+  section to a null-result line, not the whole digest — PH3-2 discipline).
+  `refresh_digest()` is the integration point; it never raises. Wired into
+  the end of both `dream_runner.py`'s and `dream_apply.py`'s `main()` — "at
+  the end of every dream run" covers both the proposing half and the
+  applying half. No live `/opt/local-se` or ES available in this session;
+  validated against synthetic `manifest.db`/`dreams/` fixtures instead
+  (empty-corpus null result, populated cycle with a same-day pending pair,
+  applied/pending state flip after simulated `dream_apply`, and a
+  forced-low-cap run to exercise the hard-truncation branch).
+- **`tools/dream_apply.py`** (v0.1.0 -> v0.1.1, bug fix) — `main()` opened
+  `applied_f = open(applied_path, ...)` with `applied_path` never assigned
+  (only `rejected_path` was); every real run with >=1 proposal would have
+  raised `NameError` before writing anything. Fixed by defining
+  `applied_path = os.path.join(dream_dir, "applied.jsonl")` alongside
+  `rejected_path`, matching the module docstring's own stated output
+  contract ("writes `applied.jsonl` ... and `rejected.jsonl`"). Found while
+  building dream_digest.py's applied-overnight section, which reads that
+  same file.
+
+---
+## 2026-07-11 (Cowork, cont'd): TRAUM Thread 2 (TRAUM-ENGINE) CLOSED — `tools/dream_apply.py` v0.1.0 apply gate (2.5), auto-apply policy (2.6, DESIGN.md §7, still empty), first supervised dream + calibration (2.7-2.8), invariant tests (2.9, `tests/test_dream_engine.py`), thread close (2.10)
+
+Closes out the same-day Thread 2 entry below (dream_runner.py 2.1-2.4). Every
+proposal Thread 2 has ever generated has now passed through a human
+confirm-gate at least once, live, on the real ~368-doc `lse-kb` — this is
+Thread 2's own dogfood run, not a synthetic exercise.
+
+- **`tools/dream_apply.py`** (2.5, new, v0.1.0) — the apply gate. Re-validates
+  every proposal against the code-enforced invariants fail-closed (never
+  raise quality, never `source_tier=ground_truth`, never touch a quarantined
+  doc except the named exception, evidence ≥20 chars) using the doc's LIVE
+  state at apply time, not the proposal's generation-time snapshot. Renders
+  the exact SCRIBE-1 confirm-gate block shape (`docs/dreaming/DESIGN.md` §6.4)
+  and asks a per-proposal yes/no; dedup pairs (`pair_id`-linked) are
+  confirmed and applied as one unit. Applies through `goethe.py`'s own
+  `Tools` class, dynamically loaded exactly the way `goethe_mcp.py` does it
+  — one write path regardless of caller. Logs every rejection (invariant or
+  human "no") with reason to `applied.jsonl`/`rejected.jsonl`.
+- **`index_to_kb` ("kb-fact") dispatch — completed this close, not new in
+  2.5.** DESIGN.md §6.2 (Thread 1, Prompt 1.5) already specified `kb-fact` as
+  the fifth proposal type dream_apply.py "reuses verbatim" from the SCRIBE-1
+  debrief format, but Prompt 2.5's original `apply_group()`/`render_group()`
+  only wired up the four Thread-2-pass call types (`mentor_correct`,
+  `record_outcome`, `kb_verify`, `skill_record`) — a real gap, silently
+  present since 2.5, only surfaced while preparing this close's own
+  kb-fact debrief proposal (see below). Fixed: `index_to_kb` now has a full
+  apply-time dispatch branch and a DESIGN.md §6.4-shaped confirm-gate render
+  (title/topic/source_tier/quality_score/verified_against/volatility/
+  evidence/content). Like `mentor_correct`/`record_outcome`, `index_to_kb`
+  has neither `provenance` nor `origin` — it gets the same full stamp
+  (both fields), located via the `doc_id=...` parsed out of its own "KB
+  created"/"KB updated (refined)" return string. `tests/test_dream_engine.py`
+  gained a `TestKbFactProposal` class (4 tests) covering this path;
+  `FakeES.index()` in that suite was corrected from an unconditional-raise
+  to a real recording stub once this surfaced that `index_to_kb`/
+  `skill_record` legitimately call `es.index()` for a brand-new doc (only
+  `es.delete()` is truly forbidden — no hard-delete tool exists anywhere in
+  this codebase).
+- **Auto-apply allowlist (2.6, design only)** — added `docs/dreaming/DESIGN.md`
+  §7: `dedup` is eligible only for the identical-pair subcase (cosine ≥0.99
+  AND `verified_against` populated and character-identical on both sides);
+  `reverify` is eligible (a `kb_verify` tag changes no content); `demote`,
+  `skill-candidate`, and `kb-fact` are permanently or provisionally excluded
+  (each creates or removes trust rather than just tagging). This closes a
+  dangling reference — `docs/dreaming/calibration-run-1.md` (written during
+  2.8) already cited "DESIGN.md §7.1"/"§7.2" before §7 existed; the section
+  now matches what those citations assumed. `GOETHE_DREAM_AUTO_APPLY` stays
+  `""` (empty) — the promotion bar (2 consecutive weeks, zero
+  rejected-in-hindsight, per type) is Thread 4's to measure, not earned yet
+  off one calibration run.
+- **First supervised dream (2.7)** — full backlog: 13/13 previously-undreamed
+  sessions, full `lse-kb` (368 docs), full `lse-errors` (32 docs). `dedup`:
+  3/3 pairs applied (cosine 0.98–1.00, all genuine same-claim duplicates,
+  none had `verified_against` set so none qualified for the new §7.2
+  auto-apply subcase anyway — correctly stayed human-gated). `stale-
+  contradiction` reverify: 0 TTL-expired docs, valid null result. `stale-
+  contradiction` contradiction: **0/7 valuable — 100% false-positive rate**
+  on verbatim-evidence review (non-sequitur pairings, category mismatches,
+  historical-vs-live claim confusion, a self-contradictory proposal, a
+  hostname/IP conflation) — the concrete, first-run demonstration of why
+  DESIGN.md's threat model rules `demote` out of auto-apply permanently.
+  `error-cluster`: 0/1 — the one skill-candidate was built entirely from a
+  `tests/test_dream_corpus.py` fixture that leaks into the real episode
+  corpus (missing `GOETHE_EPISODE_DIR` monkeypatch — flagged, not fixed
+  this run, see Known issues below). See `docs/dreaming/dream-run-2026-07-11.md`
+  for the full per-item breakdown. Also surfaced: `dream_runner.py`/
+  `dream_apply.py` must run under `/home/sy5/owui/bin/python3` on LUCIFER
+  (bare `python3` has an incompatible `elasticsearch==9.4.1`) — undocumented
+  until now.
+- **Calibration measurement (2.8)** — `docs/dreaming/calibration-run-1.md`.
+  Production `linear` retrieval mode is **bit-for-bit identical**
+  (recall@1=0.76, recall@3=0.84, MRR=0.800) before vs after the dream despite
+  ~84% corpus growth (≈200→368 docs) since the last recorded sweep.
+  `min_score=4.2` re-swept per its own maintenance rule ("re-sweep after
+  major KB growth") and holds: 38/38 correct top-1 hits kept at the 4.020
+  cut, 0 correct lost — same shape as the v0.3.8 finding. `lse-kb` doc count
+  unchanged at 368 (dedup demotes, never deletes). 3 demotions applied,
+  quality 0.50→0.35. **Verdict: no regression — clear to open Thread 3.**
+  Two non-blocking findings carried forward (see Known issues below).
+- **Invariant tests (2.9)** — `tests/test_dream_engine.py`, 16 tests, fully
+  mock-based (no live ES/Ollama/goethe.py needed): proposal-validator
+  rejection of the three hard invariants (quality-raise, `ground_truth`,
+  quarantine-touch, plus the `quarantine-delete-request` exception),
+  origin/provenance stamping against a disposable in-memory doc, dedup
+  trust-field union (keep-doc only, retire-doc untouched), dream_runner's
+  ES-read-only boundary, dream_apply's dry-run-makes-zero-ES-calls
+  guarantee, and (added during this close) the `kb-fact`/`index_to_kb`
+  path. Written to run alongside `tests/test_kb_contracts.py` (live-ES
+  contracts) without conflict — different fixtures, no shared state.
+
+**Known issues carried forward (recorded, not fixed this close):**
+- `dream_apply.py` has **no code path that sets `manifest.db`'s
+  `dreamed_at`** despite `episode_index.py`'s own comment claiming it is
+  "set by Thread 2's dream_apply.py" — the 2.7 run marked all 13 sessions
+  by hand (`sqlite3 UPDATE`). A real gap between the two files; whichever of
+  dream_runner.py (knows the session list) or dream_apply.py (knows what
+  was actually reviewed) should own this is a design call for Thread 3's
+  first prompt, not made unilaterally in this closing pass.
+- The dedup pass's candidate query (`match_all` over `lse-kb`) doesn't
+  exclude docs already demoted by a prior dedup merge, so a resolved pair
+  keeps re-surfacing on every subsequent run (confirmed live: the same 3
+  pairs re-detected in 2.8's fresh dry-run). Harmless if a human keeps
+  saying yes, but wasteful and a "why is this here again" trap.
+- `tests/test_dream_corpus.py::test_tool_exception_still_propagates_after_journaling`
+  doesn't monkeypatch `GOETHE_EPISODE_DIR`, so its real `_journal()` call
+  writes synthetic `method_raises` episodes into the live corpus on every
+  test run — traced as the root cause of 2.7's one false error-cluster
+  proposal.
+- No ES snapshot mechanism exists for a true same-day before/after
+  retrieval comparison (2.8 used the last recorded baseline, 7 days stale,
+  as "before"). Thread 4 Prompt 4.5 (A/B eval design) should specify one.
+
 ## 2026-07-11 (Cowork, cont'd): TRAUM Thread 2 (TRAUM-ENGINE) — `tools/dream_runner.py` dedup (2.2), stale/contradiction (2.3), and error-cluster (2.4) passes shipped and verified live; Goethe v0.3.9 → v0.4.0
 
 Continues the same-day Thread 1 entry below. Thread 2 is the offline dream

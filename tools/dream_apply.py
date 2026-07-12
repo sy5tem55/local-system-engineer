@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dream_apply.py — TRAUM-ENGINE apply gate (v0.1.0)
+dream_apply.py — TRAUM-ENGINE apply gate (v0.2.0)
 =============================================================================
 Companion to docs/dreaming/DESIGN.md (dataflow §1, invariants §2 row 3, SCRIBE-1
 confirm-gate format §6) and tools/dream_runner.py (Prompts 2.1-2.4, the
@@ -22,6 +22,22 @@ a deliberate mirror of goethe_mcp.py:183-208) — so there is exactly one
 write path into ES/kb regardless of whether the caller is a human MCP session
 or an applied dream proposal.
 
+ONE EXCEPTION TO "ONLY WRITES ES/kb" (Thread 3, Prompt 3.6): a `prompt-rule`
+proposal (`call == "append_learned_rule"`) never touches ES at all — it
+appends one entry to the generated include file prompts/learned-rules.md.
+This is still the same confirm-gate, the same per-proposal yes/no, the same
+applied.jsonl/rejected.jsonl logging, and the same code-enforced invariant
+discipline as everything else in this file — it is just a file write instead
+of a Tools call, because there is no Tools method for "add a standing prompt
+instruction" and there must never be one that edits prompts/node4090*
+directly. check_prompt_rule_target() below re-validates, at apply time
+against the proposal's own live args, that the target is EXACTLY
+prompts/learned-rules.md — never prompts/node4090* or anywhere else — even
+though dream_runner.py's validate_proposal_shape() already enforces the same
+thing structurally at generation time (proposals.jsonl could in principle be
+hand-edited between the two). See docs/dreaming/DESIGN.md §8 for the operator
+merge workflow this file feeds.
+
 HARD INVARIANTS (DESIGN.md §2 row 3), each enforced fail-closed (reject, not
 apply) by a dedicated check function below:
   (a) never raise quality — check_quality_raise() re-fetches the CURRENT
@@ -40,6 +56,8 @@ apply) by a dedicated check function below:
   (d) every applied write carries origin=dream + provenance matching
       ^dream-\\d{4}-\\d{2}-\\d{2}$ — see the ONE-EXCEPTION note below.
   (e) dream_runner.py's own job (session_id prefix exclusion), not this file's.
+  (f) prompt-rule proposals may ONLY ever target prompts/learned-rules.md,
+      never prompts/node4090* — check_prompt_rule_target(), Prompt 3.6.
 
 ONE EXCEPTION TO "ONE WRITE PATH" — origin/provenance stamping and dedup
 stats merge: mentor_correct/record_outcome have NO origin or provenance
@@ -58,7 +76,12 @@ is bookkeeping/tagging, never a semantic decision (what changes, by how
 much) — that always flows through the same Tools method a human would call.
 skill_record already accepts a real `provenance` argument, so no
 supplementary provenance stamp is needed there; only `origin` gets the same
-one-line es.update() afterward.
+one-line es.update() afterward. index_to_kb (the "kb-fact" proposal type,
+Thread 1 Prompt 1.5's SCRIBE-1 format, reused verbatim per DESIGN.md §6.2)
+has NEITHER provenance NOR origin — it gets the same full stamp as
+mentor_correct/record_outcome (both fields), located via the doc_id it
+returns in its own "KB created: doc_id=..." / "KB updated (refined):
+doc_id=..." result string, not skill_record's origin-only special case.
 
 CONFIRM-GATE: DESIGN.md §6.4's exact block shape, with the file-write header
 replaced per §6.4's own dream_apply.py note — a TARGET: <doc_id> header for
@@ -95,6 +118,12 @@ ENV (same GOETHE_ prefix convention as goethe.py/goethe_mcp.py/dream_runner.py)
                                     (default: this script's own directory)
   GOETHE_DREAM_AUTO_APPLY           comma-separated proposal types allowed to
                                     skip the interactive prompt (default "")
+  GOETHE_REPO_ROOT                  repo root append_learned_rule resolves
+                                    prompts/learned-rules.md against (Prompt
+                                    3.6; default: current working directory —
+                                    run this script from the repo root, same
+                                    assumption the --proposals usage examples
+                                    above already make with relative paths)
 """
 
 import argparse
@@ -105,8 +134,9 @@ import sys
 from datetime import date, datetime
 
 import dream_runner as dr  # sibling module: reuse validate_proposal_shape, not a second validator
+import dream_digest        # Prompt 3.4: morning digest refresh at end of run
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 QUARANTINE_DELETE_TYPE = "quarantine-delete-request"  # DESIGN.md §2 row 3(c) -- not
                                                         # produced by any pass yet (2.2-2.4)
@@ -134,6 +164,10 @@ def _goethe_path_default() -> str:
 
 def _dream_auto_apply_default() -> str:
     return os.environ.get("GOETHE_DREAM_AUTO_APPLY", "")
+
+
+def _repo_root_default() -> str:
+    return os.environ.get("GOETHE_REPO_ROOT", os.getcwd())
 
 
 # --- dynamic Tools loading (mirrors goethe_mcp.py:159-208 verbatim) ---------
@@ -282,6 +316,27 @@ def check_evidence_thin(args: dict, min_len: int = 20):
     return None
 
 
+def check_prompt_rule_target(call: str, args: dict):
+    """DESIGN.md §2 row 3(f) / plan Prompt 3.9's own named test: 'validator
+    rejects prompt-rule proposals targeting prompts/node4090*'. No-op for
+    every call except append_learned_rule. Re-checks, against the
+    proposal's own live args at apply time, exactly what
+    dream_runner.py's validate_proposal_shape() already enforces
+    structurally at generation time — proposals.jsonl could in principle be
+    hand-edited between the two, same reasoning as
+    check_provenance_format() above."""
+    if call != "append_learned_rule":
+        return None
+    target = args.get("target_file")
+    if target != dr.LEARNED_RULES_TARGET:
+        return (
+            f"append_learned_rule target_file must be exactly "
+            f"{dr.LEARNED_RULES_TARGET!r}, got {target!r} — refusing to write "
+            "prompt-rule content anywhere else, especially prompts/node4090*"
+        )
+    return None
+
+
 def check_skill_collision_raise(tools, args: dict):
     """skill_record's OWN internal near-dup path (cosine>=0.92) updates an
     EXISTING lse-skills doc's quality to max(existing, new) — invariant (a)
@@ -353,7 +408,8 @@ def validate_proposal_for_apply(p: dict, es) -> str:
     ptype = p.get("type")
     call = p.get("call")
 
-    err = check_ground_truth(args) or check_provenance_format(args) or check_evidence_thin(args)
+    err = (check_ground_truth(args) or check_provenance_format(args)
+           or check_evidence_thin(args) or check_prompt_rule_target(call, args))
     if err:
         return err
 
@@ -393,8 +449,10 @@ def render_group(group: list, dream_dir: str) -> str:
     fresh skill-candidate that names no target doc."""
     first = group[0]
     doc_ids = [p["args"]["doc_id"] for p in group if "doc_id" in p.get("args", {})]
-    if doc_ids:
-        target = " (merge from ".join(doc_ids) + (")" if len(doc_ids) > 1 else "")
+    file_targets = [p["args"]["target_file"] for p in group if "target_file" in p.get("args", {})]
+    targets = doc_ids or file_targets
+    if targets:
+        target = " (merge from ".join(targets) + (")" if len(targets) > 1 else "")
         top = f"――― TARGET: {target} ―――"
     else:
         top = f"――― REPORT: {os.path.join(dream_dir, 'report.md')} (reference) ―――"
@@ -417,6 +475,20 @@ def render_group(group: list, dream_dir: str) -> str:
         elif call == "kb_verify":
             lines = [("doc_id:", args.get("doc_id", "")),
                      ("note:", "READ-ONLY phase-1 probe suggestion — writes nothing")]
+        elif call == "index_to_kb":
+            # DESIGN.md §6.4's exact index_to_kb confirm-gate block shape.
+            lines = [
+                ("title:", args.get("title", "")),
+                ("topic:", args.get("topic", "")),
+                ("source_tier:", args.get("source_tier", "")),
+                ("quality_score:", args.get("quality_score", "")),
+                ("verified_against:", args.get("verified_against", "") or "(not applicable)"),
+                ("volatility:", args.get("volatility", "slow")),
+            ]
+            multiline = {
+                "evidence": args.get("evidence", "") or "(none — source_tier is not ground_truth)",
+                "content": args.get("content", ""),
+            }
         elif call == "skill_record":
             lines = [
                 ("task:", args.get("task", "")),
@@ -431,6 +503,15 @@ def render_group(group: list, dream_dir: str) -> str:
                 ("evidence (episode ids):", ", ".join(p.get("evidence", [])) or "(none)"),
             ]
             multiline = {"procedure": args.get("procedure", "")}
+        elif call == "append_learned_rule":
+            lines = [
+                ("target_file:", args.get("target_file", "")),
+                ("section_hint:", args.get("section_hint", "") or "(unspecified)"),
+                ("provenance:", args.get("provenance", "")),
+                ("source_tier:", args.get("source_tier", "")),
+                ("evidence refs:", ", ".join(p.get("evidence", [])) or "(none)"),
+            ]
+            multiline = {"rule": args.get("rule", ""), "rationale": args.get("rationale", "")}
         blocks.append(_fmt_block(call, i, len(group), lines, multiline))
         blocks.append(f"why:               {p.get('why', '')}")
         blocks.append("")
@@ -464,7 +545,84 @@ def _stamp_dream_fields(es, doc_id: str, today: str, extra: dict = None) -> None
     es.update(index="lse-kb", id=doc_id, body={"doc": doc})
 
 
-def apply_group(tools, group: list, dry_run: bool) -> list:
+LEARNED_RULES_HEADER = """# Learned Rules — TRAUM prompt-rule proposals (generated, human-gated)
+
+> Populated ONLY by `tools/dream_apply.py`, one entry per human-confirmed
+> `prompt-rule` proposal (TRAUM Thread 3, Prompt 3.6). Full merge workflow:
+> `docs/dreaming/DESIGN.md` §8.
+>
+> This file is a STAGING AREA, not a live prompt — nothing here is loaded by
+> `goethe.py`/llama-ui today, and it must never become an `#include` of
+> `prompts/node4090-*` without an explicit, separately-reviewed change to
+> that loading path. NEVER edit `prompts/node4090-*` directly from this
+> file, from `dream_apply.py`, or from any dream. The operator reviews each
+> "## Pending" entry by hand and, if accepted, folds its `rule` text into
+> the NEXT `prompts/node4090-vX.Y.Z` version bump (the same v0.5.x -> v0.6.0
+> discipline every other prompt change already follows), then moves the
+> entry down to "## Merged" annotated with the version that absorbed it.
+> Entries are append-only otherwise — never delete a pending or rejected
+> entry, edit its status instead, so this file stays a legible history of
+> every rule TRAUM has ever proposed.
+
+## Pending
+
+## Merged
+"""
+
+
+def _learned_rules_entry_text(args: dict, evidence: list, today: str) -> str:
+    """One '## Pending' entry, Prompt 3.6's fixed shape — see DESIGN.md §8
+    for the field-by-field contract this mirrors."""
+    evidence_str = ", ".join(evidence) if evidence else "(none)"
+    title = args["rule"].strip()[:60].rstrip()
+    return (
+        f"### {today} — {title} [status: pending]\n"
+        f"- rule: {args['rule']}\n"
+        f"- rationale: {args['rationale']}\n"
+        f"- section_hint: {args.get('section_hint', '') or '(unspecified)'}\n"
+        f"- evidence: {evidence_str}\n"
+        f"- dream: {args.get('provenance', f'dream-{today}')}\n"
+        "\n"
+    )
+
+
+def append_learned_rule(repo_root: str, args: dict, evidence: list, today: str) -> str:
+    """Prompt 3.6's one exception to Tools-passthrough (see module
+    docstring's ONE EXCEPTION note above). Appends one entry under
+    prompts/learned-rules.md's '## Pending' heading, creating the file with
+    LEARNED_RULES_HEADER if it doesn't exist yet. `args["target_file"]` has
+    already been validated (check_prompt_rule_target) to be EXACTLY
+    dr.LEARNED_RULES_TARGET before this is ever called — this function does
+    not re-derive the path from args, it uses the same fixed constant, so a
+    validator bug can't be compounded by this function trusting args anyway.
+    Returns a short result string, same shape as a Tools method's own
+    return value, so apply_group()/applied.jsonl logging needs no special
+    case for this call."""
+    path = os.path.join(repo_root, dr.LEARNED_RULES_TARGET)
+    if os.path.isfile(path):
+        with open(path, "rt", encoding="utf-8") as f:
+            text = f.read()
+    else:
+        text = LEARNED_RULES_HEADER
+
+    entry = _learned_rules_entry_text(args, evidence, today)
+    marker = "## Merged"
+    idx = text.find(marker)
+    if idx == -1:
+        # Marker missing (hand-edited file?) — fail closed by appending both
+        # the entry and a fresh Merged heading rather than silently
+        # dropping the new entry or guessing at file structure.
+        text = text.rstrip("\n") + "\n\n" + entry + "## Merged\n"
+    else:
+        text = text[:idx] + entry + text[idx:]
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "wt", encoding="utf-8") as f:
+        f.write(text)
+    return f"learned-rules.md updated (pending entry appended): {path}"
+
+
+def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list:
     """Applies one confirmed group. Returns a list of
     {"proposal":..., "result":...} dicts, one per proposal actually applied
     (or that would be, under --dry-run)."""
@@ -537,6 +695,31 @@ def apply_group(tools, group: list, dry_run: bool) -> list:
                           "-- skill_record's own write still succeeded", file=sys.stderr)
             results.append({"proposal": p, "result": result})
 
+        elif call == "index_to_kb":
+            # "kb-fact" proposals (DESIGN.md §6.2, reused verbatim from
+            # Thread 1's SCRIBE-1 debrief format) -- a NEW doc, never an
+            # existing doc_id, so none of the doc_id-gated checks above
+            # apply; check_ground_truth already ran on args.source_tier at
+            # the top of validate_proposal_for_apply.
+            result = tools.index_to_kb(
+                content=args["content"], title=args["title"], topic=args.get("topic", "general"),
+                source_url=args.get("source_url", ""), quality_score=args.get("quality_score", 0.5),
+                source_tier=args.get("source_tier", "inferred"), evidence=args.get("evidence", ""),
+                verified_against=args.get("verified_against", ""), volatility=args.get("volatility", "slow"),
+            )
+            doc_id_match = re.search(r"doc_id=(\S+)", result or "")
+            if doc_id_match:
+                _stamp_dream_fields(es, doc_id_match.group(1), today)
+            else:
+                print(f"[dream_apply] WARNING: could not parse doc_id from index_to_kb result "
+                      f"({result!r}) -- origin/provenance NOT stamped", file=sys.stderr)
+            results.append({"proposal": p, "result": result})
+
+        elif call == "append_learned_rule":
+            # Prompt 3.6 — the one call in this loop that never touches ES.
+            result = append_learned_rule(repo_root, args, p.get("evidence", []), today)
+            results.append({"proposal": p, "result": result})
+
         else:
             results.append({"proposal": p, "result": f"ERROR: unknown call {call!r}, not applied"})
 
@@ -560,6 +743,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--embed-model", default=_embed_model_default())
     ap.add_argument("--goethe-path", default=_goethe_path_default(),
                     help="path to goethe.py to dynamically load (default: alongside this script)")
+    ap.add_argument("--repo-root", default=_repo_root_default(),
+                    help="repo root append_learned_rule (Prompt 3.6) resolves "
+                    "prompts/learned-rules.md against (default: $GOETHE_REPO_ROOT or cwd)")
     ap.add_argument("--auto-apply-types", default=_dream_auto_apply_default(),
                     help="comma-separated proposal types allowed to skip the interactive "
                     "prompt (default: '' — DESIGN.md §2 row 2, earned via eval, not by hand)")
@@ -624,7 +810,7 @@ def main(argv=None) -> None:
                     }) + "\n")
                 continue
 
-            results = apply_group(tools, group, args.dry_run)
+            results = apply_group(tools, group, args.dry_run, args.repo_root)
             n_applied += len(results)
             for r in results:
                 applied_f.write(json.dumps({
@@ -642,6 +828,16 @@ def main(argv=None) -> None:
         f"rejected_invariant={n_rejected_invariant} rejected_human={n_rejected_human} "
         f"-> {applied_path}, {rejected_path}",
         file=sys.stderr,
+    )
+
+    # Prompt 3.4 (TRAUM-INSIGHT): refresh the morning digest "at the end of
+    # every dream run" -- the apply half in this file's case, so applied
+    # overnight KB changes show up promptly. args.dry_run here means the
+    # SAME thing it means throughout apply_group(): if this was a preview
+    # run, nothing was actually applied, so the digest must not claim it was
+    # (gather_applied() also filters on dry_run itself as defense-in-depth).
+    dream_digest.refresh_digest(
+        dream_dir=dream_dir, es_url=args.es_url, dry_run=args.dry_run,
     )
 
 
