@@ -27,6 +27,3 @@ nohup.out
 # remote once Phase 5 lands. Not tracked here; avoid it becoming an embedded/nested
 # repo blob in this one.
 lse/
-
-# Session handover/learnings — regenerated each session
-*session*.md
