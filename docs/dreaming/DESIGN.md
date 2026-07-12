@@ -749,3 +749,190 @@ no new code:
   intervening confirm") already covers this; §7 adds no new test
   obligation, only the policy the eventual `DREAM_AUTO_APPLY` value must be
   justified against.
+
+---
+
+## 8. Prompt-rule proposals — `prompts/learned-rules.md` (Thread 3, Prompt 3.6)
+
+> Fixed by Thread 3, Prompt 3.6. Implemented in `tools/dream_runner.py`'s
+> insights pass (Prompt 3.2, `_insight_to_proposal`'s `prompt-rule` branch)
+> and `tools/dream_apply.py` (`check_prompt_rule_target`,
+> `append_learned_rule`). This section is the merge-workflow contract the
+> plan prompt asks for, and the sixth proposal type's full spec (§6.2 lists
+> the first five — `dedup`, `reverify`, `demote`, `skill-candidate`,
+> `kb-fact`; `prompt-rule` is the sixth, added here rather than renumbering
+> §6, since it is structurally different from all five: it is the only
+> proposal type whose applied artifact is a file, not an ES/kb write).
+
+### 8.1 Why a new write path instead of reusing Tools
+
+Every other proposal type dispatches through an existing `goethe.py` `Tools`
+method (§1's "exactly one write path into ES/kb"). There is no `Tools`
+method for "add a standing instruction to the system prompt," and there
+must never be one that touches `prompts/node4090-*` directly — the plan is
+explicit: *"dreams may propose additions to a new generated include file
+prompts/learned-rules.md ... NEVER direct edits to the canonical node4090
+prompt."* So `prompt-rule` proposals get their own `call` name,
+`append_learned_rule`, which `dream_apply.py` recognizes as its one
+documented exception to Tools-passthrough (module docstring's "ONE
+EXCEPTION" note) — still gated by the same confirm-gate, still logged to
+`applied.jsonl`/`rejected.jsonl`, still subject to the same
+never-model-supplied-target discipline as everything else in this
+document.
+
+### 8.2 Proposal shape
+
+```json
+{
+  "type": "prompt-rule",
+  "call": "append_learned_rule",
+  "args": {
+    "target_file": "prompts/learned-rules.md",
+    "rule": "one short, imperative sentence -- exactly as it should read inside the system prompt",
+    "rationale": "one sentence: what recurring problem this rule prevents",
+    "section_hint": "which existing prompt section this would slot under -- best guess, not binding",
+    "provenance": "dream-YYYY-MM-DD",
+    "source_tier": "inferred"
+  },
+  "evidence": ["<verbatim evidence_refs from the insight that proposed this>"],
+  "insight_domain": "command-frequency|failure-retry|tool-usage|automation-candidates",
+  "confidence": 0.0,
+  "why": "the insight's own observation, truncated to 300 chars"
+}
+```
+
+`args.target_file` is **never read from the model's own output at
+generation time** — `dream_runner.py`'s `_insight_to_proposal` hard-codes it
+to the module constant `LEARNED_RULES_TARGET` (`"prompts/learned-rules.md"`)
+regardless of what the insight schema's `prompt_rule.target_file` might
+otherwise have contained (there is in fact no such field in the schema at
+all — see §8.3). This closes off the entire class of attack §5 names
+("Indirect prompt injection via episode content") for this proposal type
+specifically: even a fully compromised dreamer has no field through which
+to steer the write target, because the write target isn't a field.
+
+### 8.3 The hard invariant, enforced twice
+
+Same "code-enforced, not just prompted" discipline as every invariant in §2
+row 3, applied at both layers this workstream already uses:
+
+1. **Generation time** — `dream_runner.py`'s `validate_proposal_shape()`
+   rejects any `prompt-rule` proposal whose `args.target_file` is not
+   exactly `LEARNED_RULES_TARGET`, and rejects any with an empty `rule` or
+   `rationale`. This runs before a proposal ever reaches `proposals.jsonl`.
+2. **Apply time** — `dream_apply.py`'s `check_prompt_rule_target()`
+   re-checks the identical condition against the proposal's own live args,
+   for the same reason `check_provenance_format()` re-checks provenance
+   format: `proposals.jsonl` sits on disk between generation and apply and
+   could in principle be hand-edited. `append_learned_rule()` (the function
+   that actually writes the file) does not even accept a path from `args`
+   — it always resolves against the same `dr.LEARNED_RULES_TARGET`
+   constant `dream_runner.py` defines, so a bug in either validator cannot
+   be compounded by the writer trusting `args` anyway.
+
+This is DESIGN.md §2 row 3(f) (`tests/test_dream_engine.py`/a future
+`tests/test_dream_apply.py` case, per plan Prompt 3.9: "learned-rules.md
+never auto-merged (validator rejects prompt-rule proposals targeting
+prompts/node4090*)").
+
+`prompt-rule` is also excluded from `DREAM_AUTO_APPLY` by the same §7.1 test
+("does applying this change what the KB asserts") extended to prompts: a
+prompt-rule proposal changes what every future session is *instructed* to
+do, which is at least as consequential as a `kb-fact`/`skill-candidate` —
+never a candidate for auto-apply, full stop, same permanent exclusion as
+those two.
+
+### 8.4 `prompts/learned-rules.md` file structure
+
+Created on first use by `dream_apply.py`'s `append_learned_rule()` (or
+seeded ahead of time — see §8.6) with a fixed header, then two sections:
+
+```
+# Learned Rules — TRAUM prompt-rule proposals (generated, human-gated)
+
+> ...header explaining the file's purpose and the NEVER-edit-node4090-from-here rule...
+
+## Pending
+
+### 2026-07-12 — <first ~60 chars of the rule text> [status: pending]
+- rule: <verbatim rule text, ready to paste into a prompt section>
+- rationale: <verbatim rationale>
+- section_hint: <hint, or "(unspecified)">
+- evidence: <comma-joined evidence_refs, or "(none)">
+- dream: dream-2026-07-12
+
+## Merged
+
+### 2026-06-19 — <rule text> [status: merged (v0.6.1)]
+- ...same fields as above, unchanged...
+```
+
+Entries are **append-only**: a new `prompt-rule` proposal always adds a new
+`### ` entry under `## Pending`; nothing already in the file is ever
+rewritten by `dream_apply.py` itself (an operator moving an entry to
+`## Merged`, per §8.5, is the one human-driven exception, done by hand
+between dream runs, not by any code path). A rejected entry is not deleted
+either — the operator may hand-annotate its status (e.g. `[status:
+rejected — <why>]`) so the file stays a complete, legible history of every
+rule TRAUM has ever proposed, mirroring the KB-DECAY "quarantine and
+expiry, never deletion" rule (`docs/traum-dreaming-plan.md` §4) applied to
+this file instead of `lse-kb`.
+
+### 8.5 Operator merge workflow
+
+`prompts/learned-rules.md` is never included by reference into a live
+prompt and is never read by `goethe.py`/llama-ui — it is purely a staging
+area for a human. Folding an accepted rule into the canonical prompt
+follows the exact discipline already in place for every `prompts/v0.5.x` →
+`prompts/node4090-v0.6.0`-style bump (`prompts/CHANGELOG.md`'s own
+convention), with one extra bookkeeping step at the end:
+
+1. Read `prompts/learned-rules.md`'s `## Pending` section (ideally alongside
+   that day's `latest-digest.md`, which will surface a pending-`prompt-rule`
+   count once Prompt 3.4's digest is extended to count this proposal type
+   too — not yet wired as of this section; a future prompt's job, not
+   assumed done here).
+2. For each entry worth keeping, hand-edit the rule's wording to fit the
+   target prompt section's existing voice/format (the entry's `rule` field
+   is a starting draft, "exactly as it should read," not guaranteed to need
+   zero editing — the operator is the final author of what ships in a live
+   prompt, same as always).
+3. Bump `prompts/node4090-vX.Y.Z.md` to the next version, folding in the
+   accepted wording alongside whatever else that version bump contains.
+4. Move the entry from `## Pending` to `## Merged` in
+   `prompts/learned-rules.md`, appending `(vX.Y.Z)` to its status line and
+   leaving every other field untouched — this is the permanent record of
+   which version bump absorbed which dreamed insight, queryable later the
+   same way `applied.jsonl`/`provenance` make an ES write traceable back to
+   its dream run.
+5. Entries not accepted stay in `## Pending` (or get a hand-annotated
+   `rejected` status per §8.4) — there is no expiry rule for this file the
+   way `dream_apply.py --queue`'s 14-day proposal expiry (plan Prompt 4.4)
+   applies to ES proposals; a prompt-rule suggestion can sit unreviewed
+   indefinitely without any live-system consequence, since it is inert
+   until an operator acts on it.
+
+Steps 1–4 are entirely manual today — no code in this workstream automates
+moving an entry to `## Merged` or bumping the node4090 version, by design:
+that edit is a human, in the next version bump, full stop.
+
+### 8.6 Current status — seeded with a null result, not a fabricated rule
+
+The plan prompt asks to "seed learned-rules.md with any accepted insights
+from prompts 3.2–3.3." As of this prompt (3.6): Prompt 3.2 (the insights
+pass itself) has only ever been exercised against synthetic fixtures in
+this Cowork session (no live `/opt/local-se` corpus has been available to
+generate a real insight from — see the 2026-07-12 Prompt 3.4/3.5 CHANGELOG
+entries' own "no live ... available in this session" notes), and Prompt 3.3
+(ledger-mining from `tasks.db`) has not been implemented yet at all (still
+listed as not-done in both prior Thread 3 CHANGELOG entries). There is
+therefore no real, evidence-backed `prompt-rule` insight to seed —
+fabricating one to make this section look populated would violate the
+exact verbatim-evidence discipline this whole workstream exists to enforce.
+`prompts/learned-rules.md` is seeded with the header (§8.4) and one
+`## Pending` entry recording this as an explicit null result, per the
+project's PH3-2 discipline ("a pass that finds nothing emits ... so we can
+distinguish 'nothing there' from 'didn't look'" — plan Prompt 3.8, applied
+here one prompt early since §8.6 exists now). The first real entry in this
+file should come from an actual dream run once Prompt 3.3 ships and/or a
+live corpus is available.
