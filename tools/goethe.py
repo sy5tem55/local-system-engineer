@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.4.0
+title: LSE Goethe v0.4.0-a
 author: local-system-engineer
-version: 0.4.0
+version: 0.4.0-a
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -15,6 +15,26 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
+    Goethe v0.4.0-a: TRAUM Thread 3 (TRAUM-INSIGHT), Prompt 3.5 — [DREAM]
+              banner. Wired tools/dream_digest.py's latest-digest.md into
+              session start the CHRONOS way (server-injected, not
+              docstring-dependent): _consume_time_banner() — already the
+              single once-per-session gate for the [TIME] banner on the
+              first search_kb return — now also appends a [DREAM] line
+              (digest date + pending human-gate count + pointer to the
+              full file), hard-capped at 200 chars. New valve
+              DREAM_DIGEST_PATH (default /opt/local-se/dreams/latest-
+              digest.md; empty disables the banner). Missing/unreadable/
+              unparseable digest degrades to no [DREAM] line, never an
+              error — same non-fatal discipline as dream_digest.py's own
+              gather steps. Deliberately minimal per the PH5-2 warning
+              (plan §2): one valve, one new private method
+              (_dream_banner()), a 3-line change to an existing method —
+              no restructuring of this god-class. DEPLOY NOTE: existing
+              llama-ui threads do NOT pick up this change; each must be
+              restarted (fresh thread) after goethe_mcp.py restart for the
+              [DREAM] banner to appear, same as any other Tools-class
+              behavior change.
     Goethe v0.4.0: TRAUM Thread 2 (TRAUM-ENGINE) begins consuming this file's
               existing Tools methods from a SECOND caller for the first time —
               no code in this file changed for this bump; recorded here because
@@ -984,6 +1004,18 @@ class Tools:
             "gap computation in time_check() and the first search_kb/search_web return "
             "of each session. Empty = banner warns that the cutoff is unset. Set "
             "per-model, per-node (env GOETHE_MODEL_PRETRAIN_CUTOFF in start scripts).",
+        )
+        DREAM_DIGEST_PATH: str = Field(
+            default="/opt/local-se/dreams/latest-digest.md",
+            description="TRAUM Thread 3 (v0.4.0-a), Prompt 3.5: path to "
+            "tools/dream_digest.py's output, read once per session to build the "
+            "[DREAM] banner appended alongside the [TIME] banner on the first "
+            "search_kb return (_consume_time_banner()). Empty = banner disabled. "
+            "Missing/unreadable/unparseable file = banner silently omitted, "
+            "never an error (env GOETHE_DREAM_DIGEST_PATH in start scripts; "
+            "matches DREAM_DIR in dream_runner.py/dream_apply.py/dream_digest.py "
+            "by default, but is intentionally its own valve since goethe.py "
+            "never itself writes into that directory).",
         )
         PFSENSE_URL: str = Field(
             default="https://pfsense.home.arpa",
@@ -3469,13 +3501,59 @@ tail -5 /tmp/goethe-node3090.log
             "before asserting."
         )
 
+    _DREAM_DIGEST_MAX_CHARS = 200
+
+    def _dream_banner(self) -> str:
+        """The [DREAM] banner (TRAUM Thread 3, Prompt 3.5, v0.4.0-a). Reads
+        dream_digest.py's own output (DREAM_DIGEST_PATH valve) and surfaces
+        just the digest date + pending human-gate count, with a pointer to
+        the full file for detail — the LSE should never need to know
+        tools/dream_digest.py exists to learn a digest is waiting.
+
+        Missing valve, missing/unreadable file, or a digest whose header we
+        can't parse are all legitimate null results (no dream cycle has run
+        yet, DREAM_DIGEST_PATH is unset, etc.) — this degrades to "" rather
+        than raising or emitting a confusing partial line, same non-fatal
+        discipline as dream_digest.py's own gather_* steps.
+        """
+        path = (self.valves.DREAM_DIGEST_PATH or "").strip()
+        if not path:
+            return ""
+        try:
+            with open(path, "rt", encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            return ""
+        import re as _re  # noqa: PLC0415
+
+        m_date = _re.search(r"generated (\d{4}-\d{2}-\d{2})", text)
+        m_pending = _re.search(r"## Pending human-gate \((\d+)\)", text)
+        if not m_date or not m_pending:
+            return ""
+        line = (
+            f"[DREAM] digest={m_date.group(1)} | pending-gate={m_pending.group(1)} "
+            f"| read {path} for details"
+        )
+        return line[: self._DREAM_DIGEST_MAX_CHARS]
+
     def _consume_time_banner(self) -> str:
         """Return the [TIME] banner exactly once per session (server-side
-        enforcement — compliance must not depend on the model reading docstrings)."""
+        enforcement — compliance must not depend on the model reading
+        docstrings). TRAUM Thread 3 (v0.4.0-a): also appends the [DREAM]
+        banner (Prompt 3.5) on this same first-call gate — one server-side
+        injection point covers both time-anchoring and dream-digest
+        awareness before the session's first real search_kb result.
+        Do NOT add a second, separate once-per-session flag for [DREAM] —
+        reusing _time_banner_emitted is what guarantees the two banners can
+        never desync (one firing without the other)."""
         if self._time_banner_emitted:
             return ""
         self._time_banner_emitted = True
-        return self._time_banner(verified=False) + "\n\n"
+        banner = self._time_banner(verified=False)
+        dream_line = self._dream_banner()
+        if dream_line:
+            banner += "\n" + dream_line
+        return banner + "\n\n"
 
     def time_check(self) -> str:
         """
@@ -3576,6 +3654,24 @@ tail -5 /tmp/goethe-node3090.log
             self._time_banner_emitted = True  # this return carries the banner
             lines.append("")
             lines.append(self._time_banner(verified=verified))
+            # TRAUM Thread 3 close (v0.4.0-a, 2026-07-12): time_check() sets the
+            # SAME _time_banner_emitted flag _consume_time_banner() gates on, so
+            # a session that calls time_check() before its first search_kb was
+            # silently losing the [DREAM] banner forever (the flag trips here,
+            # _consume_time_banner() later sees it already True and returns "").
+            # This is exactly the desync _consume_time_banner()'s own docstring
+            # says reusing the flag is supposed to prevent — the assumption that
+            # _consume_time_banner() is the ONLY place that sets the flag was
+            # wrong; time_check() is a second one and the system prompt's own
+            # TIME DISCIPLINE section tells the model to call it first for any
+            # "date-sensitive work", which a TRAUM digest-review session is.
+            # Fix: time_check() must also append the [DREAM] line on the same
+            # gate it already owns, so whichever tool fires first, both banners
+            # still always appear together — restoring the "can never desync"
+            # guarantee for real instead of only for the search_kb-first case.
+            dream_line = self._dream_banner()
+            if dream_line:
+                lines.append(dream_line)
             return "\n".join(lines)
         except Exception as e:
             self._log(f"TIME-CHECK ERROR: {e}")

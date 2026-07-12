@@ -572,3 +572,151 @@ class TestKbFactProposal:
         assert "source_tier:" in rendered and "primary" in rendered
         # no doc_id anywhere in a kb-fact proposal -> REPORT header, not TARGET
         assert "――― REPORT:" in rendered
+
+
+# --- 6. prompt-rule target invariant (Prompt 3.9's own named test) --------
+
+class TestPromptRuleTargetInvariant:
+    """Plan §"Prompt 3.9": 'learned-rules.md never auto-merged (validator
+    rejects prompt-rule proposals targeting prompts/node4090*)'. Covers
+    BOTH validators that enforce this -- dream_runner.py's
+    validate_proposal_shape() at generation time and dream_apply.py's
+    check_prompt_rule_target() at apply time (belt-and-suspenders, same
+    reasoning as check_provenance_format(): proposals.jsonl could in
+    principle be hand-edited between the two) -- plus append_learned_rule()
+    itself, confirmed to write ONLY to learned-rules.md and never to any
+    prompts/node4090* path."""
+
+    def _prompt_rule_proposal(self, **overrides):
+        """`overrides` may include `target_file` to override the correct
+        default -- passing `target_file=None` DOES set args['target_file']
+        to None (not "unspecified, use the default"), which several tests
+        below rely on to exercise the missing-target case."""
+        args = {
+            "target_file": dr.LEARNED_RULES_TARGET,
+            "rule": "Always run kb_verify before trusting a >90-day-old fast-volatility doc.",
+            "rationale": "TTL-expired docs surfaced stale claims twice this month.",
+            "section_hint": "ground-truth-before-action",
+            "provenance": f"dream-{TODAY}",
+            "source_tier": "inferred",
+        }
+        args.update(overrides)
+        return {
+            "type": "prompt-rule",
+            "call": "append_learned_rule",
+            "args": args,
+            "why": "recurring stale-doc trust issue found by the error-cluster pass",
+        }
+
+    # -- generation-time: dream_runner.py's validate_proposal_shape() -----
+
+    @pytest.mark.parametrize("bad_target", [
+        "prompts/node4090-v0.6.0.md",
+        "prompts/node4090.md",
+        "prompts/node4090-v0.7.0-draft.md",
+        "goethe.py",
+        "",
+        None,
+    ])
+    def test_shape_validator_rejects_any_target_other_than_learned_rules(self, bad_target):
+        proposal = self._prompt_rule_proposal(target_file=bad_target)
+        reason = dr.validate_proposal_shape(proposal)
+        assert reason is not None
+        assert "target_file" in reason
+        assert dr.LEARNED_RULES_TARGET in reason
+
+    def test_shape_validator_accepts_the_correct_target(self):
+        proposal = self._prompt_rule_proposal()
+        assert proposal["args"]["target_file"] == "prompts/learned-rules.md"
+        assert dr.validate_proposal_shape(proposal) is None
+
+    @pytest.mark.parametrize("missing_field", ["rule", "rationale"])
+    def test_shape_validator_rejects_missing_rule_or_rationale(self, missing_field):
+        proposal = self._prompt_rule_proposal(**{missing_field: ""})
+        reason = dr.validate_proposal_shape(proposal)
+        assert reason is not None
+        assert missing_field in reason
+
+    # -- apply-time: dream_apply.py's check_prompt_rule_target() ----------
+
+    @pytest.mark.parametrize("bad_target", [
+        "prompts/node4090-v0.6.0.md", "prompts/node4090.md", "", None,
+    ])
+    def test_apply_time_check_rejects_bad_target_in_isolation(self, bad_target):
+        reason = da.check_prompt_rule_target("append_learned_rule", {"target_file": bad_target})
+        assert reason is not None
+        assert "node4090" in reason
+
+    def test_apply_time_check_accepts_correct_target(self):
+        assert da.check_prompt_rule_target(
+            "append_learned_rule", {"target_file": dr.LEARNED_RULES_TARGET}
+        ) is None
+
+    def test_apply_time_check_is_a_noop_for_other_calls(self):
+        """Docstring: 'No-op for every call except append_learned_rule' --
+        a mentor_correct/record_outcome/etc. proposal has no target_file at
+        all, and must never be rejected by this check regardless."""
+        assert da.check_prompt_rule_target("mentor_correct", {}) is None
+        assert da.check_prompt_rule_target("record_outcome", {"target_file": "anything"}) is None
+
+    def test_end_to_end_validate_for_apply_rejects_bad_target(self):
+        """Full integration through validate_proposal_for_apply(): a
+        hand-edited proposals.jsonl entry aimed at the canonical prompt is
+        caught by the STRUCTURAL (shape) layer first -- 'structural: ...'
+        prefix, same as any other shape violation -- before
+        check_prompt_rule_target() would even run."""
+        es = FakeES()
+        proposal = self._prompt_rule_proposal(target_file="prompts/node4090-v0.6.0.md")
+        reason = da.validate_proposal_for_apply(proposal, es)
+        assert reason is not None
+        assert reason.startswith("structural:")
+        assert dr.LEARNED_RULES_TARGET in reason  # message names the one ALLOWED path
+
+    def test_end_to_end_validate_for_apply_accepts_good_proposal(self):
+        es = FakeES()
+        assert da.validate_proposal_for_apply(self._prompt_rule_proposal(), es) is None
+
+    # -- append_learned_rule() itself: writes ONLY learned-rules.md -------
+
+    def test_append_learned_rule_writes_only_to_learned_rules_md(self, tmp_path):
+        proposal = self._prompt_rule_proposal()
+        result = da.append_learned_rule(
+            repo_root=str(tmp_path), args=proposal["args"],
+            evidence=["error-cluster pass, 3 occurrences across 2 sessions"], today=TODAY,
+        )
+        target_path = tmp_path / dr.LEARNED_RULES_TARGET
+        assert target_path.exists()
+        assert str(target_path) in result
+
+        # Nothing under prompts/ named node4090* was created or touched --
+        # this is the file-system-level proof of the "never auto-merged
+        # into the canonical prompt" invariant, not just a string check.
+        prompts_dir = tmp_path / "prompts"
+        node4090_files = list(prompts_dir.glob("node4090*")) if prompts_dir.is_dir() else []
+        assert node4090_files == []
+
+        text = target_path.read_text(encoding="utf-8")
+        assert "## Pending" in text
+        assert proposal["args"]["rule"] in text
+        assert proposal["args"]["rationale"] in text
+
+    def test_append_learned_rule_appends_under_pending_not_merged(self, tmp_path):
+        """A second proposal appended later must land under '## Pending'
+        too, alongside the first -- '## Merged' is a human-only, manual
+        step (plan §3.6: 'Operator manually merges accepted rules into the
+        next prompt version bump'), never something append_learned_rule()
+        itself performs."""
+        first = self._prompt_rule_proposal(rule="Rule A", rationale="Rationale A")
+        second = self._prompt_rule_proposal(rule="Rule B", rationale="Rationale B")
+        da.append_learned_rule(repo_root=str(tmp_path), args=first["args"], evidence=[], today=TODAY)
+        da.append_learned_rule(repo_root=str(tmp_path), args=second["args"], evidence=[], today=TODAY)
+
+        text = (tmp_path / dr.LEARNED_RULES_TARGET).read_text(encoding="utf-8")
+        pending_idx = text.find("## Pending")
+        merged_idx = text.find("## Merged")
+        assert pending_idx != -1 and merged_idx != -1
+        assert "Rule A" in text and "Rule B" in text
+        # both new entries land BEFORE '## Merged' (i.e. under Pending),
+        # never after it.
+        assert text.find("Rule A") < merged_idx
+        assert text.find("Rule B") < merged_idx

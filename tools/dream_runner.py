@@ -81,6 +81,76 @@ Passes:
                       prior-art context (its resolution text) but never
                       counts toward the occurrence/session bar — it's an
                       aggregate with no per-session breakdown of its own.
+  patterns            TRAUM-INSIGHT Thread 3, Prompt 3.1 — IMPLEMENTED.
+                      Mechanical audit-log miner over agent_commands.log,
+                      NO LLM call anywhere in this pass. Four sub-passes over
+                      one parsed event stream (compact tag-line format,
+                      corpus-audit.md (a)): (1) command frequency table over
+                      CMD-tag detail strings; (2) failure->retry adjacency —
+                      a CMD whose paired DONE reports rc!=0, followed by the
+                      SAME command re-issued within --patterns-retry-window
+                      lines; (3) per-tag ("tool") event counts bucketed by
+                      ISO week, zero-filled across every tag x week combo in
+                      range so a "this tool went quiet" finding (the
+                      RFC-KB-zero-usage class of finding) is directly
+                      readable without another pass; (4) longest contiguous
+                      command sequences (>=--patterns-min-sequence-len)
+                      recurring across >=--patterns-min-sessions distinct
+                      SESSIONS — agent_commands.log carries no session_id of
+                      its own, so sessions are inferred by inactivity gap
+                      (--patterns-session-gap-minutes). Generates ZERO
+                      mentor_correct/record_outcome proposals — unlike the
+                      other three passes this writes a raw analytics
+                      artifact, /opt/local-se/dreams/YYYY-MM-DD/patterns.json
+                      (or --patterns-out), for a later prompt to consume.
+                      Windowed read (corpus-audit.md (a)'s explicit caveat:
+                      the log is unrotated and growing) via
+                      --patterns-max-lines (default 50,000 — comfortably
+                      covers the ~44k-line corpus this prompt targets without
+                      loading the whole, ever-growing file).
+  insights            TRAUM-INSIGHT Thread 3, Prompt 3.2 — IMPLEMENTED.
+                      Feeds patterns.json's four mined domains (re-derived
+                      in-memory, no on-disk dependency on a prior `patterns`
+                      run) plus recent session summaries to the local model,
+                      ONE insight domain per LLM call: command-frequency,
+                      failure-retry, tool-usage, automation-candidates.
+                      Structured insight schema per DESIGN.md-style
+                      discipline: {observation, evidence_refs, cost_estimate,
+                      proposed_change (kb-fact|skill|prompt-rule|tool-change),
+                      confidence}. evidence_refs are code-enforced against the
+                      exact data shown that call (verbatim-evidence rule) --
+                      an insight with zero verified refs is discarded, not
+                      trusted on the model's word. ALL insights land in
+                      report.md's "## Cross-session insights" section;
+                      proposed_change in {kb-fact, skill, prompt-rule}
+                      additionally becomes a real proposal that flows
+                      through the same validate_proposal_shape() gate as
+                      every other pass -- kb-fact/skill dispatch through
+                      existing Tools methods (index_to_kb/skill_record,
+                      source_tier=inferred); prompt-rule (Prompt 3.6) dispatches
+                      through append_learned_rule, dream_apply.py's ONE
+                      exception to "writes go through Tools" -- it appends to
+                      the generated include file prompts/learned-rules.md,
+                      NEVER to a canonical prompts/node4090* file, and the
+                      target path is always hard-coded here, never taken from
+                      the model's own output (see _insight_to_proposal).
+                      tool-change still maps to no write path of any kind and
+                      stays report.md-only.
+
+NULL-RESULT DISCIPLINE (Prompt 3.8, PH3-2 formalized): every run_pass_*()
+returns a 3-tuple (proposals, narrative, null_record). null_record is a
+structured dict (see _null_record) — pass name, reason code, `looked`
+(True="nothing there": the pass inspected corpus_size-worth of data at
+`thresholds` and still found nothing; False="didn't look": an upstream
+gate, e.g. an empty index or unreachable dependency, stopped it first),
+corpus_size, thresholds — or None when the pass produced something
+non-null. write_report() renders it as report.md's own "## Null result"
+section (plain, not buried in prose) and appends it to
+<dream-dir>/<date>/null-results.jsonl, which — unlike report.md and
+proposals.jsonl, both single-pass-per-invocation snapshots — survives a
+full dream cycle's five sequential pass invocations against the same
+day-dir intact (same "at"-mode convention as dream_apply.py's
+applied.jsonl/rejected.jsonl).
 
 DEDUP THRESHOLD — the labeling exercise (Prompt 2.2):
   Cosine similarity alone is a signal, not a merge decision. Before trusting
@@ -127,6 +197,21 @@ ENV (mirrors goethe.py / episode_index.py's GOETHE_ prefix valve convention)
                                     = no filter; the dreamer does not currently run
                                     through the MCP gateway, so it has no session_id
                                     of its own to exclude yet.
+  GOETHE_DREAM_PATTERNS_MAX_LINES   patterns pass windowed tail-read size, in raw log
+                                    lines (default 50000 — see corpus-audit.md (a)'s
+                                    windowed-read caveat)
+  GOETHE_DREAM_PATTERNS_RETRY_WINDOW  failure->retry adjacency lookahead window, in
+                                    raw log lines (default 20)
+  GOETHE_DREAM_PATTERNS_SESSION_GAP_MINUTES  inactivity gap (minutes) used to infer
+                                    session boundaries in agent_commands.log, which
+                                    carries no session_id of its own (default 30)
+  GOETHE_DREAM_PATTERNS_MIN_SEQUENCE_LEN  shortest command sequence considered an
+                                    automation candidate (default 3)
+  GOETHE_DREAM_PATTERNS_MAX_SEQUENCE_LEN  longest command sequence window mined
+                                    (default 8 — bounds worst-case compute)
+  GOETHE_DREAM_PATTERNS_MIN_SESSIONS  minimum distinct inferred sessions a repeated
+                                    command sequence must span to qualify (default 3)
+  GOETHE_DREAM_PATTERNS_TOP_COMMANDS  command-frequency table size cap (default 50)
 
 INVARIANTS enforced structurally in this file, not just by convention
 (DESIGN.md §2 row 1 and row 3(e)):
@@ -145,13 +230,14 @@ import random
 import re
 import sqlite3
 import sys
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import date, datetime
 
 import episode_index as _epidx
+import dream_digest
 
-__version__ = "0.4.0"
+__version__ = "0.8.0"
 
 
 # --- config / valve-style env defaults --------------------------------------
@@ -194,6 +280,41 @@ def _node3090_fallback_model_default() -> str:
 
 def _dream_runner_prefix_default() -> str:
     return os.environ.get("GOETHE_DREAM_RUNNER_SESSION_PREFIX", "")
+
+
+def _patterns_max_lines_default() -> int:
+    # corpus-audit.md (a): unrotated, growing (9.4MB/134k+ lines and climbing)
+    # — windowed tail-read, not whole-file. 50k comfortably covers the
+    # ~44k-line working corpus Prompt 3.1 targets.
+    return int(os.environ.get("GOETHE_DREAM_PATTERNS_MAX_LINES", "50000"))
+
+
+def _patterns_retry_window_default() -> int:
+    return int(os.environ.get("GOETHE_DREAM_PATTERNS_RETRY_WINDOW", "20"))
+
+
+def _patterns_session_gap_minutes_default() -> int:
+    return int(os.environ.get("GOETHE_DREAM_PATTERNS_SESSION_GAP_MINUTES", "30"))
+
+
+def _patterns_min_sequence_len_default() -> int:
+    return int(os.environ.get("GOETHE_DREAM_PATTERNS_MIN_SEQUENCE_LEN", "3"))
+
+
+def _patterns_max_sequence_len_default() -> int:
+    return int(os.environ.get("GOETHE_DREAM_PATTERNS_MAX_SEQUENCE_LEN", "8"))
+
+
+def _patterns_min_sessions_default() -> int:
+    return int(os.environ.get("GOETHE_DREAM_PATTERNS_MIN_SESSIONS", "3"))
+
+
+def _patterns_top_commands_default() -> int:
+    return int(os.environ.get("GOETHE_DREAM_PATTERNS_TOP_COMMANDS", "50"))
+
+
+def _insights_max_sessions_in_prompt_default() -> int:
+    return int(os.environ.get("GOETHE_DREAM_INSIGHTS_MAX_SESSIONS_IN_PROMPT", "20"))
 
 
 def _ollama_url_default() -> str:
@@ -282,6 +403,15 @@ class DreamConfig:
     label_band: float = DEFAULT_LABEL_BAND
     label_sample_n: int = DEFAULT_LABEL_SAMPLE_N
     labels_out: str | None = None
+    patterns_max_lines: int = 50000
+    patterns_retry_window: int = 20
+    patterns_session_gap_minutes: int = 30
+    patterns_min_sequence_len: int = 3
+    patterns_max_sequence_len: int = 8
+    patterns_min_sessions: int = 3
+    patterns_top_commands: int = 50
+    patterns_out: str | None = None
+    insights_max_sessions_in_prompt: int = 20
 
 
 def build_config(args: argparse.Namespace) -> DreamConfig:
@@ -312,6 +442,15 @@ def build_config(args: argparse.Namespace) -> DreamConfig:
         label_band=args.label_band,
         label_sample_n=args.label_sample_n,
         labels_out=args.labels_out,
+        patterns_max_lines=args.patterns_max_lines,
+        patterns_retry_window=args.patterns_retry_window,
+        patterns_session_gap_minutes=args.patterns_session_gap_minutes,
+        patterns_min_sequence_len=args.patterns_min_sequence_len,
+        patterns_max_sequence_len=args.patterns_max_sequence_len,
+        patterns_min_sessions=args.patterns_min_sessions,
+        patterns_top_commands=args.patterns_top_commands,
+        patterns_out=args.patterns_out,
+        insights_max_sessions_in_prompt=args.insights_max_sessions_in_prompt,
     )
 
 
@@ -803,13 +942,16 @@ def call_dream_llm(system_prompt: str, user_content: str, cfg: DreamConfig, no_t
     return _post_chat_completion(ollama_url, payload, 300)
 
 
-def parse_dream_envelope(reply: str) -> tuple[dict | None, str]:
+def parse_dream_envelope(reply: str, key: str = "proposals") -> tuple[dict | None, str]:
     """Parse a dream-pass reply into its JSON envelope. Same strip +
     raw_decode approach as goethe.py's _parse_planner_envelope
     (tools/goethe.py:6751), adapted to this envelope's required key —
     'proposals' (a list; may be EMPTY, that's a valid outcome per
     DESIGN.md §6.1 "zero proposals is a valid, expected outcome") instead
-    of the planner's 'steps'.
+    of the planner's 'steps'. `key` generalizes this to any single-list-key
+    envelope shape (Prompt 3.2's insights pass uses key="insights") without
+    duplicating this parse logic — every existing caller relies on the
+    "proposals" default, so behavior there is unchanged.
     Returns (envelope_dict, "") on success, (None, fail_reason) on failure.
     """
     clean = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
@@ -821,16 +963,20 @@ def parse_dream_envelope(reply: str) -> tuple[dict | None, str]:
         env, _ = json.JSONDecoder().raw_decode(clean, idx)
     except Exception as exc:
         return None, f"JSON parse failed ({exc}). RAW: {clean[idx:idx + 200]!r}"
-    if "proposals" not in env or not isinstance(env["proposals"], list):
-        return None, "envelope has no 'proposals' array"
+    if key not in env or not isinstance(env[key], list):
+        return None, f"envelope has no {key!r} array"
     return env, ""
 
 
-def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConfig) -> tuple[dict | None, str | None]:
+def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConfig,
+                            key: str = "proposals") -> tuple[dict | None, str | None]:
     """Two-attempt retry loop, same shape as goethe.py's
     _request_plan_envelope (tools/goethe.py:6860): call the LLM, parse the
     envelope; on failure, append a corrective note describing exactly what
-    was wrong and retry exactly once.
+    was wrong and retry exactly once. `key` is forwarded to
+    parse_dream_envelope (see its docstring) and used in the corrective
+    retry message so the model sees the SAME key name it was asked for the
+    first time.
     Returns (envelope_dict, None) on success, (None, error_message) on
     failure (both attempts exhausted, or the LLM cascade itself errored).
     """
@@ -841,14 +987,14 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
         reply = call_dream_llm(system_prompt, content, cfg, no_think=True)
         if not reply or reply.startswith("ERROR:"):
             return None, f"DREAMER UNAVAILABLE — ({(reply or 'no reply')[:160]})"
-        env, fail_reason = parse_dream_envelope(reply)
+        env, fail_reason = parse_dream_envelope(reply, key=key)
         if env is not None:
             break
         print(f"[dream_runner] attempt {attempt} rejected — {fail_reason[:120]}", file=sys.stderr)
         content = (
             user_content
             + "\n\nPREVIOUS REPLY REJECTED: " + fail_reason[:200]
-            + "\nReturn ONLY the JSON envelope object {\"proposals\": [...]} — "
+            + f"\nReturn ONLY the JSON envelope object {{\"{key}\": [...]}} — "
             "no thinking, no prose, no code fences."
         )
     if env is None:
@@ -859,7 +1005,16 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
 # --- proposal shape guard (structural only — NOT the hard-invariant validator) -
 
 REQUIRED_PROPOSAL_KEYS = {"type", "call", "args", "why"}
-KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact"}
+KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact", "prompt-rule"}
+
+# Prompt 3.6: the ONLY file a prompt-rule proposal may ever target. Fixed
+# here as a constant (not read from a proposal's own args at generation
+# time) so a hand-edited or malicious proposals.jsonl has no path to point
+# this at prompts/node4090* even before dream_apply.py's own apply-time
+# invariant re-checks it (DESIGN.md's "code-enforced, not just prompted"
+# discipline applied at both layers, same as the demote evidence-length check
+# below).
+LEARNED_RULES_TARGET = "prompts/learned-rules.md"
 
 
 def validate_proposal_shape(p: dict) -> str | None:
@@ -890,6 +1045,24 @@ def validate_proposal_shape(p: dict) -> str | None:
         evidence = p.get("args", {}).get("evidence", "")
         if not isinstance(evidence, str) or len(evidence) < 20:
             return "demote proposal's args.evidence is missing or under 20 chars"
+    if p.get("type") == "prompt-rule":
+        # Prompt 3.6, plan §"Prompt 3.9": "learned-rules.md never auto-merged
+        # (validator rejects prompt-rule proposals targeting prompts/node4090*)".
+        # Structural half of that invariant, checked here at generation time;
+        # dream_apply.py's check_prompt_rule_target() re-checks it at apply
+        # time against live args, same belt-and-suspenders pattern as the
+        # ground-truth/quarantine checks split across both files.
+        target = p.get("args", {}).get("target_file")
+        if target != LEARNED_RULES_TARGET:
+            return (
+                f"prompt-rule proposal's args.target_file must be exactly "
+                f"{LEARNED_RULES_TARGET!r}, got {target!r} — dreams may never "
+                "target prompts/node4090* or any other file"
+            )
+        for key in ("rule", "rationale"):
+            val = p.get("args", {}).get(key, "")
+            if not isinstance(val, str) or not val.strip():
+                return f"prompt-rule proposal's args.{key} is missing or empty"
     provenance = p.get("args", {}).get("provenance")
     if provenance is not None and not re.fullmatch(r"dream-\d{4}-\d{2}-\d{2}", str(provenance)):
         # DESIGN.md §6.2: a Thread 2 dream always writes "dream-YYYY-MM-DD"
@@ -1437,6 +1610,49 @@ def _dedup_batch_to_proposals(cfg: DreamConfig, batch: list, docs_by_id: dict) -
     return proposals, None
 
 
+# --- null-result records (Prompt 3.8 — PH3-2 formalized) --------------------
+#
+# Every run_pass_*() below has, since Prompt 2.2, narrated a null result in
+# PROSE when it finds nothing ("Null result (PH3-2)" strings scattered
+# through this file). Prompt 3.8 formalizes that prose into a structured,
+# machine-readable record alongside it, so a later reader — a human
+# skimming report.md, dream_digest.py, or a future dream pass mining dream
+# history itself — can tell the two null shapes apart WITHOUT parsing
+# prose:
+#   - "nothing there": the pass actually inspected `corpus_size`-worth of
+#     data and applied `thresholds`, and still found nothing worth
+#     proposing (`looked=True`).
+#   - "didn't look": some upstream gate — an empty index, an unreachable
+#     dependency, a missing/empty log window — stopped the pass before it
+#     could examine anything at all (`looked=False`). corpus_size is still
+#     reported in this case (usually all zeros) so the distinction is
+#     visible in the data itself, not just in `looked`.
+#
+# Every run_pass_*() now returns a 3-tuple (proposals, narrative,
+# null_record); null_record is None whenever the pass produced >=1
+# proposal, or otherwise has something non-null to show (the patterns pass
+# never emits proposals at all — see run_pass_patterns — but still counts
+# as non-null when its mined analytics aren't all empty).
+
+def _null_record(pass_name: str, reason: str, *, looked: bool,
+                  corpus_size: dict, thresholds: dict) -> dict:
+    """One structured null-result record for `pass_name`. `looked` is the
+    single field a reader should check first (see module note above);
+    `reason` is a short, greppable code, not a sentence — the
+    already-returned narrative string carries the human-readable prose.
+    `corpus_size`/`thresholds` are pass-specific dicts of plain counts and
+    config values (never doc content) so a null record is always safe to
+    log, print, or feed to a later pass without redaction concerns."""
+    return {
+        "pass": pass_name,
+        "result": "null",
+        "reason": reason,
+        "looked": looked,
+        "corpus_size": corpus_size,
+        "thresholds": thresholds,
+    }
+
+
 def run_pass_dedup(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, error_docs) -> tuple:
     """Prompt 2.2 — near-duplicate lse-kb entries -> "dedup" proposal pairs.
 
@@ -1450,39 +1666,65 @@ def run_pass_dedup(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, err
 
     A null result at any stage (empty lse-kb, no embeddable docs, no
     candidate pairs, no pairs past threshold, model confirms nothing) is
-    returned as an explicit narrative, not silently swallowed — PH3-2.
+    returned as an explicit narrative, not silently swallowed — PH3-2 —
+    AND (Prompt 3.8) as a structured null_record, the function's 3rd
+    return value (None when this call produced >=1 proposal).
     """
+    thresholds = {"dedup_floor": cfg.dedup_floor, "dedup_threshold": cfg.dedup_threshold}
+
     if not kb_docs:
-        return [], "dedup pass: lse-kb returned zero docs (empty index or ES unreachable this run) — nothing to dedup. Null result (PH3-2)."
+        narrative = "dedup pass: lse-kb returned zero docs (empty index or ES unreachable this run) — nothing to dedup. Null result (PH3-2)."
+        return [], narrative, _null_record(
+            "dedup", "empty_kb", looked=False,
+            corpus_size={"kb_docs": 0, "embedded_docs": 0, "candidate_pairs": 0, "pairs_above_threshold": 0},
+            thresholds=thresholds,
+        )
 
     docs_by_id = {d["_id"]: d for d in kb_docs if d.get("_id")}
 
     embeddings = embed_kb_docs(cfg, kb_docs)
     if not embeddings:
-        return [], (
+        narrative = (
             f"dedup pass: embedding failed for all {len(docs_by_id)} doc(s) "
             f"(Ollama unreachable at {cfg.ollama_url}?) — cannot compute "
             "similarity this run."
+        )
+        return [], narrative, _null_record(
+            "dedup", "embedding_unavailable", looked=False,
+            corpus_size={"kb_docs": len(kb_docs), "embedded_docs": 0, "candidate_pairs": 0, "pairs_above_threshold": 0},
+            thresholds=thresholds,
         )
 
     pairs = find_candidate_pairs(embeddings, cfg.dedup_floor)
     pairs = filter_same_document_chunks(pairs, docs_by_id)
     if not pairs:
-        return [], (
+        narrative = (
             f"dedup pass: zero candidate pairs at/above the floor "
             f"{cfg.dedup_floor} across {len(embeddings)} embedded doc(s) "
             "(after excluding same-document chunk pairs). Null result "
             "(PH3-2) — no near-duplicates in the corpus at this floor "
             "right now."
         )
+        return [], narrative, _null_record(
+            "dedup", "no_candidate_pairs", looked=True,
+            corpus_size={"kb_docs": len(kb_docs), "embedded_docs": len(embeddings),
+                         "candidate_pairs": 0, "pairs_above_threshold": 0},
+            thresholds=thresholds,
+        )
 
     accepted = [p for p in pairs if p[2] >= cfg.dedup_threshold]
     if not accepted:
-        return [], (
+        narrative = (
             f"dedup pass: {len(pairs)} candidate pair(s) found above the floor "
             f"{cfg.dedup_floor}, but none reached the merge threshold "
             f"{cfg.dedup_threshold}. Null result (PH3-2) — nothing proposed "
             "this run."
+        )
+        return [], narrative, _null_record(
+            "dedup", "no_pairs_above_threshold", looked=True,
+            corpus_size={"kb_docs": len(kb_docs), "embedded_docs": len(embeddings),
+                         "candidate_pairs": len(pairs), "pairs_above_threshold": 0},
+            thresholds=thresholds,
         )
 
     narrative_lines = [
@@ -1498,13 +1740,20 @@ def run_pass_dedup(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, err
         if batch_note:
             narrative_lines.append(batch_note)
 
+    null_record = None
     if not proposals:
         narrative_lines.append(
             "Model confirmed zero true duplicates among the candidates — "
             "null result (PH3-2): cosine similarity alone was not enough "
             "evidence for any pair this run."
         )
-    return proposals, "\n".join(narrative_lines)
+        null_record = _null_record(
+            "dedup", "model_confirmed_zero", looked=True,
+            corpus_size={"kb_docs": len(kb_docs), "embedded_docs": len(embeddings),
+                         "candidate_pairs": len(pairs), "pairs_above_threshold": len(accepted)},
+            thresholds=thresholds,
+        )
+    return proposals, "\n".join(narrative_lines), null_record
 
 
 def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, error_docs) -> tuple:
@@ -1519,10 +1768,24 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
         _demote_proposals_for_doc.
 
     Both sub-passes report an explicit null result when they find nothing
-    (PH3-2) rather than staying silent about it.
+    (PH3-2) rather than staying silent about it — and (Prompt 3.8) the
+    whole pass's structured null_record (3rd return value) is set only
+    when BOTH sub-passes are null this run; either sub-pass alone
+    producing a proposal makes the pass non-null overall.
     """
+    thresholds = {
+        "contradiction_min_quality": CONTRADICTION_MIN_QUALITY,
+        "chronos_ttl_days": dict(_CHRONOS_TTL_DAYS),
+    }
     if not kb_docs:
-        return [], "stale-contradiction pass: lse-kb returned zero docs (empty index or ES unreachable this run) — nothing to check. Null result (PH3-2)."
+        narrative = "stale-contradiction pass: lse-kb returned zero docs (empty index or ES unreachable this run) — nothing to check. Null result (PH3-2)."
+        return [], narrative, _null_record(
+            "stale-contradiction", "empty_kb", looked=False,
+            corpus_size={"kb_docs": 0, "sessions_considered": len(sessions),
+                         "sessions_with_candidates": 0, "reverify_candidates": 0,
+                         "demote_confirmed": 0},
+            thresholds=thresholds,
+        )
 
     docs_by_id = {d["_id"]: d for d in kb_docs if d.get("_id")}
 
@@ -1573,7 +1836,18 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
             "KB doc and had other tool evidence to check it against this run."
         )
 
-    return reverify_proposals + demote_proposals, "\n".join(narrative_lines)
+    null_record = None
+    if not reverify_proposals and not demote_proposals:
+        null_record = _null_record(
+            "stale-contradiction", "no_reverify_and_no_contradictions", looked=True,
+            corpus_size={"kb_docs": len(kb_docs), "sessions_considered": len(sessions),
+                         "sessions_with_candidates": sessions_with_candidates,
+                         "reverify_candidates": len(reverify_proposals),
+                         "demote_confirmed": len(demote_proposals)},
+            thresholds=thresholds,
+        )
+
+    return reverify_proposals + demote_proposals, "\n".join(narrative_lines), null_record
 
 
 def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, error_docs) -> tuple:
@@ -1584,21 +1858,38 @@ def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_d
     prior-art context (its resolution text, if any) but never counts toward
     the occurrence/session bar itself — see collect_lse_errors_items.
     """
+    thresholds = {
+        "error_cluster_threshold": cfg.error_cluster_threshold,
+        "min_occurrences": ERROR_CLUSTER_MIN_OCCURRENCES,
+        "min_sessions": ERROR_CLUSTER_MIN_SESSIONS,
+    }
     episode_items = collect_episode_error_occurrences(sessions, episodes_by_session)
     error_doc_items = collect_lse_errors_items(error_docs)
     all_items = episode_items + error_doc_items
     if not all_items:
-        return [], (
+        narrative = (
             "error-cluster pass: no episode error/timeout occurrences and no "
             "lse-errors docs to cluster this run. Null result (PH3-2)."
+        )
+        return [], narrative, _null_record(
+            "error-cluster", "no_items", looked=False,
+            corpus_size={"episode_items": 0, "error_doc_items": 0, "embedded_items": 0,
+                         "clusters_found": 0, "clusters_qualifying": 0},
+            thresholds=thresholds,
         )
 
     items_by_key = {item["key"]: item for item in all_items}
     embeddings = embed_items(cfg, all_items)
     if not embeddings:
-        return [], (
+        narrative = (
             f"error-cluster pass: embedding failed for all {len(all_items)} "
             f"item(s) (Ollama unreachable at {cfg.ollama_url}?)."
+        )
+        return [], narrative, _null_record(
+            "error-cluster", "embedding_unavailable", looked=False,
+            corpus_size={"episode_items": len(episode_items), "error_doc_items": len(error_doc_items),
+                         "embedded_items": 0, "clusters_found": 0, "clusters_qualifying": 0},
+            thresholds=thresholds,
         )
 
     clusters = cluster_by_similarity(embeddings, cfg.error_cluster_threshold)
@@ -1629,28 +1920,1009 @@ def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_d
         f"{qualifying} cluster(s) met the >={ERROR_CLUSTER_MIN_OCCURRENCES} occurrences / "
         f">={ERROR_CLUSTER_MIN_SESSIONS} sessions bar; {len(proposals)} skill-candidate(s) drafted."
     )
+    null_record = None
     if qualifying == 0:
         narrative_lines.append(
             "Null result (PH3-2): no error/timeout pattern repeated enough "
             "this run to clear the occurrence/session bar for a skill-candidate."
         )
-    return proposals, "\n".join(narrative_lines)
+        null_record = _null_record(
+            "error-cluster", "no_cluster_cleared_bar", looked=True,
+            corpus_size={"episode_items": len(episode_items), "error_doc_items": len(error_doc_items),
+                         "embedded_items": len(embeddings), "clusters_found": len(clusters),
+                         "clusters_qualifying": 0},
+            thresholds=thresholds,
+        )
+    return proposals, "\n".join(narrative_lines), null_record
+
+
+# --- patterns pass (Prompt 3.1, TRAUM-INSIGHT — mechanical, NO LLM) ---------
+#
+# Everything below parses agent_commands.log's compact tag-line format
+# (corpus-audit.md (a): '[YYYY-MM-DD HH:MM:SS] TAG: detail', CMD paired with
+# a following 'DONE rc=<n> len=<n>' line, 99.998% of the corpus) into a flat
+# list of event dicts, then mines that list four different ways. Every
+# function from _LOG_LINE_RE down to mine_patterns() is a pure function of
+# its arguments — no file I/O, no network, no randomness, no LLM call — so
+# each is independently unit-testable against synthetic log lines/events.
+
+_LOG_LINE_RE = re.compile(
+    r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<tag>[A-Z][A-Z0-9]*): (?P<detail>.*)$"
+)
+_CWD_SUFFIX_RE = re.compile(r"\s*\(cwd=(?P<cwd>[^)]*)\)\s*$")
+_DONE_RC_RE = re.compile(r"^rc=(?P<rc>-?\d+)\s+len=(?P<len>\d+)")
+
+
+def parse_agent_log_lines(lines: list) -> list[dict]:
+    """Parse compact tag-line events: '[ts] TAG: detail'.
+
+    corpus-audit.md (a): 99.998% of agent_commands.log is this one-line-per-
+    event format; the 2-line 'bootstrap era' block (2026-05-23 22:12:51-57,
+    exactly 2 lines, ever) is '[ts] ▶ COMMAND' / '  cmd : ...' / '  cwd : ...'
+    / a divider line — none of which match `_LOG_LINE_RE` (no bare-word tag
+    followed by ': ') — so it is silently, structurally skipped, exactly as
+    corpus-audit.md calls out is safe ("trivially skippable").
+
+    Returns one dict per matched line, in file order:
+      {"line_no": <1-indexed position within `lines`>, "ts": "...",
+       "tag": "CMD"/"DONE"/..., "detail": <cwd suffix stripped>,
+       "cwd": <str or None>, "rc": <int or None, DONE lines only>}
+
+    `line_no` is 1-indexed within the `lines` list passed in, NOT
+    necessarily the on-disk line number — callers doing a windowed
+    (tail -N) read are responsible for that offset if they need it; the
+    patterns pass itself only ever uses line_no for *relative* (gap)
+    distances, so this is deliberately not disk-absolute.
+    """
+    events = []
+    for i, raw in enumerate(lines, start=1):
+        m = _LOG_LINE_RE.match(raw.rstrip("\n"))
+        if not m:
+            continue
+        tag = m.group("tag")
+        detail = m.group("detail")
+        cwd = None
+        cwd_m = _CWD_SUFFIX_RE.search(detail)
+        if cwd_m:
+            cwd = cwd_m.group("cwd")
+            detail = detail[:cwd_m.start()].rstrip()
+        event = {"line_no": i, "ts": m.group("ts"), "tag": tag, "detail": detail, "cwd": cwd}
+        if tag == "DONE":
+            rc_m = _DONE_RC_RE.match(detail)
+            event["rc"] = int(rc_m.group("rc")) if rc_m else None
+        events.append(event)
+    return events
+
+
+def command_frequency(events: list, top_n: int) -> list[dict]:
+    """Prompt 3.1 (a) — frequency table over CMD-tag detail strings (the
+    literal shell command run; cwd is stripped by parse_agent_log_lines so
+    the same command from two different working directories still counts
+    as one entry). Ties broken by first-seen order (stable), so output is
+    reproducible run-to-run, not dependent on dict/hash ordering."""
+    counts = Counter()
+    first_seen = {}
+    for idx, e in enumerate(events):
+        if e["tag"] != "CMD":
+            continue
+        cmd = e["detail"]
+        counts[cmd] += 1
+        first_seen.setdefault(cmd, idx)
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], first_seen[kv[0]]))
+    return [{"command": cmd, "count": n} for cmd, n in ordered[:top_n]]
+
+
+def _find_next_matching_cmd(events: list, start_idx: int, detail: str, max_line_no: int):
+    for e in events[start_idx:]:
+        if e["line_no"] > max_line_no:
+            break
+        if e["tag"] == "CMD" and e["detail"] == detail:
+            return e
+    return None
+
+
+def find_failure_retries(events: list, window_lines: int) -> list[dict]:
+    """Prompt 3.1 (b) — failure->retry adjacency: a CMD whose paired DONE
+    reports rc!=0, followed by the SAME command re-issued as a later CMD
+    within `window_lines` (raw log lines, not event count) after the
+    failing DONE. Single forward pass, bounded lookahead per failure —
+    deterministic, no LLM.
+
+    'Paired' follows corpus-audit.md (a) literally: the DONE immediately
+    following a CMD is that CMD's own completion marker, so `last_cmd` is
+    reset to None on every DONE (consumed) rather than carried forward —
+    an untagged/unmatched DONE (no preceding CMD in this window) is simply
+    not attributable to a command and is skipped, not guessed at.
+    """
+    results = []
+    last_cmd = None  # (detail, line_no) of the most recent CMD, awaiting its DONE
+    for idx, e in enumerate(events):
+        if e["tag"] == "CMD":
+            last_cmd = (e["detail"], e["line_no"])
+            continue
+        if e["tag"] == "DONE":
+            if last_cmd is not None:
+                rc = e.get("rc")
+                if rc is not None and rc != 0:
+                    cmd_detail, _cmd_line = last_cmd
+                    fail_line = e["line_no"]
+                    retry = _find_next_matching_cmd(
+                        events, idx + 1, cmd_detail, fail_line + window_lines
+                    )
+                    if retry is not None:
+                        results.append({
+                            "command": cmd_detail,
+                            "rc": rc,
+                            "fail_line": fail_line,
+                            "retry_line": retry["line_no"],
+                            "gap_lines": retry["line_no"] - fail_line,
+                        })
+            last_cmd = None
+    return results
+
+
+def _iso_week(ts: str) -> str:
+    dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+    iso_year, iso_week, _ = dt.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
+
+
+def tool_usage_by_week(events: list) -> tuple:
+    """Prompt 3.1 (c) — per-tag ('tool') event counts bucketed by ISO week.
+    Every tag x week combination in the observed range is present in the
+    output (zero-filled), not just weeks where a tag actually fired — this
+    is what makes a 'this tool went quiet' finding (the RFC-KB
+    zero-usage class corpus-audit.md flags) directly readable straight out
+    of patterns.json, no second pass needed. DONE is excluded (it is CMD's
+    own completion marker, not a distinct tool). Deterministic, no LLM.
+
+    Returns (usage: {tag: {week: count}}, weeks_sorted: [week, ...]).
+    """
+    weeks_seen = set()
+    tags_seen = set()
+    raw_counts = Counter()
+    for e in events:
+        if e["tag"] == "DONE":
+            continue
+        wk = _iso_week(e["ts"])
+        weeks_seen.add(wk)
+        tags_seen.add(e["tag"])
+        raw_counts[(e["tag"], wk)] += 1
+    weeks_sorted = sorted(weeks_seen)
+    usage = {
+        tag: {wk: raw_counts.get((tag, wk), 0) for wk in weeks_sorted}
+        for tag in sorted(tags_seen)
+    }
+    return usage, weeks_sorted
+
+
+def infer_sessions(events: list, gap_minutes: int) -> list:
+    """agent_commands.log carries no session_id (corpus-audit.md (a) —
+    only tasks.db/episode files do). Sessions are inferred by inactivity
+    gap: a new session starts whenever the time between one event and the
+    next exceeds `gap_minutes`. Single forward pass over already
+    time-ordered events — deterministic, no LLM.
+
+    Returns a list of event-lists (one per inferred session), in order.
+    """
+    sessions = []
+    current = []
+    prev_dt = None
+    for e in events:
+        dt = datetime.strptime(e["ts"], "%Y-%m-%d %H:%M:%S")
+        if prev_dt is not None and (dt - prev_dt).total_seconds() > gap_minutes * 60:
+            if current:
+                sessions.append(current)
+            current = []
+        current.append(e)
+        prev_dt = dt
+    if current:
+        sessions.append(current)
+    return sessions
+
+
+def session_command_lists(sessions: list) -> list:
+    """Per inferred session, the ordered list of CMD detail strings only
+    (DONE/other tags dropped) — the sequence-mining unit for
+    find_automation_candidates."""
+    return [[e["detail"] for e in sess if e["tag"] == "CMD"] for sess in sessions]
+
+
+def find_automation_candidates(command_lists: list, min_len: int, max_len: int,
+                                min_sessions: int) -> list:
+    """Prompt 3.1 (d) — longest contiguous command sequences (>=min_len)
+    that recur across >=min_sessions distinct inferred sessions.
+    Longest-first: lengths are scanned from max_len down to min_len, and
+    once a sequence at some length L clears the session bar, every
+    (session_idx, position) it occupies is 'claimed' so a shorter sequence
+    nested inside it is not ALSO reported as a separate, redundant finding
+    at a shorter length. Claims from length L are only applied to filter
+    length L-1 and shorter — two different qualifying windows of the SAME
+    length are each reported independently even if they overlap (they are
+    literally different sequences; only cross-length nesting is
+    de-duplicated). Plain contiguous-window counting, no LLM; bounded by
+    max_len so a pathological run of one repeated command can't blow up
+    compute.
+    """
+    claimed = set()  # (session_idx, position) already covered by a longer match
+    candidates = []
+    for length in range(max_len, min_len - 1, -1):
+        window_to_sessions: dict = {}
+        for s_idx, cmds in enumerate(command_lists):
+            n = len(cmds)
+            for start in range(0, n - length + 1):
+                if any((s_idx, start + k) in claimed for k in range(length)):
+                    continue
+                window = tuple(cmds[start:start + length])
+                window_to_sessions.setdefault(window, {}).setdefault(s_idx, []).append(start)
+
+        accepted_this_length = [
+            (window, by_session) for window, by_session in window_to_sessions.items()
+            if len(by_session) >= min_sessions
+        ]
+
+        for window, by_session in accepted_this_length:
+            for s_idx, starts in by_session.items():
+                for start in starts:
+                    for k in range(length):
+                        claimed.add((s_idx, start + k))
+            candidates.append({
+                "sequence": list(window),
+                "length": length,
+                "session_count": len(by_session),
+                "sessions": sorted(by_session.keys()),
+                "occurrence_count": sum(len(v) for v in by_session.values()),
+            })
+
+    candidates.sort(key=lambda c: (-c["length"], -c["session_count"], c["sequence"]))
+    return candidates
+
+
+def mine_patterns(events: list, cfg: DreamConfig) -> dict:
+    """Prompt 3.1 orchestrator — runs all four mechanical mining sub-passes
+    over one already-parsed event stream and assembles patterns.json's
+    shape. Pure function of `events` + config knobs (no file I/O, no
+    network, no LLM) so tests can feed synthetic events straight in and
+    assert on the returned dict."""
+    freq = command_frequency(events, cfg.patterns_top_commands)
+    retries = find_failure_retries(events, cfg.patterns_retry_window)
+    usage_by_week, weeks = tool_usage_by_week(events)
+    sessions = infer_sessions(events, cfg.patterns_session_gap_minutes)
+    command_lists = session_command_lists(sessions)
+    automation = find_automation_candidates(
+        command_lists,
+        cfg.patterns_min_sequence_len,
+        max(cfg.patterns_max_sequence_len, cfg.patterns_min_sequence_len),
+        cfg.patterns_min_sessions,
+    )
+    n_failures = sum(1 for e in events if e["tag"] == "DONE" and e.get("rc") not in (None, 0))
+
+    return {
+        "lines_scanned": len(events),
+        "first_ts": events[0]["ts"] if events else None,
+        "last_ts": events[-1]["ts"] if events else None,
+        "command_frequency": freq,
+        "failure_retry": retries,
+        "failure_retry_summary": {
+            "total_failures": n_failures,
+            "total_retries_within_window": len(retries),
+            "retry_window_lines": cfg.patterns_retry_window,
+        },
+        "tool_usage_by_week": usage_by_week,
+        "weeks_observed": weeks,
+        "sessions_inferred": len(sessions),
+        "automation_candidates": automation,
+        "params": {
+            "session_gap_minutes": cfg.patterns_session_gap_minutes,
+            "min_sequence_len": cfg.patterns_min_sequence_len,
+            "max_sequence_len": cfg.patterns_max_sequence_len,
+            "min_sessions": cfg.patterns_min_sessions,
+            "top_commands": cfg.patterns_top_commands,
+            "max_lines_windowed": cfg.patterns_max_lines,
+        },
+    }
+
+
+def read_agent_log_window(cfg: DreamConfig) -> list:
+    """Bounded read for the patterns pass — corpus-audit.md (a)'s explicit
+    caveat ('a dream pass should windowed-read... rather than load
+    whole-file'; the log is unrotated and growing, 9.4MB/134k+ lines and
+    climbing). Same tail-deque strategy as tail_agent_log, but with its own,
+    much larger default (--patterns-max-lines, 50,000 vs tail_agent_log's
+    fixed 5,000) since Prompt 3.1 explicitly asks to mine the log's
+    ~44k-line working history, not just a short recent tail."""
+    if not os.path.exists(cfg.agent_log):
+        return []
+    with open(cfg.agent_log, "rt", encoding="utf-8", errors="replace") as f:
+        return list(deque(f, maxlen=cfg.patterns_max_lines))
+
+
+def write_patterns_json(cfg: DreamConfig, patterns: dict) -> str:
+    """dry-run/write split mirrors write_report(): --dry-run (default)
+    prints the payload and touches no files; --no-dry-run creates the
+    dream-dir day directory and writes patterns.json (or --patterns-out)."""
+    today = date.today().isoformat()
+    out_dir = os.path.join(cfg.dream_dir, today)
+    out_path = cfg.patterns_out or os.path.join(out_dir, "patterns.json")
+    payload = {"generated_at": datetime.now().isoformat(timespec="seconds"), **patterns}
+
+    if cfg.dry_run:
+        print(f"[dream_runner] [dry-run] would write patterns to: {out_path}", file=sys.stderr)
+        print(json.dumps(payload, indent=2))
+        return out_path
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with open(out_path, "wt", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    return out_path
+
+
+def run_pass_patterns(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, error_docs) -> tuple:
+    """Prompt 3.1 — TRAUM-INSIGHT audit-log miner. Purely mechanical: NO LLM
+    call anywhere in this function or anything it calls. Four sub-passes —
+    command frequency, failure->retry adjacency, per-tag-per-week usage
+    counters, and cross-session repeated-command-sequence ('automation
+    candidate') mining — over agent_commands.log.
+
+    Generates ZERO mentor_correct/record_outcome proposals. Unlike the
+    other three passes, this one writes a raw analytics artifact
+    (patterns.json) rather than proposing KB writes — a later prompt is
+    expected to consume patterns.json for any KB-writing follow-up.
+
+    Ignores `sessions`/`episodes_by_session`/`kb_docs`/`error_docs` (kept
+    in the signature only for PASS_FUNCS uniformity with the other three
+    passes): agent_commands.log has no session_id of its own
+    (corpus-audit.md (a)), so this pass infers its own sessions by
+    inactivity gap rather than reusing manifest.db's episode-derived ones.
+    """
+    thresholds = {
+        "patterns_min_sequence_len": cfg.patterns_min_sequence_len,
+        "patterns_min_sessions": cfg.patterns_min_sessions,
+        "patterns_retry_window": cfg.patterns_retry_window,
+        "patterns_max_lines": cfg.patterns_max_lines,
+    }
+    raw_lines = read_agent_log_window(cfg)
+    if not raw_lines:
+        narrative = (
+            f"patterns pass: agent_commands.log not found or empty at "
+            f"{cfg.agent_log} — nothing to mine. Null result (PH3-2)."
+        )
+        return [], narrative, _null_record(
+            "patterns", "log_missing_or_empty", looked=False,
+            corpus_size={"raw_lines": 0, "events": 0, "sessions_inferred": 0,
+                         "command_frequency_rows": 0, "automation_candidates": 0,
+                         "failure_retry": 0},
+            thresholds=thresholds,
+        )
+
+    events = parse_agent_log_lines(raw_lines)
+    if not events:
+        narrative = (
+            f"patterns pass: read {len(raw_lines)} raw line(s) from "
+            f"{cfg.agent_log} but matched zero compact-tag-line events "
+            "(bootstrap-era-only window, or unrecognized format). Null "
+            "result (PH3-2)."
+        )
+        return [], narrative, _null_record(
+            "patterns", "no_matching_events", looked=False,
+            corpus_size={"raw_lines": len(raw_lines), "events": 0, "sessions_inferred": 0,
+                         "command_frequency_rows": 0, "automation_candidates": 0,
+                         "failure_retry": 0},
+            thresholds=thresholds,
+        )
+
+    patterns = mine_patterns(events, cfg)
+    out_path = write_patterns_json(cfg, patterns)
+
+    fr_summary = patterns["failure_retry_summary"]
+    narrative = (
+        f"patterns pass: mined {len(events)} event(s) from {len(raw_lines)} "
+        f"windowed raw line(s) of {cfg.agent_log} "
+        f"({patterns['first_ts']} .. {patterns['last_ts']}). "
+        f"{len(patterns['command_frequency'])} distinct command(s) in the "
+        f"frequency table (top {cfg.patterns_top_commands}); "
+        f"{fr_summary['total_failures']} failure(s) found, "
+        f"{fr_summary['total_retries_within_window']} retried within "
+        f"{cfg.patterns_retry_window} line(s); "
+        f"{len(patterns['weeks_observed'])} week(s) x "
+        f"{len(patterns['tool_usage_by_week'])} tag(s) in the usage matrix; "
+        f"{patterns['sessions_inferred']} session(s) inferred "
+        f"(gap={cfg.patterns_session_gap_minutes}m), "
+        f"{len(patterns['automation_candidates'])} automation candidate "
+        f"sequence(s) found (>={cfg.patterns_min_sequence_len} commands, "
+        f">={cfg.patterns_min_sessions} sessions). Written to {out_path}. "
+        "Mechanical only — no LLM call in this pass (Prompt 3.1)."
+    )
+
+    corpus_size = {
+        "raw_lines": len(raw_lines), "events": len(events),
+        "sessions_inferred": patterns["sessions_inferred"],
+        "command_frequency_rows": len(patterns["command_frequency"]),
+        "automation_candidates": len(patterns["automation_candidates"]),
+        "failure_retry": len(patterns["failure_retry"]),
+    }
+    null_record = None
+    all_domains_empty = not (
+        patterns["command_frequency"] or patterns["failure_retry"]
+        or patterns["tool_usage_by_week"] or patterns["automation_candidates"]
+    )
+    if all_domains_empty:
+        # Prompt 3.8: this is the pass's real "nothing there" verdict — it
+        # looked (raw_lines/events both non-empty, corpus_size says so),
+        # and every one of the four mechanical sub-passes still came back
+        # empty. Distinct from the partial case below, which the pre-3.8
+        # narrative already covered but did NOT distinguish structurally.
+        narrative += (
+            " Null result (PH3-2): the entire windowed read mined zero "
+            "findings across all four sub-passes (command frequency, "
+            "failure->retry, tool usage, automation candidates)."
+        )
+        null_record = _null_record(
+            "patterns", "all_domains_empty", looked=True,
+            corpus_size=corpus_size, thresholds=thresholds,
+        )
+    elif not patterns["automation_candidates"] and not patterns["failure_retry"]:
+        narrative += (
+            " Null sub-result (PH3-2): no repeated-sequence automation "
+            "candidates and no failure->retry adjacencies found in this window."
+        )
+    return [], narrative, null_record
+
+
+
+
+# --- insights pass (Prompt 3.2, TRAUM-INSIGHT — one LLM call per domain) ---
+#
+# Feeds patterns.json's four mined domains (re-derived in-memory via
+# mine_patterns/read_agent_log_window -- the SAME code Prompt 3.1's
+# `patterns` pass itself calls, so this pass has no on-disk patterns.json
+# dependency and no ordering requirement against a prior `--pass patterns`
+# run) plus recent session summaries to the local model. "Tight scope per
+# call" (Qwen3.6's profile) means one insight DOMAIN per LLM call, never one
+# diffuse prompt covering all four at once -- see INSIGHT_DOMAINS and
+# _INSIGHT_DOMAIN_BUILDERS below, one pair per patterns.json section.
+
+INSIGHT_DOMAINS = ("command-frequency", "failure-retry", "tool-usage", "automation-candidates")
+INSIGHT_PROPOSED_CHANGES = {"kb-fact", "skill", "prompt-rule", "tool-change"}
+INSIGHT_OBSERVATION_MIN_LEN = 20  # no one-word "findings" -- same discipline as elsewhere in this file
+INSIGHT_MAX_ITEMS_PER_DOMAIN_PROMPT = 30  # cap raw data rows shown per call
+
+
+def build_session_summaries(sessions: list, max_sessions: int) -> list:
+    """Prompt 3.2's "last N session summaries" -- built straight from
+    manifest.db's own `sessions` row (session_id/start_ts/end_ts/n_calls/
+    n_errors/tools_used), no episode re-read needed. `sessions` is already
+    the --sessions/--since-bounded undreamed-session list every other pass
+    uses (select_undreamed_sessions) -- "last N" reuses that existing
+    selection rather than adding a second, redundant session-count knob;
+    `max_sessions` (--insights-max-sessions-in-prompt) only caps how many
+    of those get inlined into an LLM prompt, independent of how many were
+    read from manifest.db in the first place."""
+    summaries = []
+    for row in sessions[:max_sessions]:
+        try:
+            tools_used = json.loads(row["tools_used"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            tools_used = []
+        summaries.append({
+            "session_id": row["session_id"],
+            "start_ts": row["start_ts"],
+            "end_ts": row["end_ts"],
+            "n_calls": row["n_calls"],
+            "n_errors": row["n_errors"],
+            "tools_used": tools_used,
+        })
+    return summaries
+
+
+def _render_session_summaries(summaries: list) -> str:
+    if not summaries:
+        return "(no undreamed session summaries available this run)"
+    lines = []
+    for s in summaries:
+        tools = ", ".join(s["tools_used"][:12])
+        lines.append(
+            f"- session_id={s['session_id']} start={s['start_ts']} end={s['end_ts']} "
+            f"n_calls={s['n_calls']} n_errors={s['n_errors']} tools=[{tools}]"
+        )
+    return "\n".join(lines)
+
+
+def _domain_command_frequency(patterns: dict):
+    rows = patterns.get("command_frequency") or []
+    if not rows:
+        return None
+    rows = rows[:INSIGHT_MAX_ITEMS_PER_DOMAIN_PROMPT]
+    lines = [f'- "{r["command"]}" (count={r["count"]})' for r in rows]
+    refs = {r["command"] for r in rows}
+    return "\n".join(lines), refs
+
+
+def _domain_failure_retry(patterns: dict):
+    rows = patterns.get("failure_retry") or []
+    if not rows:
+        return None
+    rows = rows[:INSIGHT_MAX_ITEMS_PER_DOMAIN_PROMPT]
+    lines = [
+        f'- "{r["command"]}" failed rc={r["rc"]} at line {r["fail_line"]}, '
+        f'retried {r["gap_lines"]} line(s) later at line {r["retry_line"]}'
+        for r in rows
+    ]
+    refs = {r["command"] for r in rows}
+    return "\n".join(lines), refs
+
+
+def _domain_tool_usage(patterns: dict):
+    usage = patterns.get("tool_usage_by_week") or {}
+    weeks = patterns.get("weeks_observed") or []
+    if not usage or not weeks:
+        return None
+    lines = []
+    refs = set()
+    for tag in sorted(usage):
+        per_week = ", ".join(f"{wk}={usage[tag].get(wk, 0)}" for wk in weeks)
+        lines.append(f"- {tag}: {per_week}")
+        refs.add(tag)
+        refs.update(weeks)
+    return "\n".join(lines), refs
+
+
+def _domain_automation_candidates(patterns: dict):
+    rows = patterns.get("automation_candidates") or []
+    if not rows:
+        return None
+    rows = rows[:INSIGHT_MAX_ITEMS_PER_DOMAIN_PROMPT]
+    lines = []
+    refs = set()
+    for r in rows:
+        seq_str = " -> ".join(r["sequence"])
+        lines.append(
+            f'- [{seq_str}] recurs across {r["session_count"]} session(s), '
+            f'{r["occurrence_count"]} occurrence(s) total'
+        )
+        refs.add(seq_str)
+        refs.update(r["sequence"])
+    return "\n".join(lines), refs
+
+
+_INSIGHT_DOMAIN_BUILDERS = {
+    "command-frequency": _domain_command_frequency,
+    "failure-retry": _domain_failure_retry,
+    "tool-usage": _domain_tool_usage,
+    "automation-candidates": _domain_automation_candidates,
+}
+
+
+_INSIGHT_SCHEMA_BLOCK = """Return ONLY this JSON object -- no prose, no thinking, no code fences:
+{"insights": [
+  {"observation": "one or two sentences: the specific pattern you found and why it matters",
+   "evidence_refs": ["<copy EXACTLY from the DATA block above -- a command string, tag name, week label, or sequence step, character-for-character>", "..."],
+   "cost_estimate": "rough wasted-calls/wasted-time estimate grounded in the counts you were given (e.g. '12 wasted CMD retries, ~2 min agent time')",
+   "proposed_change": "one of: kb-fact | skill | prompt-rule | tool-change",
+   "confidence": <float 0.0-1.0>,
+   "kb_fact": {"title": "...", "content": "...", "topic": "...", "volatility": "static|fast|slow"},
+   "skill": {"task": "...", "procedure": "...", "verification": "...", "preconditions": "", "failure_modes": "", "occupation": "..."},
+   "prompt_rule": {"rule": "one short, imperative sentence -- exactly as it should read inside the system prompt", "rationale": "one sentence: what recurring problem this rule prevents", "section_hint": "which existing prompt section this would slot under, e.g. 'ground-truth-before-action' or 'time discipline' -- best guess, not binding"}
+  }
+]}
+Include "kb_fact" ONLY when proposed_change is "kb-fact"; include "skill" ONLY when
+proposed_change is "skill"; include "prompt_rule" ONLY when proposed_change is
+"prompt-rule"; omit all three otherwise. A "prompt_rule" is NOT a new fact or a new
+procedure -- it is a standing behavioral instruction worth adding to every future
+session's system prompt, proposed only when the SAME avoidable mistake or omission
+recurs across multiple sessions (never from one occurrence). evidence_refs that are not
+an EXACT copy from the DATA block will be discarded by the validator, and an insight
+with zero surviving evidence_refs will be discarded entirely -- ground every insight in
+the real data you were given, do not invent counts or commands. Zero insights is a valid,
+expected outcome for this domain if nothing here clears the bar."""
+
+
+_INSIGHT_SYSTEM_PROMPTS = {
+    "command-frequency": """You are the TRAUM dreamer's cross-session insight pass (Thread 3, Prompt 3.2), COMMAND-FREQUENCY domain ONLY.
+
+You will be given the most-frequently-issued shell commands mined mechanically
+from agent_commands.log (already counted -- do not recount, do not second-guess
+the numbers) plus a list of recent session summaries for context.
+
+Look for exactly ONE kind of finding in THIS call: a command (or tight family of
+commands) run often enough, or repetitively enough for a narrow fixed purpose,
+that it represents a real recurring workflow worth systematizing -- via a new
+lse-kb fact documenting it, a reusable skill procedure, a prompt-rule change, or
+an actual tool/automation change. Do NOT analyze failures, retries, or
+week-over-week usage trends here -- those are separate domains with their own
+calls.
+
+""" + _INSIGHT_SCHEMA_BLOCK,
+
+    "failure-retry": """You are the TRAUM dreamer's cross-session insight pass (Thread 3, Prompt 3.2), FAILURE-RETRY domain ONLY.
+
+You will be given commands that failed (nonzero exit) and were re-issued
+verbatim shortly afterward, mined mechanically from agent_commands.log
+(already matched -- do not re-derive which pairs count) plus recent session
+summaries for context.
+
+Look for exactly ONE kind of finding in THIS call: a recurring failure pattern
+worth fixing at the root -- a missing precondition, a config issue, a tool bug
+-- rather than being silently worked around by a manual retry every time it
+happens. Do NOT analyze raw command frequency, tool-usage cadence, or
+multi-command sequences here -- those are separate domains with their own
+calls.
+
+""" + _INSIGHT_SCHEMA_BLOCK,
+
+    "tool-usage": """You are the TRAUM dreamer's cross-session insight pass (Thread 3, Prompt 3.2), TOOL-USAGE domain ONLY.
+
+You will be given per-tool (per-tag) event counts bucketed by ISO week, already
+zero-filled across every week in range (already computed -- do not recompute),
+plus recent session summaries for context.
+
+Look for exactly ONE kind of finding in THIS call: a tool whose usage pattern
+across weeks is itself the story -- went from active to silent (possible
+abandonment or a broken workflow worth documenting), spiked sharply, or shows
+some other week-over-week shift worth a human's attention. Do NOT analyze
+individual command text, failure/retry pairs, or multi-command sequences here
+-- those are separate domains with their own calls.
+
+""" + _INSIGHT_SCHEMA_BLOCK,
+
+    "automation-candidates": """You are the TRAUM dreamer's cross-session insight pass (Thread 3, Prompt 3.2), AUTOMATION-CANDIDATES domain ONLY.
+
+You will be given command sequences that recur, in the same order, across
+multiple distinct sessions (already confirmed to meet the session-count bar --
+do not re-verify that count), plus recent session summaries for context.
+
+Look for exactly ONE kind of finding in THIS call: a sequence worth turning
+into a documented skill procedure, or an actual tool/script (proposed_change =
+"tool-change") that replaces N manual steps with one call. Do NOT analyze raw
+command frequency, failure/retry pairs, or week-over-week tool usage here --
+those are separate domains with their own calls.
+
+""" + _INSIGHT_SCHEMA_BLOCK,
+}
+
+
+def _validate_insight_item(item: dict, valid_refs: set) -> tuple:
+    """Structural + code-enforced-evidence validation for one insight
+    envelope item. Returns (cleaned_item, None) on success, (None, reason)
+    on rejection. Returns a NEW dict with evidence_refs filtered down to
+    only the refs that are a real, exact match against `valid_refs` (the
+    domain data + session_ids actually shown to the model this call) --
+    Prompt 3.2's verbatim-evidence rule, code-enforced here rather than
+    only prompted for, same discipline as the stale-contradiction pass's
+    substring check (_demote_proposals_for_doc)."""
+    if not isinstance(item, dict):
+        return None, "not an object"
+    observation = str(item.get("observation", "")).strip()
+    if len(observation) < INSIGHT_OBSERVATION_MIN_LEN:
+        return None, f"observation missing or under {INSIGHT_OBSERVATION_MIN_LEN} chars"
+    proposed_change = item.get("proposed_change")
+    if proposed_change not in INSIGHT_PROPOSED_CHANGES:
+        return None, f"unknown proposed_change: {proposed_change!r}"
+    cost_estimate = str(item.get("cost_estimate", "")).strip()
+    if not cost_estimate:
+        return None, "cost_estimate missing or empty"
+    confidence = item.get("confidence")
+    if (not isinstance(confidence, (int, float)) or isinstance(confidence, bool)
+            or not (0.0 <= float(confidence) <= 1.0)):
+        return None, f"confidence must be a number in [0.0, 1.0], got {confidence!r}"
+    raw_refs = item.get("evidence_refs")
+    if not isinstance(raw_refs, list):
+        return None, "evidence_refs must be a list"
+    verified_refs = [r for r in raw_refs if isinstance(r, str) and r in valid_refs]
+    if not verified_refs:
+        return None, "no evidence_refs verified as an exact match against the data shown this call"
+
+    cleaned = {
+        "observation": observation,
+        "evidence_refs": verified_refs,
+        "cost_estimate": cost_estimate,
+        "proposed_change": proposed_change,
+        "confidence": float(confidence),
+    }
+    if proposed_change == "kb-fact":
+        kb_fact = item.get("kb_fact")
+        if (isinstance(kb_fact, dict) and str(kb_fact.get("title", "")).strip()
+                and str(kb_fact.get("content", "")).strip()):
+            volatility = kb_fact.get("volatility")
+            cleaned["kb_fact"] = {
+                "title": str(kb_fact.get("title", "")).strip(),
+                "content": str(kb_fact.get("content", "")).strip(),
+                "topic": str(kb_fact.get("topic", "")).strip() or "general",
+                "volatility": volatility if volatility in ("static", "fast", "slow") else "slow",
+            }
+    elif proposed_change == "skill":
+        skill = item.get("skill")
+        if (isinstance(skill, dict) and str(skill.get("task", "")).strip()
+                and str(skill.get("procedure", "")).strip()
+                and str(skill.get("verification", "")).strip()):
+            cleaned["skill"] = {
+                "task": str(skill.get("task", "")).strip(),
+                "procedure": str(skill.get("procedure", "")).strip(),
+                "verification": str(skill.get("verification", "")).strip(),
+                "preconditions": str(skill.get("preconditions", "")).strip(),
+                "failure_modes": str(skill.get("failure_modes", "")).strip(),
+                "occupation": str(skill.get("occupation", "")).strip() or "Local System Engineer",
+            }
+    elif proposed_change == "prompt-rule":
+        # Prompt 3.6. Note there is deliberately no "target_file" key read
+        # from the model here -- the file a prompt-rule proposal writes to
+        # is fixed in code (_insight_to_proposal -> LEARNED_RULES_TARGET),
+        # never something the model chooses, so there is no field here for
+        # a prompt-injected episode to steer.
+        prompt_rule = item.get("prompt_rule")
+        if (isinstance(prompt_rule, dict) and str(prompt_rule.get("rule", "")).strip()
+                and str(prompt_rule.get("rationale", "")).strip()):
+            cleaned["prompt_rule"] = {
+                "rule": str(prompt_rule.get("rule", "")).strip(),
+                "rationale": str(prompt_rule.get("rationale", "")).strip(),
+                "section_hint": str(prompt_rule.get("section_hint", "")).strip() or "(unspecified)",
+            }
+    return cleaned, None
+
+
+def _insight_to_proposal(insight: dict, domain: str, today: str):
+    """kb-fact/skill/prompt-rule-shaped insights become a real proposal;
+    tool-change still has no write path of any kind (no tool/script exists
+    to dispatch a tool-change through) and stays report.md-only. Returns
+    None if proposed_change isn't proposal-shaped, or its detail sub-object
+    didn't validate (see _validate_insight_item).
+
+    prompt-rule (Prompt 3.6) is the one case that does NOT dispatch through
+    an existing goethe.py Tools method the way kb-fact/skill do -- there is
+    no Tools method for "add a standing prompt instruction," and there must
+    never be one that edits prompts/node4090* directly (plan §3.6: "NEVER
+    direct edits to the canonical node4090 prompt"). Instead it targets the
+    generated include file prompts/learned-rules.md via a new
+    append_learned_rule call that dream_apply.py handles as its one
+    documented exception to "writes go through Tools" (see that file's
+    module docstring and check_prompt_rule_target()). target_file is a
+    fixed constant here, never read from `insight` -- the model never
+    chooses the path a prompt-rule proposal writes to."""
+    evidence_str = (
+        f"TRAUM-INSIGHT {domain} domain, dream-{today}: " + "; ".join(insight["evidence_refs"])
+    )[:900]
+    if insight["proposed_change"] == "kb-fact" and "kb_fact" in insight:
+        kb = insight["kb_fact"]
+        return {
+            "type": "kb-fact",
+            "call": "index_to_kb",
+            "args": {
+                "content": kb["content"],
+                "title": kb["title"],
+                "topic": kb["topic"],
+                "source_tier": "inferred",  # dream-origin can never self-grant ground_truth
+                "quality_score": 0.5,
+                "evidence": evidence_str,
+                "verified_against": "",
+                "volatility": kb["volatility"],
+            },
+            "insight_domain": domain,
+            "confidence": insight["confidence"],
+            "why": insight["observation"][:300],
+        }
+    if insight["proposed_change"] == "skill" and "skill" in insight:
+        sk = insight["skill"]
+        return {
+            "type": "skill-candidate",
+            "call": "skill_record",
+            "args": {
+                "task": sk["task"],
+                "occupation": sk["occupation"],
+                "procedure": sk["procedure"],
+                "verification": sk["verification"],
+                "preconditions": sk["preconditions"],
+                "failure_modes": sk["failure_modes"],
+                "provenance": f"dream-{today}",
+                "source_tier": "inferred",
+                "quality": 0.45,
+            },
+            "evidence": insight["evidence_refs"],
+            "insight_domain": domain,
+            "confidence": insight["confidence"],
+            "why": insight["observation"][:300],
+        }
+    if insight["proposed_change"] == "prompt-rule" and "prompt_rule" in insight:
+        pr = insight["prompt_rule"]
+        return {
+            "type": "prompt-rule",
+            "call": "append_learned_rule",
+            "args": {
+                "target_file": LEARNED_RULES_TARGET,  # hard-coded, see docstring above
+                "rule": pr["rule"],
+                "rationale": pr["rationale"],
+                "section_hint": pr["section_hint"],
+                "provenance": f"dream-{today}",
+                "source_tier": "inferred",
+            },
+            "evidence": insight["evidence_refs"],
+            "insight_domain": domain,
+            "confidence": insight["confidence"],
+            "why": insight["observation"][:300],
+        }
+    return None
+
+
+def _run_insight_domain(cfg: DreamConfig, domain: str, patterns: dict, session_text: str,
+                         session_refs: set, today: str) -> tuple:
+    """One request_dream_envelope() call for one insight domain. Returns
+    (insights, proposals, note). A domain with no underlying data (e.g.
+    zero automation candidates this run) makes NO LLM call at all -- there
+    is nothing to ask about, same null-result-without-a-call discipline
+    the dedup/error-cluster passes already follow when their own
+    prerequisite data is empty."""
+    built = _INSIGHT_DOMAIN_BUILDERS[domain](patterns)
+    if built is None:
+        return [], [], f"{domain}: no data this run — skipped, no LLM call."
+    data_text, domain_refs = built
+    valid_refs = domain_refs | session_refs
+
+    user_content = (
+        f"DATA ({domain}):\n{data_text}\n\n"
+        f"RECENT SESSION SUMMARIES:\n{session_text}"
+    )
+    env, err = request_dream_envelope(
+        _INSIGHT_SYSTEM_PROMPTS[domain], user_content, cfg, key="insights"
+    )
+    if env is None:
+        return [], [], f"{domain}: {err}"
+
+    insights = []
+    proposals = []
+    rejected = 0
+    for item in env.get("insights", []):
+        cleaned, _reason = _validate_insight_item(item, valid_refs)
+        if cleaned is None:
+            rejected += 1
+            continue
+        cleaned["domain"] = domain
+        insights.append(cleaned)
+        proposal = _insight_to_proposal(cleaned, domain, today)
+        if proposal is not None:
+            proposals.append(proposal)
+
+    note = f"{domain}: {len(insights)} insight(s) accepted"
+    if rejected:
+        note += f", {rejected} rejected (malformed or unverifiable evidence_refs)"
+    note += "."
+    return insights, proposals, note
+
+
+def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, error_docs) -> tuple:
+    """Prompt 3.2 — TRAUM-INSIGHT cross-session insight pass. Feeds
+    patterns.json's four mined domains (re-derived in-memory via
+    mine_patterns/read_agent_log_window, same code Prompt 3.1's `patterns`
+    pass itself uses -- no on-disk patterns.json dependency, no ordering
+    requirement against a prior `--pass patterns` run) plus recent session
+    summaries to the local model, ONE insight domain per LLM call (tight
+    scope per call, matching Qwen3.6's profile) rather than one diffuse
+    prompt covering everything at once.
+
+    Insights ALWAYS land in report.md's "## Cross-session insights" section
+    (folded into this pass's own narrative string -- write_report emits
+    narrative verbatim, so a "## Cross-session insights" heading inside it
+    renders as its own top-level report section). proposed_change in
+    {"kb-fact", "skill", "prompt-rule"} is proposal-shaped: kb-fact/skill
+    dispatch through dream_apply.py's existing Tools calls
+    (index_to_kb/skill_record); prompt-rule (Prompt 3.6) dispatches through
+    append_learned_rule, which dream_apply.py applies by appending to
+    prompts/learned-rules.md instead of calling a Tools method -- see
+    _insight_to_proposal. "tool-change" still maps to no write path at all
+    and is never converted to a proposals.jsonl entry. All three
+    proposal-shaped kinds flow into the SAME `proposals` list every other
+    pass returns, validated by the SAME validate_proposal_shape() gate in
+    main().
+    """
+    thresholds = {
+        "insights_max_sessions_in_prompt": cfg.insights_max_sessions_in_prompt,
+        "insight_observation_min_len": INSIGHT_OBSERVATION_MIN_LEN,
+    }
+    raw_lines = read_agent_log_window(cfg)
+    events = parse_agent_log_lines(raw_lines) if raw_lines else []
+    patterns = mine_patterns(events, cfg)
+
+    session_summaries = build_session_summaries(sessions, cfg.insights_max_sessions_in_prompt)
+    session_text = _render_session_summaries(session_summaries)
+    session_refs = {s["session_id"] for s in session_summaries}
+
+    domains_with_data = [d for d in INSIGHT_DOMAINS if _INSIGHT_DOMAIN_BUILDERS[d](patterns) is not None]
+    if not domains_with_data and not session_summaries:
+        narrative = (
+            "insights pass: no patterns.json domain data (empty agent_commands.log "
+            "window) and no session summaries this run — nothing to feed the model. "
+            "Null result (PH3-2)."
+        )
+        return [], narrative, _null_record(
+            "insights", "no_data_to_feed", looked=False,
+            corpus_size={"session_summaries": 0, "domains_with_data": 0,
+                         "insights_accepted": 0, "proposals": 0},
+            thresholds=thresholds,
+        )
+
+    today = date.today().isoformat()
+    all_insights = []
+    all_proposals = []
+    notes = []
+    for domain in INSIGHT_DOMAINS:
+        insights, proposals, note = _run_insight_domain(
+            cfg, domain, patterns, session_text, session_refs, today
+        )
+        all_insights.extend(insights)
+        all_proposals.extend(proposals)
+        if note:
+            notes.append(note)
+
+    narrative_lines = [
+        f"insights pass: {len(session_summaries)} session summary(ies) considered "
+        f"across {len(INSIGHT_DOMAINS)} domain(s); {len(all_insights)} insight(s) "
+        f"accepted total, {len(all_proposals)} converted to a proposal "
+        "(kb-fact/skill/prompt-rule — tool-change stays report.md-only).",
+        "",
+    ] + notes + [""]
+
+    narrative_lines.append("## Cross-session insights")
+    narrative_lines.append("")
+    null_record = None
+    if not all_insights:
+        narrative_lines.append(
+            "Null result (PH3-2): no domain produced an insight that cleared the "
+            "evidence-verification bar this run."
+        )
+        null_record = _null_record(
+            "insights", "no_insight_cleared_bar", looked=True,
+            corpus_size={"session_summaries": len(session_summaries),
+                         "domains_with_data": len(domains_with_data),
+                         "insights_accepted": 0, "proposals": 0},
+            thresholds=thresholds,
+        )
+    else:
+        for i, ins in enumerate(all_insights, 1):
+            became_proposal = ins["proposed_change"] in ("kb-fact", "skill") and (
+                "kb_fact" in ins or "skill" in ins
+            )
+            narrative_lines.append(
+                f"{i}. **[{ins['domain']}/{ins['proposed_change']}]** "
+                f"(confidence={ins['confidence']:.2f}) — {ins['observation']}"
+            )
+            narrative_lines.append(f"   - evidence: {', '.join(ins['evidence_refs'])}")
+            narrative_lines.append(f"   - cost estimate: {ins['cost_estimate']}")
+            if became_proposal:
+                narrative_lines.append("   - flowed into proposals.jsonl")
+            narrative_lines.append("")
+
+    return all_proposals, "\n".join(narrative_lines), null_record
 
 
 PASS_FUNCS = {
     "dedup": run_pass_dedup,
     "stale-contradiction": run_pass_stale_contradiction,
     "error-cluster": run_pass_error_cluster,
+    "patterns": run_pass_patterns,
+    "insights": run_pass_insights,
 }
-
 
 # --- output: report.md + proposals.jsonl ------------------------------------
 
-def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: str) -> tuple[str, str]:
+def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: str,
+                  null_record: dict | None = None) -> tuple[str, str]:
+    """Prompt 3.8 adds `null_record` (optional, default None — every
+    pre-3.8 call site with 2 positional args still works). When set,
+    report.md gets a plain, dedicated "## Null result" section — not
+    buried inside the narrative prose above it — stating the looked/
+    didn't-look verdict, the corpus size examined, and the thresholds
+    applied. The record is ALSO appended (never overwritten) to
+    <dream-dir>/<date>/null-results.jsonl, the same "at" convention
+    dream_apply.py already uses for applied.jsonl/rejected.jsonl: unlike
+    report.md and proposals.jsonl (both single-pass-per-invocation
+    snapshots — see this module's write_patterns_json/dream_digest.py's
+    gather_top_insights docstring for the documented per-pass-overwrite
+    limitation), a full dream cycle runs all five passes in sequence
+    against the SAME day-dir, and null-results.jsonl is the one place
+    every pass's null verdict for the day survives that sequence intact."""
     today = date.today().isoformat()
     out_dir = os.path.join(cfg.dream_dir, today)
     report_path = os.path.join(out_dir, "report.md")
     proposals_path = os.path.join(out_dir, "proposals.jsonl")
+    null_results_path = os.path.join(out_dir, "null-results.jsonl")
 
     lines = [
         f"# TRAUM dream report — {today} — pass: {cfg.pass_name}",
@@ -1669,11 +2941,25 @@ def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: s
         for i, p in enumerate(proposals, 1):
             lines.append(f"{i}. **{p.get('type')}** via `{p.get('call')}` — {p.get('why', '')}")
         lines.append("")
+
+    if null_record is not None:
+        # Prompt 3.8: "report.md says so plainly" — a dedicated section,
+        # not just prose the reader has to notice inside ## Narrative.
+        verdict = "nothing there" if null_record["looked"] else "didn't look"
+        lines.append("## Null result")
+        lines.append("")
+        lines.append(f"**{verdict}** (`looked={null_record['looked']}`) — reason: `{null_record['reason']}`")
+        lines.append("")
+        lines.append(f"- corpus size examined: `{json.dumps(null_record['corpus_size'], sort_keys=True)}`")
+        lines.append(f"- thresholds used: `{json.dumps(null_record['thresholds'], sort_keys=True)}`")
+        lines.append("")
     report_text = "\n".join(lines)
 
     if cfg.dry_run:
-        print(f"[dream_runner] [dry-run] would write:\n  {report_path}\n  {proposals_path}",
-              file=sys.stderr)
+        would_write = f"  {report_path}\n  {proposals_path}"
+        if null_record is not None:
+            would_write += f"\n  {null_results_path} (append)"
+        print(f"[dream_runner] [dry-run] would write:\n{would_write}", file=sys.stderr)
         print(report_text)
         return report_path, proposals_path
 
@@ -1683,6 +2969,11 @@ def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: s
     with open(proposals_path, "wt", encoding="utf-8") as f:
         for p in proposals:
             f.write(json.dumps(p) + "\n")
+    if null_record is not None:
+        record = {**null_record, "date": today,
+                  "generated_at": datetime.now().astimezone().isoformat()}
+        with open(null_results_path, "at", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
     return report_path, proposals_path
 
 
@@ -1761,6 +3052,45 @@ def parse_args(argv=None) -> argparse.Namespace:
                     default=_error_cluster_threshold_default(),
                     help="cosine floor for grouping error/timeout occurrences as the same "
                     "underlying failure (default: 0.80)")
+
+    patterns_group = ap.add_argument_group("patterns pass (Prompt 3.1, TRAUM-INSIGHT)")
+    patterns_group.add_argument("--patterns-max-lines", type=int,
+                    default=_patterns_max_lines_default(),
+                    help="windowed tail-read size for agent_commands.log, in raw lines "
+                    "(default: 50000 -- corpus-audit.md (a)'s windowed-read caveat, the "
+                    "log is unrotated and growing)")
+    patterns_group.add_argument("--patterns-retry-window", type=int,
+                    default=_patterns_retry_window_default(),
+                    help="failure->retry adjacency lookahead, in raw log lines (default: 20)")
+    patterns_group.add_argument("--patterns-session-gap-minutes", type=int,
+                    default=_patterns_session_gap_minutes_default(),
+                    help="inactivity gap (minutes) used to infer session boundaries in "
+                    "agent_commands.log, which carries no session_id of its own (default: 30)")
+    patterns_group.add_argument("--patterns-min-sequence-len", type=int,
+                    default=_patterns_min_sequence_len_default(),
+                    help="shortest command sequence considered an automation candidate "
+                    "(default: 3)")
+    patterns_group.add_argument("--patterns-max-sequence-len", type=int,
+                    default=_patterns_max_sequence_len_default(),
+                    help="longest command sequence window mined, bounds worst-case compute "
+                    "(default: 8)")
+    patterns_group.add_argument("--patterns-min-sessions", type=int,
+                    default=_patterns_min_sessions_default(),
+                    help="minimum distinct inferred sessions a repeated command sequence "
+                    "must span to qualify as an automation candidate (default: 3)")
+    patterns_group.add_argument("--patterns-top-commands", type=int,
+                    default=_patterns_top_commands_default(),
+                    help="command-frequency table size cap (default: 50)")
+    patterns_group.add_argument("--patterns-out", default=None,
+                    help="override patterns.json output path (default: "
+                    "<dream-dir>/<date>/patterns.json)")
+
+    insights_group = ap.add_argument_group("insights pass (Prompt 3.2, TRAUM-INSIGHT)")
+    insights_group.add_argument("--insights-max-sessions-in-prompt", type=int,
+                    default=_insights_max_sessions_in_prompt_default(),
+                    help="cap on how many session summaries are inlined into each "
+                    "insight LLM prompt, independent of --sessions' manifest.db "
+                    "selection size (default: 20)")
 
     ap.add_argument("-v", "--verbose", action="store_true")
     return ap.parse_args(argv)
@@ -1849,7 +3179,7 @@ def main(argv=None) -> None:
               file=sys.stderr)
 
     pass_func = PASS_FUNCS[cfg.pass_name]
-    raw_proposals, narrative = pass_func(cfg, sessions, episodes_by_session, kb_docs, error_docs)
+    raw_proposals, narrative, null_record = pass_func(cfg, sessions, episodes_by_session, kb_docs, error_docs)
 
     proposals = []
     for p in raw_proposals:
@@ -1860,9 +3190,18 @@ def main(argv=None) -> None:
             continue
         proposals.append(p)
 
-    report_path, proposals_path = write_report(cfg, sessions, proposals, narrative)
+    report_path, proposals_path = write_report(cfg, sessions, proposals, narrative, null_record)
+    null_suffix = f" null_result={null_record['reason']} (looked={null_record['looked']})" if null_record else ""
     print(f"[dream_runner] {mode}done. report={report_path} proposals={proposals_path} "
-          f"n_proposals={len(proposals)}", file=sys.stderr)
+          f"n_proposals={len(proposals)}{null_suffix}", file=sys.stderr)
+
+    # Prompt 3.4 (TRAUM-INSIGHT): refresh the morning digest "at the end of
+    # every dream run". Never allowed to turn a successful pass into a
+    # reported failure -- refresh_digest() swallows its own exceptions.
+    dream_digest.refresh_digest(
+        dream_dir=cfg.dream_dir, episode_dir=cfg.episode_dir, manifest_db=cfg.manifest_db,
+        es_url=cfg.es_url, dry_run=cfg.dry_run,
+    )
 
 
 if __name__ == "__main__":

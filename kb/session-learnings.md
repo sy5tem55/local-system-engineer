@@ -885,3 +885,138 @@ Cumulative KB entries from post-session debriefs.
 - `docs/dreaming/calibration-run-1.md` (Prompt 2.8) cited "DESIGN.md §7.1"/"§7.2" (the auto-apply allowlist) before §7 existed — Prompt 2.6 ("design only") had been skipped in practice. Added §7 this session so those citations point at something real; recorded as a genuine skipped-prompt finding, not invented scope.
 - `dream_apply.py` has no code path that sets `manifest.db`'s `dreamed_at`, despite `episode_index.py`'s own comment claiming it is "set by Thread 2's dream_apply.py" — Prompt 2.7's 13 sessions were marked by hand (`sqlite3 UPDATE`). Left open for Thread 3's first prompt to design (dream_runner.py knows the session list; dream_apply.py knows what was actually reviewed — genuinely unclear which file should own this without a real design pass, not something to guess at during a closing prompt).
 - **Calibration verdict, recorded as this session's kb-fact proposal:** production `linear` `search_kb` retrieval mode was bit-for-bit identical (recall@1=0.76, recall@3=0.84, MRR=0.800) before vs after Thread 2's first supervised dream, despite ~84% `lse-kb` growth (200→368 docs); `min_score=4.2` re-swept per its own maintenance rule and still holds (38/38 correct top-1 kept at cut=4.020, 0 correct lost). No regression — Thread 2 is clear to hand off to Thread 3 on the retrieval-quality dimension specifically (two non-blocking process gaps — dedup re-proposal, `dreamed_at` — are carried forward separately, see `CHANGELOG.md`).
+
+## Session 2026-07-12 — TRAUM Thread 3 close: v0.4.0-a deployed live, `time_check()`/`[DREAM]` desync, a real dream cycle's first two surprises
+
+This close ran differently from every prior TRAUM entry: this Cowork session
+turned out to be running ON LUCIFER itself (`C:\Users\SY5\Claude\Projects\
+local-system-engineer` is the same repo WSL2 mounts at `~/projects/local-
+system-engineer` via `/mnt/c/...`), and `mcp__goethe__*` tools were live-
+connected to the real `goethe_mcp` gateway — not simulated, not mocked. That
+turned "deploy + verify" from a documentation exercise into a real one, and
+running the dreamer against real data (`lse-kb`, `agent_commands.log`,
+`tasks.db`) for the first time surfaced two genuine findings neither the
+sandbox-only Prompt 3.8 run nor any unit test had caught.
+
+**The digest insight this close asked for, answered directly:** the digest
+itself, this cycle, is unremarkable — 6 `dedup` proposals, all "exact
+character-for-character duplicate" pairs, the most mundane possible finding
+a dreamer can produce, plus two genuine null results (`stale-contradiction`,
+`error-cluster`) working exactly as designed. Nothing in the digest's own
+content is non-obvious. **The genuinely non-obvious findings this close
+came from *operating* the dreamer for the first time against real data, not
+from the digest's insights pass** (which was deliberately not run for real
+— see below): (1) a live plaintext credential sitting in `agent_commands.log`
+that the `patterns` pass would have written straight into a git-committed
+artifact and handed to an off-host LLM as prompt evidence, had the pipeline
+continued as designed; (2) `proposals.jsonl` has no append-mode protection
+against a later pass in the same cycle silently overwriting an earlier
+pass's real, actionable proposals — proven by watching it actually happen,
+not by reading the code and predicting it could.
+
+### What worked
+- Testing "does the `[DREAM]` banner appear on first `search_kb`" the
+  realistic way — call `time_check()` first, exactly as CHRONOS's own
+  docstring and the system prompt's TIME DISCIPLINE section both instruct
+  for date-sensitive work, rather than calling `search_kb` in isolation
+  the way every existing unit test did — immediately surfaced a real
+  interaction bug (see below) that no test written before this close would
+  have caught, because every prior test exercised the two banner-emitting
+  tools separately, never in the order a real session would actually use them.
+- Reviewing the digest file itself *between* each dream pass, not only once
+  at the end of a "full cycle," caught the `proposals.jsonl` overwrite live
+  as it happened (`Pending human-gate (6)` → `(0)` after two null passes) —
+  reviewing only the final state would have shown an empty queue with no
+  way to tell whether that meant "nothing pending" or "something got
+  silently dropped."
+- `start-goethe.sh`'s kill pattern (`goethe_mcp[.]py.*--transport http`)
+  correctly left two unrelated stdio-transport `goethe_mcp.py` instances
+  running untouched during the gateway restart — confirmed by PID/port
+  inspection before and after, not assumed from reading the script.
+
+### What failed and why
+- **Attempted:** verify the `[DREAM]` banner by calling `time_check()`
+  first (the documented, recommended order), then `search_kb`.
+  **Failed because:** `time_check()` sets the same `_time_banner_emitted`
+  flag `_consume_time_banner()` gates on, but only ever appends the
+  `[TIME]` line — never `[DREAM]`. `_consume_time_banner()`'s own docstring
+  claims reusing that flag "guarantees the two banners can never desync,"
+  but that reasoning only accounted for `_consume_time_banner()` itself
+  setting the flag; it didn't account for a second, independent setter.
+  Result: a session calling `time_check()` before its first `search_kb`
+  got `[TIME]` immediately and then silently lost `[DREAM]` for the rest
+  of the session, every time.
+  **Fix:** `tools/goethe.py`'s `time_check()` now also calls
+  `self._dream_banner()` and appends the line on the same gate it already
+  owns. New test `TestChronosTimeCheck::test_time_check_first_still_
+  carries_dream_banner` (`tests/test_kb_contracts.py`) pins the fix.
+  Redeployed (second gateway restart) to ship it; re-verified live —
+  `search_kb` after `time_check()` now correctly shows neither banner
+  again (both already delivered by `time_check()`), and a *fresh* session
+  calling `search_kb` first shows both together.
+- **Attempted:** run `patterns --no-dry-run` for real, then feed
+  `patterns.json` into a real `insights` LLM pass, to get a genuine
+  cross-session insight for this debrief.
+  **Failed because:** the `patterns` pass's `command_frequency()` mining
+  reads `agent_commands.log` completely verbatim, with no secret-redaction
+  step anywhere in `dream_runner.py`. The real `--dry-run` preview (kept
+  at dry-run specifically because of what it found) surfaced a live
+  plaintext password embedded in a repeated `sshpass -p '...' ssh ...`
+  command, 6 occurrences. `--no-dry-run` would have written it into a
+  git-tracked `patterns.json`/`report.md`; a subsequent real `insights` run
+  would have sent it off-host to node3090's LLM inside
+  `_domain_command_frequency()`'s prompt text as "evidence."
+  **Fix:** neither step was run for real. The password is not repeated
+  anywhere in this repo. Recorded as a Thread-4-blocking finding in
+  `CHANGELOG.md` and `CURRENT-STATE.md`: `dream_runner.py` needs a
+  redaction pass over raw command text before Thread 4 (TRAUM-AUTO) can
+  safely schedule any of this unattended, and the operator should rotate
+  the actual credential and move it to Vaultwarden.
+- **Attempted:** run the full multi-pass cycle (`dedup` → `stale-
+  contradiction` → `error-cluster`) the same way Prompt 3.8's sandbox run
+  did, then read the final digest once.
+  **Failed because:** `report.md`/`proposals.jsonl` are single-pass-per-
+  day-dir snapshots (true since before Prompt 3.8; 3.8 only added
+  append-mode persistence for *null* results, not for real proposals).
+  `dedup` produced 6 genuine, real duplicate-pair proposals; the two null
+  passes that ran after it in the same day-dir silently overwrote them out
+  of `proposals.jsonl` — the digest's pending-gate count visibly dropped
+  from 6 to 0. In the empty-corpus Prompt 3.8 sandbox run, every pass was
+  null, so overwriting-empty-with-empty never revealed this; it took a
+  real, non-null first pass to expose it.
+  **Fix:** re-ran `dedup` a second time, last, so its real output is what
+  survives on disk for the operator's review. The underlying gap (no
+  append-only persistence for real proposals across a multi-pass cycle,
+  matching what `null-results.jsonl` already does for nulls) is unfixed
+  and recorded as Thread 4's first item, not patched unilaterally here.
+
+### Key facts
+- This Cowork session runs on LUCIFER itself — `mcp__goethe__*` tools are a
+  live connection to the real gateway, not a simulation. Confirmed via
+  `git log`/`git status` matching between the Windows-side path and WSL2's
+  `~/projects/local-system-engineer`, and `pytest`'s `rootdir` reporting
+  `/mnt/c/Users/SY5/Claude/Projects/local-system-engineer` from inside WSL2.
+- The Cowork bash sandbox (`mcp__workspace__bash`) is a *separate*,
+  unrelated environment from LUCIFER's real WSL2 — its FUSE mount's
+  staleness bug (documented in the Prompt 3.9 CHANGELOG entry) is specific
+  to that sandbox and does not reflect the true state of the files on
+  LUCIFER, which were confirmed correct and in sync (`ast.parse` clean,
+  exact line-count match) throughout this close.
+- `goethe_mcp.py`'s `Tools()` instance is created ONCE per gateway process
+  (`inst = Tools()`, not per MCP client session) — `_time_banner_emitted`
+  is therefore process-lifetime scoped, not per-llama-ui-thread scoped.
+  The banner only fires once for the FIRST caller of any kind after a
+  gateway restart; every llama-ui thread after that first caller (until
+  the next restart) will not see it again. This is why the DEPLOY NOTE in
+  `goethe.py`'s own changelog insists on a fresh thread immediately after
+  a gateway restart, and why testing the banner live consumes the one
+  opportunity a real user's fresh thread would otherwise get.
+- `dream_runner.py --pass dedup --no-dry-run` against the real 372-doc
+  `lse-kb` takes roughly 90–120s (Ollama CPU embedding, pairwise cosine,
+  LLM confirmation per candidate) — long enough that `execute_command`'s
+  own timeout cuts it off if run synchronously; use `nohup ... & disown`
+  and poll the log file instead.
+- `dream_runner.py`'s `main()` already calls `dream_digest.py` at the end
+  of every pass invocation to refresh `/opt/local-se/dreams/latest-
+  digest.md` — no separate manual digest-generation step is needed after
+  a real run.

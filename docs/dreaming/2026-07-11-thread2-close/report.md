@@ -63,21 +63,34 @@ held to `dream_apply.py`'s own ceiling for that shape of evidence, same as
 any other kb-fact proposal reviewed at this gate. `quality_score=0.75`
 sits under the `primary` tier's 0.8 ceiling.
 
-## Why this wasn't applied for real in this session
+## Applied
 
-`tools/dream_apply.py --no-dry-run` requires a live Elasticsearch +
-Ollama connection (`GOETHE_ES_URL`/`GOETHE_OLLAMA_URL`) to actually call
-`index_to_kb`. Cowork has no network path to LUCIFER's ES/Ollama instances
-— every other TRAUM Thread 2 artifact that touched live ES
-(`dream-run-2026-07-11.md`, `calibration-run-1.md`) was run directly on
-LUCIFER via `/home/sy5/owui/bin/python3` (the owui venv — bare `python3`
-has an incompatible `elasticsearch==9.4.1`, per Prompt 2.7's infra
-finding), not from this Cowork session. This proposal is prepared and
-validated exactly as far as that boundary allows; applying it for real is
-one command on LUCIFER:
+`tools/dream_apply.py --no-dry-run` requires a live Elasticsearch + Ollama
+connection (`GOETHE_ES_URL`/`GOETHE_OLLAMA_URL`), which Cowork has no
+network path to — this proposal was prepared and validated in Cowork, then
+applied for real on LUCIFER via `/home/sy5/owui/bin/python3` (the owui
+venv; bare `python3` has an incompatible `elasticsearch==9.4.1`, per
+Prompt 2.7's infra finding):
 
 ```bash
 /home/sy5/owui/bin/python3 tools/dream_apply.py \
   --proposals docs/dreaming/2026-07-11-thread2-close/proposals.jsonl \
   --no-dry-run
 ```
+
+Result (2026-07-11, confirmed at the gate):
+
+```
+KB updated (refined): doc_id=2253baf1e9df847d | quality 0.90 → 0.90 | refinements=1 | tier=primary
+done. applied=1 (auto=0) rejected_invariant=0 rejected_human=0
+```
+
+`index_to_kb`'s own dedup path fired (`goethe.py`'s cosine≥0.92 near-
+duplicate check) rather than creating a fresh doc — an existing `lse-kb`
+entry (`doc_id=2253baf1e9df847d`) was already a close match for this
+content, already at `quality_score=0.90` (above this proposal's 0.75), so
+`quality_score = max(existing, new)` left it unchanged at 0.90; only
+`refinement_count` incremented and the calibration-verdict content merged
+in. `dream_apply.py`'s stamp still ran afterward — the updated doc now
+carries `origin=dream`, `provenance=dream-2026-07-11`. Logged in
+`applied.jsonl` alongside this file.
