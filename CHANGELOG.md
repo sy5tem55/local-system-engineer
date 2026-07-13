@@ -3,6 +3,22 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-07-13 (Codex): TRAUM end-to-end acceptance + slot-aware dreamer routing (dream_runner v0.4.1)
+
+- Ran all five dream passes against live read-only inputs with artifacts isolated
+  under `/tmp/lse`; verified digest, queue, dry-run apply, and invariant rejection
+  without a production KB write.
+- Found the default 2,000 MiB VRAM gate misclassified an idle, already-loaded
+  llama-server as busy (model allocation left 1,128 MiB free), forcing CPU Ollama
+  and a 300-second timeout.
+- `dream_runner.py` now reads llama-server `/slots`: an idle loaded slot is
+  reused, an active slot falls back to CPU, and free VRAM remains the fail-closed
+  fallback only when slot state is unavailable.
+- Regression coverage expanded to 412/412 passing tests (14 focused routing
+  contracts), followed by a default-settings live sandbox rerun.
+- Updated the historical TRAUM plan to implemented/accepted status and added
+  `docs/dreaming/KB-ENTRY-PROMPT.md` for connected LSE and portable users.
+
 ## 2026-07-13 (Cowork, cont'd): TRAUM Thread 4 CLOSE (Prompts 4.9 + 4.10) — **WORKSTREAM COMPLETE; the v0.4.0 line is the TRAUM era.** 408/408 tests; nightly loop live; tonight's dream reviews its own construction
 
 - **Prompt 4.9 — documentation pass, every command executed live first**:

@@ -8,13 +8,12 @@ Covers:
     output correctly over a (mocked) SSH subprocess call, and fails CLOSED
     (returns 0, "treat as busy") on any subprocess error, timeout, or
     unparseable output -- never fails open toward "assume the GPU is free".
-  - `call_dream_llm`'s cascade skips the llama-server leg and goes straight
-    to Ollama when free VRAM is below `node3090_vram_gate_mb`, without ever
-    probing or calling llama-server at all (Prompt 4.1: "fall back to the
-    Ollama/CPU path rather than skipping" -- dreams are latency-insensitive,
-    so this is a redirect, never a hard failure).
-  - the llama-server leg still runs normally when free VRAM clears the gate
-    and the health probe succeeds (the pre-4.1 cascade behavior, unchanged).
+  - a healthy loaded llama-server is selected when `/slots` says idle even
+    when the model itself leaves less free VRAM than the legacy threshold.
+  - an active llama-server slot redirects to CPU Ollama without an SSH/VRAM
+    probe, avoiding contention with an interactive request.
+  - when `/slots` is unavailable, the existing fail-closed free-VRAM gate is
+    retained as the compatibility fallback.
   - the DREAM_LLM_URL forced-endpoint leg (checked before node3090 at all)
     is untouched by the new gate -- it has its own health probe and never
     calls the VRAM check.
@@ -108,39 +107,71 @@ class TestNode3090FreeVramMb:
         assert free == 0
 
 
-class TestCallDreamLlmVramGate:
-    def test_gpu_busy_skips_llama_server_falls_to_ollama(self, monkeypatch):
-        """free_vram below the gate -> llama-server is never probed or
-        called; Ollama is called directly (the 'fall back, don't skip'
-        behavior Prompt 4.1 asks for)."""
-        calls = {"health_probe": 0, "chat": []}
+class TestLlamaServerSlotIdle:
+    class Response:
+        def __init__(self, body: bytes, status: int = 200):
+            self.body = body
+            self.status = status
 
-        monkeypatch.setattr(dr, "_node3090_free_vram_mb", lambda *a, **k: 500)  # under gate
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return self.body
+
+    def test_idle_slots(self):
+        response = self.Response(b'[{"id":0,"is_processing":false}]')
+        with patch("urllib.request.urlopen", return_value=response):
+            assert dr._llama_server_slot_idle("http://node3090:8080") is True
+
+    def test_active_slot(self):
+        response = self.Response(b'[{"id":0,"is_processing":true}]')
+        with patch("urllib.request.urlopen", return_value=response):
+            assert dr._llama_server_slot_idle("http://node3090:8080") is False
+
+    def test_unavailable_or_invalid_is_unknown(self):
+        for body in (b'{"not":"slots"}', b'["not-a-slot"]', b'[]'):
+            response = self.Response(body)
+            with patch("urllib.request.urlopen", return_value=response):
+                assert dr._llama_server_slot_idle("http://node3090:8080") is None
+
+
+class TestCallDreamLlmVramGate:
+    def test_active_slot_skips_llama_server_falls_to_ollama(self, monkeypatch):
+        calls = {"health_probe": 0, "vram": 0, "chat": []}
 
         def fake_health_probe(url, timeout=3):
             calls["health_probe"] += 1
-            return True  # even if it WOULD be reachable, gate must win
+            return True
 
         def fake_post(base_url, payload, timeout):
             calls["chat"].append(base_url)
             return "ok-from-ollama"
 
+        def fake_vram(*args, **kwargs):
+            calls["vram"] += 1
+            return 21000
+
+        monkeypatch.setattr(dr, "_node3090_free_vram_mb", fake_vram)
         monkeypatch.setattr(dr, "_health_probe", fake_health_probe)
+        monkeypatch.setattr(dr, "_llama_server_slot_idle", lambda url: False)
         monkeypatch.setattr(dr, "_post_chat_completion", fake_post)
 
-        cfg = _cfg(node3090_vram_gate_mb=2000)
-        result = dr.call_dream_llm("sys prompt", "user content", cfg)
+        result = dr.call_dream_llm("sys", "user", _cfg())
 
         assert result == "ok-from-ollama"
-        assert calls["health_probe"] == 0, "llama-server must not even be probed when GPU is busy"
+        assert calls["health_probe"] == 1
+        assert calls["vram"] == 0
         assert calls["chat"] == ["http://node3090.home.arpa:11434"]
 
-    def test_gpu_free_uses_llama_server_as_before(self, monkeypatch):
-        """free_vram at/above the gate + healthy probe -> llama-server leg
-        runs exactly as it did before this gate existed."""
+    def test_loaded_idle_server_used_even_when_free_vram_low(self, monkeypatch):
         calls = {"health_probe": [], "chat": []}
 
-        monkeypatch.setattr(dr, "_node3090_free_vram_mb", lambda *a, **k: 21000)  # clears gate
+        def vram_must_not_run(*args, **kwargs):
+            raise AssertionError("idle slot is authoritative; VRAM probe must not run")
 
         def fake_health_probe(url, timeout=3):
             calls["health_probe"].append(url)
@@ -150,7 +181,9 @@ class TestCallDreamLlmVramGate:
             calls["chat"].append(base_url)
             return "ok-from-llama-server"
 
+        monkeypatch.setattr(dr, "_node3090_free_vram_mb", vram_must_not_run)
         monkeypatch.setattr(dr, "_health_probe", fake_health_probe)
+        monkeypatch.setattr(dr, "_llama_server_slot_idle", lambda url: True)
         monkeypatch.setattr(dr, "_post_chat_completion", fake_post)
 
         cfg = _cfg(node3090_vram_gate_mb=2000)
@@ -160,12 +193,30 @@ class TestCallDreamLlmVramGate:
         assert calls["health_probe"] == ["http://node3090.home.arpa:8080"]
         assert calls["chat"] == ["http://node3090.home.arpa:8080"]
 
+    def test_slots_unavailable_uses_legacy_free_vram_gate(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(dr, "_health_probe", lambda url, timeout=3: True)
+        monkeypatch.setattr(dr, "_llama_server_slot_idle", lambda url: None)
+        monkeypatch.setattr(dr, "_node3090_free_vram_mb", lambda *a, **k: 500)
+        monkeypatch.setattr(
+            dr,
+            "_post_chat_completion",
+            lambda base_url, payload, timeout: calls.append(base_url) or "ok-from-ollama",
+        )
+
+        result = dr.call_dream_llm(
+            "sys", "user", _cfg(node3090_vram_gate_mb=2000)
+        )
+
+        assert result == "ok-from-ollama"
+        assert calls == ["http://node3090.home.arpa:11434"]
+
     def test_gpu_free_but_llama_server_call_fails_still_falls_to_ollama(self, monkeypatch):
         """Gate clears and probe succeeds, but the actual generate call
         errors -- pre-existing fallback-on-failure behavior must survive
         the gate being added in front of it."""
-        monkeypatch.setattr(dr, "_node3090_free_vram_mb", lambda *a, **k: 21000)
         monkeypatch.setattr(dr, "_health_probe", lambda url, timeout=3: True)
+        monkeypatch.setattr(dr, "_llama_server_slot_idle", lambda url: True)
 
         calls = []
 
@@ -186,13 +237,18 @@ class TestCallDreamLlmVramGate:
     def test_forced_dream_llm_url_leg_never_touches_vram_gate(self, monkeypatch):
         """DREAM_LLM_URL, when healthy, short-circuits the whole cascade --
         the VRAM probe must never even be called."""
-        probe_calls = {"vram": 0}
+        probe_calls = {"vram": 0, "slots": 0}
 
         def fail_if_called(*a, **k):
             probe_calls["vram"] += 1
             return 0
 
+        def slot_fail_if_called(*a, **k):
+            probe_calls["slots"] += 1
+            return None
+
         monkeypatch.setattr(dr, "_node3090_free_vram_mb", fail_if_called)
+        monkeypatch.setattr(dr, "_llama_server_slot_idle", slot_fail_if_called)
         monkeypatch.setattr(dr, "_health_probe", lambda url, timeout=3: True)
         monkeypatch.setattr(dr, "_post_chat_completion", lambda base_url, payload, timeout: "ok-forced")
 
@@ -201,6 +257,7 @@ class TestCallDreamLlmVramGate:
 
         assert result == "ok-forced"
         assert probe_calls["vram"] == 0, "forced-endpoint success must short-circuit before the VRAM gate"
+        assert probe_calls["slots"] == 0
 
     def test_default_vram_gate_is_2000_mb(self):
         assert dr._node3090_vram_gate_mb_default() == 2000

@@ -3,7 +3,9 @@
 > Workstream codename: **TRAUM** (Ger. "dream" — keeps the Goethe/Faust register).
 > Created 2026-07-11 (Cowork). Source concept: Lamis Mukta (Anthropic MTS),
 > "Learning while you sleep: Beyond memory to dreaming", AI Native DevCon, June 2026.
-> Status: PLANNED. Absorbs Workstream E (SCRIBE) — see ROADMAP.md reconciliation note.
+> Status: **IMPLEMENTED** — all four threads closed 2026-07-13; 408-test close
+> suite green. End-to-end operator acceptance rerun 2026-07-13; see §5 and
+> `docs/dreaming/KB-ENTRY-PROMPT.md`.
 
 ---
 
@@ -94,8 +96,9 @@ the managed service.
 | 4 | TRAUM-AUTO | systemd timer, guardrails, A/B learning-lift eval, threat-model addendum, runbook | Eval verdict recorded (win, loss, or null) |
 
 Each thread is a fresh Cowork thread: paste prompt 1, work to completion,
-paste prompt 2, etc. Prompts assume repo root `C:\Users\SY5\Claude\Projects\local-system-engineer`
-(WSL: `/home/sy5/projects/local-system-engineer`). Every thread ends with the
+paste prompt 2, etc. Prompts assume repo root
+`C:\Users\SY5\Documents\Claude\Projects\local-system-engineer`
+(WSL: `/home/sy5/local-system-engineer`). Every thread ends with the
 standard close: tests green → CHANGELOG.md → CURRENT-STATE.md → commit → debrief.
 
 ---
@@ -258,3 +261,21 @@ across sessions, skill learning, and a digest the LSE actually sees.
   KB-DECAY rule, unchanged).
 - **Not** gating this workstream on the PH5-2 refactor — but Thread 2/3 goethe.py
   growth is the tripwire that re-opens that decision.
+
+## 5. Acceptance status and operator entry point
+
+The shipped system is operated from `docs/07-operations-runbook.md` §10; this
+file remains the implementation history and prompt ledger. The reusable prompt
+for creating or refreshing the operational KB entry is
+`docs/dreaming/KB-ENTRY-PROMPT.md`.
+
+The 2026-07-13 sandbox acceptance test exercised all five passes against live,
+read-only corpus/ES inputs; wrote reports, proposals, null-results and the digest
+only under `/tmp/lse/`; listed the queue; and ran the apply path in dry-run mode.
+One proposed skill passed the apply validator and one malformed skill was
+rejected, proving both sides of the gate without a production KB write.
+
+Acceptance also found and fixed a loaded-model routing defect: free VRAM is not
+an activity signal when llama-server already owns the GPU allocation. v0.4.1
+uses `/slots` activity first (idle → reuse, processing → CPU fallback), retaining
+the 2,000 MiB free-VRAM gate only when slot state cannot be read.

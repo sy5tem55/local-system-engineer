@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dream_runner.py — TRAUM-ENGINE offline dream runner (v0.4.0)
+dream_runner.py — TRAUM-ENGINE offline dream runner (v0.4.1)
 =============================================================================
 Companion to docs/dreaming/DESIGN.md (dataflow, §1) and
 docs/dreaming/corpus-audit.md (corpus readiness survey). TRAUM Thread 2,
@@ -1157,6 +1157,32 @@ def _health_probe(url: str, timeout: int = 3) -> bool:
         return False
 
 
+def _llama_server_slot_idle(url: str, timeout: int = 3) -> bool | None:
+    """Return True when every llama-server slot is idle, False when any
+    slot is processing, and None when slot state cannot be established.
+
+    A loaded model legitimately consumes nearly all VRAM. Free-VRAM alone
+    therefore cannot distinguish an idle, reusable server from an interactive
+    workload. `/slots` is the authoritative activity signal when available;
+    callers retain the fail-closed VRAM fallback when it is not.
+    """
+    import urllib.request as _ureq  # noqa: PLC0415
+
+    try:
+        with _ureq.urlopen(f"{url.rstrip('/')}/slots", timeout=timeout) as r:
+            if r.status != 200:
+                return None
+            slots = json.loads(r.read().decode("utf-8"))
+        if not isinstance(slots, list) or not slots:
+            return None
+        valid_slots = [slot for slot in slots if isinstance(slot, dict)]
+        if not valid_slots:
+            return None
+        return not any(bool(slot.get("is_processing")) for slot in valid_slots)
+    except Exception:
+        return None
+
+
 def _node3090_free_vram_mb(host: str, user: str, port: int, timeout: int = 8) -> int:
     """Free VRAM (MiB) on node3090's GPU, queried over SSH.
 
@@ -1273,16 +1299,43 @@ def call_dream_llm(system_prompt: str, user_content: str, cfg: DreamConfig, no_t
             print(f"[dream_runner] DREAM_LLM_URL down ({force_url}) — cascade", file=sys.stderr)
 
     llm_url = cfg.node3090_llm_url.rstrip("/")
-    free_vram = _node3090_free_vram_mb(cfg.node3090_ssh_host, cfg.node3090_ssh_user, cfg.node3090_ssh_port)
-    print(f"[dream_runner] node3090 free VRAM={free_vram} MB (gate={cfg.node3090_vram_gate_mb} MB)",
-          file=sys.stderr)
-    if free_vram < cfg.node3090_vram_gate_mb:
-        print(f"[dream_runner] node3090 GPU busy (free {free_vram} MB < gate "
-              f"{cfg.node3090_vram_gate_mb} MB) -- skipping llama-server, falling straight to "
-              "Ollama (dreams are latency-insensitive; never worth contending for a shared GPU)",
-              file=sys.stderr)
-    elif _health_probe(llm_url):
-        print(f"[dream_runner] llama-server probe OK -> {llm_url}", file=sys.stderr)
+    server_healthy = _health_probe(llm_url)
+    use_llama_server = False
+    if server_healthy:
+        slot_idle = _llama_server_slot_idle(llm_url)
+        if slot_idle is True:
+            use_llama_server = True
+            print(
+                f"[dream_runner] llama-server healthy with idle slot -> {llm_url}",
+                file=sys.stderr,
+            )
+        elif slot_idle is False:
+            print(
+                "[dream_runner] llama-server has an active slot -- falling straight "
+                "to Ollama to avoid contending with an interactive request",
+                file=sys.stderr,
+            )
+        else:
+            free_vram = _node3090_free_vram_mb(
+                cfg.node3090_ssh_host,
+                cfg.node3090_ssh_user,
+                cfg.node3090_ssh_port,
+            )
+            print(
+                "[dream_runner] llama-server slot state unavailable; node3090 free "
+                f"VRAM={free_vram} MB (gate={cfg.node3090_vram_gate_mb} MB)",
+                file=sys.stderr,
+            )
+            if free_vram >= cfg.node3090_vram_gate_mb:
+                use_llama_server = True
+            else:
+                print(
+                    "[dream_runner] free VRAM below gate -- falling straight to "
+                    "Ollama (fail-closed)",
+                    file=sys.stderr,
+                )
+
+    if use_llama_server:
         payload = _build_payload(system_prompt, user_content, no_think)
         result = _post_chat_completion(llm_url, payload, 120)
         if not result.startswith("ERROR:"):
