@@ -149,16 +149,22 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 
 - [ ] **PH4-1** — DATA-1..4 (self-harvested gold sets — no HF/Kaggle; `dataset_lint.py`;
       sha256-frozen datasets; reseed preserves trust fields).
-- [→] **PH4-2** — SCRIBE-1..4 **ABSORBED INTO TRAUM** (2026-07-11): the dreaming
-      workstream subsumes the self-writing loop — SCRIBE-1/-2/-3 are TRAUM Thread 1
-      prompts 1.5–1.7, SCRIBE-4 is Thread 3 prompt 3.7, SCRIBE-5 stays a standing
-      discipline. Execute via `docs/traum-dreaming-plan.md` (4 threads × 10 prompts).
-      **Thread 1 (TRAUM-CORPUS) ✅ COMPLETE (2026-07-11):** SCRIBE-1/2/3 shipped
-      for real (see Workstream E below) — episode journaling live on the
-      gateway (goethe_mcp v1.11.1), manifest/rotation built, 137 backfill
-      facts applied to production `lse-kb`. Still [→] not [x]: Threads 2–4
-      (offline dream runner, apply gate + SCRIBE-4, A/B eval) have not
-      started — the corpus is being collected but nothing dreams over it yet.
+- [x] **PH4-2** — SCRIBE-1..4 **ABSORBED INTO TRAUM** (2026-07-11) — **ALL 4
+      THREADS COMPLETE (2026-07-13)**. Thread 1 (TRAUM-CORPUS) ✅ 2026-07-11:
+      episode journaling live on the gateway (goethe_mcp v1.11.1),
+      manifest/rotation, SCRIBE-1/2/3, 137 backfill facts applied. Thread 2
+      (TRAUM-ENGINE) ✅ 2026-07-11: dream_runner/dream_apply, first supervised
+      dream (3 dedup merges applied, 8/11 proposals correctly gate-rejected).
+      Thread 3 (TRAUM-INSIGHT) ✅ 2026-07-12: patterns/insights mining,
+      digest + [DREAM] banner live (Goethe v0.4.0-a), SCRIBE-4
+      self-measurement, null-result discipline. Thread 4 (TRAUM-AUTO) ✅
+      2026-07-13: nightly timer installed+enabled (03:30, first unattended
+      fire 2026-07-14), guardrails (lock/budgets/activity), crash discipline,
+      --queue + 14-day expiry, A/B eval RUN (pre-registered verdict: LOSS,
+      methodologically inconclusive — eval/eval-report-traum-1.md §6-7),
+      threat model, DREAM_AUTO_APPLY held empty (DESIGN.md §7.4), runbook §10.
+      Both Thread-3 security/data-loss findings fixed at Thread 4 open
+      (agent-log redaction, pass-scoped output files).
 - [ ] **PH4-3** — RFC KB verdict (carried P21): still ZERO `search_rfc` calls. Either wire it
       into episode prompts (topology/DNS challenges cite RFC 8375 etc.) or retire the index.
       Decide with usage-log data, not sentiment.
@@ -166,10 +172,23 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 ### Phase 5 — Refactor under green tests (Workstream F)
 
 - [ ] **PH5-1** — REFACTOR-1 (single `TrustPolicy`, kills 3× `_TIER_CEILING`).
-- [ ] **PH5-2** — REFACTOR-2 (extract `goethe_kb.py`; MCP tool-list diff must be empty;
-      goethe.py is 5819 lines and growing ~150/release — do this before v0.4).
-- [ ] **PH5-3** — REFACTOR-4 threat-model doc (`docs/threat-model-kb.md`) — includes the P0-2
+- [ ] **PH5-2** — REFACTOR-2 (extract `goethe_kb.py`; MCP tool-list diff must be empty).
+      **Urgency re-assessed at TRAUM close (2026-07-13):** goethe.py is now
+      7,228 lines (the "5819… do this before v0.4" bar above is stale — v0.4.0-a
+      shipped anyway; TRAUM deliberately kept its ~140 goethe.py lines to the
+      banner/digest read path and put everything else in new files). The
+      original condition is now breached, not approaching: **schedule PH5-2
+      before the next feature workstream that touches goethe.py**, and treat
+      any further goethe.py growth as blocked on it.
+- [~] **PH5-3** — REFACTOR-4 threat-model doc (`docs/threat-model-kb.md`) — includes the P0-2
       gateway exposure as its first worked example, plus KB poisoning origin-tags.
+      **PARTIAL (2026-07-12, TRAUM Prompt 4.7):** the file now exists with the
+      DREAMING chapter fully worked (Shostack ×4, mitigations mapped to named
+      contract tests). Still open: the P0-2 gateway worked example, and the
+      origin-tags themselves — 4.7 found `origin=web/human/local-probe` tagging
+      is NOT implemented in the live `index_to_kb` path (grep-verified), so the
+      laundering mitigation is currently the blunt "dream never mints
+      ground_truth" ceiling.
 
 ### Phase 6 — Arena, episodes, autonomy (parallel track, gated on Phase 1)
 
@@ -377,7 +396,11 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       decommissioned key-based auth) was found while writing this step and
       documented as the worked example — not yet applied, still requires
       going through the normal confirm gate like any other proposal.
-- [ ] **SCRIBE-4** — Skill self-measurement: monthly `run_tests(scope=retrieval)`
+- [x] **SCRIBE-4** ✅ DONE (2026-07-12, TRAUM Thread 3 Prompt 3.7 — continuous,
+      not monthly: every dream run appends a retrieval-of-dreamed-docs section
+      to its report + skills stats + month-over-month deltas; re-verified live
+      against ES 9.4.3 on 2026-07-13's sanity pass) — original framing:
+      monthly `run_tests(scope=retrieval)`
       + skills-index report (uses/successes/failures/archived count — data already
       in `stats`) appended to the debrief; the skill that writes learnings should
       report whether learnings are being retrieved (RFC-KB lesson: 0 calls in

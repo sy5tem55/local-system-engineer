@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dream_apply.py — TRAUM-ENGINE apply gate (v0.2.0)
+dream_apply.py — TRAUM-ENGINE apply gate (v0.3.0)
 =============================================================================
 Companion to docs/dreaming/DESIGN.md (dataflow §1, invariants §2 row 3, SCRIBE-1
 confirm-gate format §6) and tools/dream_runner.py (Prompts 2.1-2.4, the
@@ -102,6 +102,41 @@ and rejected.jsonl (one line per rejected proposal, invariant failure or a
 human "no", with the reason) — Prompt 2.5's "rejected proposals are logged
 with reason to the dream dir."
 
+MORNING QUEUE (Thread 4, Prompt 4.4): --queue scans EVERY YYYY-MM-DD day-dir
+under --dream-dir (not just one proposals.jsonl), and lists every proposal
+not yet resolved (present in that day-dir's applied.jsonl, rejected.jsonl, OR
+the new expired.jsonl) — oldest day-dir first, grouped by proposal `type` so
+same-shaped items batch together for review. It is read-only with respect to
+ES/kb: it never loads goethe.py's Tools class at all, only local dream-dir
+files (dream_digest.py's own list_day_dirs/load_jsonl/proposal_key are
+reused verbatim so a proposal's identity/resolved-state matches the digest's
+own "Pending human-gate" preview section exactly). Any pending proposal
+whose day-dir is more than --stale-days (default 14) old is AUTO-EXPIRED as
+part of the same --queue call: one line appended to that day-dir's new
+expired.jsonl with a reason ("stale (>14d) — auto-expired; re-dream will
+re-propose if still true"), then excluded from the listing. This write is
+unconditional — NOT gated by --dry-run — the same precedent rejected.jsonl
+already sets in the single-run flow below: --dry-run only ever means "don't
+call a Tools method / don't write to ES"; expiry is local dream-dir
+bookkeeping, not an ES write, so it always happens when --queue runs and
+finds something stale. Rationale for auto-expiry rather than piling up
+forever: a 14-day-old proposal was generated against ES/kb state that has
+likely moved on; forcing it through the normal confirm-gate this late risks
+applying something already stale or duplicated by a more recent dream. If
+the underlying issue is still real, the next re-dream naturally re-proposes
+it against current state.
+
+MORNING REVIEW LOOP (~5 minutes; full runbook write-up is Prompt 4.9, not
+yet done — this is the short version so the loop is usable today):
+  1. `python3 dream_apply.py --queue` — see everything pending, oldest
+     first, grouped by type; anything past --stale-days auto-expires here.
+  2. For each day-dir shown, apply that batch the normal way:
+     `python3 dream_apply.py --proposals <dream-dir>/<date>/proposals.jsonl --no-dry-run`
+     (still per-proposal yes/no — --queue only changes how you FIND what's
+     waiting, never how it gets applied).
+  3. Re-run `--queue` — it should now be empty (or down to only proposals
+     from a run started after step 1).
+
 USAGE
   # Dry-run (default): renders and validates everything, asks nothing,
   # calls no Tools method — safe to run to preview a batch.
@@ -109,6 +144,10 @@ USAGE
 
   # Real run: interactive, per-proposal yes/no, actually writes to ES.
   python3 dream_apply.py --proposals dreams/2026-07-11/proposals.jsonl --no-dry-run
+
+  # Morning queue (Prompt 4.4): list everything pending across ALL day-dirs,
+  # oldest first, grouped by type; auto-expires anything >14 days old.
+  python3 dream_apply.py --queue --dream-dir dreams
 
 ENV (same GOETHE_ prefix convention as goethe.py/goethe_mcp.py/dream_runner.py)
   GOETHE_ES_URL, GOETHE_OLLAMA_URL, GOETHE_EMBED_MODEL  — same valves Tools()
@@ -124,6 +163,11 @@ ENV (same GOETHE_ prefix convention as goethe.py/goethe_mcp.py/dream_runner.py)
                                     run this script from the repo root, same
                                     assumption the --proposals usage examples
                                     above already make with relative paths)
+  GOETHE_DREAM_DIR                  --queue only: dream output root to scan
+                                    for YYYY-MM-DD day-dirs (default:
+                                    /opt/local-se/dreams — same variable and
+                                    default dream_runner.py/dream_digest.py
+                                    already use for the same root)
 """
 
 import argparse
@@ -136,12 +180,16 @@ from datetime import date, datetime
 import dream_runner as dr  # sibling module: reuse validate_proposal_shape, not a second validator
 import dream_digest        # Prompt 3.4: morning digest refresh at end of run
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 
 QUARANTINE_DELETE_TYPE = "quarantine-delete-request"  # DESIGN.md §2 row 3(c) -- not
                                                         # produced by any pass yet (2.2-2.4)
 
 _TIER_CEILING = {"ground_truth": 1.0, "primary": 0.8, "secondary": 0.6, "inferred": 0.4}
+
+DREAM_QUEUE_STALE_DAYS = 14  # Prompt 4.4: proposals older than this (by their
+                             # day-dir date) are auto-expired by --queue, not
+                             # left to accumulate forever unreviewed.
 
 
 # --- config / valve-style env defaults --------------------------------------
@@ -168,6 +216,14 @@ def _dream_auto_apply_default() -> str:
 
 def _repo_root_default() -> str:
     return os.environ.get("GOETHE_REPO_ROOT", os.getcwd())
+
+
+def _dream_dir_default() -> str:
+    """--queue only. Same env var and default dream_runner.py/dream_digest.py
+    already use for the dream output root (a directory of YYYY-MM-DD
+    day-dirs) -- deliberately the SAME variable, not a new one, so a single
+    GOETHE_DREAM_DIR export configures all three tools consistently."""
+    return os.environ.get("GOETHE_DREAM_DIR", "/opt/local-se/dreams")
 
 
 # --- dynamic Tools loading (mirrors goethe_mcp.py:159-208 verbatim) ---------
@@ -455,7 +511,11 @@ def render_group(group: list, dream_dir: str) -> str:
         target = " (merge from ".join(targets) + (")" if len(targets) > 1 else "")
         top = f"――― TARGET: {target} ―――"
     else:
-        top = f"――― REPORT: {os.path.join(dream_dir, 'report.md')} (reference) ―――"
+        # Pass-scoped report names as of Thread 4 (report-<pass>.md); the
+        # glob keeps legacy shared-report.md day-dirs readable too.
+        _reports = dream_digest.day_dir_files(dream_dir, "report", "md")
+        _ref = ", ".join(_reports) if _reports else os.path.join(dream_dir, "report-*.md")
+        top = f"――― REPORT: {_ref} (reference) ―――"
 
     blocks = [top, ""]
     for i, p in enumerate(group, 1):
@@ -726,6 +786,142 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
     return results
 
 
+# --- queue mode (Prompt 4.4, TRAUM-AUTO) -----------------------------------
+# Read-only w.r.t. ES/kb -- never loads goethe.py's Tools class. Only reads
+# local dream-dir files (reusing dream_digest.py's own day-dir/jsonl/identity
+# helpers so a proposal's "is this resolved yet" state matches the digest's
+# preview section exactly) and, when it finds something stale, appends to a
+# new expired.jsonl next to applied.jsonl/rejected.jsonl.
+
+def gather_queue(dream_dir: str, today, stale_days: int = DREAM_QUEUE_STALE_DAYS):
+    """Walks every YYYY-MM-DD day-dir under dream_dir, OLDEST FIRST, and
+    returns (pending, expired):
+      pending -- proposals not yet applied/rejected/expired, each tagged with
+                 its source date and age_days, in oldest-day-dir-first order
+                 (Prompt 4.4: "oldest first").
+      expired -- proposals this call JUST auto-expired (age_days > stale_days),
+                 each tagged with date/age_days/reason -- reported back so the
+                 caller can tell the operator what changed this run.
+
+    A proposal already present (by dream_digest.proposal_key content hash) in
+    its day-dir's applied.jsonl, rejected.jsonl, OR expired.jsonl is resolved
+    and excluded from `pending`. Newly-expired proposals are appended to that
+    day-dir's expired.jsonl UNCONDITIONALLY -- not gated by --dry-run. This
+    mirrors the precedent this file already sets for rejected.jsonl in the
+    single-run flow below (human-decline/invariant-fail rejections are logged
+    regardless of --dry-run too): --dry-run only ever means "don't call a
+    Tools method / don't write to ES". Auto-expiry is local bookkeeping, not
+    an ES write, so it always happens.
+
+    A day-dir whose name fails to parse as a date is defensively treated as
+    age_days=0 (never auto-expired on a parse failure -- fail closed toward
+    "keep it pending for a human to see", not toward silent data loss)."""
+    day_dirs = sorted(dream_digest.list_day_dirs(dream_dir))  # ascending == oldest first
+    pending: list = []
+    expired: list = []
+
+    for d in day_dirs:
+        base = os.path.join(dream_dir, d)
+        proposals = []
+        for _ppath in dream_digest.day_dir_files(base, "proposals", "jsonl"):
+            proposals.extend(dream_digest.load_jsonl(_ppath))
+        if not proposals:
+            continue
+        applied = dream_digest.load_jsonl(os.path.join(base, "applied.jsonl"))
+        rejected = dream_digest.load_jsonl(os.path.join(base, "rejected.jsonl"))
+        expired_prior = dream_digest.load_jsonl(os.path.join(base, "expired.jsonl"))
+        resolved = {dream_digest.proposal_key(e["proposal"]) for e in applied if "proposal" in e}
+        resolved |= {dream_digest.proposal_key(e["proposal"]) for e in rejected if "proposal" in e}
+        resolved |= {dream_digest.proposal_key(e["proposal"]) for e in expired_prior if "proposal" in e}
+
+        try:
+            age_days = (today - date.fromisoformat(d)).days
+        except ValueError:
+            age_days = 0  # malformed dir name -- fail closed, never auto-expire
+
+        newly_expired_here = []
+        for p in proposals:
+            if dream_digest.proposal_key(p) in resolved:
+                continue
+            if age_days > stale_days:
+                entry = {
+                    "proposal": p,
+                    "reason": f"stale (>{stale_days}d, age={age_days}d) -- auto-expired; "
+                              "re-dream will re-propose if still true",
+                    "expired_at": datetime.now().astimezone().isoformat(),
+                    "age_days": age_days,
+                }
+                newly_expired_here.append(entry)
+                expired.append({**entry, "date": d})
+            else:
+                pending.append({"date": d, "age_days": age_days, "proposal": p})
+
+        if newly_expired_here:
+            with open(os.path.join(base, "expired.jsonl"), "at", encoding="utf-8") as f:
+                for entry in newly_expired_here:
+                    f.write(json.dumps(entry) + "\n")
+
+    return pending, expired
+
+
+def group_queue_by_type(pending: list) -> dict:
+    """Buckets already-oldest-first `pending` entries by proposal `type`,
+    preserving each bucket's oldest-first order. Bucket order itself falls
+    out for free: dict insertion order means whichever type's OLDEST pending
+    proposal is encountered first (i.e. is oldest overall) leads the listing
+    -- the type that has been waiting longest gets reviewed first, not
+    alphabetical order."""
+    buckets: dict = {}
+    for entry in pending:
+        ptype = entry["proposal"].get("type", "unknown")
+        buckets.setdefault(ptype, []).append(entry)
+    return buckets
+
+
+def render_queue(buckets: dict, today) -> str:
+    """Human-readable listing for stdout -- deliberately plain text (not the
+    SCRIBE-1 confirm-gate block shape render_group() uses below): --queue is
+    a read-only inventory to scan quickly, not a per-proposal apply prompt."""
+    total = sum(len(v) for v in buckets.values())
+    lines = [f"=== dream_apply --queue: {total} pending proposal(s) as of {today.isoformat()} ==="]
+    for ptype, entries in buckets.items():
+        lines.append(f"\n-- {ptype} ({len(entries)} pending, oldest first) --")
+        for e in entries:
+            p = e["proposal"]
+            pair = f" pair_id={p['pair_id']}" if p.get("pair_id") else ""
+            why = dream_digest._truncate(p.get("why", ""), 100)
+            lines.append(f"  [{e['date']}, {e['age_days']}d old]{pair} {p.get('call', '?')} — {why}")
+    return "\n".join(lines)
+
+
+def cmd_queue(args) -> None:
+    today = date.today()
+    pending, expired = gather_queue(args.dream_dir, today, stale_days=args.stale_days)
+
+    if expired:
+        by_date = {}
+        for e in expired:
+            by_date.setdefault(e["date"], 0)
+            by_date[e["date"]] += 1
+        detail = ", ".join(f"{d}:{n}" for d, n in sorted(by_date.items()))
+        print(f"[dream_apply] auto-expired {len(expired)} stale (>{args.stale_days}d) "
+              f"proposal(s) this run ({detail}) -> <day-dir>/expired.jsonl", file=sys.stderr)
+
+    if not pending:
+        print(f"[dream_apply] queue is empty -- 0 pending proposal(s) under {args.dream_dir}",
+              file=sys.stderr)
+        return
+
+    buckets = group_queue_by_type(pending)
+    print(render_queue(buckets, today))
+    print(
+        f"\n[dream_apply] {len(pending)} pending across {len(buckets)} type(s) under "
+        f"{args.dream_dir}. Apply a day's batch with: python3 dream_apply.py --proposals "
+        f"{args.dream_dir}/<date>/proposals.jsonl --no-dry-run",
+        file=sys.stderr,
+    )
+
+
 # --- main ----------------------------------------------------------------
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -734,7 +930,19 @@ def parse_args(argv=None) -> argparse.Namespace:
         description="TRAUM-ENGINE apply gate — the ONLY code allowed to write dream "
         "proposals to ES. Prompt 2.5. See docs/dreaming/DESIGN.md.",
     )
-    ap.add_argument("--proposals", required=True, help="path to a dream run's proposals.jsonl")
+    ap.add_argument("--proposals", default=None,
+                    help="path to a dream run's proposals.jsonl (required unless --queue)")
+    ap.add_argument("--queue", action="store_true",
+                    help="Prompt 4.4: list pending human-gate proposals across ALL day-dirs "
+                    "under --dream-dir, oldest first, grouped by type; auto-expires anything "
+                    "older than --stale-days. Read-only w.r.t. ES -- does not load goethe.py. "
+                    "See MORNING REVIEW LOOP in this module's docstring.")
+    ap.add_argument("--dream-dir", default=_dream_dir_default(),
+                    help="--queue only: dream output root to scan for day-dirs "
+                    "(default: $GOETHE_DREAM_DIR or /opt/local-se/dreams)")
+    ap.add_argument("--stale-days", type=int, default=DREAM_QUEUE_STALE_DAYS,
+                    help="--queue only: auto-expire proposals older than this many days "
+                    f"(default: {DREAM_QUEUE_STALE_DAYS})")
     ap.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=True,
                     help="render + validate + ask, but never actually call a Tools method "
                     "(default: true). Pass --no-dry-run to actually write to ES.")
@@ -754,6 +962,14 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> None:
     args = parse_args(argv)
+
+    if args.queue:
+        cmd_queue(args)
+        return
+
+    if not args.proposals:
+        raise SystemExit("[dream_apply] --proposals is required unless --queue is given")
+
     dream_dir = os.path.dirname(os.path.abspath(args.proposals)) or "."
     auto_apply_types = {t.strip() for t in args.auto_apply_types.split(",") if t.strip()}
 

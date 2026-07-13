@@ -10,7 +10,19 @@ tools/dream_runner.py (Prompts 2.1-2.4, 3.1-3.2 — the READ-ONLY proposer,
 Generates /opt/local-se/dreams/latest-digest.md: a single, <=30-line file
 for BOTH audiences named in the prompt — the operator reads it by hand, and
 Prompt 3.5 (not yet built) wires a short summary of it into the gateway's
-session-start [DREAM] banner. Four sections, in order:
+session-start [DREAM] banner. Up to five sections, in order:
+  0. ESCALATION banner (Prompt 4.3, TRAUM-AUTO) — present ONLY when
+     gather_crash_streak() finds >=CRASH_ESCALATION_THRESHOLD (3)
+     consecutive calendar days whose day-dir has a crashes.jsonl (written
+     by dream_runner.py's crash handler, one line per crashed pass — see
+     write_failure_report/record_crash_error there). Deliberately rendered
+     FIRST, immediately after the title line, so MAX_DIGEST_LINES
+     truncation can never cut it — a stuck pipeline is exactly the thing
+     this file must never let scroll off the bottom. Absent entirely on a
+     healthy run (0/1/2 consecutive failed nights, or a broken streak) —
+     this is not a permanent section, it's a symptom, matching the same
+     "say nothing when there's nothing to say" discipline everything else
+     in this file already follows (PH3-2 null-result convention).
   1. What changed in the KB overnight — real (non-dry-run) applied.jsonl
      entries from the most recent dream cycle's day-dir.
   2. Top 3 insights — parsed back out of the most recent report.md that
@@ -26,8 +38,11 @@ session-start [DREAM] banner. Four sections, in order:
   3. Pending human-gate items — proposals.jsonl entries, across day-dirs in
      the lookback window, whose canonical JSON does not appear (by content
      hash) in that same day-dir's applied.jsonl or rejected.jsonl yet. This
-     is a lightweight preview of what Prompt 4.4's `dream_apply --queue`
-     will formalize later in Thread 4 — not a replacement for it.
+     is a lightweight preview only — bounded by lookback_days, newest-dirs-
+     first, no expiry, capped to 6 lines by render_digest(). The formal,
+     unbounded, oldest-first, type-grouped, 14-day-auto-expiring queue is
+     `dream_apply.py --queue` (Prompt 4.4, TRAUM-AUTO) — this section is a
+     preview of it, not a replacement.
   4. One-line corpus stats — manifest.db session counts (total / dreamed /
      pending) plus best-effort lse-kb/lse-errors/lse-skills doc counts (ES
      reads are READ-ONLY, same `search_index`-style discipline as
@@ -60,6 +75,7 @@ ENV (same GOETHE_ prefix convention as dream_runner.py/dream_apply.py)
 """
 
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -69,9 +85,12 @@ import sys
 from dataclasses import dataclass
 from datetime import date
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
+# 0.2.0 — Prompt 4.3 (TRAUM-AUTO): gather_crash_streak() + the ESCALATION
+#         banner in render_digest(). No other section's behavior changed.
 
 MAX_DIGEST_LINES = 30
+CRASH_ESCALATION_THRESHOLD = 3  # consecutive failed nights before the operator banner fires
 _DAY_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _INSIGHT_LINE_RE = re.compile(
     r"^\d+\.\s+\*\*\[(?P<domain>[^/\]]+)/(?P<change>[^\]]+)\]\*\*\s+"
@@ -149,6 +168,21 @@ def load_jsonl(path: str) -> list[dict]:
             except json.JSONDecodeError:
                 continue
     return out
+
+
+def day_dir_files(base: str, stem: str, ext: str) -> list[str]:
+    """All of a day-dir's files for one output family, pass-scoped names
+    first, legacy shared name last: report-<pass>.md + report.md, or
+    proposals-<pass>.jsonl + proposals.jsonl. dream_runner.py writes
+    pass-scoped names as of Thread 4 (the shared names lost earlier passes'
+    output to per-pass overwrite -- see write_report()'s docstring); day-dirs
+    from Threads 2-3 still carry the legacy shared file, so readers take
+    the union. Sorted for deterministic ordering."""
+    scoped = sorted(glob.glob(os.path.join(base, f"{stem}-*.{ext}")))
+    legacy = os.path.join(base, f"{stem}.{ext}")
+    if os.path.exists(legacy):
+        scoped.append(legacy)
+    return scoped
 
 
 def proposal_key(p: dict) -> str:
@@ -241,21 +275,20 @@ def gather_top_insights(cfg: DigestConfig, primary_date: str | None, n: int = 3)
     candidates = day_dirs[: max(1, cfg.lookback_days)]
 
     for d in candidates:
-        report_path = os.path.join(cfg.dream_dir, d, "report.md")
-        if not os.path.exists(report_path):
-            continue
-        try:
-            with open(report_path, "rt", encoding="utf-8") as f:
-                text = f.read()
-        except OSError:
-            continue
-        section = _extract_insights_section(text)
-        if section is None:
-            continue
-        insights = parse_insight_lines(section)
-        if insights:
-            insights.sort(key=lambda x: x["confidence"], reverse=True)
-            return insights[:n], d, None
+        day_insights: list[dict] = []
+        for report_path in day_dir_files(os.path.join(cfg.dream_dir, d), "report", "md"):
+            try:
+                with open(report_path, "rt", encoding="utf-8") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            section = _extract_insights_section(text)
+            if section is None:
+                continue
+            day_insights.extend(parse_insight_lines(section))
+        if day_insights:
+            day_insights.sort(key=lambda x: x["confidence"], reverse=True)
+            return day_insights[:n], d, None
 
     if not candidates:
         return [], None, "no dream cycles found yet"
@@ -268,9 +301,14 @@ def gather_pending(cfg: DigestConfig, primary_date: str | None) -> tuple[list[di
     """Proposals across day-dirs in the lookback window whose content-hash
     does not appear in that same day's applied.jsonl/rejected.jsonl yet.
     Newest day-dirs first; each entry tagged with its source date. This is
-    a preview, not the formal queue Prompt 4.4 (Thread 4) builds -- it has
-    no expiry rule, no --queue flag, and no dedup across days by anything
-    other than exact content match."""
+    a preview, not the formal queue -- see `dream_apply.py --queue`
+    (Prompt 4.4, TRAUM-AUTO), which additionally auto-expires anything
+    older than 14 days (logged to that day-dir's expired.jsonl) and groups
+    by proposal type oldest-first. This preview deliberately does NOT
+    apply that expiry rule -- refreshing the digest must never mutate
+    dream-dir state as a side effect, so a stale item still shows up here
+    (uncapped by count, just by lookback_days) until an actual --queue run
+    expires it."""
     day_dirs = list_day_dirs(cfg.dream_dir)[: max(1, cfg.lookback_days)]
     if not day_dirs:
         return [], "no dream cycles found yet"
@@ -278,7 +316,9 @@ def gather_pending(cfg: DigestConfig, primary_date: str | None) -> tuple[list[di
     pending: list[dict] = []
     for d in day_dirs:
         base = os.path.join(cfg.dream_dir, d)
-        proposals = load_jsonl(os.path.join(base, "proposals.jsonl"))
+        proposals = []
+        for _ppath in day_dir_files(base, "proposals", "jsonl"):
+            proposals.extend(load_jsonl(_ppath))
         if not proposals:
             continue
         applied = load_jsonl(os.path.join(base, "applied.jsonl"))
@@ -364,17 +404,85 @@ def render_corpus_line(stats: dict) -> str:
     return "Corpus: " + " · ".join(parts)
 
 
+# --- crash streak (Prompt 4.3, TRAUM-AUTO) ----------------------------------
+
+def gather_crash_streak(cfg: DigestConfig, today: str) -> tuple[int, str | None]:
+    """Count consecutive recent calendar days, walking backward from
+    today, whose day-dir has a NON-EMPTY crashes.jsonl (dream_runner.py's
+    crash handler appends one line there per crashed pass -- see
+    write_failure_report). A day is "failed" if ANY pass crashed that
+    night -- deliberately coarse/conservative in the alarm-prone
+    direction: the escalation exists to catch operators' attention on a
+    genuinely broken pipeline, not to precisely characterize partial
+    failures (dream_apply --queue / report.md's own FAILED banner are
+    where the per-pass detail lives).
+
+    A day-dir that exists WITHOUT crashes.jsonl (or with an empty one)
+    breaks the streak -- a clean night. A day-dir that doesn't exist AT
+    ALL also breaks the streak, deliberately: an ambiguous gap (box off,
+    dream simply didn't run) is NOT evidence of 3 consecutive BAD nights,
+    so it must not silently count toward escalation either way.
+
+    Bounded by cfg.lookback_days (same knob gather_pending already uses)
+    so a long-dead, never-cleaned-up dream_dir can't make this an
+    unbounded scan -- in practice CRASH_ESCALATION_THRESHOLD (3) is far
+    smaller than any sane lookback_days, so the bound is a safety margin,
+    not something that fires in normal operation.
+
+    Returns (streak_length, most_recent_failed_date_or_None). streak_length
+    may be 0 (no crashes.jsonl for today, or today's day-dir doesn't exist
+    yet) without that being an error -- see write_digest's exception guard
+    for what a genuine gather failure looks like instead.
+    """
+    from datetime import timedelta as _timedelta  # noqa: PLC0415
+
+    streak = 0
+    most_recent: str | None = None
+    day = date.fromisoformat(today)
+    for _ in range(cfg.lookback_days):
+        day_str = day.isoformat()
+        day_dir = os.path.join(cfg.dream_dir, day_str)
+        if not os.path.isdir(day_dir):
+            break
+        crashes = load_jsonl(os.path.join(day_dir, "crashes.jsonl"))
+        if not crashes:
+            break
+        streak += 1
+        if most_recent is None:
+            most_recent = day_str
+        day = day - _timedelta(days=1)
+    return streak, most_recent
+
+
 # --- render ---------------------------------------------------------------
 
 def render_digest(cfg: DigestConfig, today: str, primary_date: str | None,
                    applied: list[dict], applied_note: str | None,
                    insights: list[dict], insights_date: str | None, insights_note: str | None,
                    pending: list[dict], pending_note: str | None,
-                   corpus: dict) -> str:
+                   corpus: dict, crash_streak: int = 0, crash_last_date: str | None = None) -> str:
     lines: list[str] = []
     lines.append(f"# TRAUM dream digest — generated {today}"
                   + (f" (cycle: {primary_date})" if primary_date else " (no cycles yet)"))
     lines.append("")
+
+    if crash_streak >= CRASH_ESCALATION_THRESHOLD:
+        # Prompt 4.3: rendered FIRST, right after the title, specifically
+        # so MAX_DIGEST_LINES truncation (bottom of this function) can
+        # never cut it off -- see gather_crash_streak's own docstring.
+        lines.append(f"## :rotating_light: ESCALATION — {crash_streak} consecutive failed dream nights")
+        lines.append(
+            f"- dream_runner.py has crashed at least once every night for the last "
+            f"{crash_streak} night(s) (most recent: {crash_last_date}). This is NOT a "
+            "normal PH3-2 null result -- something in the dreaming pipeline itself is "
+            "broken (node3090/Ollama reachability, Elasticsearch, a code bug, ...)."
+        )
+        lines.append(
+            f"- Check `dreams/{crash_last_date}/report.md`'s FAILED banner and "
+            f"`dreams/{crash_last_date}/crashes.jsonl` for the exact error, or search "
+            "lse-errors for context=dream-runner / provenance=dream-infra for the full trail."
+        )
+        lines.append("")
 
     lines.append(f"## Applied overnight ({len(applied)})")
     if applied_note:
@@ -422,7 +530,7 @@ def render_digest(cfg: DigestConfig, today: str, primary_date: str | None,
     if len(lines) > MAX_DIGEST_LINES:
         kept = lines[: MAX_DIGEST_LINES - 1]
         omitted = len(lines) - len(kept)
-        kept.append(f"… {omitted} more line(s) omitted — see dreams/{primary_date or '<date>'}/report.md")
+        kept.append(f"… {omitted} more line(s) omitted — see dreams/{primary_date or '<date>'}/report-*.md")
         lines = kept
 
     return "\n".join(lines) + "\n"
@@ -465,9 +573,19 @@ def write_digest(cfg: DigestConfig) -> str:
         corpus = {"sessions": None, "docs": {idx: None for idx in KB_INDICES}}
         print(f"[dream_digest] WARNING: corpus stats gather failed ({exc})", file=sys.stderr)
 
+    try:
+        crash_streak, crash_last_date = gather_crash_streak(cfg, today)
+    except Exception as exc:
+        # Fails CLOSED toward "no escalation shown" rather than crashing
+        # the whole digest over a broken streak-scan -- same PH3-2
+        # discipline as every other gather_* guard above. A silent miss
+        # here is far preferable to the digest itself becoming unavailable.
+        crash_streak, crash_last_date = 0, None
+        print(f"[dream_digest] WARNING: crash-streak gather failed ({exc})", file=sys.stderr)
+
     text = render_digest(cfg, today, primary_date, applied, applied_note,
                           insights, insights_date, insights_note,
-                          pending, pending_note, corpus)
+                          pending, pending_note, corpus, crash_streak, crash_last_date)
 
     if cfg.dry_run:
         print(f"[dream_digest] [dry-run] would write {cfg.digest_path()}:", file=sys.stderr)
