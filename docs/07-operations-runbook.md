@@ -508,3 +508,12 @@ reason). Day-dirs before 2026-07-13 use the legacy shared
 | Units (installed) | `/etc/systemd/system/goethe-dream.{service,timer}` |
 | Unit templates (repo) | `lse/services/goethe-dream.{service,timer}.tmpl` |
 | Runner sandbox cwd | `/var/lib/lse/dream-sandbox` (holds nothing durable) |
+
+### 10.7 Create or refresh the TRAUM operator KB entry
+
+Use the copy-paste prompt in
+[`docs/dreaming/KB-ENTRY-PROMPT.md`](dreaming/KB-ENTRY-PROMPT.md). It requires
+live read-only verification before claiming ground truth, previews the proposed
+entry before indexing, and never applies dream proposals as part of documentation.
+Users without GOETHE tools receive the same entry as reviewable Markdown/JSON and
+must label unverified fields instead of presenting them as live facts.

@@ -120,7 +120,7 @@ the same `GOETHE_<FIELD>` env-var convention as the rest of the stack.
 | `NODE3090_SSH_HOST` | `node3090.home.arpa` | No | Env var OK | VRAM-gate probe target for the dreamer's llama-server leg (Prompt 4.1) — `BatchMode=yes` SSH + `nvidia-smi`; probe failure fails CLOSED (treated as GPU busy → Ollama/CPU leg). |
 | `NODE3090_SSH_USER` | `lse-admin` | No | Env var OK | SSH user for the VRAM-gate probe. |
 | `NODE3090_SSH_PORT` | `22` | No | Env var OK | SSH port for the VRAM-gate probe. |
-| `NODE3090_VRAM_GATE_MB` | `2000` | No | Env var OK | Free-VRAM floor (MiB) below which node3090's GPU is treated as busy and the dreamer cascades to the CPU leg — dreams are latency-insensitive, never contend for a shared GPU. |
+| `NODE3090_VRAM_GATE_MB` | `2000` | No | Env var OK | Fail-closed fallback used only when llama-server `/slots` activity cannot be read. An idle loaded slot is reused regardless of free VRAM; an active slot cascades to CPU Ollama. If slot state is unavailable, free VRAM below this MiB floor is treated as busy. |
 | `DREAM_PATTERNS_MAX_LINES` | `50000` | No | Env var OK | Patterns pass: windowed tail-read size for `agent_commands.log` (unrotated, growing — corpus-audit caveat). |
 | `DREAM_PATTERNS_RETRY_WINDOW` | `20` | No | Env var OK | Patterns pass: failure→retry adjacency lookahead, in raw log lines. |
 | `DREAM_PATTERNS_SESSION_GAP_MINUTES` | `30` | No | Env var OK | Patterns pass: inactivity gap used to infer session boundaries (the log carries no session_id). |
