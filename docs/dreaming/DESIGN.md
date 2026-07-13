@@ -720,10 +720,64 @@ whole subcase or it doesn't.
 
 ### 7.4 Decision log
 
-*Empty as of this writing (Thread 2, Prompt 2.6) — populated by Thread 4,
-Prompt 4.8, once eval evidence exists. Until an entry is added here,
-`DREAM_AUTO_APPLY` stays `""` and every proposal type requires a human yes,
-with no exceptions.*
+> Append-down. Each entry records a Prompt 4.8-class autonomy decision and
+> the evidence it rests on, BEFORE any valve changes in a running
+> deployment. Until an entry explicitly promotes a type,
+> `DREAM_AUTO_APPLY` stays `""` and every proposal type requires a human
+> yes, with no exceptions.
+
+**2026-07-13 — Prompt 4.8 (Thread 4): `DREAM_AUTO_APPLY` stays `""` — all
+types remain human-gated. Cadence: nightly retained.**
+
+Auto-apply decision — no type promoted, on four independent grounds:
+
+1. **The §7.3 measurement window hasn't started.** The rule requires ≥2
+   consecutive weeks of gate-reviewed operation with a zero
+   rejected-in-hindsight count per type. The nightly timer
+   (`goethe-dream.timer`) was only installed and enabled 2026-07-13 —
+   every dream run before that was hand-driven in-thread. Week 1 of the
+   window begins with the first unattended cycle (2026-07-14 03:30).
+2. **The A/B eval provides no promotion evidence.**
+   `eval/eval-report-traum-1.md`: pre-registered verdict **LOSS**
+   (A=53/60 vs B=51/60; tool calls 34 vs 31 — both win-criterion legs
+   failed). Its §6 root-cause is methodological (≈15-min divergence
+   window between conditions, n=1 per condition, unpinned sampling) —
+   inconclusive rather than damning, but §7.3 requires positive eval
+   evidence FOR promotion, and an inconclusive loss is not that.
+3. **The threat model says the structural backstops are incomplete.**
+   `docs/threat-model-kb.md`: the origin-tag laundering protection is
+   today a blunt ceiling (origin=web/human/local-probe tagging is not
+   implemented in the live `index_to_kb` path), and gate-fatigue
+   mitigations are untested. Removing the human gate for any type now
+   would remove the one control that is demonstrably working.
+4. **Gate rejection history is nonzero.** Thread 2's calibration run
+   rejected 8 of 11 proposals at the gate (all 7 stale-contradiction + 1
+   error-cluster). The bar is zero rejected-in-hindsight; we are nowhere
+   near it even before hindsight is measurable.
+
+Cadence decision — **nightly retained** (OnCalendar 03:30, ±15 min
+jitter), not reduced to 2–3×/week:
+
+- Corpus growth is bursty (24–92 episode files/day on active days, 0 on
+  idle days as of 2026-07-13; 13 manifest sessions, all dreamed) and
+  proposal yield modest but non-null (6 pending from the last full
+  cycle) — but nightly runs are cheap and self-limiting: 45-min
+  wall-clock + LLM-call budgets, VRAM gate diverts to node3090's CPU leg
+  when the GPU is busy, lockfile + 30-min session-activity guard, and
+  the null-result discipline makes idle nights near-free.
+- The `[DREAM]` session banner, the 14-day queue expiry, and §7.3's
+  2-consecutive-week windows all assume a fresh nightly digest; a
+  sparser cadence stales the banner and stretches the promotion
+  denominator for no measurable saving.
+- **Revisit trigger (recorded now, so drift is a decision, not
+  forgetfulness):** if 4 consecutive weeks of nightly runs produce only
+  null records, drop to 2–3×/week — as a new entry here.
+
+Eval re-run precondition (from `eval/eval-report-traum-1.md` §7): any
+future promotion attempt first needs a re-run with ≥1 week of real
+elapsed nightly dreaming between conditions and multiple trials (or
+pinned sampling). Not scheduled; it is the entry ticket for revisiting
+this decision, not a standing task.
 
 ### 7.5 Current implementation status
 

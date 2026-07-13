@@ -547,3 +547,60 @@ class TestPatternsJsonDeterminism:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# --- redact_log_text (Thread 4 prerequisite: agent-log secret redaction) ----
+# The Thread 3 close's live run surfaced a plaintext password in a repeated
+# `sshpass -p` command in agent_commands.log; redaction now happens at parse
+# time inside parse_agent_log_lines() so no downstream consumer (frequency
+# table, patterns.json, insights LLM prompt) ever sees the raw secret.
+
+class TestRedactLogText:
+
+    def test_sshpass_password_flag_redacted(self):
+        out = dr.redact_log_text("sshpass -p 'Sup3rSecret!' ssh lse-admin@node3090 uptime")
+        assert "Sup3rSecret!" not in out
+        assert "[REDACTED:cli-credential]" in out
+        assert out.startswith("sshpass -p ")
+        assert out.endswith("ssh lse-admin@node3090 uptime")
+
+    def test_bearer_token_redacted(self):
+        out = dr.redact_log_text('curl -H "Authorization: Bearer abc123.def-456" http://host/')
+        assert "abc123" not in out
+        assert "[REDACTED:bearer-token]" in out
+
+    def test_assignment_style_secret_redacted(self):
+        out = dr.redact_log_text("export PFSENSE_API_KEY=abcdef123456789012 && run-thing")
+        assert "abcdef123456789012" not in out
+        assert out.startswith("export PFSENSE_API_KEY=")
+        assert "[REDACTED:pattern-match]" in out
+
+    def test_innocent_single_letter_flags_untouched(self):
+        # `-u` (sort/python) deliberately NOT matched -- redacting its argument
+        # would corrupt the frequency table for innocent commands.
+        for cmd in ("sort -u /tmp/list.txt", "python -u script.py --verbose",
+                    "ls -la /opt/local-se"):
+            assert dr.redact_log_text(cmd) == cmd
+
+    def test_empty_string_safe(self):
+        assert dr.redact_log_text("") == ""
+
+    def test_parse_agent_log_lines_applies_redaction(self):
+        lines = [_cmd("2026-07-01 10:00:00", "sshpass -p hunter2secret ssh node3090 uptime"),
+                 _done("2026-07-01 10:00:01", 0)]
+        events = dr.parse_agent_log_lines(lines)
+        assert events[0]["tag"] == "CMD"
+        assert "hunter2secret" not in events[0]["detail"]
+        assert "[REDACTED:cli-credential]" in events[0]["detail"]
+
+    def test_frequency_table_counts_redacted_command_as_one(self):
+        # Identical raw commands redact to identical strings, so the count
+        # survives redaction (3 occurrences -> one entry, count 3).
+        lines = []
+        for i in range(3):
+            lines.append(_cmd(f"2026-07-01 10:0{i}:00", "sshpass -p hunter2secret ssh node uptime"))
+            lines.append(_done(f"2026-07-01 10:0{i}:30", 0))
+        events = dr.parse_agent_log_lines(lines)
+        freq = dr.command_frequency(events, top_n=10)
+        assert len(freq) == 1 and freq[0]["count"] == 3
+        assert "hunter2secret" not in freq[0]["command"]

@@ -174,8 +174,12 @@ local-system-engineer/
 │   └── test_*.py               ← smoke tests
 │
 ├── tools/
-│   ├── goethe.py                    ← current production tool (Goethe v0.2.5, stable filename)
-│   ├── goethe_mcp.py                ← MCP gateway server (v1.9.3)
+│   ├── goethe.py                    ← current production tool (Goethe v0.4.0-a, stable filename)
+│   ├── goethe_mcp.py                ← MCP gateway server (v1.11.1, TRAUM episode journaling)
+│   ├── dream_runner.py              ← TRAUM offline dream passes (proposes, never writes ES)
+│   ├── dream_apply.py               ← TRAUM human confirm-gate + --queue (the ONLY dream write path)
+│   ├── dream_digest.py              ← TRAUM ≤30-line morning digest
+│   ├── episode_index.py             ← episode manifest.db build + rotation
 │   ├── start-goethe.sh              ← LUCIFER MCP startup script
 │   ├── start-goethe-node3090.sh     ← node3090 MCP deploy + startup script
 │   ├── system-prompt-v0.5.18.md    ← current LUCIFER system prompt
@@ -188,6 +192,14 @@ local-system-engineer/
 │   ├── CHANGELOG.md
 │   └── v0.5.15.md               ← last OWUI-era system prompt (archived)
 │
-└── eval/
-    └── eval-report-v6.md        ← Run 7: 62/63 (projected); see VERSION.md Co-test Matrix
+├── eval/
+│   ├── eval-report-v6.md        ← Run 7: 62/63 (projected); see VERSION.md Co-test Matrix
+│   ├── traum-ab-design.md       ← TRAUM A/B learning-lift eval design (pre-registered criterion)
+│   ├── eval-report-traum-1.md   ← TRAUM A/B run 1 verdict: LOSS (methodologically inconclusive — see §6-7)
+│   ├── v35_harness.py           ← v3.5 suite harness (reconstruction; original was never committed)
+│   └── retrieval-gold-v1.jsonl  ← frozen retrieval gold set (sha256 in traum-ab-design.md)
+│
+├── lse/services/                ← systemd unit templates (goethe-mcp, llama-server, goethe-dream ×2)
+│
+└── docs/dreaming/               ← TRAUM design + run artifacts (DESIGN.md, corpus-audit, calibration)
 ```

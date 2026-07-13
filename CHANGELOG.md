@@ -3,6 +3,737 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+## 2026-07-13 (Cowork, cont'd): TRAUM Thread 4 CLOSE (Prompts 4.9 + 4.10) — **WORKSTREAM COMPLETE; the v0.4.0 line is the TRAUM era.** 408/408 tests; nightly loop live; tonight's dream reviews its own construction
+
+- **Prompt 4.9 — documentation pass, every command executed live first**:
+  `docs/07-operations-runbook.md` §10 "Dreaming operations" (5-minute morning
+  review loop, timer health, failed-night escalation + lock handling,
+  re-dreaming a session, provenance tracing doc→dream→episode, path table —
+  all 8 command groups run on LUCIFER 2026-07-13 before being written down);
+  `VALVES.md` +17 Thread-4 valve rows (lock/budgets/activity-guard,
+  node3090 SSH VRAM-gate quartet, patterns/insights knobs) and the
+  `DREAM_AUTO_APPLY` row re-pointed at the §7.4 decision; `README.md`
+  repo-layout updated (dream tools, eval TRAUM artifacts, lse/services,
+  docs/dreaming).
+- **Prompt 4.10 — close**:
+  - **`.gitignore` decision (flagged at 4.5, decided now):** line 44's
+    blanket `eval/` → `eval/*` + 5 explicit re-includes (frozen gold set,
+    v35 harness, A/B design doc, its verdict report, v3.5 suite text) —
+    a directory-level ignore can't be negated from inside, so the class
+    stays ignored while the citable artifacts become trackable for the
+    first time ever.
+  - **Full test pass: `pytest tests/ -q` → 408 passed** (includes the 290
+    dream-scoped + kb contracts run against live ES).
+  - CURRENT-STATE.md TRAUM row: workstream complete, eval verdict recorded
+    (LOSS, methodologically inconclusive), interpreter/client-drift note
+    (units on system python3 / ES client 9.4.1; still no requirements.txt
+    pinning — standing risk from the 2026-07-11 drift).
+  - ROADMAP.md reconciled: PH4-2 [x] (all 4 TRAUM threads), SCRIBE-4 [x]
+    (continuous self-measurement, stronger than the monthly ask), PH5-2
+    urgency re-assessed (goethe.py 7,228 lines — the stale "before v0.4"
+    bar is breached; next goethe.py-touching workstream is blocked on the
+    extract), PH5-3 [~] (dreaming chapter exists; P0-2 example + real
+    origin-tags still open).
+  - Prompt 4.10's last act, rewritten for the live timer: tonight's
+    03:32 unattended cycle processes THIS workstream's own sessions —
+    the loop reviewing its own construction is the acceptance test; read
+    `/opt/local-se/dreams/latest-digest.md` tomorrow morning.
+- **Known-open at close (named, not hidden):** operator credential rotation
+  (the sshpass password redaction now scrubs is still live in the log
+  file and wherever it authenticates); ES client unpinned (add
+  requirements pin with PH5-2); eval re-run per report §7 is the entry
+  ticket for any future DREAM_AUTO_APPLY promotion; origin-tags
+  (PH5-3) remain the structural gap the threat model leans hardest on.
+
+---
+## 2026-07-13 (Cowork): TRAUM Thread 4 (TRAUM-AUTO), Prompts 4.1-install + 4.8 — nightly timer LIVE on LUCIFER; autonomy decision recorded: DREAM_AUTO_APPLY stays empty, nightly cadence retained
+
+- **Prompt 4.1 gap closed — timer installed and enabled live** (the 4.1
+  session had written `lse/services/goethe-dream.{service,timer}.tmpl` but
+  never installed them; `systemctl` confirmed `Unit goethe-dream.timer could
+  not be found` before this). Rendered live units from the templates
+  (ExecStart → `/usr/bin/python3 /home/sy5/local-system-engineer/tools/
+  dream_runner.py`, one per pass ×5; system python3 chosen deliberately —
+  its elasticsearch client (9.4.1) is the one verified against the live ES
+  9.4.3 server, while the owui venv still carries 8.19.3), verified with
+  `systemd-analyze verify`, smoke-tested the runner end-to-end (patterns
+  pass, dry-run, real corpus: 13 sessions, lse-kb=376), then installed via
+  operator sudo-delegation: `enabled`, `active (waiting)`, first unattended
+  fire **2026-07-14 03:32:12 CEST**. Sandbox cwd `/var/lib/lse/dream-sandbox`
+  created per the template's install notes.
+- **Prompt 4.8 — autonomy decisions recorded in DESIGN.md §7.4** (the
+  decision log the promotion rule requires be written BEFORE any valve
+  change): `DREAM_AUTO_APPLY` stays `""` on four independent grounds
+  (§7.3 2-week measurement window only starts with tonight's first
+  unattended cycle; the A/B eval's pre-registered LOSS verdict is
+  methodologically inconclusive and in any case not positive evidence FOR
+  promotion; threat-model finding that origin-tag laundering protection is
+  a blunt ceiling with origin=web tagging unimplemented; Thread 2's gate
+  rejected 8/11 calibration proposals). Cadence: **nightly retained**, with
+  a recorded revisit trigger (4 consecutive all-null weeks → 2-3×/week) and
+  the eval re-run precondition (≥1 week real elapsed dreaming + multiple
+  trials/pinned sampling) named as the entry ticket for ever revisiting
+  promotion.
+- Verification audits this session (before any new work): 4.2/4.3/4.4
+  guardrail/crash/queue implementations re-tested (91 dedicated tests
+  green), 4.5/4.6 artifacts verified (gold-set sha256 matches the frozen
+  value in `traum-ab-design.md`; the LOSS verdict's `record_error`
+  entry `6122c47830260f4e` confirmed present in live `lse-errors`),
+  4.7's 22 cited test node-id groups re-collected against the live test
+  tree — all still valid.
+
+---
+## 2026-07-12 (Cowork, cont'd x11): TRAUM Thread 4 (TRAUM-AUTO), prerequisite fixes — the two Thread 3 close findings closed before 4.8: agent-log secret redaction in the patterns pass; pass-scoped report/proposals filenames end the multi-pass day-dir clobber
+
+- **`tools/dream_runner.py` v0.11.0 → v0.12.0**:
+  - **Agent-log secret redaction** (`redact_log_text()` + `_REDACT_RULES`,
+    applied inside `parse_agent_log_lines()` — one choke point, every
+    downstream consumer sees only redacted text). The Thread 3 close's live
+    run surfaced a plaintext password in a repeated `sshpass -p` command;
+    `agent_commands.log` is written verbatim with no redaction of its own, so
+    the dreamer scrubs at READ time, before anything reaches `patterns.json`,
+    report files, or an off-host LLM prompt. Rules 1+3 are
+    `goethe_mcp.py`'s episode-journaling regexes verbatim (`Bearer …`,
+    `<ident-containing-key/token/secret/password>=<12+-char blob>`); rule 2
+    adds the credential-as-CLI-flag shape (`sshpass -p`, `--password`,
+    `--user`, `--token`, `--api-key`, `--secret`) the assignment rule can't
+    catch. Bare `-u` deliberately NOT matched (`sort -u`/`python -u` would
+    lose innocent arguments and corrupt the frequency table).
+  - **Pass-scoped output filenames**: `write_report()` now writes
+    `report-<pass>.md` / `proposals-<pass>.jsonl` (and the crash writer
+    `report-<pass>.md`), not the shared `report.md`/`proposals.jsonl` —
+    the Thread 3 close found a full multi-pass cycle silently discarded
+    earlier passes' REAL pending proposals via per-pass overwrite (recovered
+    by hand that close; 3.8's append-mode `null-results.jsonl` fixed null
+    verdicts only). Re-running the SAME pass still overwrites only its own
+    snapshot.
+- **`tools/dream_digest.py` v0.2.0 → v0.3.0**: new `day_dir_files()` — union
+  of pass-scoped + legacy shared names (Threads 2–3 day-dirs stay readable);
+  `gather_top_insights()` scans every `report*.md` in a day-dir (union of
+  insights, confidence-sorted), `gather_pending()` every `proposals*.jsonl`.
+- **`tools/dream_apply.py` v0.3.0 → v0.4.0**: `gather_queue()` (Prompt 4.4's
+  queue) and `render_group()`'s REPORT reference both glob via
+  `dream_digest.day_dir_files()`.
+- **Tests**: `tests/test_dream_patterns.py` +7 (redaction rules, parse-time
+  application, redacted-command frequency stability, innocent-flag
+  non-matches); `tests/test_dream_engine.py` +2 (pass-scoped filenames,
+  two-pass no-clobber); `tests/test_dream_digest.py` +2 (`day_dir_files`
+  union/ordering, `gather_pending` across pass files);
+  `tests/test_dream_crash_discipline.py` fault-injection expectation updated
+  to `report-patterns.md`. `pytest tests/ -k dream -q`: **290 passed**.
+- Deferred: operator must still rotate the surfaced `sshpass` credential and
+  move it to Vaultwarden (redaction protects future dreams, not the log
+  file itself, which remains on disk unredacted).
+
+---
+## 2026-07-12 (Cowork, cont'd x10): TRAUM Thread 4 (TRAUM-AUTO), Prompt 4.7 — dreaming threat-model addendum; created `docs/threat-model-kb.md` (REFACTOR-4 had not landed); 4 named threats + 2 carried from DESIGN.md, each mitigation mapped to contract test by name, gaps stated honestly
+
+- **Created `docs/threat-model-kb.md`** (did not exist — confirmed REFACTOR-4/
+  PH5-3 unlanded on ROADMAP.md before creating it, per the prompt's own
+  "creating the file if REFACTOR-4 hasn't landed" instruction). Structured
+  as the Shostack 4-question frame (what we built / what can go wrong / what
+  we do / did it work), matching and maturing the "mini pass" DESIGN.md §5
+  already had (Thread 1, Prompt 1.2) — that section explicitly said it was
+  "a draft input" to this doc, not a substitute; this prompt is that fold-in.
+  §5 of the new file is a deliberate stub for the broader REFACTOR-4 scope
+  (P0-2 gateway exposure, tier self-grant, NTP spoof, ES-unauthenticated)
+  that Prompt 4.7 did not ask for — left open on ROADMAP.md, not silently
+  claimed as done.
+- **Four threats written per the prompt's exact list**: (1) poisoning via
+  web-content laundered through episodes into dreamed facts — including the
+  honest finding that `origin=web` tagging (the other half of the
+  REFACTOR-4 asymmetric-trust rule this is supposed to extend) **does not
+  exist anywhere in the live `index_to_kb` write path** (`grep`-verified),
+  so today's real mitigation is the blunter "dream can never mint
+  ground_truth regardless of source," not source-aware laundering
+  detection; (2) prompt-injection persisted in episode JSONL replaying into
+  the dreamer on every future run that reads that session, not just the
+  fetch-time one; (3) gate fatigue, tied explicitly to how it's the actual
+  delivery mechanism for (1) and (2) reaching `lse-kb`; (4) dreamer endpoint
+  compromise — `GOETHE_DREAM_LLM_URL` has no allowlist/identity check, so
+  the real mitigation is blast-radius containment (read-only ES client,
+  budget caps, crash discipline), not endpoint verification. Plus the two
+  DESIGN.md §5 already had (secret leakage, auto-apply scope creep), carried
+  forward and re-verified rather than re-derived.
+- **Every mitigation mapped to a contract test by name**, and every citation
+  spot-checked with `pytest --collect-only` against the live test files
+  before writing it down (`tests/test_dream_engine.py`,
+  `tests/test_dream_guards.py`, `tests/test_dream_crash_discipline.py`,
+  `tests/test_dream_apply_queue.py`, `tests/test_dream_corpus.py` — 127
+  collected test node-ids verified, zero typos/renamed tests in the doc).
+- **Three real gaps found and stated plainly, not glossed over**: no
+  dedicated test for the verbatim-quote ≥20-char rule as its own case; no
+  test/allowlist for `GOETHE_DREAM_LLM_URL` endpoint identity; the
+  "secret-scan CI check" DESIGN.md §5 described as a mitigation **was never
+  actually built** — confirmed no `.github/workflows/` exists in this repo
+  at all. Recorded as open items with concrete follow-up suggestions, not
+  fixed in this prompt (documentation scope).
+
+Deferred to later prompts:
+- Closing the three gaps above (test additions, `origin=web` tagging via
+  REFACTOR-4, endpoint allowlisting) — out of scope for a doc-writing prompt.
+- Prompt 4.8 (autonomy tuning — the LOSS verdict from 4.6 plus this threat
+  model are both direct inputs now), 4.9 (runbook), 4.10 (Thread close).
+
+## 2026-07-12 (Cowork, cont'd x9): TRAUM Thread 4 (TRAUM-AUTO), Prompt 4.6 — ran the A/B eval, verdict LOSS (`eval/eval-report-traum-1.md`); root cause identified as methodological (no elapsed dreaming window + model sampling variance), not a bad KB write; `record_error` filed; `DREAM_AUTO_APPLY` left empty
+
+- **Executed the eval** per `traum-ab-design.md`: Condition A = `lse-kb`/
+  `lse-errors`/`lse-skills` cloned document-for-document (mapping + `_id` +
+  `_source`, trust fields intact) into a disposable `elasticsearch:9.4.3`
+  container (deviation from the design's ES-native-snapshot plan — the
+  live container has no `path.repo` configured and restarting it to add
+  one was judged too risky mid-eval; the clone approach gives the same
+  isolation guarantee without touching production). A second `goethe_mcp`
+  gateway (byte-identical `goethe.py`/`goethe_mcp.py` to the live one,
+  diffed) served Condition A on a spare port against the disposable ES;
+  Condition B ran against the real live gateway. `llama-server` was not
+  running at prompt start — started fresh (`Qwen3.6-27B-UD-Q4_K_XL`, ctx
+  131072, matching Run 9's header) and served both conditions sequentially
+  (one GPU).
+- **Score sheet**: A=53/60, B=51/60 (v3.5 S/P/M/W/A/L). Tool calls: A=31,
+  B=34 (more, not fewer). **Both legs of the pre-registered B-wins
+  criterion fail — verdict LOSS**, recorded mechanically, not reframed.
+  Full per-scenario grading with transcript evidence in the report,
+  including a harness limitation discovered mid-grading (P1/P3/M2's
+  suite text assumes an interactive human typing "yes" mid-conversation;
+  `v35_harness.py` has no mechanism for that — adjudicated symmetrically
+  for both conditions per the same precedent Run 9 already established,
+  with a strict-literal cross-check confirming the verdict direction is
+  unaffected either way).
+- **Root-cause analysis (the important part)**: none of the scenarios
+  driving the score delta (S3, P3, P5, M2, W1) involved a KB-content
+  difference between conditions — all were tool-use-reasoning gaps
+  (sudo/permission judgment, a hallucinated "file doesn't exist" on a
+  permission-denied read, an incorrect "elevated access required" claim
+  disproven by the other condition's own successful direct read).
+  Retrieval recall/MRR on the frozen gold set was bit-for-bit identical
+  between conditions on production (linear) mode; wrong-KB-hit count was
+  0 for both. Condition A's snapshot and Condition B's live run happened
+  ~15 minutes apart with no nightly dream cycle in between (03:30 timer),
+  so the two KBs barely diverged — this run mostly measured model-sampling
+  variance (`--reasoning-budget -1`, no temperature pinning, n=1 per
+  condition), not a dreaming effect. Recorded honestly as a null-adjacent
+  result with a methodological gap, not oversold as evidence dreaming
+  hurts quality.
+- **Per the loss-verdict instruction**: no `lse-errors` entry blames a
+  specific bad KB write, because none was found — filing one anyway to
+  satisfy the letter of the instruction was judged worse than explaining
+  why it doesn't apply. A `record_error` entry (hash `6122c47830260f4e`)
+  captures the verdict + root-cause finding + re-run recommendation for
+  the next dreaming-lift attempt. `DREAM_AUTO_APPLY` stays empty
+  regardless of root cause, per the instruction.
+- **Also discovered**: `test-suite-v3.5.md`'s M2 precondition ("gs alias
+  not present") is stale again — same drift class CURRENT-STATE.md already
+  flagged once for this exact scenario, now recurred.
+- Disposable infra (Condition-A gateway on 9701, `elasticsearch-eval-a`
+  container + volume) torn down after the report was filed. `llama-server`
+  left running (shared service, not eval-specific).
+
+Deferred to later prompts:
+- A proper re-run with a real elapsed dreaming window and multiple trials
+  per condition (or pinned sampling) — recommended in the report §7, not
+  done here since Prompt 4.6's scope was "run the eval as designed," not
+  "redesign it mid-run."
+- Prompt 4.7 (threat-model addendum), 4.8 (autonomy tuning — this loss
+  verdict is now an input), 4.9 (runbook), 4.10 (Thread close).
+
+## 2026-07-12 (Cowork, cont'd x8): TRAUM Thread 4 (TRAUM-AUTO), Prompt 4.5 — A/B learning-lift eval design (`eval/traum-ab-design.md`); reconstructed + committed `eval/v35_harness.py` v0.1.0 (original lost, never committed, `/tmp/lse/` cleared); gold-set DATA-3 freeze (sha256)
+
+- **`eval/traum-ab-design.md`** (new). Design-only per the prompt ("before
+  running anything"). Condition A = `lse-kb` frozen via ES snapshot
+  (repository + snapshot + restore into a disposable second ES instance,
+  commands specified, not yet executed); Condition B = live dreamed KB.
+  Reframed "pre-dreaming-era" (§2): the literal pre-Thread-2 snapshot does
+  not exist (`GET /_snapshot` → `{}`, no repo ever registered — this gap
+  was already flagged in `calibration-run-1.md` and deferred to this
+  prompt) and cannot be reconstructed from logs (in-place trust-field
+  mutation would contaminate the control) — Condition A is now defined as
+  "frozen at eval-start," anchoring every future TRAUM eval to a real
+  baseline instead of a stale reference point.
+- **Metrics specified**: suite score (v3.5 S/P/M/W/A/L, 0/2/3 rubric,
+  human/LLM-graded from harness transcripts); retrieval recall/MRR on
+  `retrieval-gold-v1.jsonl` (50 rows, sha256 frozen per DATA-3:
+  `a5fe1380...1379be`); tool-call count to completion per scenario (the
+  "faster verification" claim); wrong-KB-hit count (defined precisely —
+  requires evidence the model used a bad `search_kb` hit, not just that
+  one was returned; direct empirical check on the poisoning-via-dreaming
+  invariants).
+- **Pre-registered success criterion** (§6): B wins iff suite score
+  strictly improves, OR tool-calls drop ≥10% with no score loss. Anything
+  else recorded as null/loss, no post-hoc reframing.
+- **`eval/v35_harness.py`** (new, v0.1.0). The plan named this file as
+  "the harness" and instructed committing it first since it lived only in
+  `/tmp/lse/` — confirmed gone on both LUCIFER and node3090 while writing
+  this design (the loss was already documented 2026-07-07 in
+  `t1_feedback_loop.py`'s docstring and `CURRENT-STATE.md`'s Outstanding
+  note; never actually committed). Reconstructed from the surviving
+  description in `eval-report-v8.md` + the proven MCP-driving-a-model
+  wiring already committed in `t1_mcp_harness.py`. Adds multi-turn
+  conversation-chain support the original wasn't documented as having:
+  parses `test-suite-v3.5.md` directly, detects "continuing in the same
+  conversation as X" linkage in the suite's own prose, and correctly
+  grouped the real suite into 19 chains / 20 scenarios (A1→A2 linked,
+  everything else fresh) — verified live via `--list` against the real
+  file, not just unit-tested.
+- **Gold-set freeze (DATA-3, partial)**: `eval/retrieval-gold-v1.jsonl`
+  sha256 recorded in the design doc; must be re-checked at the top of
+  Prompt 4.6, void if it doesn't match. General `freeze_bench.py`-style
+  gold-set tooling (the full DATA-3 item) remains open on ROADMAP.md — not
+  built here, this eval doesn't wait on it.
+
+Deferred to later prompts:
+- Actually registering the ES snapshot repo, taking the Condition-A
+  snapshot, and standing up the disposable second ES instance — explicitly
+  left to Prompt 4.6 (design-only scope for 4.5).
+- Freezing `test-suite-v3.5.md` itself under DATA-3 (only the gold set was
+  frozen here).
+- Confirming the live model on `:8080` at run time — not assumed in the
+  design, to be recorded verbatim in `eval-report-traum-1.md`.
+- Running the eval itself (Prompt 4.6), the threat-model addendum (4.7),
+  autonomy tuning (4.8), and the runbook pass (4.9).
+
+## 2026-07-12 (Cowork, cont'd x7): TRAUM Thread 4 (TRAUM-AUTO), Prompt 4.4 — `dream_apply.py --queue` (pending human-gate proposals across ALL day-dirs, oldest first, grouped by type), 14-day staleness auto-expiry; `dream_apply.py` v0.2.0 -> v0.3.0
+
+- **`dream_apply.py --queue`** (new CLI mode). Until now, dream_apply.py only
+  ever operated on ONE day-dir's proposals.jsonl at a time; the morning
+  "what's waiting on me" view was a lightweight preview baked into
+  dream_digest.py's own "Pending human-gate" section (capped at 6 lines,
+  bounded by lookback_days, no expiry — that section's own docstring
+  explicitly said "Prompt 4.4 will formalize this later"). `--queue` is
+  that formal version: `gather_queue()` walks EVERY YYYY-MM-DD day-dir
+  under `--dream-dir` (default `$GOETHE_DREAM_DIR` or
+  `/opt/local-se/dreams` — same variable dream_runner.py/dream_digest.py
+  already use for the same root), oldest day-dir first, and returns every
+  proposal not yet resolved — "resolved" meaning its content-hash (reusing
+  `dream_digest.proposal_key`, so identity matches the digest's own
+  preview exactly) already appears in that day-dir's applied.jsonl OR
+  rejected.jsonl OR the new expired.jsonl (below). `group_queue_by_type()`
+  then buckets the oldest-first stream by proposal `type`, which gets
+  "oldest first, grouped by type" (the prompt's own phrasing) for free:
+  dict insertion order means whichever type's single oldest pending item
+  appears earliest in the stream leads the listing, not alphabetical
+  order. `render_queue()` prints a plain-text inventory (date, age in
+  days, `call`, `pair_id` when set, truncated `why`) to **stdout**
+  (everything else in this file logs to stderr — `--queue`'s actual
+  output is a report meant to be read/redirected, unlike the interactive
+  apply flow's status lines). **`--queue` never loads goethe.py's Tools
+  class and never touches ES** — it is pure local dream-dir bookkeeping,
+  provable by a new test that monkeypatches `load_tools_class` to explode
+  and confirms `--queue` still runs clean.
+- **14-day staleness auto-expiry** (`DREAM_QUEUE_STALE_DAYS = 14`, inside
+  `gather_queue()`). A pending proposal whose day-dir is more than 14 days
+  old gets ONE line appended to that day-dir's new `expired.jsonl` —
+  `{proposal, reason, expired_at, age_days}`, reason text: "stale (>14d,
+  age=Nd) — auto-expired; re-dream will re-propose if still true" (the
+  prompt's own rationale, verbatim) — and is excluded from the pending
+  listing from then on. This write is **unconditional, not gated by
+  `--dry-run`** — the same precedent this file already set for
+  `rejected.jsonl` in the single-run flow (human-decline / invariant-fail
+  rejections are logged regardless of `--dry-run` too, since `--dry-run`
+  here only ever means "don't call a Tools method / don't write to ES";
+  expiry is local bookkeeping, not an ES write). Idempotent: a
+  second `--queue` run over the same stale proposal does not re-append or
+  duplicate — it's already in `expired.jsonl`'s own resolved-set. Boundary
+  is `age_days > 14` (exactly 14 days old is still the last safe day, not
+  yet expired) — the day-dir-name-parses-but-isn't-a-real-date case (e.g.
+  `2026-13-40`, which `dream_digest._DAY_DIR_RE`'s regex accepts but
+  `date.fromisoformat()` cannot) fails CLOSED: `age_days=0`, never
+  auto-expired, matching this file's own long-standing "when in doubt,
+  leave it for a human" discipline.
+- **`dream_digest.py`** — updated (not rewritten) the two places that
+  described the pending-items preview as "no expiry rule, no --queue flag"
+  (module docstring §3, `gather_pending()`'s own docstring), since that's
+  no longer accurate now that Prompt 4.4 exists. Both now point at
+  `dream_apply.py --queue` as the formal version and explain, explicitly,
+  why the digest's own preview still does NOT apply the expiry rule
+  itself (refreshing the digest must never mutate dream-dir state as a
+  side effect — only an actual `--queue` invocation may expire anything).
+  No behavior change in `dream_digest.py`, docstrings only.
+- **Morning review loop, short version** (full runbook write-up is its
+  own later prompt, 4.9 — not done here): added a MORNING REVIEW LOOP
+  section to `dream_apply.py`'s own module docstring plus a `--queue`
+  usage example, describing the ~5-minute loop: (1) `dream_apply.py
+  --queue` to see everything pending oldest-first and let staleness expire
+  what's moved on, (2) apply each day-dir's batch the normal way
+  (`dream_apply.py --proposals <dream-dir>/<date>/proposals.jsonl
+  --no-dry-run`, still per-proposal yes/no — `--queue` only changes how
+  you FIND what's waiting, never how it's applied), (3) re-run `--queue`
+  to confirm it's empty. This is deliberately the CONCISE version living
+  next to the code it documents; the operator-facing runbook entry Prompt
+  4.9 asks for is a separate, fuller doc not yet written.
+- **Tests.** New `tests/test_dream_apply_queue.py` (30 tests) — the first
+  test file dream_apply.py has ever had (its ES-mutating apply flow has no
+  tests yet; `--queue` is deliberately ES-free/Tools-free, so it was
+  testable in full without any FakeES/FakeTools scaffolding).
+  `TestGatherQueueBasic` (empty root, day-dir with no proposals.jsonl,
+  single fresh day-dir, oldest-day-dir-first ordering across two dirs),
+  `TestGatherQueueExpiry` (past the 14-day line, exactly at the 14-day
+  boundary — must NOT expire, one day past the boundary — must expire,
+  expired.jsonl's full field shape, a signature-inspection assertion that
+  `gather_queue` has no `dry_run` parameter at all, and a second-call
+  idempotency check that nothing gets re-expired or duplicated),
+  `TestGatherQueueResolvedExclusion` (already-applied, already-rejected,
+  an old-but-already-applied proposal correctly staying OUT of `expired`
+  too, and one resolved + one still-pending proposal coexisting in the
+  same day-dir), `TestGatherQueueMalformedDayDir` (the `2026-13-40`
+  regex-matches-but-unparseable case), `TestGroupQueueByType` (within-type
+  ordering, cross-type bucket-order-follows-oldest-item, missing `type`
+  bucketing as `"unknown"`), `TestRenderQueue` (all rendered fields, long
+  `why` truncation, header count/date), `TestCmdQueue` (empty-queue
+  message on stderr, listing on stdout vs. summary on stderr, expiry
+  notice on stderr), `TestMainQueueWiring` (`--queue` doesn't require
+  `--proposals`, `--stale-days` defaults to the constant, missing
+  `--proposals` without `--queue` raises `SystemExit`, and — the most
+  load-bearing test in the file — `--queue` proven to never call
+  `load_tools_class` by monkeypatching it to raise, both directly and via
+  a full `main(["--queue", ...])` end-to-end run).
+  Live smoke test directly against a synthetic multi-day-dir tree (run
+  outside pytest, three day-dirs at ages 32d/15d/2d) confirmed the exact
+  same behavior the tests assert: the two stale day-dirs' proposals were
+  auto-expired to their own `expired.jsonl` on the first `--queue` call,
+  a second call did not re-expire or duplicate them, the fresh day-dir's
+  two proposals showed up correctly grouped by type, and marking one of
+  them as already-applied (via a hand-written `applied.jsonl` entry) made
+  it disappear from a third `--queue` call while its sibling proposal
+  correctly remained.
+  Full dream-scoped suite: `pytest tests/ -k dream -q` — **279 passed**
+  (249 prior + 30 new), 0 failed.
+- **Deferred to their own later prompts, not done here:** the full
+  operator-facing runbook entry for the morning review loop (Prompt 4.9 —
+  this prompt's own text explicitly assigns that write-up there, not
+  here). Also not done: any change to `dream_apply.py`'s single-run apply
+  flow itself (invariant checks, confirm-gate rendering, ES writes) —
+  `--queue` is purely additive, a new read path alongside the existing
+  write path, and does not touch it.
+
+---
+## 2026-07-12 (Cowork, cont'd x6): TRAUM Thread 4 (TRAUM-AUTO), Prompt 4.3 — crash discipline (record_crash_error, FAILED-banner partial reports, explicit Restart=no), 3-consecutive-failed-nights digest escalation; `dream_runner.py` v0.10.0 -> v0.11.0, `dream_digest.py` v0.1.0 -> v0.2.0
+
+- **`record_crash_error`** (new, `dream_runner.py`) — the ONE sanctioned
+  exception to this file's otherwise-absolute ES-read-only invariant
+  (module docstring INVARIANTS section updated to say so explicitly;
+  `search_index()`'s own docstring now points at it too). Hardcoded
+  `index="lse-errors"`, `provenance="dream-infra"`, `context="dream-runner"`
+  — structurally incapable of writing `lse-kb`; an OPERATIONAL failure
+  record about the dreaming system itself, the same class of thing
+  `goethe.py`'s own `Tools.record_error` already writes for every other
+  LSE subsystem. Deliberately does NOT instantiate `goethe.py`'s Tools
+  god-class for this one call (the whole point of TRAUM's "new files, not
+  god-class growth" architecture note) — reimplements just enough of its
+  document shape directly against this file's own `es_client(cfg)`: same
+  sha256-of-normalized-text hash as goethe.py's own `error_hash` (so an
+  identical error string collides to the SAME doc whether recorded here or
+  via the interactive tool), plain get-then-update occurrence-count bump
+  on a repeat, `es.index()` fallback on any get failure (not-found is the
+  common case; ES-down is the rare one, both land in the same fallback).
+  Deliberately skips goethe.py's embedding-based KNN dedup — a crash
+  handler must be maximally simple, and adding an Ollama embedding
+  dependency to the path that handles Ollama/node3090 already having
+  failed would be exactly backwards. Honors `cfg.dry_run` (prints instead
+  of writing, per this file's own long-standing "touches no files, no ES"
+  dry-run guarantee). Total failure inside this function is caught and
+  returned as a string, never raised — a broken error-reporting path must
+  never mask the original crash.
+- **`write_failure_report`** (new, `dream_runner.py`). A PARTIAL
+  `report.md` with a `## FAILED` banner, the exception type/message, a
+  full traceback, and an explicit "manifest.db's dreamed_at is untouched
+  ... safe to re-dream" statement — written from whatever `main()` still
+  has at crash time (`sessions_count` defaults to 0, so a crash before
+  session-selection even runs still gets a usable report). Same
+  `<dream-dir>/<date>/report.md` path and "last invocation today wins"
+  convention `write_report()` already has. Also appends one line to the
+  new `<dream-dir>/<date>/crashes.jsonl` (same `"at"`-append convention as
+  `null-results.jsonl` — survives the night's whole multi-pass sequence
+  intact, unlike `report.md`) — this is what the new escalation banner
+  (below) scans for.
+- **`main()` rewired**: the whole run body now sits inside
+  `try / except Exception / finally`. On ANY unhandled exception:
+  `_handle_crash()` runs all three steps (write the FAILED report, call
+  `record_crash_error`, refresh the digest so an escalation banner shows
+  up immediately if this crash makes 3-in-a-row) — each step independently
+  try/excepted so one broken reporting path can't mask the original
+  exception — and then the ORIGINAL exception is **re-raised unchanged**.
+  The process still exits non-zero (systemd/journalctl correctly show the
+  pass failed); `finally` still runs `release_lock()` regardless, so a
+  crash never leaves an orphaned lock blocking tomorrow's cycle. The
+  guard-check phase (recent-session-activity, lock acquisition) stays
+  deliberately OUTSIDE this try/except — it runs before the lock even
+  exists to release, and both guard functions already degrade
+  internally rather than raising.
+- **`goethe-dream.service.tmpl`** (Prompt 4.1 file, updated): `Restart=no`
+  is now an EXPLICIT line (Prompt 4.3's own words), not just relied on as
+  `Type=oneshot`'s default — so a future edit to this unit can't silently
+  reintroduce a restart spiral without a very visible diff. ExecStart
+  comment block rewritten to describe the real crash-discipline flow now
+  that it exists (previously said "not yet implemented as of this unit").
+  `systemd-analyze verify` clean after the edit.
+- **3-consecutive-failed-nights escalation** (`dream_digest.py`, new
+  `gather_crash_streak` + `CRASH_ESCALATION_THRESHOLD = 3`). Walks
+  backward from today counting consecutive day-dirs with a non-empty
+  `crashes.jsonl` — a night counts as "failed" if ANY pass crashed that
+  night (deliberately coarse/alarm-prone; per-pass detail lives in
+  `report.md`'s own FAILED banner and the future `dream_apply --queue`).
+  A day-dir with no/empty `crashes.jsonl`, OR a day-dir that doesn't exist
+  at all, breaks the streak — an ambiguous gap (box off, cycle didn't run)
+  is deliberately NOT treated as evidence of 3 bad nights. Bounded by the
+  existing `lookback_days` knob. `render_digest()` renders the banner
+  (`## :rotating_light: ESCALATION — N consecutive failed dream nights`,
+  pointing at that night's `report.md`/`crashes.jsonl`/`lse-errors`)
+  **immediately after the title line** — before every other section — so
+  `MAX_DIGEST_LINES` truncation can never cut it, and it is absent
+  entirely below the threshold (same "say nothing when there's nothing to
+  say" discipline as every other section). `write_digest()` gathers it
+  with the same independent try/except-degrades-to-nothing guard as every
+  other `gather_*` step.
+- **Tests.** New `tests/test_dream_crash_discipline.py`, 20 tests:
+  `record_crash_error` (dry-run zero ES calls, new-doc shape, repeat bumps
+  occurrence_count not a new doc, case/whitespace normalization collides
+  to the same hash, total ES failure swallowed), `write_failure_report`
+  (dry-run prints nothing to disk, real write's banner/traceback/
+  crashes.jsonl fields, appends-not-overwrites across two passes in one
+  day-dir), `_handle_crash` (calls all three steps, never raises even
+  when EVERY step is made to fail), **fault injection through the REAL
+  `main()`** (`PASS_FUNCS["patterns"]` monkeypatched to raise mid-run,
+  driven through actual `--no-dry-run` argv against tmp_path dirs and a
+  FakeES double): confirms the report.md FAILED banner and crashes.jsonl
+  are really on disk, the ES write really has
+  `context=dream-runner`/`provenance=dream-infra`, the lockfile is really
+  gone afterward (no orphan), a synthetic manifest.db's `dreamed_at`
+  column is completely untouched after the crash, and `pytest.raises`
+  confirms the original exception really does propagate out of `main()`.
+  Plus `gather_crash_streak` (3-in-a-row, a clean night breaking the
+  streak, a missing day-dir breaking the streak, the lookback_days bound)
+  and the escalation banner (absent below 3, present at 3, survives
+  `MAX_DIGEST_LINES` truncation via the same many-`insights` overflow
+  technique `test_dream_digest.py`'s own heavy-overflow test uses — an
+  earlier version of this test tried to force overflow via a huge
+  `applied` list and silently passed for the wrong reason, since
+  `applied` is capped at 6 items inside `render_digest()` itself; caught
+  by asserting the omission marker line, not just line count). Live
+  dry-run smoke check directly against LUCIFER's real `lse.toml` defaults
+  confirmed the ES round-trip path end-to-end.
+  Full dream-scoped suite: `pytest tests/ -k dream -q` — **249 passed**
+  (229 prior + 20 new), 0 failed.
+- **Deferred to their own later prompts, not done here:** the
+  `dream_apply --queue` morning workflow (4.4), VALVES.md documentation of
+  every TRAUM valve including the new crash/escalation-related ones (4.9,
+  though this prompt added no NEW env vars — `record_crash_error` and
+  `gather_crash_streak` are unconditional, unconfigurable behavior, not
+  valves). Also not done: an actual live 3-night crash streak on LUCIFER
+  (impractical to wait out in-session) — `gather_crash_streak`'s unit
+  tests construct the day-dir/crashes.jsonl fixtures directly rather than
+  waiting for real failed nights to accumulate.
+
+---
+## 2026-07-12 (Cowork, cont'd x5): TRAUM Thread 4 (TRAUM-AUTO), Prompt 4.2 — lockfile, recent-session-activity guard, per-run budgets (sessions/LLM-calls/45min wall-clock), dreamer-episode-exclusion assert; `dream_runner.py` v0.9.0 -> v0.10.0
+
+- **Lockfile** (`acquire_lock`/`release_lock`, new). Single-writer lock
+  across ALL dream_runner.py invocations on this box (not just same-`--pass`
+  ones), covering both the scheduled 5-ExecStart nightly cycle somehow
+  still running when the next night's timer fires and an operator's manual
+  CLI run overlapping the scheduled one. Atomic `O_CREAT|O_EXCL` create
+  avoids the check-then-create race. A held lock is reclaimed once when
+  its PID is provably dead (`os.kill(pid, 0)`) or the file is older than
+  `--lock-max-age-s` (default 4h, matching `goethe-dream.service.tmpl`'s
+  own `TimeoutStartSec` outer bound from Prompt 4.1) -- the PID-reuse edge
+  case. `release_lock` only ever removes a lock it can prove is its own
+  (PID match in the lock's own JSON payload), so it can never yank a lock
+  out from under a process that already reclaimed it as stale. New:
+  `--lockfile` (default `<dream-dir>/.dream.lock`), `--lock-max-age-s`.
+- **Recent-session-activity guard** (`_recent_session_active`, new). Skips
+  the run (clean, logged, exit 0 -- never an error) if any LSE session's
+  `end_ts` in manifest.db falls within `--session-active-window-min`
+  (default 30) of now. Refreshes manifest.db first
+  (`episode_index.build_manifest`) so "per manifest" -- the prompt's own
+  phrasing -- reflects near-real-time state; nothing else on this box
+  currently rebuilds manifest.db on its own schedule, so without this
+  refresh the check could easily miss a session that started minutes ago.
+  Degrades to "don't block" on a missing manifest, an unparseable
+  timestamp, or the refresh itself throwing -- and on a future `end_ts`
+  (clock skew), rather than false-positive-blocking a nightly run.
+- **Per-run budgets** (`DreamBudget`, new dataclass; `_budget_checkpoint`
+  helper). Three dimensions, checked in a fixed order (wall-clock first,
+  then LLM-calls, then sessions) so the report always states what
+  ACTUALLY stopped a run first: `--budget-max-wall-clock-min` (default
+  45, per the prompt), `--budget-max-llm-calls` (default 100),
+  `--budget-max-sessions` (default: same value as `--sessions`, so out of
+  the box this adds no NEW restriction beyond the existing selection cap).
+  Attached to `cfg.budget` ONLY by `main()` for real runs -- every direct
+  `DreamConfig(...)` construction elsewhere (all 6 test files as of this
+  prompt) leaves it `None` and every check is a silent no-op, so zero
+  existing call sites needed to change. `call_dream_llm` checks the
+  budget FIRST, before even the DREAM_LLM_URL forced-endpoint leg -- once
+  exhausted, a run makes ZERO further network calls of any kind, not just
+  zero node3090 calls -- and returns `'BUDGET_EXHAUSTED: <reason>'` rather
+  than `'ERROR: ...'` so `request_dream_envelope` can tell "we chose to
+  stop" apart from "the dreamer failed us" (and skips its normal 2-attempt
+  retry for that reply -- retrying an exhausted budget is pointless).
+  Loop-level `_budget_checkpoint(cfg)` break-checks added to all four
+  per-item loops that can consume budget: `run_pass_dedup`'s
+  `DEDUP_LLM_BATCH_SIZE` batch loop, `run_pass_stale_contradiction`'s
+  per-session demote loop (also the one pass with a natural
+  `record_session()` call -- dedup batches PAIRS, error-cluster batches
+  CLUSTERS, insights batches DOMAINS, patterns makes no LLM call and
+  explicitly ignores `sessions`, so "sessions consumed" stays inert for
+  those by design, not by oversight), `run_pass_error_cluster`'s cluster
+  loop, and `run_pass_insights`'s domain loop. `main()` centrally appends
+  ONE **BUDGET TRUNCATION** note to the pass's narrative when
+  `cfg.budget.truncated` (usage numbers for all three dimensions,
+  explicit "this is a normal, expected exit, not an error" line,
+  reminder that `dreamed_at` is untouched so a re-dream naturally picks
+  up the rest) -- centralized so none of the four pass functions needed
+  their own note-formatting logic, only the loop-level break.
+- **Dreamer-episode-exclusion assert** (`assert_no_episode_writes` +
+  `_snapshot_episode_session_files`, new). DESIGN.md §2 invariant 3(e)
+  ("no dream-of-dreams") made STRUCTURAL, not just conventional -- it was
+  already true by construction (the dreamer doesn't run through
+  `goethe_mcp.py`'s `register()` journaling wrapper, so nothing in this
+  file has a write path into `EPISODE_DIR` at all today), but "true by
+  construction" is an assumption a future edit could quietly break. Now:
+  a before/after `{relative_path: mtime}` snapshot of every SESSION file
+  (`day-dir/*.jsonl[.gz]`, via `episode_index.py`'s own
+  `iter_day_dirs`/`iter_session_files` so "what counts as a session file"
+  has exactly one definition in this codebase) is taken at the start and
+  end of every real run; any addition, removal, or modification raises
+  `AssertionError` -- deliberately uncaught in `main()`, as loud as a real
+  bug. `manifest.db` itself (which lives inside `EPISODE_DIR` by default)
+  is correctly excluded from the snapshot -- it's a legitimate, expected
+  write target for both `episode_index.build_manifest` (including this
+  same prompt's own session-activity-guard refresh) and `dream_apply.py`'s
+  `dreamed_at` column, not a violation.
+- **`main()` rewired** around all of the above: guards checked first
+  (skip, don't error, unless `--ignore-guards` -- a manual/debug-only
+  escape hatch `goethe-dream.service.tmpl` never sets), budget constructed
+  and attached, the whole existing body wrapped in `try/finally` so
+  `release_lock` always runs (even if the episode-exclusion assert itself
+  is what fails), episode snapshot taken before `select_undreamed_sessions`
+  and checked as the last statement inside the `try` block.
+- **Tests.** New `tests/test_dream_guards.py`, 31 tests: `DreamBudget`
+  dimension/ordering/mark-once semantics, `_budget_checkpoint`,
+  `call_dream_llm`'s zero-network-calls-when-exhausted short circuit,
+  `request_dream_envelope`'s no-retry-on-budget-exhaustion (with a sanity
+  check that the pre-existing real-`ERROR:` retry behavior is untouched),
+  full lock lifecycle (acquire/release round-trip, live-lock blocks a
+  second acquire, dead-PID reclaim, too-old-even-if-alive reclaim,
+  release-never-steals-a-lock-it-doesn't-own, release-on-missing-file is
+  a safe no-op -- dead PIDs obtained by actually spawning and waiting on a
+  real subprocess, not guessed), `_recent_session_active` (blocks/doesn't
+  block/clock-skew/missing-manifest/refresh-failure, against real
+  synthetic manifest.db files), `assert_no_episode_writes`
+  (passes/new-file-raises/modified-file-raises/manifest.db-is-exempt), and
+  two integration tests driving `run_pass_stale_contradiction`'s REAL loop
+  (not simulated) to confirm it actually stops early -- 3 of 10 sessions
+  processed under an LLM-call budget of 3, 4 of 10 under a session budget
+  of 4 -- via a monkeypatched `_health_probe`/`_post_chat_completion`
+  (letting the real `call_dream_llm` do its real bookkeeping) rather than
+  stubbing `call_dream_llm` itself, after an initial version of that test
+  falsely passed 10/10 sessions because stubbing `call_dream_llm` directly
+  had silently removed its own budget accounting along with it -- caught
+  by the test asserting `sessions_consumed == 3`, not just `truncated`.
+  Full dream-scoped suite: `pytest tests/ -k dream -q` -- 229 passed
+  (198 prior + 31 new), 0 failed.
+- **Live smoke test on LUCIFER.** `python3 tools/dream_runner.py --pass
+  patterns --episode-dir /tmp/smoke-dream-42/... --dry-run`: exit 0,
+  correct null-result digest (real lse-kb=372/lse-errors=32/lse-skills=17
+  counts from live ES), lockfile created and cleanly removed on exit,
+  episode-exclusion assert passed silently.
+- **Deferred to their own later prompts, not done here:** crash discipline
+  proper (record_error, FAILED-banner partial report, 3-consecutive-
+  failed-nights escalation — 4.3), the `dream_apply --queue` morning
+  workflow (4.4), VALVES.md documentation of every new
+  `GOETHE_DREAM_LOCKFILE`/`GOETHE_DREAM_SESSION_ACTIVE_WINDOW_MIN`/
+  `GOETHE_DREAM_BUDGET_*` valve (4.9). Also not done: injecting a real
+  fault to exercise the "budget exhaustion mid-run on a live corpus"
+  path end-to-end against actual node3090/Ollama traffic -- the unit +
+  integration tests above cover the mechanism; a live 45-minute wall-clock
+  trip is impractical to actually wait out in this session and is exactly
+  the kind of thing Prompt 4.3's fault-injection ask will want anyway.
+
+---
+## 2026-07-12 (Cowork, cont'd x4): TRAUM Thread 4 (TRAUM-AUTO), Prompt 4.1 — `goethe-dream.service.tmpl` + `.timer.tmpl` (nightly 03:30 +/-15min), `dream_runner.py` v0.8.0 -> v0.9.0 (remote node3090 VRAM gate)
+
+Opens Thread 4. Scope was exactly Prompt 4.1's ask: the systemd trigger, a
+real VRAM-aware fallback behind it, and wiring the new service pair into
+the product layout doc the same way the existing `services/*.tmpl` files
+are declared (goethe-mcp.service.tmpl and llama-server.service.tmpl have no
+other "launch script" wiring on this box today — they are still manual/
+`start-goethe.sh`-launched, so LSE-PRODUCT-LAYOUT.md's services/ manifest
++ carve-mapping + product-file-manifest tables are the only place any of
+these three are "wired in", and that's what this prompt's own "the same
+way existing services are" phrase resolves to).
+
+- **`lse/services/goethe-dream.service.tmpl` + `goethe-dream.timer.tmpl`**
+  (new). Template-style match to `goethe-mcp.service.tmpl`: same
+  system-install-layout disclaimer/manual-install block, same
+  `ProtectSystem=full` + explicit `ReadWritePaths` hardening posture. Five
+  `ExecStart=` lines (`Type=oneshot`), one per `dream_runner.py --pass`
+  (dedup, stale-contradiction, error-cluster, patterns, insights, in
+  `PASS_FUNCS` declaration order), each `--no-dry-run` and each prefixed
+  `-` so one pass's uncaught exception doesn't blank out the other four
+  before Prompt 4.3's real crash discipline lands. Runs as `User=sy5`,
+  `WorkingDirectory=/var/lib/lse/dream-sandbox` — a dedicated, disposable
+  cwd distinct from `goethe-mcp.service.tmpl`'s `/opt/lse` code-tree
+  WorkingDirectory, since this is an unattended offline batch job, not a
+  colocated long-lived service. Timer: `OnCalendar=*-*-* 03:30:00`,
+  `RandomizedDelaySec=15min`, `Persistent=true` (catches up on next boot if
+  LUCIFER was asleep at 03:30 — safe, since manifest.db's `dreamed_at` gate
+  makes a late/duplicate run just see fewer or zero undreamed sessions).
+  Verified with `systemd-analyze verify` (clean, no warnings) and
+  `systemd-analyze calendar` (next-elapse math checks out) on LUCIFER's own
+  systemd 255.
+- **`dream_runner.py` remote VRAM gate** (v0.8.0 -> v0.9.0). New
+  `_node3090_free_vram_mb()`: SSHes to node3090 (`-o BatchMode=yes`, fails
+  CLOSED to 0 == "busy" on any error) and runs the identical
+  `nvidia-smi --query-gpu=memory.free` probe goethe.py's
+  `Tools._planner_free_vram_mb` (tools/goethe.py:1486) already runs
+  locally for the Gemma-spawn gate — same pattern, applied to a box
+  dream_runner doesn't own. Wired into `call_dream_llm`'s cascade: below
+  the new `--node3090-vram-gate-mb` floor (default 2000 MiB,
+  `GOETHE_NODE3090_VRAM_GATE_MB`), the llama-server leg is skipped
+  entirely (never even health-probed) and the cascade goes straight to
+  Ollama/CPU — satisfies the prompt's explicit "fall back... rather than
+  skipping" (dreams are latency-insensitive, so losing GPU speed is fine;
+  losing the run entirely would not be). New CLI flags/env:
+  `--node3090-ssh-host/-user/-port`, `--node3090-vram-gate-mb`. New
+  `DreamConfig` fields default-valued (not required) so every existing
+  direct-construction call site (5 test files) kept working unmodified —
+  confirmed by running the full pre-existing suite unchanged after the
+  edit: `pytest tests/ -k dream -q` — 198 passed, 0 failed, 0 skipped.
+- **`tests/test_dream_vram_gate.py`** (new, 10 tests). `_node3090_free_vram_mb`
+  parsing (single/multi-GPU nvidia-smi output, SSH timeout, unparseable
+  output — all fail CLOSED to 0). `call_dream_llm` cascade: GPU-busy skips
+  llama-server without probing it and calls Ollama directly; GPU-free runs
+  llama-server exactly as before the gate existed; GPU-free-but-the-actual-
+  call-still-fails still falls through to Ollama (pre-existing behavior
+  survives the new gate in front of it); the forced `DREAM_LLM_URL` leg
+  short-circuits before the VRAM probe is ever called at all. All via
+  `monkeypatch`/`unittest.mock`, zero live SSH/HTTP. 10/10 passed.
+- **`lse/docs/LSE-PRODUCT-LAYOUT.md`** updated: `services/` tree listing,
+  carve-mapping table, and product-file-manifest table all now list
+  `dream_runner.py`/`dream_apply.py`/`dream_digest.py`/`episode_index.py`
+  -> `$LSE_HOME/goethe/` and the new service pair -> `$LSE_HOME/services/`,
+  plus a one-line addition to the `systemd=true` WSL invariant noting timer
+  units need it too. No other launch-script wiring exists for this box's
+  services yet (see scope note above) — deliberately did not touch
+  `scripts/restart_exporters.sh` (that script is explicitly host-side,
+  non-systemd processes WSL2 kills on restart; a `systemctl enable`d timer
+  survives a WSL2 restart on its own and doesn't belong in that list) or
+  the Windows `lse-stack-launch-*.ps1` launcher (a different concern
+  entirely — interactive llama-server model-profile switching, not
+  systemd service enablement).
+- **Deferred to their own later prompts, not done here (by design):**
+  concurrency/budget guardrails + lockfile (4.2), crash discipline /
+  `record_error` on unhandled exceptions (4.3), the `dream_apply --queue`
+  morning workflow (4.4), VALVES.md documentation of the new
+  `GOETHE_NODE3090_SSH_*`/`GOETHE_NODE3090_VRAM_GATE_MB` valves (4.9).
+
+Not yet done: actually installing/enabling the unit on a live box (no root
+on this Cowork session; `systemd-analyze verify` is the strongest
+pre-install check available here) — first real firing + morning-after
+report review is Prompt 4.1's true acceptance test and is the operator's
+to run.
+
+---
 ## 2026-07-12 (Cowork, cont'd x3): TRAUM Thread 3 (TRAUM-INSIGHT) CLOSED — v0.4.0-a deployed live to LUCIFER, `[DREAM]`/`time_check()` desync fixed, first real dream cycle, security + data-loss findings, debrief
 
 Closes Thread 3. Unlike every prior TRAUM entry this thread, this one ran

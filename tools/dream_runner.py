@@ -17,7 +17,12 @@ goethe.py's node planner (tools/goethe.py `_call_node_planner` /
 `_request_plan_envelope`, ~line 1322/6860): a PLANNER_FORCE_URL-style forced
 endpoint (here: DREAM_LLM_URL) checked first, falling through to the
 NODE3090 llama-server / Ollama cascade, with `thinking_budget_tokens=0` and
-a two-attempt envelope-parse loop with one corrective retry. Nothing here
+a two-attempt envelope-parse loop with one corrective retry. As of Prompt
+4.1 (TRAUM-AUTO) the llama-server leg is additionally gated on node3090's
+own free VRAM via SSH + nvidia-smi (see `_node3090_free_vram_mb`) -- a
+remote application of goethe.py's `_planner_free_vram_mb` pattern, which
+only gates the LOCAL Gemma-spawn leg and has no remote equivalent for
+node3090 itself. Nothing here
 imports or calls any Anthropic/Cowork API surface (DESIGN.md §2 invariant 1).
 
 Output: /opt/local-se/dreams/YYYY-MM-DD/{report.md,proposals.jsonl}.
@@ -191,6 +196,15 @@ ENV (mirrors goethe.py / episode_index.py's GOETHE_ prefix valve convention)
                                     NODE3090_LLM_URL: http://node3090.home.arpa:8080)
   GOETHE_NODE3090_OLLAMA_URL        Ollama CPU fallback (default http://node3090.home.arpa:11434)
   GOETHE_NODE3090_PLANNER_FALLBACK_MODEL  Ollama fallback model (default qwen3:4b)
+  GOETHE_NODE3090_SSH_HOST          node3090 SSH host for the VRAM gate probe (default
+                                    node3090.home.arpa, same as _NODE_REGISTRY)
+  GOETHE_NODE3090_SSH_USER          SSH user for the VRAM gate probe (default lse-admin)
+  GOETHE_NODE3090_SSH_PORT          SSH port for the VRAM gate probe (default 22)
+  GOETHE_NODE3090_VRAM_GATE_MB      free-VRAM floor (MiB) below which node3090's GPU is
+                                    treated as busy and the llama-server leg is skipped
+                                    in favor of Ollama/CPU (default 2000; Prompt 4.1,
+                                    TRAUM-AUTO -- same gate pattern as goethe.py's
+                                    _planner_free_vram_mb, applied to the remote box)
   GOETHE_DREAM_RUNNER_SESSION_PREFIX  if set, sessions whose session_id starts with
                                     this are excluded from selection — DESIGN.md §2
                                     invariant 3(e), "no dream-of-dreams". Empty (default)
@@ -215,8 +229,17 @@ ENV (mirrors goethe.py / episode_index.py's GOETHE_ prefix valve convention)
 
 INVARIANTS enforced structurally in this file, not just by convention
 (DESIGN.md §2 row 1 and row 3(e)):
-  - Zero Elasticsearch write calls anywhere below — only `search_index()`
-    (es.search) exists; there is no es.index/update/delete call site.
+  - Elasticsearch write calls are limited to exactly ONE function,
+    `record_crash_error()` (Prompt 4.3, TRAUM-AUTO) — hardcoded to
+    index="lse-errors" only, provenance="dream-infra" only, called from
+    exactly one place (main()'s crash handler, on an unhandled exception).
+    This is an OPERATIONAL failure record about the dreaming system
+    itself, the same class of thing goethe.py's own record_error already
+    does for every other LSE subsystem — never dream CONTENT, which still
+    flows exclusively through dream_apply.py's human-gated apply path.
+    `search_index()` (es.search) remains the only way this file reads ES;
+    there is still no es.delete call site anywhere, and no write of any
+    kind to lse-kb.
   - Zero import of, or HTTP call to, any Anthropic/Cowork API surface.
   - Episode selection can exclude the dreamer's own session_id prefix.
 """
@@ -230,14 +253,15 @@ import random
 import re
 import sqlite3
 import sys
+import time
 from collections import Counter, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 
 import episode_index as _epidx
 import dream_digest
 
-__version__ = "0.8.0"
+__version__ = "0.12.0"
 
 
 # --- config / valve-style env defaults --------------------------------------
@@ -276,6 +300,69 @@ def _node3090_ollama_url_default() -> str:
 
 def _node3090_fallback_model_default() -> str:
     return os.environ.get("GOETHE_NODE3090_PLANNER_FALLBACK_MODEL", "qwen3:4b")
+
+
+def _node3090_ssh_host_default() -> str:
+    # Same host as node3090_start_llm.sh / goethe.py's _NODE_REGISTRY["node3090"].
+    return os.environ.get("GOETHE_NODE3090_SSH_HOST", "node3090.home.arpa")
+
+
+def _node3090_ssh_user_default() -> str:
+    return os.environ.get("GOETHE_NODE3090_SSH_USER", "lse-admin")
+
+
+def _node3090_ssh_port_default() -> int:
+    return int(os.environ.get("GOETHE_NODE3090_SSH_PORT", "22"))
+
+
+def _node3090_vram_gate_mb_default() -> int:
+    """Free-VRAM floor (MiB) on node3090 below which the GPU is treated as
+    'busy' and the llama-server leg of the cascade is skipped in favor of
+    Ollama/CPU (Prompt 4.1, TRAUM-AUTO). Same gate PATTERN as goethe.py's
+    Tools._planner_free_vram_mb (tools/goethe.py:1486) -- identical
+    nvidia-smi query -- but that one runs locally to gate a Gemma spawn on
+    whichever box goethe.py itself runs on. dream_runner has no local GPU
+    to gate: node3090 is remote, so this queries it over SSH instead.
+    node3090's llama-server is already resident with parallel=1 and a
+    ctx-size-96000 KV cache pre-allocated at startup, so idle-vs-generating
+    free VRAM barely moves -- this floor isn't sized to prevent an OOM from
+    THIS call, it's sized to detect 'something else is visibly using the
+    GPU right now' (an interactive Gemma/benchmark spawn) and defer to CPU
+    rather than pile on. 2000 MiB is a coarse 'basically nothing extra
+    loaded' floor, not a tuned budget -- adjust via env if node3090's
+    baseline idle-free-VRAM drifts from that.
+    """
+    return int(os.environ.get("GOETHE_NODE3090_VRAM_GATE_MB", "2000"))
+
+
+def _lockfile_default() -> str:
+    # Empty by default -- build_config() resolves this to
+    # <dream-dir>/.dream.lock once cfg.dream_dir is known (same "resolve
+    # against another already-known path" pattern as manifest_db's own
+    # default, built from episode_dir in build_config rather than here).
+    return os.environ.get("GOETHE_DREAM_LOCKFILE", "")
+
+
+def _lock_max_age_s_default() -> float:
+    # Secondary staleness signal alongside the primary PID-liveness check
+    # (see acquire_lock) -- catches PID reuse (a dead dream_runner's PID
+    # got recycled by an unrelated process) and a run stuck well past its
+    # own wall-clock budget. 4h matches goethe-dream.service.tmpl's own
+    # TimeoutStartSec outer safety net (Prompt 4.1) for all 5 passes
+    # combined, so a lock can never outlive systemd's own dead-man's switch.
+    return float(os.environ.get("GOETHE_DREAM_LOCK_MAX_AGE_S", str(4 * 3600)))
+
+
+def _session_active_window_min_default() -> int:
+    return int(os.environ.get("GOETHE_DREAM_SESSION_ACTIVE_WINDOW_MIN", "30"))
+
+
+def _budget_max_llm_calls_default() -> int:
+    return int(os.environ.get("GOETHE_DREAM_BUDGET_MAX_LLM_CALLS", "100"))
+
+
+def _budget_max_wall_clock_min_default() -> float:
+    return float(os.environ.get("GOETHE_DREAM_BUDGET_MAX_WALL_CLOCK_MIN", "45"))
 
 
 def _dream_runner_prefix_default() -> str:
@@ -378,6 +465,84 @@ DEFAULT_LABEL_SAMPLE_N = 20
 
 
 @dataclass
+class DreamBudget:
+    """Per-run (one dream_runner.py process invocation -- one `--pass X`
+    run, matching goethe-dream.service.tmpl's one-ExecStart-per-pass
+    design from Prompt 4.1) resource ceiling. Prompt 4.2, TRAUM-AUTO.
+
+    Attached to DreamConfig.budget ONLY by main() for real runs; direct
+    DreamConfig(...) construction elsewhere (every existing test, the
+    --sample-labels utility path) leaves cfg.budget as None, and every
+    budget check in this file (_budget_checkpoint, call_dream_llm) is a
+    silent no-op when cfg.budget is None -- budgets are opt-in via main(),
+    never assumed present.
+
+    'sessions consumed' only means something to a pass with a natural
+    per-session LLM loop -- today that is run_pass_stale_contradiction's
+    demote sub-pass alone. Passes without one (dedup batches candidate
+    PAIRS, error-cluster batches CLUSTERS, insights batches DOMAINS,
+    patterns makes no LLM call at all and explicitly ignores `sessions`)
+    simply never call record_session(), and this dimension stays inert
+    for them -- not every budget dimension has to bind on every pass.
+    """
+    max_sessions: int
+    max_llm_calls: int
+    max_wall_clock_s: float
+    started_at: float = field(default_factory=time.monotonic)
+    sessions_consumed: int = 0
+    llm_calls_made: int = 0
+    truncated: bool = False
+    truncation_reason: str = ""
+
+    def elapsed_s(self) -> float:
+        return time.monotonic() - self.started_at
+
+    def exhausted(self) -> str | None:
+        """First exhausted dimension's human-readable reason, in a fixed
+        check order (wall-clock first -- the one dimension every pass
+        shares regardless of its own loop shape), or None if nothing is
+        exhausted yet. Does NOT mutate state -- see mark_truncated."""
+        if self.elapsed_s() >= self.max_wall_clock_s:
+            return f"wall-clock budget exhausted ({self.elapsed_s():.0f}s >= {self.max_wall_clock_s:.0f}s)"
+        if self.llm_calls_made >= self.max_llm_calls:
+            return f"LLM-call budget exhausted ({self.llm_calls_made} >= {self.max_llm_calls})"
+        if self.sessions_consumed >= self.max_sessions:
+            return f"session budget exhausted ({self.sessions_consumed} >= {self.max_sessions})"
+        return None
+
+    def mark_truncated(self, reason: str) -> None:
+        """First reason wins -- if wall-clock trips first and a caller
+        checks again later after llm_calls also happens to be over, the
+        report should still say what ACTUALLY stopped it first."""
+        if not self.truncated:
+            self.truncated = True
+            self.truncation_reason = reason
+
+    def record_llm_call(self) -> None:
+        self.llm_calls_made += 1
+
+    def record_session(self, n: int = 1) -> None:
+        self.sessions_consumed += n
+
+
+def _budget_checkpoint(cfg: "DreamConfig") -> bool:
+    """True (and marks cfg.budget.truncated, first reason wins) if a
+    budget is attached to cfg and ANY dimension is currently exhausted.
+    False -- a silent no-op -- when cfg.budget is None. Call at the top of
+    every per-item loop iteration a pass has (one dedup batch, one
+    contradiction-check session, one error cluster, one insight domain)
+    to stop early and cleanly rather than grinding through remaining
+    items that would just immediately re-hit the same exhausted budget."""
+    if cfg.budget is None:
+        return False
+    reason = cfg.budget.exhausted()
+    if reason:
+        cfg.budget.mark_truncated(reason)
+        return True
+    return False
+
+
+@dataclass
 class DreamConfig:
     episode_dir: str
     dream_dir: str
@@ -412,11 +577,50 @@ class DreamConfig:
     patterns_top_commands: int = 50
     patterns_out: str | None = None
     insights_max_sessions_in_prompt: int = 20
+    # Prompt 4.1 (TRAUM-AUTO) -- remote VRAM gate for the node3090 llama-server
+    # leg. Defaulted (not required) so direct DreamConfig(...) construction
+    # elsewhere (tests, ad hoc scripts) keeps working without every caller
+    # needing to know about it; build_config() always sets these explicitly
+    # from CLI/env via the _node3090_*_default() functions above.
+    node3090_ssh_host: str = "node3090.home.arpa"
+    node3090_ssh_user: str = "lse-admin"
+    node3090_ssh_port: int = 22
+    node3090_vram_gate_mb: int = 2000
+    # Prompt 4.2 (TRAUM-AUTO) -- lockfile, recent-session-activity guard,
+    # and per-run budgets. All defaulted (not required) for the same
+    # backward-compatibility reason as the node3090_* fields above: every
+    # existing direct DreamConfig(...) call site (5 test files as of
+    # Prompt 4.1) keeps working with zero changes. `lockfile=""` is a
+    # sentinel build_config() always resolves to a real path
+    # (<dream-dir>/.dream.lock) once cfg.dream_dir is known; ad hoc
+    # construction that leaves it "" and then calls acquire_lock() directly
+    # would resolve it to a lock in the CURRENT directory, which is not
+    # sensible for a real run (but harmless for a test that never calls
+    # acquire_lock() at all, which is most of them).
+    lockfile: str = ""
+    lock_max_age_s: float = 4 * 3600
+    session_active_window_min: int = 30
+    budget_max_sessions: int = 50
+    budget_max_llm_calls: int = 100
+    budget_max_wall_clock_min: float = 45.0
+    ignore_guards: bool = False
+    budget: "DreamBudget | None" = None
 
 
 def build_config(args: argparse.Namespace) -> DreamConfig:
     episode_dir = args.episode_dir
     manifest_db = args.manifest_db or os.path.join(episode_dir, "manifest.db")
+    dream_dir = args.dream_dir
+    lockfile = args.lockfile or os.path.join(dream_dir, ".dream.lock")
+    # Prompt 4.2's own phrasing is "max sessions consumed" as a single
+    # concept -- default the CONSUMPTION budget to whatever the SELECTION
+    # cap (--sessions) already is, so out of the box this adds no NEW
+    # restriction beyond what select_undreamed_sessions() already limits
+    # itself to; --budget-max-sessions only matters when explicitly set
+    # tighter (or looser) than --sessions.
+    budget_max_sessions = (
+        args.budget_max_sessions if args.budget_max_sessions is not None else args.sessions
+    )
     return DreamConfig(
         episode_dir=episode_dir,
         dream_dir=args.dream_dir,
@@ -428,6 +632,10 @@ def build_config(args: argparse.Namespace) -> DreamConfig:
         node3090_llm_url=args.node3090_llm_url,
         node3090_ollama_url=args.node3090_ollama_url,
         node3090_fallback_model=args.node3090_fallback_model,
+        node3090_ssh_host=args.node3090_ssh_host,
+        node3090_ssh_user=args.node3090_ssh_user,
+        node3090_ssh_port=args.node3090_ssh_port,
+        node3090_vram_gate_mb=args.node3090_vram_gate_mb,
         ollama_url=args.ollama_url,
         embed_model=args.embed_model,
         dedup_floor=args.dedup_floor,
@@ -451,6 +659,13 @@ def build_config(args: argparse.Namespace) -> DreamConfig:
         patterns_top_commands=args.patterns_top_commands,
         patterns_out=args.patterns_out,
         insights_max_sessions_in_prompt=args.insights_max_sessions_in_prompt,
+        lockfile=lockfile,
+        lock_max_age_s=args.lock_max_age_s,
+        session_active_window_min=args.session_active_window_min,
+        budget_max_sessions=budget_max_sessions,
+        budget_max_llm_calls=args.budget_max_llm_calls,
+        budget_max_wall_clock_min=args.budget_max_wall_clock_min,
+        ignore_guards=args.ignore_guards,
     )
 
 
@@ -557,13 +772,101 @@ def es_client(cfg: DreamConfig):
 
 
 def search_index(cfg: DreamConfig, index: str, body: dict) -> list[dict]:
-    """The ONLY ES call shape this file is allowed to use. Do not add an
-    es.index/update/delete call anywhere in this module — proposing a
-    change is this file's entire job; applying one is dream_apply.py's
-    (Prompt 2.5), and only past a human confirm-gate."""
+    """The ONLY ES READ call shape this file is allowed to use. Do not add
+    an es.index/update/delete call here — proposing a KB/skill change is
+    this file's entire job; applying one is dream_apply.py's (Prompt 2.5),
+    and only past a human confirm-gate. The ONE exception to "this file
+    never writes ES" anywhere in the module is record_crash_error() below
+    (Prompt 4.3) — a completely separate function, hardcoded to
+    index="lse-errors" only, never touched by any pass function, never
+    reachable from this function."""
     es = es_client(cfg)
     resp = es.search(index=index, body=body)
     return [dict(h["_source"], _id=h["_id"]) for h in resp["hits"]["hits"]]
+
+
+def record_crash_error(cfg: DreamConfig, error_text: str, context: str = "dream-runner") -> str:
+    """THE ONLY Elasticsearch WRITE call anywhere in dream_runner.py --
+    Prompt 4.3 (TRAUM-AUTO)'s sanctioned, narrow exception to this file's
+    otherwise-absolute read-only invariant (module docstring INVARIANTS
+    section above; test_dream_engine.py's TestESReadOnlyBoundary covers
+    search_index() specifically, not this function). Hardcoded to
+    index="lse-errors" and provenance="dream-infra" -- structurally
+    incapable of writing lse-kb. This is an OPERATIONAL failure record
+    about the dreaming system itself, the same class of thing goethe.py's
+    own Tools.record_error (tools/goethe.py:5099) already writes for every
+    other LSE subsystem; dream CONTENT still only ever flows through
+    dream_apply.py's human-gated apply path.
+
+    Deliberately does NOT reuse goethe.py's Tools.record_error, which
+    would mean instantiating the whole Tools god-class just for this one
+    call -- exactly what TRAUM's architecture note (DESIGN.md, "adds code
+    mostly in NEW files... to avoid growing the god-class") says to avoid.
+    Reimplements just enough of its document shape directly against this
+    file's own es_client(cfg) (same one search_index() already uses): a
+    sha256-of-normalized-text hash as the doc id (same normalization as
+    goethe.py's own error_hash, so an identical error string collides to
+    the SAME document whether recorded here or via the interactive tool),
+    a plain occurrence_count bump on a repeat via get-then-update, falling
+    back to a fresh es.index() when the get fails for ANY reason (not
+    found -- the overwhelmingly common case -- or ES genuinely down).
+    Deliberately skips goethe.py's embedding-based KNN near-duplicate
+    check: a crash handler must be maximally simple and robust, and
+    computing an Ollama embedding here would add a second network
+    dependency to a code path whose whole job is coping with the FIRST
+    one having already failed.
+
+    Best-effort and total: ANY failure anywhere in this function (ES
+    unreachable, malformed response, whatever) is caught, logged to
+    stderr, and swallowed -- never re-raised. A broken error-reporting
+    path must never mask or replace the ORIGINAL crash it exists to
+    report; main()'s crash handler always re-raises that original
+    exception regardless of what happens here.
+
+    Honors cfg.dry_run exactly like every other write in this file (module
+    docstring USAGE section: "touches no files, no ES") -- prints what it
+    would have written instead of calling ES.
+    """
+    import hashlib as _hashlib  # noqa: PLC0415
+    import re as _re  # noqa: PLC0415
+    from datetime import timezone as _timezone  # noqa: PLC0415
+
+    normalised = _re.sub(r"\s+", " ", error_text.lower().strip())
+    error_hash = _hashlib.sha256(normalised.encode()).hexdigest()[:16]
+    now = datetime.now(_timezone.utc).isoformat()
+
+    if cfg.dry_run:
+        msg = (f"[dry-run] would record_error to lse-errors (hash={error_hash}, "
+               f"context={context!r}, provenance=dream-infra)")
+        print(f"[dream_runner] {msg}", file=sys.stderr)
+        return msg
+
+    try:
+        es = es_client(cfg)
+        try:
+            existing = es.get(index="lse-errors", id=error_hash)
+            new_count = (existing["_source"].get("occurrence_count") or 0) + 1
+            es.update(index="lse-errors", id=error_hash, body={
+                "doc": {"last_seen": now, "occurrence_count": new_count},
+            })
+            return f"lse-errors updated: dream-infra crash pattern now seen {new_count}x (hash={error_hash})"
+        except Exception:
+            doc = {
+                "error_hash": error_hash,
+                "error_text": error_text[:4000],
+                "context": context,
+                "provenance": "dream-infra",
+                "resolution": "",
+                "occurrence_count": 1,
+                "first_seen": now,
+                "last_seen": now,
+            }
+            es.index(index="lse-errors", id=error_hash, document=doc)
+            return f"lse-errors created: new dream-infra crash recorded (hash={error_hash})"
+    except Exception as exc:
+        msg = f"record_crash_error itself failed ({exc}) -- lse-errors was NOT updated"
+        print(f"[dream_runner] WARNING: {msg}", file=sys.stderr)
+        return msg
 
 
 # --- embeddings / cosine dedup (Prompt 2.2) ---------------------------------
@@ -854,6 +1157,39 @@ def _health_probe(url: str, timeout: int = 3) -> bool:
         return False
 
 
+def _node3090_free_vram_mb(host: str, user: str, port: int, timeout: int = 8) -> int:
+    """Free VRAM (MiB) on node3090's GPU, queried over SSH.
+
+    Remote counterpart to goethe.py's Tools._planner_free_vram_mb
+    (tools/goethe.py:1486): the identical `nvidia-smi --query-gpu=memory.free
+    --format=csv,noheader,nounits` probe, run on node3090 via a bare `ssh`
+    subprocess rather than a local one -- dream_runner has no local GPU to
+    gate against (LUCIFER may not even have a model loaded), node3090 is
+    the box whose GPU the cascade actually contends for. BatchMode=yes so a
+    missing/expired key fails fast instead of hanging on a password prompt.
+    Returns 0 (== 'treat as busy', the safe direction) on any SSH failure,
+    timeout, or unparseable output -- a flaky link should fail toward the
+    CPU-only leg, never toward assuming the GPU is free.
+    """
+    import subprocess as _sp3  # noqa: PLC0415
+
+    try:
+        r = _sp3.run(
+            [
+                "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5",
+                "-o", "BatchMode=yes", "-p", str(port), f"{user}@{host}",
+                "nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits",
+            ],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        lines = [ln.strip() for ln in r.stdout.strip().splitlines() if ln.strip()]
+        if lines:
+            return max(int(ln) for ln in lines)
+    except Exception:
+        pass
+    return 0
+
+
 def _post_chat_completion(base_url: str, payload: bytes, timeout: int) -> str:
     """POST payload to /v1/chat/completions. Returns content or 'ERROR: ...'.
     Identical shape to goethe.py's Tools._post_chat_completion
@@ -909,9 +1245,20 @@ def call_dream_llm(system_prompt: str, user_content: str, cfg: DreamConfig, no_t
          configuration, same as PLANNER_FORCE_URL does for node_plan().
       1. NODE3090_LLM_URL llama-server (GPU, primary).
       2. NODE3090_OLLAMA_URL Ollama CPU fallback (always-available).
-    Returns the model's raw reply string, or 'ERROR: <reason>' if every
-    step fails.
+    Returns the model's raw reply string, 'ERROR: <reason>' if every step
+    fails, or 'BUDGET_EXHAUSTED: <reason>' (Prompt 4.2, TRAUM-AUTO) if
+    cfg.budget is attached and already exhausted -- checked FIRST, before
+    even the forced-endpoint leg, so a truncated run makes zero network
+    calls of any kind once its budget is spent, not just zero node3090
+    calls. request_dream_envelope() special-cases this prefix so a
+    deliberate stop is never reported to the operator as "the dreamer
+    failed" -- it didn't; we chose not to ask it.
     """
+    if _budget_checkpoint(cfg):
+        return f"BUDGET_EXHAUSTED: {cfg.budget.truncation_reason}"
+    if cfg.budget is not None:
+        cfg.budget.record_llm_call()
+
     if cfg.dream_llm_url:
         force_url = cfg.dream_llm_url.rstrip("/")
         if _health_probe(force_url):
@@ -926,7 +1273,15 @@ def call_dream_llm(system_prompt: str, user_content: str, cfg: DreamConfig, no_t
             print(f"[dream_runner] DREAM_LLM_URL down ({force_url}) — cascade", file=sys.stderr)
 
     llm_url = cfg.node3090_llm_url.rstrip("/")
-    if _health_probe(llm_url):
+    free_vram = _node3090_free_vram_mb(cfg.node3090_ssh_host, cfg.node3090_ssh_user, cfg.node3090_ssh_port)
+    print(f"[dream_runner] node3090 free VRAM={free_vram} MB (gate={cfg.node3090_vram_gate_mb} MB)",
+          file=sys.stderr)
+    if free_vram < cfg.node3090_vram_gate_mb:
+        print(f"[dream_runner] node3090 GPU busy (free {free_vram} MB < gate "
+              f"{cfg.node3090_vram_gate_mb} MB) -- skipping llama-server, falling straight to "
+              "Ollama (dreams are latency-insensitive; never worth contending for a shared GPU)",
+              file=sys.stderr)
+    elif _health_probe(llm_url):
         print(f"[dream_runner] llama-server probe OK -> {llm_url}", file=sys.stderr)
         payload = _build_payload(system_prompt, user_content, no_think)
         result = _post_chat_completion(llm_url, payload, 120)
@@ -985,6 +1340,13 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
     content = user_content
     for attempt in (1, 2):
         reply = call_dream_llm(system_prompt, content, cfg, no_think=True)
+        if reply and reply.startswith("BUDGET_EXHAUSTED:"):
+            # Prompt 4.2: a deliberate stop, not a failure -- return it
+            # verbatim as the "error" message so callers' existing
+            # not-None-env handling folds it straight into their narrative
+            # note, but never retry (attempt 2 would just re-hit the same
+            # exhausted budget for free -- pointless).
+            return None, reply
         if not reply or reply.startswith("ERROR:"):
             return None, f"DREAMER UNAVAILABLE — ({(reply or 'no reply')[:160]})"
         env, fail_reason = parse_dream_envelope(reply, key=key)
@@ -1734,6 +2096,8 @@ def run_pass_dedup(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, err
     ]
     proposals = []
     for start in range(0, len(accepted), DEDUP_LLM_BATCH_SIZE):
+        if _budget_checkpoint(cfg):  # Prompt 4.2
+            break
         batch = accepted[start:start + DEDUP_LLM_BATCH_SIZE]
         batch_proposals, batch_note = _dedup_batch_to_proposals(cfg, batch, docs_by_id)
         proposals.extend(batch_proposals)
@@ -1796,7 +2160,14 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
     demoted_doc_ids = set()  # one demote per doc_id per run -- see note below
     sessions_with_candidates = 0
     for row in sessions:
+        if _budget_checkpoint(cfg):  # Prompt 4.2
+            break
         session_id = row["session_id"]
+        if cfg.budget is not None:
+            # "consumed" = looked at, regardless of whether it turns out
+            # to have a candidate -- counted here, before the (potentially
+            # non-trivial) contradiction scan below, not after.
+            cfg.budget.record_session()
         session_episodes = episodes_by_session.get(session_id) or []
         candidates = find_contradiction_candidates(session_episodes, docs_by_id)
         if not candidates:
@@ -1903,6 +2274,8 @@ def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_d
     proposals = []
     qualifying = 0
     for cluster_keys in clusters:
+        if _budget_checkpoint(cfg):  # Prompt 4.2
+            break
         episode_members = [items_by_key[k] for k in cluster_keys if items_by_key[k]["source"] == "episode"]
         errors_context = [items_by_key[k] for k in cluster_keys if items_by_key[k]["source"] == "lse-errors"]
         distinct_sessions = {m["session_id"] for m in episode_members}
@@ -1946,6 +2319,44 @@ def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_d
 # its arguments — no file I/O, no network, no randomness, no LLM call — so
 # each is independently unit-testable against synthetic log lines/events.
 
+# --- agent-log secret redaction (Thread 4 prerequisite, 2026-07-12) --------
+# The Thread 3 close's live run surfaced a plaintext password inside a repeated
+# `sshpass -p` command in agent_commands.log. The log is written verbatim by
+# goethe.py's audit path (it has no redaction of its own), so the dreamer must
+# scrub at READ time, before anything reaches patterns.json, report files, or
+# an off-host LLM prompt. Rules 1 and 3 are goethe_mcp.py's episode-journaling
+# regexes (_BEARER_RE / _PATTERN_SECRET_RE) verbatim -- same shapes, same
+# replacement-tag convention; rule 2 adds the credential-as-CLI-flag shape
+# (`sshpass -p`, `--password`) that the assignment-style rule 3 structurally
+# cannot catch. (curl's bare `-u` is NOT matched: a single-letter flag shared
+# by `sort -u`/`python -u` would redact innocent arguments and corrupt the
+# frequency table; curl credentials still hit rule 2 via --user or rule 3 via
+# token-shaped values.)
+_REDACT_RULES = [
+    (re.compile(r"Bearer\s+[A-Za-z0-9\-_.]+"),
+     "[REDACTED:bearer-token]"),
+    (re.compile(r"(?i)((?:sshpass\s+(?:-p|--password)|--password|--user|--token|--api-key|--secret)"
+                r"[=\s]+)(\"[^\"]+\"|'[^']+'|\S+)"),
+     r"\1[REDACTED:cli-credential]"),
+    (re.compile(r"(?i)([\w]*(?:key|token|secret|password)[\w]*)"
+                r"([\"']?\s*[:=]\s*[\"']?)[A-Za-z0-9\-_./+]{12,}"),
+     r"\1\2[REDACTED:pattern-match]"),
+]
+
+
+def redact_log_text(text: str) -> str:
+    """Scrub high-confidence secret shapes from one agent-log detail string.
+    Applied inside parse_agent_log_lines() so EVERY downstream consumer
+    (command_frequency, find_failure_retries, repeated-sequence mining,
+    patterns.json, the insights LLM prompt) only ever sees redacted text --
+    one choke point, not per-consumer discipline."""
+    if not text:
+        return text
+    for pattern, replacement in _REDACT_RULES:
+        text = pattern.sub(replacement, text)
+    return text
+
+
 _LOG_LINE_RE = re.compile(
     r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<tag>[A-Z][A-Z0-9]*): (?P<detail>.*)$"
 )
@@ -1980,7 +2391,7 @@ def parse_agent_log_lines(lines: list) -> list[dict]:
         if not m:
             continue
         tag = m.group("tag")
-        detail = m.group("detail")
+        detail = redact_log_text(m.group("detail"))
         cwd = None
         cwd_m = _CWD_SUFFIX_RE.search(detail)
         if cwd_m:
@@ -2843,6 +3254,9 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
     all_proposals = []
     notes = []
     for domain in INSIGHT_DOMAINS:
+        if _budget_checkpoint(cfg):  # Prompt 4.2
+            notes.append(f"{domain}: skipped -- {cfg.budget.truncation_reason}.")
+            break
         insights, proposals, note = _run_insight_domain(
             cfg, domain, patterns, session_text, session_refs, today
         )
@@ -2911,17 +3325,23 @@ def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: s
     didn't-look verdict, the corpus size examined, and the thresholds
     applied. The record is ALSO appended (never overwritten) to
     <dream-dir>/<date>/null-results.jsonl, the same "at" convention
-    dream_apply.py already uses for applied.jsonl/rejected.jsonl: unlike
-    report.md and proposals.jsonl (both single-pass-per-invocation
-    snapshots — see this module's write_patterns_json/dream_digest.py's
-    gather_top_insights docstring for the documented per-pass-overwrite
-    limitation), a full dream cycle runs all five passes in sequence
-    against the SAME day-dir, and null-results.jsonl is the one place
-    every pass's null verdict for the day survives that sequence intact."""
+    dream_apply.py already uses for applied.jsonl/rejected.jsonl.
+
+    PASS-SCOPED FILENAMES (Thread 4 prerequisite, 2026-07-12): output is
+    report-<pass>.md / proposals-<pass>.jsonl, NOT the shared report.md /
+    proposals.jsonl of Threads 2-3. The Thread 3 close found the shared
+    names silently discarded earlier passes' REAL pending proposals when a
+    full cycle ran multiple passes against the same day-dir (recovered by
+    hand that close; Prompt 3.8's append-mode null-results.jsonl fixed it
+    for null verdicts only). Per-pass names make a later pass structurally
+    unable to clobber an earlier one, while re-running the SAME pass still
+    overwrites only its own snapshot (correct: latest run of a pass wins).
+    Readers glob: dream_digest.py and dream_apply --queue scan
+    proposals*.jsonl / report*.md, so legacy day-dirs stay readable."""
     today = date.today().isoformat()
     out_dir = os.path.join(cfg.dream_dir, today)
-    report_path = os.path.join(out_dir, "report.md")
-    proposals_path = os.path.join(out_dir, "proposals.jsonl")
+    report_path = os.path.join(out_dir, f"report-{cfg.pass_name}.md")
+    proposals_path = os.path.join(out_dir, f"proposals-{cfg.pass_name}.jsonl")
     null_results_path = os.path.join(out_dir, "null-results.jsonl")
 
     lines = [
@@ -2977,6 +3397,91 @@ def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: s
     return report_path, proposals_path
 
 
+def write_failure_report(cfg: DreamConfig, exc: Exception, sessions_count: int = 0) -> tuple[str, str]:
+    """Prompt 4.3 (TRAUM-AUTO) crash discipline: a PARTIAL report.md with a
+    prominent FAILED banner, written from whatever context main() still
+    has at crash time. sessions_count defaults to 0 so a crash before
+    select_undreamed_sessions() even runs (e.g. during the episode
+    snapshot) still gets a usable report instead of no report at all.
+
+    Pass-scoped <dream-dir>/<date>/report-<pass>.md path (Thread 4
+    prerequisite, 2026-07-12 -- same fix as write_report(): the Thread 3
+    close found shared per-day filenames let a later pass silently clobber
+    an earlier pass's output, so a crashed pass now only ever replaces its
+    OWN pass's report, never another pass's, and never a successful
+    pass's report either).
+
+    ALSO appends one line to <dream-dir>/<date>/crashes.jsonl -- the same
+    "at"-mode append convention null-results.jsonl already uses, so unlike
+    report.md this survives the whole night's multi-pass sequence intact.
+    This is what dream_digest.py's 3-consecutive-failed-nights escalation
+    (same prompt) scans across recent day-dirs; see gather_crash_streak.
+
+    Honors cfg.dry_run like every other write in this file (prints instead
+    of writing). Returns (report_path, crashes_path) either way.
+    """
+    import traceback as _tb  # noqa: PLC0415
+
+    today = date.today().isoformat()
+    out_dir = os.path.join(cfg.dream_dir, today)
+    report_path = os.path.join(out_dir, f"report-{cfg.pass_name}.md")
+    crashes_path = os.path.join(out_dir, "crashes.jsonl")
+
+    tb_text = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    lines = [
+        f"# TRAUM dream report — {today} — pass: {cfg.pass_name}",
+        "",
+        "## FAILED",
+        "",
+        f"This pass crashed with an unhandled exception at {now} and did NOT "
+        "complete. Everything below is PARTIAL/best-effort context from "
+        "whatever main() had gotten to, not a normal report.",
+        "",
+        f"Sessions considered before the crash: {sessions_count}",
+        "",
+        f"**Error:** `{type(exc).__name__}: {exc}`",
+        "",
+        "```",
+        tb_text.rstrip(),
+        "```",
+        "",
+        "manifest.db's `dreamed_at` is untouched for every session this run "
+        "would have looked at — only dream_apply.py ever sets it, and this "
+        "pass never reached a point where it would have called that — so a "
+        "re-dream on the next successful run will naturally retry everything "
+        "this crash interrupted. Safe to re-dream.",
+        "",
+        f"See lse-errors (context=dream-runner, provenance=dream-infra) for "
+        "the same failure recorded as a searchable error-KB entry, and "
+        f"`{crashes_path}` for this night's full crash log.",
+        "",
+    ]
+    report_text = "\n".join(lines)
+
+    if cfg.dry_run:
+        print(f"[dream_runner] [dry-run] would write FAILED report to:\n  {report_path}\n  {crashes_path}",
+              file=sys.stderr)
+        print(report_text)
+        return report_path, crashes_path
+
+    os.makedirs(out_dir, exist_ok=True)
+    with open(report_path, "wt", encoding="utf-8") as f:
+        f.write(report_text)
+    crash_record = {
+        "date": today,
+        "pass": cfg.pass_name,
+        "failed_at": now,
+        "error_type": type(exc).__name__,
+        "error_text": str(exc)[:2000],
+        "sessions_considered": sessions_count,
+    }
+    with open(crashes_path, "at", encoding="utf-8") as f:
+        f.write(json.dumps(crash_record) + "\n")
+    return report_path, crashes_path
+
+
 # --- CLI ----------------------------------------------------------------
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -3014,6 +3519,16 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--node3090-llm-url", default=_node3090_llm_url_default())
     ap.add_argument("--node3090-ollama-url", default=_node3090_ollama_url_default())
     ap.add_argument("--node3090-fallback-model", default=_node3090_fallback_model_default())
+    ap.add_argument("--node3090-ssh-host", default=_node3090_ssh_host_default(),
+                    help="node3090 SSH host for the remote VRAM gate probe "
+                    "(default: $GOETHE_NODE3090_SSH_HOST or node3090.home.arpa)")
+    ap.add_argument("--node3090-ssh-user", default=_node3090_ssh_user_default())
+    ap.add_argument("--node3090-ssh-port", type=int, default=_node3090_ssh_port_default())
+    ap.add_argument("--node3090-vram-gate-mb", type=int, default=_node3090_vram_gate_mb_default(),
+                    help="skip the llama-server leg and go straight to Ollama when "
+                    "node3090's free VRAM (nvidia-smi, via SSH) is below this many MiB "
+                    "(default: 2000) -- same gate pattern as goethe.py's "
+                    "_planner_free_vram_mb, applied to the remote box")
     ap.add_argument("--runner-session-prefix", default=_dream_runner_prefix_default(),
                     help="exclude sessions whose session_id starts with this (no "
                     "dream-of-dreams, DESIGN.md §2 invariant 3(e)); default: unset/none")
@@ -3092,6 +3607,35 @@ def parse_args(argv=None) -> argparse.Namespace:
                     "insight LLM prompt, independent of --sessions' manifest.db "
                     "selection size (default: 20)")
 
+    guard_group = ap.add_argument_group("run guards + budgets (Prompt 4.2, TRAUM-AUTO)")
+    guard_group.add_argument("--lockfile", default=_lockfile_default(),
+                    help="path to the cross-invocation run lock (default: "
+                    "<dream-dir>/.dream.lock) -- guards against two dream_runner.py "
+                    "processes (scheduled or manual) running concurrently")
+    guard_group.add_argument("--lock-max-age-s", type=float, default=_lock_max_age_s_default(),
+                    help="a held lock older than this many seconds is treated as stale "
+                    "and reclaimed even if its PID still looks alive (PID-reuse edge "
+                    "case) (default: 14400 = 4h)")
+    guard_group.add_argument("--session-active-window-min", type=int,
+                    default=_session_active_window_min_default(),
+                    help="skip the run if any LSE session (per manifest.db, refreshed "
+                    "right before this check) was active within this many minutes "
+                    "(default: 30) -- courtesy to a live operator, not a hard invariant")
+    guard_group.add_argument("--budget-max-sessions", type=int, default=None,
+                    help="hard per-run cap on sessions actually processed by a pass "
+                    "with a per-session LLM loop (default: same value as --sessions)")
+    guard_group.add_argument("--budget-max-llm-calls", type=int,
+                    default=_budget_max_llm_calls_default(),
+                    help="hard per-run cap on LLM chat-completion calls made through "
+                    "call_dream_llm, across the whole cascade (default: 100)")
+    guard_group.add_argument("--budget-max-wall-clock-min", type=float,
+                    default=_budget_max_wall_clock_min_default(),
+                    help="hard per-run wall-clock budget in minutes (default: 45)")
+    guard_group.add_argument("--ignore-guards", action="store_true",
+                    help="bypass the lock + recent-session-activity checks entirely "
+                    "(manual/debug runs only -- NEVER set this on the scheduled "
+                    "nightly cycle; per-run budgets still apply even with this set)")
+
     ap.add_argument("-v", "--verbose", action="store_true")
     return ap.parse_args(argv)
 
@@ -3145,6 +3689,261 @@ def _run_sample_labels(cfg: DreamConfig) -> None:
         print(f"[dream_runner] worksheet also written to {cfg.labels_out}", file=sys.stderr)
 
 
+# --- run guards (Prompt 4.2, TRAUM-AUTO): lockfile, session-activity, ------
+# --- and the dreamer-episode-exclusion assert -------------------------------
+
+def _pid_alive(pid: int) -> bool:
+    """True if a process with this PID currently exists (any owner).
+    os.kill(pid, 0) sends no actual signal, just probes existence/
+    permission. ESRCH (no such process) -> dead, the lock is stale.
+    EPERM (exists, owned by someone else) -> still counts as alive; this
+    is a liveness probe, never an attempt to signal/kill anything."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _read_lock(lockfile: str) -> dict | None:
+    try:
+        with open(lockfile, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def acquire_lock(cfg: DreamConfig) -> bool:
+    """Best-effort single-writer lock across ALL dream_runner.py
+    invocations on this box, not just same-pass ones -- covers both the
+    scheduled 5-ExecStart nightly cycle somehow still running when the
+    NEXT night's timer fires (each pass is its own process, so this is
+    what actually prevents two full cycles overlapping) and an operator's
+    manual CLI run overlapping the scheduled one.
+
+    Atomic create (O_CREAT|O_EXCL) avoids the classic check-then-create
+    race. A held lock is reclaimed once (one retry) when it looks stale:
+    its PID is dead (a crashed prior run -- Prompt 4.3's real crash
+    discipline isn't built yet, so this is the only cleanup a crash gets
+    today), OR the file itself is older than cfg.lock_max_age_s (PID-reuse
+    edge case, or a run stuck well past its own wall-clock budget).
+
+    Returns True if acquired (caller now owns the lock and MUST call
+    release_lock when done, normally via try/finally), False if genuinely
+    held by a live, fresh lock -- callers should treat False as "skip this
+    run", never as an error.
+    """
+    os.makedirs(os.path.dirname(cfg.lockfile) or ".", exist_ok=True)
+    payload = json.dumps({
+        "pid": os.getpid(),
+        "pass": cfg.pass_name,
+        "acquired_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }).encode()
+
+    for _attempt in (1, 2):  # 2nd attempt only fires right after reclaiming a stale lock
+        try:
+            fd = os.open(cfg.lockfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            with os.fdopen(fd, "wb") as f:
+                f.write(payload)
+            return True
+        except FileExistsError:
+            pass
+
+        held = _read_lock(cfg.lockfile)
+        try:
+            age_s = time.time() - os.path.getmtime(cfg.lockfile)
+        except OSError:
+            age_s = float("inf")  # file vanished between the exists-check and stat -- treat as gone
+        held_pid = held.get("pid") if held else None
+        stale = (
+            held is None
+            or held_pid is None
+            or not _pid_alive(held_pid)
+            or age_s >= cfg.lock_max_age_s
+        )
+        if not stale:
+            return False
+        print(f"[dream_runner] reclaiming stale lock at {cfg.lockfile} "
+              f"(held={held}, age={age_s:.0f}s)", file=sys.stderr)
+        try:
+            os.remove(cfg.lockfile)
+        except OSError:
+            pass
+        # Loop back for exactly one more O_EXCL attempt now that the stale
+        # file is gone -- if another process beat us to reclaiming it, the
+        # 2nd attempt legitimately fails again and we correctly report
+        # "held", rather than looping forever.
+    return False
+
+
+def release_lock(cfg: DreamConfig) -> None:
+    """Best-effort -- never raises. Only removes the lock if it still
+    looks like OUR lock (PID match), so a lock some OTHER process already
+    reclaimed as stale (we somehow ran past lock_max_age_s ourselves) is
+    never yanked out from under it."""
+    held = _read_lock(cfg.lockfile)
+    if held and held.get("pid") == os.getpid():
+        try:
+            os.remove(cfg.lockfile)
+        except OSError:
+            pass
+
+
+def _recent_session_active(cfg: DreamConfig) -> str:
+    """Empty string if no LSE session was recently active; otherwise a
+    human-readable reason for the skip.
+
+    Refreshes manifest.db first (episode_index.build_manifest) so "per
+    manifest" -- Prompt 4.2's own phrasing -- reflects near-real-time
+    state rather than however stale the last independent manifest rebuild
+    happened to be; nothing else on this box currently rebuilds
+    manifest.db on a schedule of its own, so without this refresh the
+    check could easily miss a session that started minutes ago.
+    """
+    try:
+        _epidx.build_manifest(cfg.episode_dir, cfg.manifest_db)
+    except Exception as exc:
+        print(f"[dream_runner] WARNING: manifest refresh before session-activity "
+              f"check failed ({exc}) -- checking against possibly-stale manifest.db",
+              file=sys.stderr)
+
+    if not os.path.exists(cfg.manifest_db):
+        return ""
+
+    conn = sqlite3.connect(cfg.manifest_db, timeout=10)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT session_id, end_ts FROM sessions ORDER BY end_ts DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or not row["end_ts"]:
+        return ""
+
+    try:
+        end_dt = datetime.fromisoformat(row["end_ts"])
+    except ValueError:
+        return ""
+    now = datetime.now().astimezone()
+    age_min = (now - end_dt).total_seconds() / 60.0
+    # age_min < 0 means the session's own end_ts is in our "future" (clock
+    # skew) -- don't false-positive-block a nightly run on a clock glitch.
+    if 0 <= age_min < cfg.session_active_window_min:
+        return (f"session {row['session_id']!r} was active {age_min:.1f} min ago "
+                f"(< {cfg.session_active_window_min}min window)")
+    return ""
+
+
+def _snapshot_episode_session_files(episode_dir: str) -> dict[str, float]:
+    """{relative_path: mtime} for every SESSION file (day-dir/*.jsonl[.gz])
+    under episode_dir -- deliberately excludes manifest.db itself, which is
+    a legitimate, expected write target (episode_index.build_manifest() --
+    including the call inside _recent_session_active() above -- and
+    dream_apply.py's dreamed_at column both write there by design). Reuses
+    episode_index.py's own iter_day_dirs/iter_session_files so "what counts
+    as a session file" has exactly one definition anywhere in this
+    codebase, rather than a second regex guess living here too."""
+    snap: dict[str, float] = {}
+    if not os.path.isdir(episode_dir):
+        return snap
+    for _day, day_dir in _epidx.iter_day_dirs(episode_dir):
+        for path in _epidx.iter_session_files(day_dir):
+            try:
+                snap[os.path.relpath(path, episode_dir)] = os.path.getmtime(path)
+            except OSError:
+                continue
+    return snap
+
+
+def assert_no_episode_writes(episode_dir: str, before: dict[str, float]) -> None:
+    """Prompt 4.2 (TRAUM-AUTO) makes DESIGN.md §2 invariant 3(e) --
+    "no dream-of-dreams" -- structural, not just conventional.
+
+    It is currently true BY CONSTRUCTION that dream_runner.py never writes
+    a session file into EPISODE_DIR: the dreamer does not run through
+    goethe_mcp.py's register() journaling wrapper, so nothing in this file
+    even HAS a write path into EPISODE_DIR today. But "currently true by
+    construction" is an ASSUMPTION a future edit could break quietly (a
+    new pass that shells out to something that happens to write there,
+    or a copy-paste of gateway-adjacent code) -- the prompt's own words are
+    "assert, don't assume". So: assert it. Compare a full before/after
+    listing (path -> mtime) of every session file under episode_dir and
+    fail LOUDLY if anything was added, removed, or modified.
+
+    Raises AssertionError -- deliberately uncaught anywhere in main(); a
+    violation here is exactly the corpus-poisoning failure mode
+    docs/threat-model-kb.md's dreaming section (Prompt 4.7, not yet
+    written) will need to reason about, so it must be as loud as a real
+    bug, never silently swallowed.
+    """
+    after = _snapshot_episode_session_files(episode_dir)
+    if after != before:
+        added = sorted(set(after) - set(before))
+        removed = sorted(set(before) - set(after))
+        changed = sorted(p for p in (set(after) & set(before)) if after[p] != before[p])
+        raise AssertionError(
+            "INVARIANT VIOLATION (Prompt 4.2, no-dream-of-dreams): EPISODE_DIR "
+            f"session files changed during this run -- added={added} "
+            f"removed={removed} changed={changed}. dream_runner must NEVER "
+            "write into GOETHE_EPISODE_DIR; this indicates a new code path "
+            "broke that invariant."
+        )
+
+
+def _handle_crash(cfg: DreamConfig, exc: Exception, sessions_count: int = 0) -> None:
+    """Prompt 4.3 (TRAUM-AUTO) crash discipline -- called from main()'s
+    `except Exception` handler for ANY unhandled exception during a real
+    run (post-guards, post-lock-acquisition; see main()'s own comment for
+    why the guard-check phase itself is out of scope). Best-effort does:
+      1. record_crash_error() -- lse-errors, context="dream-runner",
+         provenance="dream-infra".
+      2. write_failure_report() -- partial report.md with a FAILED banner
+         + crashes.jsonl append (what the 3-consecutive-failed-nights
+         escalation in dream_digest.py scans for).
+      3. refresh the morning digest, so an escalation banner (if this
+         crash makes 3 in a row) shows up immediately, not just after
+         tomorrow's first successful/unsuccessful run.
+      3. dreamed_at is left untouched -- already true by construction
+         (only dream_apply.py ever sets it), nothing here needs to
+         actively enforce that, it's just restated in the report text.
+
+    NEVER raises itself -- each step is independently try/excepted so one
+    broken reporting path (e.g. ES down, which might be WHY the original
+    crash happened) cannot mask or replace the exception main() is about
+    to re-raise after this returns. Logs its own failures to stderr.
+    """
+    print(f"[dream_runner] CRASH in pass={cfg.pass_name}: {type(exc).__name__}: {exc}",
+          file=sys.stderr)
+
+    try:
+        write_failure_report(cfg, exc, sessions_count=sessions_count)
+    except Exception as report_exc:
+        print(f"[dream_runner] WARNING: failed to write the FAILED report itself "
+              f"({report_exc}) -- continuing crash handling anyway", file=sys.stderr)
+
+    try:
+        result = record_crash_error(cfg, error_text=f"{type(exc).__name__}: {exc}",
+                                     context="dream-runner")
+        print(f"[dream_runner] {result}", file=sys.stderr)
+    except Exception as record_exc:
+        print(f"[dream_runner] WARNING: record_crash_error itself failed ({record_exc})",
+              file=sys.stderr)
+
+    try:
+        dream_digest.refresh_digest(
+            dream_dir=cfg.dream_dir, episode_dir=cfg.episode_dir, manifest_db=cfg.manifest_db,
+            es_url=cfg.es_url, dry_run=cfg.dry_run,
+        )
+    except Exception as digest_exc:
+        print(f"[dream_runner] WARNING: post-crash digest refresh failed ({digest_exc})",
+              file=sys.stderr)
+
+
 def main(argv=None) -> None:
     args = parse_args(argv)
     cfg = build_config(args)
@@ -3153,55 +3952,125 @@ def main(argv=None) -> None:
         _run_sample_labels(cfg)
         return
 
-    sessions = select_undreamed_sessions(cfg)
-    mode = "[dry-run] " if cfg.dry_run else ""
-    print(f"[dream_runner] {mode}pass={cfg.pass_name} undreamed-sessions-selected={len(sessions)} "
-          f"(limit={cfg.sessions_limit}, since={cfg.since or '(none)'})", file=sys.stderr)
-
-    if not sessions:
-        print("[dream_runner] no undreamed sessions — episode-history context will be empty, "
-              "but ES-only passes (dedup, error-cluster) still run against the live indices.",
-              file=sys.stderr)
-
-    episodes_by_session = {row["session_id"]: read_session_episodes(cfg, row) for row in sessions}
-
-    kb_docs: list = []
-    error_docs: list = []
-    try:
-        if cfg.pass_name in ("dedup", "stale-contradiction"):
-            kb_docs = search_index(cfg, "lse-kb", {"query": {"match_all": {}}, "size": 500,
-                                                    "_source": KB_SOURCE_FIELDS})
-        if cfg.pass_name == "error-cluster":
-            error_docs = search_index(cfg, "lse-errors", {"query": {"match_all": {}}, "size": 500,
-                                                            "_source": ERROR_SOURCE_FIELDS})
-    except Exception as exc:
-        print(f"[dream_runner] WARNING: ES read failed ({exc}) — proceeding with empty index view",
-              file=sys.stderr)
-
-    pass_func = PASS_FUNCS[cfg.pass_name]
-    raw_proposals, narrative, null_record = pass_func(cfg, sessions, episodes_by_session, kb_docs, error_docs)
-
-    proposals = []
-    for p in raw_proposals:
-        err = validate_proposal_shape(p)
-        if err:
-            print(f"[dream_runner] WARNING: dropping malformed proposal ({err}): {p!r}",
+    # Prompt 4.2: lock + recent-session-activity guards. --ignore-guards is
+    # a manual/debug escape hatch ONLY -- goethe-dream.service.tmpl never
+    # sets it. Per-run budgets (below) always apply regardless. NOTE
+    # (Prompt 4.3): the guard-check phase itself is deliberately OUTSIDE
+    # the try/except crash handler below -- it runs before the lock is
+    # even acquired (nothing to release yet), and both guard functions
+    # already have their own internal exception handling that degrades to
+    # "don't block" rather than raising (see _recent_session_active's own
+    # docstring) -- an exception escaping THAT would itself be a bug in
+    # the guard code, a different failure class than a pass crashing.
+    if not cfg.ignore_guards:
+        block_reason = _recent_session_active(cfg)
+        if block_reason:
+            print(f"[dream_runner] SKIPPING run (pass={cfg.pass_name}): {block_reason}",
                   file=sys.stderr)
-            continue
-        proposals.append(p)
+            return
+        if not acquire_lock(cfg):
+            print(f"[dream_runner] SKIPPING run (pass={cfg.pass_name}): another dream "
+                  f"run holds the lock at {cfg.lockfile}", file=sys.stderr)
+            return
+    else:
+        print("[dream_runner] --ignore-guards set: bypassing the lock + recent-session "
+              "checks (manual/debug run only -- never use this on the scheduled "
+              "nightly cycle)", file=sys.stderr)
 
-    report_path, proposals_path = write_report(cfg, sessions, proposals, narrative, null_record)
-    null_suffix = f" null_result={null_record['reason']} (looked={null_record['looked']})" if null_record else ""
-    print(f"[dream_runner] {mode}done. report={report_path} proposals={proposals_path} "
-          f"n_proposals={len(proposals)}{null_suffix}", file=sys.stderr)
-
-    # Prompt 3.4 (TRAUM-INSIGHT): refresh the morning digest "at the end of
-    # every dream run". Never allowed to turn a successful pass into a
-    # reported failure -- refresh_digest() swallows its own exceptions.
-    dream_digest.refresh_digest(
-        dream_dir=cfg.dream_dir, episode_dir=cfg.episode_dir, manifest_db=cfg.manifest_db,
-        es_url=cfg.es_url, dry_run=cfg.dry_run,
+    cfg.budget = DreamBudget(
+        max_sessions=cfg.budget_max_sessions,
+        max_llm_calls=cfg.budget_max_llm_calls,
+        max_wall_clock_s=cfg.budget_max_wall_clock_min * 60,
     )
+
+    sessions: list = []
+    try:
+        episode_snapshot = _snapshot_episode_session_files(cfg.episode_dir)
+
+        sessions = select_undreamed_sessions(cfg)
+        mode = "[dry-run] " if cfg.dry_run else ""
+        print(f"[dream_runner] {mode}pass={cfg.pass_name} undreamed-sessions-selected={len(sessions)} "
+              f"(limit={cfg.sessions_limit}, since={cfg.since or '(none)'})", file=sys.stderr)
+
+        if not sessions:
+            print("[dream_runner] no undreamed sessions — episode-history context will be empty, "
+                  "but ES-only passes (dedup, error-cluster) still run against the live indices.",
+                  file=sys.stderr)
+
+        episodes_by_session = {row["session_id"]: read_session_episodes(cfg, row) for row in sessions}
+
+        kb_docs: list = []
+        error_docs: list = []
+        try:
+            if cfg.pass_name in ("dedup", "stale-contradiction"):
+                kb_docs = search_index(cfg, "lse-kb", {"query": {"match_all": {}}, "size": 500,
+                                                        "_source": KB_SOURCE_FIELDS})
+            if cfg.pass_name == "error-cluster":
+                error_docs = search_index(cfg, "lse-errors", {"query": {"match_all": {}}, "size": 500,
+                                                                "_source": ERROR_SOURCE_FIELDS})
+        except Exception as exc:
+            print(f"[dream_runner] WARNING: ES read failed ({exc}) — proceeding with empty index view",
+                  file=sys.stderr)
+
+        pass_func = PASS_FUNCS[cfg.pass_name]
+        raw_proposals, narrative, null_record = pass_func(cfg, sessions, episodes_by_session, kb_docs, error_docs)
+
+        if cfg.budget.truncated:
+            narrative = (
+                f"{narrative}\n\n**BUDGET TRUNCATION (Prompt 4.2):** this pass stopped early — "
+                f"{cfg.budget.truncation_reason}. Results above are PARTIAL, not a complete pass "
+                "over the selected corpus — this is a normal, expected exit, not an error. Budget "
+                f"usage: sessions {cfg.budget.sessions_consumed}/{cfg.budget.max_sessions}, LLM "
+                f"calls {cfg.budget.llm_calls_made}/{cfg.budget.max_llm_calls}, wall-clock "
+                f"{cfg.budget.elapsed_s():.0f}s/{cfg.budget.max_wall_clock_s:.0f}s. manifest.db's "
+                "dreamed_at is untouched either way (only dream_apply.py sets it), so a re-dream "
+                "will naturally pick up whatever this run didn't reach."
+            )
+            print(f"[dream_runner] BUDGET TRUNCATED: {cfg.budget.truncation_reason}", file=sys.stderr)
+
+        proposals = []
+        for p in raw_proposals:
+            err = validate_proposal_shape(p)
+            if err:
+                print(f"[dream_runner] WARNING: dropping malformed proposal ({err}): {p!r}",
+                      file=sys.stderr)
+                continue
+            proposals.append(p)
+
+        report_path, proposals_path = write_report(cfg, sessions, proposals, narrative, null_record)
+        null_suffix = f" null_result={null_record['reason']} (looked={null_record['looked']})" if null_record else ""
+        print(f"[dream_runner] {mode}done. report={report_path} proposals={proposals_path} "
+              f"n_proposals={len(proposals)}{null_suffix}", file=sys.stderr)
+
+        # Prompt 3.4 (TRAUM-INSIGHT): refresh the morning digest "at the end of
+        # every dream run". Never allowed to turn a successful pass into a
+        # reported failure -- refresh_digest() swallows its own exceptions.
+        dream_digest.refresh_digest(
+            dream_dir=cfg.dream_dir, episode_dir=cfg.episode_dir, manifest_db=cfg.manifest_db,
+            es_url=cfg.es_url, dry_run=cfg.dry_run,
+        )
+
+        # Prompt 4.2: assert, don't assume -- see assert_no_episode_writes's
+        # own docstring. Deliberately the LAST statement in the try block,
+        # inside it (not after) so it still runs via `finally` -> release_lock
+        # even if this specific check is what fails.
+        assert_no_episode_writes(cfg.episode_dir, episode_snapshot)
+    except Exception as exc:
+        # Prompt 4.3: crash discipline. Handle (record_error, partial
+        # FAILED report, digest refresh), THEN re-raise the ORIGINAL
+        # exception unchanged -- this process still exits non-zero (so
+        # `systemctl status`/journalctl correctly show this pass failed),
+        # but goethe-dream.service.tmpl has Restart=no (Type=oneshot's own
+        # default, made explicit -- see that file) so there is no
+        # systemd-level restart spiral, and each of its 5 ExecStart lines
+        # is "-"-prefixed so one crashed pass doesn't block the remaining
+        # four that same night. The .timer fires again tomorrow regardless
+        # of tonight's exit code -- that's the actual retry mechanism.
+        _handle_crash(cfg, exc, sessions_count=len(sessions))
+        raise
+    finally:
+        if not cfg.ignore_guards:
+            release_lock(cfg)
 
 
 if __name__ == "__main__":

@@ -398,3 +398,113 @@ Prometheus reaches Grafana and other containers by name (`http://prometheus:9090
 | Tool versions | `C:\Users\SY5\Documents\Claude\Projects\local-system-engineer\tools\` |
 | Prompt versions | `C:\Users\SY5\Documents\Claude\Projects\local-system-engineer\prompts\` |
 | Version registry | `C:\Users\SY5\Documents\Claude\Projects\local-system-engineer\VERSION.md` |
+
+## 10. Dreaming operations (TRAUM)
+
+The TRAUM loop runs nightly, unattended: `goethe-dream.timer` fires
+`goethe-dream.service` at 03:30 (±15 min jitter), which runs the five
+dream passes (`dedup`, `stale-contradiction`, `error-cluster`, `patterns`,
+`insights`) via `tools/dream_runner.py --no-dry-run`. The runner only ever
+PROPOSES — nothing reaches Elasticsearch without a human yes through
+`tools/dream_apply.py`. Every command below was executed and verified on
+LUCIFER on 2026-07-13.
+
+### 10.1 The 5-minute morning review loop
+
+```bash
+# 1. What happened overnight? (≤30 lines, always current)
+cat /opt/local-se/dreams/latest-digest.md
+
+# 2. What's waiting on you? (all day-dirs, oldest first, grouped by type;
+#    proposals >14 days old are auto-expired with reason on this call)
+cd /home/sy5/local-system-engineer
+python3 tools/dream_apply.py --queue
+
+# 3. Apply/reject a day's batch interactively (per-proposal yes/no;
+#    invariant validation happens regardless of your answer):
+python3 tools/dream_apply.py --proposals /opt/local-se/dreams/<date>/proposals-<pass>.jsonl --no-dry-run
+```
+
+The `[DREAM]` banner on your first `search_kb`/`time_check` of a session
+carries digest date + pending-gate count — if it says pending > 0, run
+step 2.
+
+### 10.2 Timer health
+
+```bash
+systemctl list-timers goethe-dream.timer --no-pager   # NEXT ≈ tomorrow 03:30-03:45
+journalctl -u goethe-dream --no-pager -n 50           # last run's stdout/stderr
+systemctl status goethe-dream.timer --no-pager        # enabled + active (waiting)
+# fire one full cycle by hand, off-schedule (needs root):
+sudo systemctl start goethe-dream.service
+```
+
+### 10.3 Failed nights
+
+A crashed pass writes `report-<pass>.md` with a `## FAILED` banner plus a
+line in `crashes.jsonl` in that day-dir, files a `record_error` to
+`lse-errors` (context=`dream-runner`, provenance=`dream-infra`), and does
+NOT mark sessions dreamed (safe re-dream). `Restart=no` — the timer just
+fires again the next night. **3 consecutive failed nights escalates in the
+digest header** — that banner is your signal to read the newest
+`crashes.jsonl`:
+
+```bash
+ls /opt/local-se/dreams/*/crashes.jsonl        # empty today: no crashed nights yet
+tail -1 "$(ls -t /opt/local-se/dreams/*/crashes.jsonl 2>/dev/null | head -1)"
+```
+
+If a run died holding the lock: the lock self-expires (default 4 h) and
+carries the holder PID (liveness-probed) — a dead holder's lock is broken
+automatically. Manual inspect/clear:
+
+```bash
+cat /opt/local-se/dreams/.dream.lock 2>/dev/null || echo "no lock held"
+rm /opt/local-se/dreams/.dream.lock   # only if the PID inside is dead
+```
+
+### 10.4 Re-dreaming a session
+
+Sessions are consumed once (`dreamed_at` in the manifest). To re-dream one
+(e.g. after a crash you don't trust, or a redaction/parser fix you want
+re-applied to history):
+
+```bash
+sqlite3 /opt/local-se/episodes/manifest.db \
+  "SELECT session_id, dreamed_at FROM sessions ORDER BY start_ts DESC LIMIT 10;"
+sqlite3 /opt/local-se/episodes/manifest.db \
+  "UPDATE sessions SET dreamed_at=NULL WHERE session_id='<session_id>';"
+# then either wait for tonight's timer or run one pass by hand:
+python3 /home/sy5/local-system-engineer/tools/dream_runner.py --pass <pass> --no-dry-run
+```
+
+(A hand run during the day usually needs `--ignore-guards` — the 30-min
+session-activity guard will correctly refuse while you're using the LSE.)
+
+### 10.5 Tracing a KB doc back to its dream
+
+Every dream-applied write carries `origin=dream` +
+`provenance=dream-YYYY-MM-DD`:
+
+```bash
+curl -s "http://127.0.0.1:9200/lse-kb/_search" -H 'Content-Type: application/json' \
+  -d '{"query":{"term":{"origin":"dream"}},"size":10,"_source":["title","provenance","origin"]}'
+```
+
+The provenance date names the day-dir: `/opt/local-se/dreams/<date>/`
+holds `report-<pass>.md` (the WHY), `proposals-<pass>.jsonl` (the exact
+proposed call), `applied.jsonl` (the human yes + what was written),
+`rejected.jsonl` / `expired.jsonl` (everything that didn't land, with
+reason). Day-dirs before 2026-07-13 use the legacy shared
+`report.md`/`proposals.jsonl` names.
+
+### 10.6 Paths
+
+| What | Where |
+|---|---|
+| Episode corpus | `/opt/local-se/episodes/YYYY-MM-DD/<session>.jsonl` + `manifest.db` |
+| Dream output | `/opt/local-se/dreams/YYYY-MM-DD/` |
+| Morning digest | `/opt/local-se/dreams/latest-digest.md` |
+| Units (installed) | `/etc/systemd/system/goethe-dream.{service,timer}` |
+| Unit templates (repo) | `lse/services/goethe-dream.{service,timer}.tmpl` |
+| Runner sandbox cwd | `/var/lib/lse/dream-sandbox` (holds nothing durable) |
