@@ -3,6 +3,25 @@
 > Format: `## YYYY-MM-DD — <what shipped>`
 
 ---
+
+## 2026-07-15 (Cowork): TRAUM Thread 4 (TRAUM-AUTO) — dream operations hardened: secret redaction, quarantine passes, proposal queue with expiry, systemd timer, ledger mining, auto-apply earn path, digest prompt-rule counting
+
+Thread 4 close. All 9 remaining dream operations implemented and tested live against LUCIFER.
+
+- **Secret redaction (3 rules, 426/9609 events redacted).** `dream_runner.py` now redacts sensitive tool outputs (`vault_*`, `get_vault_secret`, `set_vault_secret`) before writing to episode JSONL — prevents credential leakage into the dream corpus. 3 redaction patterns covering 426 of 9,609 audited events.
+- **Pass-scoped filenames.** Each dream pass now writes to `$DREAM_DIR/YYYY-MM-DD/report-<pass>.md` and `proposals-<pass>.jsonl` (e.g. `report-dedup.md`, `proposals-insights.jsonl`) — eliminates filename collisions when multiple runs occur on the same day.
+- **Quarantine-delete-request pass.** `dream_runner.py` scans `lse-kb` for quarantined docs (stale=true, quality=0.2) and generates delete proposals for human review — closes the KB-DECAY-1 quarantine→deletion loop. Live run: 0 quarantined docs found.
+- **dreamed_at auto-stamp.** `dream_apply.py` now stamps `dreamed_at` on session manifest rows during apply — prevents re-dreaming already-processed sessions on crash recovery. 50 sessions stamped in initial run.
+- **Proposal queue with 14-day expiry.** `dream_apply.py --queue` lists pending human-gate proposals across all dream runs (oldest first, grouped by type). Proposals older than 14 days auto-expired with reason. 28 pending proposals from 4 files at close.
+- **systemd timer (goethe-dream.timer active).** `start-goethe.sh` updated with quarantine pass integration. Timer fires nightly at 03:30 with 15m random delay — VRAM-aware fallback to Ollama/CPU path if node3090 GPU busy.
+- **Ledger mining.** `dream_runner.py` now reads `tasks.db` planner ledger and generates kb-fact proposals from completed tasks' evidence fields. 10 kb-fact proposals from 49 done tasks in initial run.
+- **Auto-apply earn path.** `dream_apply.py` eval DB initialized with `--earn-status` flag — tracks per-type success/failure rates for the 2-consecutive-week zero-rejected-in-hindsight promotion bar (DESIGN.md §7). No types auto-promoted yet (eval period not started).
+- **Digest prompt-rule counting.** `dream_digest.py` now counts pending proposals by type and surfaces ⚠ warning when `prompt-rule` proposals exist. Type breakdown shown in digest header.
+
+**Files modified:** `tools/dream_runner.py` (+quarantine pass, +ledger-mining pass, +sessions writing, +redaction, +pass-scoped filenames), `tools/dream_apply.py` (+es_delete dispatch, +dreamed_at stamping, +queue mode, +earn path), `tools/dream_digest.py` (+prompt-rule counting), `tools/goethe.py` (minor), `tools/start-goethe.sh` (+quarantine pass). Backups at `.bak.step5`.
+
+**Deploy note:** systemd timer `goethe-dream.timer` active. No gateway restart required (dream tools are offline, invoked by timer).
+
 ## 2026-07-12 (Cowork, cont'd x3): TRAUM Thread 3 (TRAUM-INSIGHT) CLOSED — v0.4.0-a deployed live to LUCIFER, `[DREAM]`/`time_check()` desync fixed, first real dream cycle, security + data-loss findings, debrief
 
 Closes Thread 3. Unlike every prior TRAUM entry this thread, this one ran
