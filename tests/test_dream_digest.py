@@ -189,3 +189,41 @@ class TestDigestOnEmptyCorpus:
         (tmp_path / "dreams").mkdir()
         cfg = _make_cfg(tmp_path)
         assert dd.pick_primary_date(cfg, today="2026-07-12") is None
+
+
+# --- pass-scoped day-dir files (Thread 4 prerequisite) ----------------------
+# dream_runner.py now writes report-<pass>.md / proposals-<pass>.jsonl;
+# day_dir_files() must take the union of pass-scoped names and the legacy
+# shared name so Threads 2-3 day-dirs stay readable.
+
+class TestPassScopedDayDirFiles:
+
+    def _proposal(self, i):
+        return {"type": "dedup", "call": "mentor_correct",
+                "args": {"doc_id": f"doc-{i}"}, "why": f"synthetic proposal {i}"}
+
+    def test_union_of_scoped_and_legacy(self, tmp_path):
+        import json
+        base = tmp_path / "dreams" / "2026-07-12"
+        base.mkdir(parents=True)
+        for name in ("proposals-dedup.jsonl", "proposals-stale-contradiction.jsonl",
+                     "proposals.jsonl"):
+            with open(base / name, "wt", encoding="utf-8") as f:
+                f.write(json.dumps(self._proposal(name)) + "\n")
+        files = dd.day_dir_files(str(base), "proposals", "jsonl")
+        assert len(files) == 3
+        assert files[-1].endswith("proposals.jsonl")  # legacy last
+        assert files[0].endswith("proposals-dedup.jsonl")  # sorted scoped first
+
+    def test_gather_pending_reads_all_pass_files(self, tmp_path):
+        import json
+        cfg = _make_cfg(tmp_path)
+        base = tmp_path / "dreams" / "2026-07-12"
+        base.mkdir(parents=True)
+        with open(base / "proposals-dedup.jsonl", "wt", encoding="utf-8") as f:
+            f.write(json.dumps(self._proposal(1)) + "\n")
+        with open(base / "proposals-error-cluster.jsonl", "wt", encoding="utf-8") as f:
+            f.write(json.dumps(self._proposal(2)) + "\n")
+        pending, note = dd.gather_pending(cfg, "2026-07-12")
+        assert note is None
+        assert len(pending) == 2

@@ -39,6 +39,7 @@ corrected "How to run" section -- run_tests turned out to be a hardcoded
 from __future__ import annotations
 
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -82,7 +83,7 @@ PropposeFn = Callable[[list[dict]], TurnResult]
 
 
 def run_pytest(task_dir: str, timeout_s: int = 60) -> tuple[bool, str]:
-    """Run `python3 -m pytest -q --tb=short` in task_dir.
+    """Run pytest with the interpreter executing this harness.
 
     Returns (passed, raw_combined_stdout_stderr). This is the mechanism
     eval/test-suite-coding-t0t1-v1.md's corrected "How to run" section
@@ -90,7 +91,7 @@ def run_pytest(task_dir: str, timeout_s: int = 60) -> tuple[bool, str]:
     """
     try:
         result = subprocess.run(
-            ["python3", "-m", "pytest", "-q", "--tb=short"],
+            [sys.executable, "-m", "pytest", "-q", "--tb=short"],
             cwd=task_dir,
             capture_output=True,
             text=True,
