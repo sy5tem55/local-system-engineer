@@ -1093,7 +1093,7 @@ class Tools:
             "/usr/local/bin/llama-server.",
         )
         SEARCH_BUDGET: int = Field(
-            default=8,
+            default=15,
             description="Max search_web/search_reddit/fetch_url calls per rolling "
             "window (anti-spiral gate, v1.7.1). Code-enforced.",
         )
