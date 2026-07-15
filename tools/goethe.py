@@ -972,11 +972,11 @@ class Tools:
         )
         OLLAMA_URL: str = Field(
             default="http://127.0.0.1:11434",
-            description="Ollama base URL for nomic-embed-text embeddings (CPU-only, no GPU).",
+            description="Ollama base URL for KB embeddings (CPU-only, no GPU).",
         )
         EMBED_MODEL: str = Field(
-            default="nomic-embed-text",
-            description="Ollama embedding model (768-dim). Must be pulled via 01-ollama-setup.sh.",
+            default="qwen3-embedding:0.6b",
+            description="Ollama embedding model (1024-dim). Must match the live ES index mappings.",
         )
         REPO_DIR: str = Field(
             default="/home/sy5/projects/local-system-engineer",
@@ -3727,7 +3727,7 @@ tail -5 /tmp/goethe-node3090.log
                 es = self._es()
                 lines = []
                 ok = True
-                for idx in ("lse-kb", "lse-errors", "lse-skills",
+                for idx in ("lse-kb", "lse-errors-1024", "lse-skills",
                             "lse-rfc-kb", "lse-search-cache"):
                     try:
                         if es.indices.exists(index=idx):
@@ -3738,7 +3738,7 @@ tail -5 /tmp/goethe-node3090.log
                                 lines.append("    ^ FAIL: lse-kb is EMPTY")
                         else:
                             lines.append(f"  {idx}: MISSING")
-                            if idx in ("lse-kb", "lse-errors"):
+                            if idx in ("lse-kb", "lse-errors-1024"):
                                 ok = False
                     except Exception as exc:
                         lines.append(f"  {idx}: ERROR {exc}")
@@ -4653,7 +4653,7 @@ tail -5 /tmp/goethe-node3090.log
     # ── RAG private helpers ──────────────────────────────────────────────────
 
     def _embed(self, text: str) -> list:
-        """768-dim embedding from Ollama nomic-embed-text (CPU-only, no GPU pressure)."""
+        """Embedding from the configured Ollama model (1024-dim in production)."""
         import requests  # noqa: PLC0415
 
         r = requests.post(
@@ -5128,7 +5128,7 @@ tail -5 /tmp/goethe-node3090.log
             normalised = re.sub(r"\s+", " ", error_text.lower().strip())
             error_hash = hashlib.sha256(normalised.encode()).hexdigest()[:16]
             dup_resp = es.search(
-                index="lse-errors",
+                index="lse-errors-1024",
                 body={
                     "knn": {
                         "field": "embedding",
@@ -5145,7 +5145,7 @@ tail -5 /tmp/goethe-node3090.log
                 existing = dup_hits[0]
                 new_count = existing["_source"]["occurrence_count"] + 1
                 es.update(
-                    index="lse-errors",
+                    index="lse-errors-1024",
                     id=existing["_id"],
                     body={
                         "doc": {
@@ -5166,7 +5166,7 @@ tail -5 /tmp/goethe-node3090.log
                 "first_seen": now,
                 "last_seen": now,
             }
-            es.index(index="lse-errors", id=error_hash, document=doc)
+            es.index(index="lse-errors-1024", id=error_hash, document=doc)
             return f"Error KB created: new error pattern recorded (hash={error_hash}).{wf_note}"
         except Exception as e:
             self._log(f"RECORD-ERROR ERROR: {e}")
@@ -5187,7 +5187,7 @@ tail -5 /tmp/goethe-node3090.log
             embedding = self._embed(error_text)
             es = self._es()
             resp = es.search(
-                index="lse-errors",
+                index="lse-errors-1024",
                 body={
                     "knn": {
                         "field": "embedding",

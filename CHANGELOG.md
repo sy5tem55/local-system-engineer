@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-07-15 (Codex): TRAUM production reconciliation — hardened Thread 4, Qwen/1024 index alignment, tracked timer, 420-test release gate
+
+Corrective close after auditing LSE commits `7348aef`, `fc85468`, and `87026fb` against `docs/traum-dreaming-plan.md`, the live stack, and the newer hardened work that had existed only in the timer checkout.
+
+- **Hardened Thread 4 restored to the authoritative checkout.** Ported lock/session guards, per-run LLM and wall-clock budgets, crash discipline, pass-scoped artifacts, queue source-file resolution, secret redaction, threat model, A/B design/report, and loaded-model-aware node3090 routing.
+- **Unsafe LSE additions retired.** No Elasticsearch delete primitive is exposed. Quarantine remains review/proposal policy, not a hard-delete path. The generic nightly ledger summarizer was not retained: Prompt 3.3 is satisfied by the cited, schema-aware one-off `kb/ledger-mining-proposals.md`. `DREAM_AUTO_APPLY` remains empty after the recorded A/B **LOSS** (A=53/60, B=51/60).
+- **Embedding contract aligned.** Goethe, dream runner/apply/digest, tests, and launcher now use `qwen3-embedding:0.6b` and `lse-errors-1024`. Live aliases/counts at verification: `lse-kb` → `lse-kb-1024` (56), `lse-skills` → `lse-skills-1024` (2), `lse-errors-1024` (44 before the reconciliation error records). A fresh Goethe instance produced a 1024-dimensional vector and wrote error records successfully.
+- **Gateway launcher repaired.** `start-goethe.sh` v2.1.3 again launches detached via `setsid nohup`, redirects stdin/logs, then reaches the port/process/PID verification steps. Live restart produced exactly one HTTP gateway process with the Qwen model override.
+- **Timer made repository-owned and fail-visible.** Added `scripts/systemd/goethe-dream.{service,timer}` plus executable `tools/run-dream-cycle.sh`. Installed unit runs `/home/sy5/projects/local-system-engineer`, has no ignored `ExecStart`, uses one 45-minute cycle timeout, and is enabled/active. Manual acceptance start returned `Result=success`; the five passes correctly skipped inside the 30-minute active-session window and the digest refreshed.
+- **Release proof.** `bash -n` clean; `systemd-analyze verify` clean; authoritative `pytest tests/ -q`: **420 passed**; direct Goethe `run_tests(scope=all)`: **KB PASS, retrieval PASS, harness/tests PASS**. The T1 feedback harness now uses `sys.executable`, eliminating PATH-dependent Miniforge failures.
+
+Unrelated modified/untracked logs, prompts, backups, and operator artifacts in the authoritative checkout were preserved and not staged.
+
 ## 2026-07-15 (Cowork): TRAUM Thread 4 (TRAUM-AUTO) — dream operations hardened: secret redaction, quarantine passes, proposal queue with expiry, systemd timer, ledger mining, auto-apply earn path, digest prompt-rule counting
 
 Thread 4 close. All 9 remaining dream operations implemented and tested live against LUCIFER.

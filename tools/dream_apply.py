@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-dream_apply.py — TRAUM-ENGINE apply gate (v0.2.0)
+dream_apply.py — TRAUM-ENGINE apply gate (v0.4.0)
 =============================================================================
 Companion to docs/dreaming/DESIGN.md (dataflow §1, invariants §2 row 3, SCRIBE-1
 confirm-gate format §6) and tools/dream_runner.py (Prompts 2.1-2.4, the
 READ-ONLY proposer). TRAUM Thread 2, Prompt 2.5 — the last Thread 2 piece.
 
-THIS IS THE ONLY CODE ALLOWED TO WRITE TO lse-kb/lse-errors/lse-skills ON
+THIS IS THE ONLY CODE ALLOWED TO WRITE TO lse-kb/lse-errors-1024/lse-skills ON
 BEHALF OF A DREAM. dream_runner.py never calls an ES-mutating Tools method;
 it only ever writes dreams/YYYY-MM-DD/proposals.jsonl. This file reads that
 proposals.jsonl, re-validates every proposal against the code-enforced
@@ -102,6 +102,41 @@ and rejected.jsonl (one line per rejected proposal, invariant failure or a
 human "no", with the reason) — Prompt 2.5's "rejected proposals are logged
 with reason to the dream dir."
 
+MORNING QUEUE (Thread 4, Prompt 4.4): --queue scans EVERY YYYY-MM-DD day-dir
+under --dream-dir (not just one proposals.jsonl), and lists every proposal
+not yet resolved (present in that day-dir's applied.jsonl, rejected.jsonl, OR
+the new expired.jsonl) — oldest day-dir first, grouped by proposal `type` so
+same-shaped items batch together for review. It is read-only with respect to
+ES/kb: it never loads goethe.py's Tools class at all, only local dream-dir
+files (dream_digest.py's own list_day_dirs/load_jsonl/proposal_key are
+reused verbatim so a proposal's identity/resolved-state matches the digest's
+own "Pending human-gate" preview section exactly). Any pending proposal
+whose day-dir is more than --stale-days (default 14) old is AUTO-EXPIRED as
+part of the same --queue call: one line appended to that day-dir's new
+expired.jsonl with a reason ("stale (>14d) — auto-expired; re-dream will
+re-propose if still true"), then excluded from the listing. This write is
+unconditional — NOT gated by --dry-run — the same precedent rejected.jsonl
+already sets in the single-run flow below: --dry-run only ever means "don't
+call a Tools method / don't write to ES"; expiry is local dream-dir
+bookkeeping, not an ES write, so it always happens when --queue runs and
+finds something stale. Rationale for auto-expiry rather than piling up
+forever: a 14-day-old proposal was generated against ES/kb state that has
+likely moved on; forcing it through the normal confirm-gate this late risks
+applying something already stale or duplicated by a more recent dream. If
+the underlying issue is still real, the next re-dream naturally re-proposes
+it against current state.
+
+MORNING REVIEW LOOP (~5 minutes; full runbook write-up is Prompt 4.9, not
+yet done — this is the short version so the loop is usable today):
+  1. `python3 dream_apply.py --queue` — see everything pending, oldest
+     first, grouped by type; anything past --stale-days auto-expires here.
+  2. For each day-dir shown, apply that batch the normal way:
+     `python3 dream_apply.py --proposals <dream-dir>/<date>/proposals.jsonl --no-dry-run`
+     (still per-proposal yes/no — --queue only changes how you FIND what's
+     waiting, never how it gets applied).
+  3. Re-run `--queue` — it should now be empty (or down to only proposals
+     from a run started after step 1).
+
 USAGE
   # Dry-run (default): renders and validates everything, asks nothing,
   # calls no Tools method — safe to run to preview a batch.
@@ -109,6 +144,10 @@ USAGE
 
   # Real run: interactive, per-proposal yes/no, actually writes to ES.
   python3 dream_apply.py --proposals dreams/2026-07-11/proposals.jsonl --no-dry-run
+
+  # Morning queue (Prompt 4.4): list everything pending across ALL day-dirs,
+  # oldest first, grouped by type; auto-expires anything >14 days old.
+  python3 dream_apply.py --queue --dream-dir dreams
 
 ENV (same GOETHE_ prefix convention as goethe.py/goethe_mcp.py/dream_runner.py)
   GOETHE_ES_URL, GOETHE_OLLAMA_URL, GOETHE_EMBED_MODEL  — same valves Tools()
@@ -124,26 +163,33 @@ ENV (same GOETHE_ prefix convention as goethe.py/goethe_mcp.py/dream_runner.py)
                                     run this script from the repo root, same
                                     assumption the --proposals usage examples
                                     above already make with relative paths)
+  GOETHE_DREAM_DIR                  --queue only: dream output root to scan
+                                    for YYYY-MM-DD day-dirs (default:
+                                    /opt/local-se/dreams — same variable and
+                                    default dream_runner.py/dream_digest.py
+                                    already use for the same root)
 """
 
 import argparse
-import glob
 import json
 import os
 import re
 import sys
-import sqlite3
 from datetime import date, datetime
 
 import dream_runner as dr  # sibling module: reuse validate_proposal_shape, not a second validator
 import dream_digest        # Prompt 3.4: morning digest refresh at end of run
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 
-QUARANTINE_DELETE_TYPE = "quarantine-delete-request"  # DESIGN.md §2 row 3(c) -- produced by
-                                                        # quarantine-delete-request pass (run_pass_quarantine_delete)
+QUARANTINE_DELETE_TYPE = "quarantine-delete-request"  # DESIGN.md §2 row 3(c) -- not
+                                                        # produced by any pass yet (2.2-2.4)
 
 _TIER_CEILING = {"ground_truth": 1.0, "primary": 0.8, "secondary": 0.6, "inferred": 0.4}
+
+DREAM_QUEUE_STALE_DAYS = 14  # Prompt 4.4: proposals older than this (by their
+                             # day-dir date) are auto-expired by --queue, not
+                             # left to accumulate forever unreviewed.
 
 
 # --- config / valve-style env defaults --------------------------------------
@@ -157,7 +203,7 @@ def _ollama_url_default() -> str:
 
 
 def _embed_model_default() -> str:
-    return os.environ.get("GOETHE_EMBED_MODEL", "nomic-embed-text")
+    return os.environ.get("GOETHE_EMBED_MODEL", "qwen3-embedding:0.6b")
 
 
 def _goethe_path_default() -> str:
@@ -170,6 +216,14 @@ def _dream_auto_apply_default() -> str:
 
 def _repo_root_default() -> str:
     return os.environ.get("GOETHE_REPO_ROOT", os.getcwd())
+
+
+def _dream_dir_default() -> str:
+    """--queue only. Same env var and default dream_runner.py/dream_digest.py
+    already use for the dream output root (a directory of YYYY-MM-DD
+    day-dirs) -- deliberately the SAME variable, not a new one, so a single
+    GOETHE_DREAM_DIR export configures all three tools consistently."""
+    return os.environ.get("GOETHE_DREAM_DIR", "/opt/local-se/dreams")
 
 
 # --- dynamic Tools loading (mirrors goethe_mcp.py:159-208 verbatim) ---------
@@ -224,122 +278,6 @@ def load_proposals(path: str) -> list:
                 print(f"[dream_apply] WARNING: {path}:{lineno} unparseable, skipped ({exc})",
                       file=sys.stderr)
     return proposals
-
-
-# Proposal queue with expiry (Prompt 4.4 / Thread 4)
-PROPOSAL_EXPIRY_DAYS = 14  # proposals expire after 14 days
-
-
-def _proposal_date_from_path(path: str) -> str | None:
-    """Extract the date string (YYYY-MM-DD) from a proposals file path.
-    Returns None if the date cannot be extracted."""
-    # Path pattern: dreams/YYYY-MM-DD/proposals-*.jsonl
-    parts = os.path.normpath(path).split(os.sep)
-    for i, part in enumerate(parts):
-        if part.startswith("proposals"):
-            # The date is the parent directory
-            if i > 0:
-                parent = parts[i - 1]
-                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", parent):
-                    return parent
-    return None
-
-
-def load_proposals_with_expiry(path: str, expiry_days: int = PROPOSAL_EXPIRY_DAYS) -> list:
-    """Load proposals from a file, filtering out expired ones.
-    Proposals expire after expiry_days from their generation date (extracted from path).
-    Returns (proposals, expired_count)."""
-    proposals = load_proposals(path)
-    if not proposals:
-        return [], 0
-
-    # Extract date from path
-    prop_date = _proposal_date_from_path(path)
-    if prop_date is None:
-        # Can't determine date, keep all proposals
-        return proposals, 0
-
-    try:
-        from datetime import timedelta
-        gen_date = datetime.fromisoformat(prop_date).replace(tzinfo=None)
-        cutoff = (datetime.now() - timedelta(days=expiry_days)).date()
-        if gen_date.date() < cutoff:
-            # All proposals in this file are expired
-            print(f"[dream_apply] {path}: {len(proposals)} proposal(s) expired "
-                  f"(generated {prop_date}, older than {expiry_days} days)",
-                  file=sys.stderr)
-            return [], len(proposals)
-    except (ValueError, TypeError):
-        # Date parsing failed, keep all proposals
-        pass
-
-    return proposals, 0
-
-
-def scan_proposal_queue(dream_dir: str, expiry_days: int = PROPOSAL_EXPIRY_DAYS) -> list:
-    """Scan all day-dirs for pending (non-expired, non-applied, non-rejected) proposals.
-    Returns a list of (path, proposals) tuples, newest day-dirs first."""
-    from datetime import timedelta
-    queue = []
-    expired_total = 0
-
-    # Find all day-dirs (YYYY-MM-DD pattern)
-    day_dirs = []
-    try:
-        for entry in os.listdir(dream_dir):
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry):
-                day_dirs.append(entry)
-    except OSError:
-        return []
-
-    # Sort newest first
-    day_dirs.sort(reverse=True)
-
-    for day in day_dirs:
-        base = os.path.join(dream_dir, day)
-
-        # Check if this day-dir has applied/rejected records
-        applied_keys = set()
-        rejected_keys = set()
-        for jsonl_file in ("applied.jsonl", "rejected.jsonl"):
-            jsonl_path = os.path.join(base, jsonl_file)
-            if os.path.exists(jsonl_path):
-                with open(jsonl_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            try:
-                                entry = json.loads(line)
-                                prop = entry.get("proposal", {})
-                                # Use type+call+why as a simple key
-                                key = (prop.get("type"), prop.get("call"), prop.get("why", "")[:100])
-                                if jsonl_file == "applied.jsonl":
-                                    applied_keys.add(key)
-                                else:
-                                    rejected_keys.add(key)
-                            except json.JSONDecodeError:
-                                continue
-
-        # Find all proposal files in this day-dir
-        proposal_files = glob.glob(os.path.join(base, "proposals-*.jsonl"))
-        for prop_path in proposal_files:
-            proposals, expired = load_proposals_with_expiry(prop_path, expiry_days)
-            expired_total += expired
-
-            # Filter out already resolved proposals
-            pending = []
-            for p in proposals:
-                key = (p.get("type"), p.get("call"), p.get("why", "")[:100])
-                if key not in applied_keys and key not in rejected_keys:
-                    pending.append(p)
-
-            if pending:
-                queue.append((prop_path, pending))
-
-    if expired_total > 0:
-        print(f"[dream_apply] queue scan: {expired_total} expired proposal(s) filtered out",
-              file=sys.stderr)
-    return queue
 
 
 def group_proposals(proposals: list) -> list:
@@ -575,9 +513,9 @@ def render_group(group: list, dream_dir: str) -> str:
     else:
         # Pass-scoped report names as of Thread 4 (report-<pass>.md); the
         # glob keeps legacy shared-report.md day-dirs readable too.
-        reports = sorted(glob.glob(os.path.join(dream_dir, "report*.md")))
-        ref = ", ".join(reports) if reports else os.path.join(dream_dir, "report*.md")
-        top = f"――― REPORT: {ref} (reference) ―――"
+        _reports = dream_digest.day_dir_files(dream_dir, "report", "md")
+        _ref = ", ".join(_reports) if _reports else os.path.join(dream_dir, "report-*.md")
+        top = f"――― REPORT: {_ref} (reference) ―――"
 
     blocks = [top, ""]
     for i, p in enumerate(group, 1):
@@ -634,12 +572,6 @@ def render_group(group: list, dream_dir: str) -> str:
                 ("evidence refs:", ", ".join(p.get("evidence", [])) or "(none)"),
             ]
             multiline = {"rule": args.get("rule", ""), "rationale": args.get("rationale", "")}
-        elif call == "es_delete":
-            lines = [
-                ("doc_id:", args.get("doc_id", "")),
-            ]
-            multiline = {}
-
         blocks.append(_fmt_block(call, i, len(group), lines, multiline))
         blocks.append(f"why:               {p.get('why', '')}")
         blocks.append("")
@@ -848,193 +780,146 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
             result = append_learned_rule(repo_root, args, p.get("evidence", []), today)
             results.append({"proposal": p, "result": result})
 
-        elif call == "es_delete":
-            # quarantine-delete-request: delete a quarantined doc from lse-kb
-            # check_quarantine() already ran at the top of the loop and allows
-            # this type on quarantined docs — it is the ONLY type that may.
-            doc_id = args["doc_id"]
-            result = es.delete(index="lse-kb", id=doc_id)
-            results.append({"proposal": p, "result": f"deleted doc_id={doc_id} from lse-kb (found={result.get('found', False)})"})
-
         else:
             results.append({"proposal": p, "result": f"ERROR: unknown call {call!r}, not applied"})
 
     return results
 
 
-def _stamp_dreamed_at(dream_dir, manifest_db, dry_run):
-    """Prompt 2.7 - auto-stamp dreamed_at for sessions considered in this run.
-    Reads sessions-*.jsonl companion files and updates manifest.db.
-    Returns number of sessions stamped."""
-    session_files = glob.glob(os.path.join(dream_dir, "sessions-*.jsonl"))
-    if not session_files:
-        return 0
-    session_ids = set()
-    for sf in session_files:
-        with open(sf, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        sid = json.loads(line).get("session_id")
-                        if sid:
-                            session_ids.add(sid)
-                    except json.JSONDecodeError:
-                        continue
-    if not session_ids or dry_run:
-        return 0
-    try:
-        conn = sqlite3.connect(manifest_db)
-        now = datetime.now().astimezone().isoformat()
-        stamped = 0
-        for sid in session_ids:
-            cur = conn.execute(
-                "UPDATE sessions SET dreamed_at = ? WHERE session_id = ? AND dreamed_at IS NULL",
-                (now, sid)
-            )
-            stamped += cur.rowcount
-        conn.commit()
-        conn.close()
-        print(f"[dream_apply] stamped dreamed_at={now[:19]} for {stamped} session(s) "
-              f"in {manifest_db}", file=sys.stderr)
-        return stamped
-    except Exception as exc:
-        print(f"[dream_apply] WARNING: failed to stamp dreamed_at: {exc}", file=sys.stderr)
-        return 0
+# --- queue mode (Prompt 4.4, TRAUM-AUTO) -----------------------------------
+# Read-only w.r.t. ES/kb -- never loads goethe.py's Tools class. Only reads
+# local dream-dir files (reusing dream_digest.py's own day-dir/jsonl/identity
+# helpers so a proposal's "is this resolved yet" state matches the digest's
+# preview section exactly) and, when it finds something stale, appends to a
+# new expired.jsonl next to applied.jsonl/rejected.jsonl.
+
+def gather_queue(dream_dir: str, today, stale_days: int = DREAM_QUEUE_STALE_DAYS):
+    """Walks every YYYY-MM-DD day-dir under dream_dir, OLDEST FIRST, and
+    returns (pending, expired):
+      pending -- proposals not yet applied/rejected/expired, each tagged with
+                 its source date and age_days, in oldest-day-dir-first order
+                 (Prompt 4.4: "oldest first").
+      expired -- proposals this call JUST auto-expired (age_days > stale_days),
+                 each tagged with date/age_days/reason -- reported back so the
+                 caller can tell the operator what changed this run.
+
+    A proposal already present (by dream_digest.proposal_key content hash) in
+    its day-dir's applied.jsonl, rejected.jsonl, OR expired.jsonl is resolved
+    and excluded from `pending`. Newly-expired proposals are appended to that
+    day-dir's expired.jsonl UNCONDITIONALLY -- not gated by --dry-run. This
+    mirrors the precedent this file already sets for rejected.jsonl in the
+    single-run flow below (human-decline/invariant-fail rejections are logged
+    regardless of --dry-run too): --dry-run only ever means "don't call a
+    Tools method / don't write to ES". Auto-expiry is local bookkeeping, not
+    an ES write, so it always happens.
+
+    A day-dir whose name fails to parse as a date is defensively treated as
+    age_days=0 (never auto-expired on a parse failure -- fail closed toward
+    "keep it pending for a human to see", not toward silent data loss)."""
+    day_dirs = sorted(dream_digest.list_day_dirs(dream_dir))  # ascending == oldest first
+    pending: list = []
+    expired: list = []
+
+    for d in day_dirs:
+        base = os.path.join(dream_dir, d)
+        proposals = []
+        for _ppath in dream_digest.day_dir_files(base, "proposals", "jsonl"):
+            proposals.extend(dream_digest.load_jsonl(_ppath))
+        if not proposals:
+            continue
+        applied = dream_digest.load_jsonl(os.path.join(base, "applied.jsonl"))
+        rejected = dream_digest.load_jsonl(os.path.join(base, "rejected.jsonl"))
+        expired_prior = dream_digest.load_jsonl(os.path.join(base, "expired.jsonl"))
+        resolved = {dream_digest.proposal_key(e["proposal"]) for e in applied if "proposal" in e}
+        resolved |= {dream_digest.proposal_key(e["proposal"]) for e in rejected if "proposal" in e}
+        resolved |= {dream_digest.proposal_key(e["proposal"]) for e in expired_prior if "proposal" in e}
+
+        try:
+            age_days = (today - date.fromisoformat(d)).days
+        except ValueError:
+            age_days = 0  # malformed dir name -- fail closed, never auto-expire
+
+        newly_expired_here = []
+        for p in proposals:
+            if dream_digest.proposal_key(p) in resolved:
+                continue
+            if age_days > stale_days:
+                entry = {
+                    "proposal": p,
+                    "reason": f"stale (>{stale_days}d, age={age_days}d) -- auto-expired; "
+                              "re-dream will re-propose if still true",
+                    "expired_at": datetime.now().astimezone().isoformat(),
+                    "age_days": age_days,
+                }
+                newly_expired_here.append(entry)
+                expired.append({**entry, "date": d})
+            else:
+                pending.append({"date": d, "age_days": age_days, "proposal": p})
+
+        if newly_expired_here:
+            with open(os.path.join(base, "expired.jsonl"), "at", encoding="utf-8") as f:
+                for entry in newly_expired_here:
+                    f.write(json.dumps(entry) + "\n")
+
+    return pending, expired
 
 
-# --- auto-apply earn path with A/B eval (DESIGN.md §2 row 2) ---------------
-
-AUTO_APPLY_DB = "/opt/local-se/dreams/auto-apply-eval.db"
-
-_AUTO_APPLY_SCHEMA = """
-CREATE TABLE IF NOT EXISTS eval_outcomes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    proposal_type TEXT NOT NULL,
-    call_type TEXT NOT NULL,
-    outcome TEXT NOT NULL,
-    applied_at TEXT NOT NULL,
-    dry_run INTEGER NOT NULL DEFAULT 0,
-    evidence TEXT
-);
-CREATE TABLE IF NOT EXISTS earn_thresholds (
-    proposal_type TEXT PRIMARY KEY,
-    min_runs INTEGER NOT NULL DEFAULT 10,
-    min_success_rate REAL NOT NULL DEFAULT 0.85,
-    earned_at TEXT,
-    earned_by TEXT
-);
-"""
+def group_queue_by_type(pending: list) -> dict:
+    """Buckets already-oldest-first `pending` entries by proposal `type`,
+    preserving each bucket's oldest-first order. Bucket order itself falls
+    out for free: dict insertion order means whichever type's OLDEST pending
+    proposal is encountered first (i.e. is oldest overall) leads the listing
+    -- the type that has been waiting longest gets reviewed first, not
+    alphabetical order."""
+    buckets: dict = {}
+    for entry in pending:
+        ptype = entry["proposal"].get("type", "unknown")
+        buckets.setdefault(ptype, []).append(entry)
+    return buckets
 
 
-def _init_eval_db(db_path: str) -> sqlite3.Connection:
-    """Initialize the auto-apply evaluation database."""
-    conn = sqlite3.connect(db_path, timeout=10)
-    conn.executescript(_AUTO_APPLY_SCHEMA)
-    conn.commit()
-    return conn
+def render_queue(buckets: dict, today) -> str:
+    """Human-readable listing for stdout -- deliberately plain text (not the
+    SCRIBE-1 confirm-gate block shape render_group() uses below): --queue is
+    a read-only inventory to scan quickly, not a per-proposal apply prompt."""
+    total = sum(len(v) for v in buckets.values())
+    lines = [f"=== dream_apply --queue: {total} pending proposal(s) as of {today.isoformat()} ==="]
+    for ptype, entries in buckets.items():
+        lines.append(f"\n-- {ptype} ({len(entries)} pending, oldest first) --")
+        for e in entries:
+            p = e["proposal"]
+            pair = f" pair_id={p['pair_id']}" if p.get("pair_id") else ""
+            why = dream_digest._truncate(p.get("why", ""), 100)
+            lines.append(f"  [{e['date']}, {e['age_days']}d old]{pair} {p.get('call', '?')} — {why}")
+    return "\n".join(lines)
 
 
-def _record_eval_outcome(db_path: str, proposal_type: str, call_type: str,
-                         outcome: str, evidence: str = "") -> None:
-    """Record an outcome for a proposal type in the eval database."""
-    try:
-        conn = _init_eval_db(db_path)
-        now = datetime.now().astimezone().isoformat()
-        conn.execute(
-            "INSERT INTO eval_outcomes (proposal_type, call_type, outcome, applied_at, dry_run, evidence) "
-            "VALUES (?, ?, ?, ?, 0, ?)",
-            (proposal_type, call_type, outcome, now, evidence[:500])
-        )
-        conn.commit()
-        conn.close()
-    except Exception as exc:
-        print(f"[dream_apply] WARNING: failed to record eval outcome: {exc}",
+def cmd_queue(args) -> None:
+    today = date.today()
+    pending, expired = gather_queue(args.dream_dir, today, stale_days=args.stale_days)
+
+    if expired:
+        by_date = {}
+        for e in expired:
+            by_date.setdefault(e["date"], 0)
+            by_date[e["date"]] += 1
+        detail = ", ".join(f"{d}:{n}" for d, n in sorted(by_date.items()))
+        print(f"[dream_apply] auto-expired {len(expired)} stale (>{args.stale_days}d) "
+              f"proposal(s) this run ({detail}) -> <day-dir>/expired.jsonl", file=sys.stderr)
+
+    if not pending:
+        print(f"[dream_apply] queue is empty -- 0 pending proposal(s) under {args.dream_dir}",
               file=sys.stderr)
+        return
 
-
-def _check_earn_path(db_path: str, proposal_type: str,
-                     min_runs: int = 10, min_success_rate: float = 0.85) -> tuple:
-    """Check if a proposal type has earned auto-apply status.
-    Returns (earned: bool, stats: dict)."""
-    try:
-        conn = _init_eval_db(db_path)
-        # Get stats for this proposal type (non-dry-run outcomes only)
-        row = conn.execute(
-            "SELECT COUNT(*) as total, "
-            "SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as successes "
-            "FROM eval_outcomes WHERE proposal_type = ? AND dry_run = 0",
-            (proposal_type,)
-        ).fetchone()
-        total = row[0] or 0
-        successes = row[1] or 0
-        success_rate = successes / total if total > 0 else 0.0
-
-        earned = total >= min_runs and success_rate >= min_success_rate
-        stats = {
-            "total": total,
-            "successes": successes,
-            "success_rate": round(success_rate, 3),
-            "min_runs": min_runs,
-            "min_success_rate": min_success_rate,
-            "earned": earned,
-        }
-
-        # Update the thresholds table if earned
-        if earned:
-            conn.execute(
-                "INSERT OR REPLACE INTO earn_thresholds "
-                "(proposal_type, min_runs, min_success_rate, earned_at, earned_by) "
-                "VALUES (?, ?, ?, ?, 'auto-earn-path')",
-                (proposal_type, min_runs, min_success_rate,
-                 datetime.now().astimezone().isoformat())
-            )
-            conn.commit()
-
-        conn.close()
-        return earned, stats
-    except Exception as exc:
-        print(f"[dream_apply] WARNING: failed to check earn path: {exc}",
-              file=sys.stderr)
-        return False, {"error": str(exc)}
-
-
-def _get_earned_types(db_path: str) -> list:
-    """Get all proposal types that have earned auto-apply status."""
-    try:
-        conn = _init_eval_db(db_path)
-        rows = conn.execute(
-            "SELECT proposal_type FROM earn_thresholds WHERE earned_at IS NOT NULL"
-        ).fetchall()
-        conn.close()
-        return [r[0] for r in rows]
-    except Exception:
-        return []
-
-
-def _print_earn_status(db_path: str) -> None:
-    """Print the current earn path status for all proposal types."""
-    try:
-        conn = _init_eval_db(db_path)
-        rows = conn.execute(
-            "SELECT proposal_type, COUNT(*) as total, "
-            "SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as successes "
-            "FROM eval_outcomes WHERE dry_run = 0 "
-            "GROUP BY proposal_type ORDER BY total DESC"
-        ).fetchall()
-        if not rows:
-            print("[dream_apply] earn-path: no outcomes recorded yet", file=sys.stderr)
-            conn.close()
-            return
-        print("\n[dream_apply] earn-path status:", file=sys.stderr)
-        for row in rows:
-            ptype, total, successes = row
-            rate = successes / total if total > 0 else 0.0
-            earned = "✓ EARNED" if total >= 10 and rate >= 0.85 else f"({total}/10 runs, {rate:.0%})"
-            print(f"  {ptype}: {successes}/{total} ({rate:.0%}) {earned}", file=sys.stderr)
-        conn.close()
-    except Exception as exc:
-        print(f"[dream_apply] WARNING: failed to print earn status: {exc}", file=sys.stderr)
+    buckets = group_queue_by_type(pending)
+    print(render_queue(buckets, today))
+    print(
+        f"\n[dream_apply] {len(pending)} pending across {len(buckets)} type(s) under "
+        f"{args.dream_dir}. Apply a day's batch with: python3 dream_apply.py --proposals "
+        f"{args.dream_dir}/<date>/proposals.jsonl --no-dry-run",
+        file=sys.stderr,
+    )
 
 
 # --- main ----------------------------------------------------------------
@@ -1045,14 +930,19 @@ def parse_args(argv=None) -> argparse.Namespace:
         description="TRAUM-ENGINE apply gate — the ONLY code allowed to write dream "
         "proposals to ES. Prompt 2.5. See docs/dreaming/DESIGN.md.",
     )
+    ap.add_argument("--proposals", default=None,
+                    help="path to a dream run's proposals.jsonl (required unless --queue)")
     ap.add_argument("--queue", action="store_true",
-                    help="scan all day-dirs for pending proposals (newest first), "
-                    "filtering expired (>14 days) and already-resolved proposals")
-    ap.add_argument("--earn-status", action="store_true",
-                    help="show auto-apply earn path status and exit")
-    ap.add_argument("--expiry-days", type=int, default=PROPOSAL_EXPIRY_DAYS,
-                    help=f"proposal expiry in days (default: {PROPOSAL_EXPIRY_DAYS})")
-    ap.add_argument("--proposals", required=False, help="path to a dream run's proposals.jsonl")
+                    help="Prompt 4.4: list pending human-gate proposals across ALL day-dirs "
+                    "under --dream-dir, oldest first, grouped by type; auto-expires anything "
+                    "older than --stale-days. Read-only w.r.t. ES -- does not load goethe.py. "
+                    "See MORNING REVIEW LOOP in this module's docstring.")
+    ap.add_argument("--dream-dir", default=_dream_dir_default(),
+                    help="--queue only: dream output root to scan for day-dirs "
+                    "(default: $GOETHE_DREAM_DIR or /opt/local-se/dreams)")
+    ap.add_argument("--stale-days", type=int, default=DREAM_QUEUE_STALE_DAYS,
+                    help="--queue only: auto-expire proposals older than this many days "
+                    f"(default: {DREAM_QUEUE_STALE_DAYS})")
     ap.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=True,
                     help="render + validate + ask, but never actually call a Tools method "
                     "(default: true). Pass --no-dry-run to actually write to ES.")
@@ -1064,9 +954,6 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--repo-root", default=_repo_root_default(),
                     help="repo root append_learned_rule (Prompt 3.6) resolves "
                     "prompts/learned-rules.md against (default: $GOETHE_REPO_ROOT or cwd)")
-    ap.add_argument("--manifest-db", default="/opt/local-se/episodes/manifest.db",
-                    help="path to manifest.db for dreamed_at stamping (default: /opt/local-se/episodes/manifest.db)")
-
     ap.add_argument("--auto-apply-types", default=_dream_auto_apply_default(),
                     help="comma-separated proposal types allowed to skip the interactive "
                     "prompt (default: '' — DESIGN.md §2 row 2, earned via eval, not by hand)")
@@ -1075,42 +962,23 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> None:
     args = parse_args(argv)
-    if args.earn_status:
-        _print_earn_status(AUTO_APPLY_DB)
-        return
-    if not args.queue and not args.proposals:
-        print("[dream_apply] error: either --proposals or --queue is required",
-              file=sys.stderr)
-        sys.exit(1)
-    if args.queue:
-        dream_dir = os.environ.get("GOETHE_DREAM_DIR", "/opt/local-se/dreams")
-    else:
-        dream_dir = os.path.dirname(os.path.abspath(args.proposals)) or "."
-    auto_apply_types = {t.strip() for t in args.auto_apply_types.split(",") if t.strip()}
-    # Add empirically earned types
-    earned = _get_earned_types(AUTO_APPLY_DB)
-    auto_apply_types.update(earned)
-    if earned:
-        print(f"[dream_apply] earned auto-apply types: {', '.join(earned)}", file=sys.stderr)
 
     if args.queue:
-        # Queue mode: scan all day-dirs for pending proposals
-        queue = scan_proposal_queue(dream_dir, args.expiry_days)
-        proposals = []
-        for path, props in queue:
-            proposals.extend(props)
-        mode = "[dry-run] " if args.dry_run else ""
-        print(f"[dream_apply] {mode}queue mode: {len(proposals)} pending proposal(s) "
-              f"from {len(queue)} file(s) in {dream_dir}", file=sys.stderr)
-    else:
-        proposals = load_proposals(args.proposals)
-        mode = "[dry-run] " if args.dry_run else ""
-        print(f"[dream_apply] {mode}loaded {len(proposals)} proposal(s) from {args.proposals}",
-              file=sys.stderr)
+        cmd_queue(args)
+        return
+
+    if not args.proposals:
+        raise SystemExit("[dream_apply] --proposals is required unless --queue is given")
+
+    dream_dir = os.path.dirname(os.path.abspath(args.proposals)) or "."
+    auto_apply_types = {t.strip() for t in args.auto_apply_types.split(",") if t.strip()}
+
+    proposals = load_proposals(args.proposals)
+    mode = "[dry-run] " if args.dry_run else ""
+    print(f"[dream_apply] {mode}loaded {len(proposals)} proposal(s) from {args.proposals}",
+          file=sys.stderr)
     if not proposals:
         print("[dream_apply] nothing to do.", file=sys.stderr)
-        # Still stamp dreamed_at - sessions were considered even if no proposals
-        _stamp_dreamed_at(dream_dir, args.manifest_db, args.dry_run)
         return
 
     Tools = load_tools_class(args.goethe_path)
@@ -1167,17 +1035,6 @@ def main(argv=None) -> None:
                     "dry_run": args.dry_run,
                 }) + "\n")
                 print(f"[dream_apply] {mode}{r['result']}", file=sys.stderr)
-                # Record eval outcome for earn path tracking
-                if not args.dry_run:
-                    prop = r["proposal"]
-                    outcome = "success" if "ERROR" not in r.get("result", "") else "failure"
-                    _record_eval_outcome(
-                        AUTO_APPLY_DB,
-                        prop.get("type", "unknown"),
-                        prop.get("call", "unknown"),
-                        outcome,
-                        r.get("result", "")[:200]
-                    )
     finally:
         applied_f.close()
         rejected_f.close()
@@ -1188,10 +1045,6 @@ def main(argv=None) -> None:
         f"-> {applied_path}, {rejected_path}",
         file=sys.stderr,
     )
-
-    # Prompt 2.7: stamp dreamed_at for sessions considered in this run
-    _stamp_dreamed_at(dream_dir, args.manifest_db, args.dry_run)
-
 
     # Prompt 3.4 (TRAUM-INSIGHT): refresh the morning digest "at the end of
     # every dream run" -- the apply half in this file's case, so applied

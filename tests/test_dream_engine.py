@@ -720,3 +720,35 @@ class TestPromptRuleTargetInvariant:
         # never after it.
         assert text.find("Rule A") < merged_idx
         assert text.find("Rule B") < merged_idx
+
+
+# --- pass-scoped output filenames (Thread 4 prerequisite) -------------------
+# The Thread 3 close found the shared report.md/proposals.jsonl names let a
+# later pass in a multi-pass cycle silently discard an earlier pass's REAL
+# pending proposals. write_report() is now pass-scoped: report-<pass>.md /
+# proposals-<pass>.jsonl.
+
+class TestWriteReportPassScoped:
+
+    def _cfg_for(self, tmp_path, pass_name):
+        import dataclasses
+        return dataclasses.replace(
+            _make_cfg(), dream_dir=str(tmp_path), dry_run=False, pass_name=pass_name)
+
+    def test_write_report_uses_pass_scoped_filenames(self, tmp_path):
+        import os
+        cfg = self._cfg_for(tmp_path, "dedup")
+        report_path, proposals_path = dr.write_report(cfg, [], [], "narrative text")
+        assert report_path.endswith("report-dedup.md")
+        assert proposals_path.endswith("proposals-dedup.jsonl")
+        assert os.path.exists(report_path) and os.path.exists(proposals_path)
+
+    def test_two_passes_do_not_clobber_each_other(self, tmp_path):
+        ra, pa = dr.write_report(self._cfg_for(tmp_path, "dedup"), [], [], "dedup narrative")
+        rb, pb = dr.write_report(self._cfg_for(tmp_path, "error-cluster"), [], [],
+                                 "error-cluster narrative")
+        assert ra != rb and pa != pb
+        with open(ra, encoding="utf-8") as f:
+            assert "dedup narrative" in f.read()
+        with open(rb, encoding="utf-8") as f:
+            assert "error-cluster narrative" in f.read()

@@ -1,7 +1,7 @@
 # LSE Valve Registry
 > Single source of truth for all MCP/tool valve configuration across LSE tools.
 > Update this file whenever a valve is added, removed, or its security posture changes.
-> Last updated: 2026-07-15 (Cowork) — TRAUM Thread 4 close: added earn path + queue expiry valves
+> Last updated: 2026-07-11 (Cowork) — added §4 TRAUM dreaming valves (Thread 2 close)
 > **Note:** OpenWebUI retired (2026-06-21). Valves are now env vars passed to goethe_mcp.py
 > via `GOETHE_<FIELD>` env vars or directly inside the tool's `Valves` class.
 > Override pattern: `GOETHE_ES_URL=http://... bash tools/start-goethe.sh`
@@ -36,7 +36,7 @@ Valves configured via `GOETHE_<FIELD>` env vars or `Valves` class defaults in `g
 | `EXTRA_WRITE_PATHS` | `` (empty) | No | Env var OK | Colon-separated extra write paths |
 | `ES_URL` | `http://127.0.0.1:9200` | No | Env var OK | Elasticsearch RAG endpoint. node3090 overrides to `http://localhost:9200` (local `lse-kb-es` Docker). |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | No | Env var OK | Ollama endpoint for RAG embeddings. node3090: CPU-only local instance. |
-| `EMBED_MODEL` | `nomic-embed-text` | No | Env var OK | Embedding model name |
+| `EMBED_MODEL` | `qwen3-embedding:0.6b` | No | Env var OK | Production embedding model (1024 dimensions); index mappings must match |
 | `HERMES_API_URL` | `http://192.168.5.41:8642` | No | Env var OK | Hermes gateway on node3090. Direct bind confirmed P27. |
 | `HERMES_API_KEY` | `7aa537e0…` (see source) | Low | Env var OK | Hermes gateway API key. Blast radius: node3090 Hermes tasks only. |
 | `PFSENSE_API_KEY` | (see `~/.lse/secrets` or Vaultwarden) | **YES** | ✅ **ENV VAR** | pfSense REST API key — use env var, not hardcoded value. |
@@ -94,7 +94,7 @@ No sensitive data. No action required.
 
 ### 4. TRAUM dreaming — `goethe_mcp.py` journaling + `tools/dream_runner.py` + `tools/dream_apply.py`
 
-TRAUM Threads 1-4 complete (`docs/traum-dreaming-plan.md`, `docs/dreaming/DESIGN.md`).
+TRAUM Thread 1/2 (`docs/traum-dreaming-plan.md`, `docs/dreaming/DESIGN.md`).
 No secrets — every valve here is a path, URL, or numeric threshold. All use
 the same `GOETHE_<FIELD>` env-var convention as the rest of the stack.
 
@@ -112,14 +112,25 @@ the same `GOETHE_<FIELD>` env-var convention as the rest of the stack.
 | `DREAM_DEDUP_FLOOR` | `0.75` | No | Env var OK | Candidate-pair cosine floor for the dedup pass — deliberately below the merge threshold so `--sample-labels` has real borderline pairs to show. Provisional pending a full-corpus `--sample-labels` run (see `dream_runner.py`'s own calibration note). |
 | `DREAM_DEDUP_THRESHOLD` | `0.92` | No | Env var OK | Merge cosine cutoff for real (non-labeling) dedup runs. Matches `index_to_kb`'s live dedup threshold as a placeholder. |
 | `DREAM_ERROR_CLUSTER_THRESHOLD` | `0.80` | No | Env var OK | Cosine floor for grouping error/timeout occurrences into one cluster (error-cluster pass). |
+| `DREAM_LOCKFILE` | `` (empty → `<dream-dir>/.dream.lock`) | No | Env var OK | `dream_runner.py` concurrency lock (Prompt 4.2). Holds PID + start time; a dead holder's lock is broken automatically, a live one skips the run. |
+| `DREAM_LOCK_MAX_AGE_S` | `14400` (4 h) | No | Env var OK | Lock self-expiry — a lock older than this is stale regardless of PID state. |
+| `DREAM_SESSION_ACTIVE_WINDOW_MIN` | `30` | No | Env var OK | Recent-session-activity guard (Prompt 4.2): skip the dream run if the manifest shows an LSE session active within this window. `--ignore-guards` bypasses (hand runs). |
+| `DREAM_BUDGET_MAX_LLM_CALLS` | `100` | No | Env var OK | Per-run LLM-call budget; exhaustion is a normal exit with a truncation note, not an error (Prompt 4.2). |
+| `DREAM_BUDGET_MAX_WALL_CLOCK_MIN` | `45` | No | Env var OK | Per-run wall-clock budget — hard stop with partial report on breach (Prompt 4.2). |
+| `NODE3090_SSH_HOST` | `node3090.home.arpa` | No | Env var OK | VRAM-gate probe target for the dreamer's llama-server leg (Prompt 4.1) — `BatchMode=yes` SSH + `nvidia-smi`; probe failure fails CLOSED (treated as GPU busy → Ollama/CPU leg). |
+| `NODE3090_SSH_USER` | `lse-admin` | No | Env var OK | SSH user for the VRAM-gate probe. |
+| `NODE3090_SSH_PORT` | `22` | No | Env var OK | SSH port for the VRAM-gate probe. |
+| `NODE3090_VRAM_GATE_MB` | `2000` | No | Env var OK | Fail-closed fallback used only when llama-server `/slots` activity cannot be read. An idle loaded slot is reused regardless of free VRAM; an active slot cascades to CPU Ollama. If slot state is unavailable, free VRAM below this MiB floor is treated as busy. |
+| `DREAM_PATTERNS_MAX_LINES` | `50000` | No | Env var OK | Patterns pass: windowed tail-read size for `agent_commands.log` (unrotated, growing — corpus-audit caveat). |
+| `DREAM_PATTERNS_RETRY_WINDOW` | `20` | No | Env var OK | Patterns pass: failure→retry adjacency lookahead, in raw log lines. |
+| `DREAM_PATTERNS_SESSION_GAP_MINUTES` | `30` | No | Env var OK | Patterns pass: inactivity gap used to infer session boundaries (the log carries no session_id). |
+| `DREAM_PATTERNS_MIN_SEQUENCE_LEN` | `3` | No | Env var OK | Patterns pass: shortest repeated command sequence considered an automation candidate. |
+| `DREAM_PATTERNS_MAX_SEQUENCE_LEN` | `8` | No | Env var OK | Patterns pass: longest mined sequence window (bounds worst-case compute). |
+| `DREAM_PATTERNS_MIN_SESSIONS` | `3` | No | Env var OK | Patterns pass: minimum distinct inferred sessions a repeated sequence must span. |
+| `DREAM_PATTERNS_TOP_COMMANDS` | `50` | No | Env var OK | Patterns pass: command-frequency table size cap. |
+| `DREAM_INSIGHTS_MAX_SESSIONS_IN_PROMPT` | `20` | No | Env var OK | Insights pass: cap on session summaries inlined per insight LLM prompt, independent of `--sessions`. |
 | `DREAM_DIGEST_PATH` | `/opt/local-se/dreams/latest-digest.md` | No | Env var OK | **`goethe.py`'s own valve** (v0.4.0-a, Prompt 3.5) — NOT read by `dream_runner.py`/`dream_apply.py`/`dream_digest.py` (those write the file; this only reads it back). Read once per session, on the first of EITHER `time_check()` or `search_kb`/`search_web` (Thread 3 close fix, 2026-07-12 — `time_check()` previously shared the once-per-session gate without ever reading this valve, silently dropping the `[DREAM]` line for any session that called `time_check()` first). Empty = `[DREAM]` banner disabled. Missing/unreadable/unparseable file = banner silently omitted, never an error. **Live-verified 2026-07-12** against LUCIFER's real gateway and a real digest (6 pending proposals) — confirmed banner text exactly matches the documented format. |
-| `DREAM_AUTO_APPLY` | `` (empty) | No | Env var OK | Comma-separated proposal `type`s allowed to skip `dream_apply.py`'s interactive confirm prompt. **Still empty as of TRAUM Thread 2's close (2026-07-11)** — see `docs/dreaming/DESIGN.md` §7 for the full eligibility table and the 2-consecutive-week zero-rejected-in-hindsight promotion bar (Thread 4's to earn, not set by hand). |
-
-**Thread 4 hardcoded values (not env-var gated — change in source if needed):**
-- `PROPOSAL_EXPIRY_DAYS = 14` (`dream_apply.py`) — proposals auto-expire after 14 days in `--queue` mode
-- `AUTO_APPLY_DB = /opt/local-se/dreams/auto-apply-eval.db` — SQLite eval DB for earn path tracking
-- Secret redaction: 3 patterns in `dream_runner.py` (`vault_*`, `get_vault_secret`, `set_vault_secret`) — hardcoded, not configurable
-
+| `DREAM_AUTO_APPLY` | `` (empty) | No | Env var OK | Comma-separated proposal `type`s allowed to skip `dream_apply.py`'s interactive confirm prompt. **Still empty per the Prompt 4.8 decision (2026-07-13, recorded in `docs/dreaming/DESIGN.md` §7.4)** — the §7.3 promotion bar (2 consecutive weeks, zero rejected-in-hindsight, positive eval evidence) is unmet on four independent grounds; the measurement window only starts with the first unattended nightly cycle (2026-07-14). Do not set by hand without a new §7.4 entry. |
 | `PATH` (dream_apply) | alongside `dream_apply.py` | No | Env var OK | `GOETHE_PATH` — where `dream_apply.py` dynamically loads `goethe.py`'s `Tools` class from (same mechanism `goethe_mcp.py` uses). |
 | `REPO_ROOT` | current working directory | No | Env var OK | `GOETHE_REPO_ROOT` (Prompt 3.6) — repo root `dream_apply.py`'s `append_learned_rule()` resolves `prompts/learned-rules.md` against. Run `dream_apply.py` from the repo root (same assumption its own usage examples already make with relative `--proposals` paths) or set this explicitly. |
 
