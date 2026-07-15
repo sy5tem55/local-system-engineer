@@ -1,5 +1,5 @@
 # LSE Version Registry
-> Last updated: 2026-07-02 (Cowork — P0-1 reconciliation via live goethe MCP bridge)
+> Last updated: 2026-07-15 (Cowork) — TRAUM Thread 4 close: dream tools v0.9.0/v0.3.0/v0.2.0
 > Authored by: Claude (Anthropic) — P26 contributions: cogitator v1.7.10 (source-claim verification, fabrication #5 class), v1.7.11 (KB source-tier quality gate, pfSense self-grant incident). P27: v1.7.12 restored from OWUI backup + cache fix; v1.7.13 SSH KB-FIRST rule (bare-ssh-before-KB + wrong-topic-filter incidents). Ground truth is earned, not claimed.
 > **Ground Rule (P27):** Always verify line count between versions. Report delta and track in Line Count Tally below.
 
@@ -28,6 +28,16 @@
 | run_episode.py | v1 | 2026-06-04 | `scripts/run_episode.py` |
 | ChallengeGenerator | v1 | 2026-06-04 | `scripts/challenge_generator.py` |
 | rfc_kb.py | v1 | 2026-06-04 | `scripts/rfc_kb.py` |
+## TRAUM Dream Tools
+
+| Component | Version | Shipped | Status |
+|---|---|---|---|
+| Dream Runner | **dream_runner.py v0.9.0** | 2026-07-15 | ✅ **DEPLOYED** — 5 passes (dedup, stale-contradiction, error-cluster, patterns, insights) + quarantine-delete-request + ledger-mining; secret redaction (3 rules); pass-scoped filenames; systemd timer integration; 426/9609 events redacted. Lineage: v0.1.0 (Thread 2) → v0.2.0 (stale-contradiction) → v0.3.0 (error-cluster) → v0.4.0 (patterns) → v0.5.0 (insights) → v0.6.0 (ledger-mining) → v0.7.0 (null-result discipline) → v0.8.0 (Thread 3 close) → v0.9.0 (Thread 4: redaction + quarantine + pass-scoped filenames + systemd timer) |
+| Dream Apply | **dream_apply.py v0.3.0** | 2026-07-15 | ✅ **DEPLOYED** — human-gated apply with ES dispatch (mentor_correct, record_outcome, index_to_kb, es_delete); dreamed_at auto-stamp; proposal queue with 14-day expiry; auto-apply earn path (eval DB, --earn-status flag, 2-week promotion bar). Lineage: v0.1.0 (Thread 2, apply gate) → v0.2.0 (Thread 3, prompt-rule dispatch) → v0.3.0 (Thread 4: queue + expiry + earn path + dreamed_at stamp) |
+| Dream Digest | **dream_digest.py v0.2.0** | 2026-07-15 | ✅ **DEPLOYED** — ≤30-line morning digest with applied/insights/pending sections; prompt-rule counting with ⚠ warning; type breakdown. Lineage: v0.1.0 (Thread 3, digest format) → v0.2.0 (Thread 4: prompt-rule counting + type breakdown) |
+| Systemd Timer | **goethe-dream.timer** | 2026-07-15 | ✅ **ACTIVE** — nightly 03:30 + 15m RandomizedDelaySec; runs dream_runner.py --all-passes; VRAM-aware Ollama fallback; quarantine pass integrated. Service template: `services/goethe-dream.service` |
+
+
 
 ---
 

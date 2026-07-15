@@ -27,3 +27,11 @@ nohup.out
 # remote once Phase 5 lands. Not tracked here; avoid it becoming an embedded/nested
 # repo blob in this one.
 lse/
+
+# Security: credential files — never commit (audit 2026-07)
+*.env
+observability/*.env
+tokens.md
+token*.json
+**/token*.json
+**/tokens.md
