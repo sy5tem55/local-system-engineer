@@ -3,7 +3,7 @@
 # Usage: bash ~/projects/local-system-engineer/tools/start-goethe.sh
 # Python: owui venv (/home/sy5/owui/bin/python3) is retained as the LSE MCP runtime.
 #
-# v2.1.2 — corrections to the v2.1 proposal:
+# v2.1.3 — corrections to the v2.1 proposal:
 #   * ss checks use -H: without it ss prints a header even for a free port,
 #     making "port free" impossible (Step 2 aborted every run) and
 #     "is listening" vacuous (Step 4 passed even on crash).
@@ -60,11 +60,11 @@ done
 # ── Step 3.5: clean stale GUI child PID files ────────────────────────────────
 rm -f /tmp/goethe-gui/Goethe_MCP-*-child.pid /tmp/goethe-gui/goethe_mcp-*-child.pid 2>/dev/null || true
 
-# ── Step 4: launch foreground (visible log, terminal-bound) ─────────────────
+# ── Step 4: launch detached and SIGHUP-proof ─────────────────────────────────
 env GOETHE_MCP_TOKEN="$GOETHE_MCP_TOKEN" \
     BW_PASSWORD="${BW_PASSWORD:-}" \
     GOETHE_EMBED_MODEL="qwen3-embedding:0.6b" \
-  /home/sy5/owui/bin/python3 "$LSE_DIR/goethe_mcp.py" \
+  setsid nohup /home/sy5/owui/bin/python3 "$LSE_DIR/goethe_mcp.py" \
   --goethe "$LSE_DIR/goethe.py" \
   --also  "$LSE_DIR/vaultwarden_tools_v1.3.0.py" \
   --also  "$LSE_DIR/pfsense_tools_v1.0.0.py" \
@@ -72,7 +72,9 @@ env GOETHE_MCP_TOKEN="$GOETHE_MCP_TOKEN" \
   --transport http \
   --port 9700 \
   --host 127.0.0.1 \
-  --cors-origin 'http://127.0.0.1:8080'
+  --cors-origin 'http://127.0.0.1:8080' \
+  </dev/null >"$LOG" 2>&1 &
+
 # ── Step 5: verify the gateway is listening (up to 10s) ─────────────────────
 for attempt in $(seq 1 20); do
   if ss -tlnH sport = :9700 | grep -q .; then

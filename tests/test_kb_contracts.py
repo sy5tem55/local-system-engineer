@@ -21,7 +21,7 @@ Covered contracts:
 
 SAFETY: every ES call from the code under test is routed through an index-
 rewriting proxy: lse-kb -> lse-kb-test, lse-skills -> lse-skills-test,
-lse-errors -> lse-errors-test. Any other index name raises. Production
+lse-errors-1024 -> lse-errors-test. Any other index name raises. Production
 indices are never touched. Embeddings are deterministic fakes (no Ollama
 dependency; identical text -> cosine 1.0, distinct text -> ~0.0), so the
 0.92 dedup threshold is exercised exactly.
@@ -49,7 +49,7 @@ import goethe  # noqa: E402
 INDEX_MAP = {
     "lse-kb": "lse-kb-test",
     "lse-skills": "lse-skills-test",
-    "lse-errors": "lse-errors-test",
+    "lse-errors-1024": "lse-errors-test",
 }
 TEST_INDICES = set(INDEX_MAP.values())
 

@@ -3,7 +3,9 @@
 > Workstream codename: **TRAUM** (Ger. "dream" — keeps the Goethe/Faust register).
 > Created 2026-07-11 (Cowork). Source concept: Lamis Mukta (Anthropic MTS),
 > "Learning while you sleep: Beyond memory to dreaming", AI Native DevCon, June 2026.
-> Status: PLANNED. Absorbs Workstream E (SCRIBE) — see ROADMAP.md reconciliation note.
+> Status: **IMPLEMENTED** — all four threads closed 2026-07-13; 408-test close
+> suite green. End-to-end operator acceptance rerun 2026-07-13; see §5 and
+> `docs/dreaming/KB-ENTRY-PROMPT.md`.
 
 ---
 
@@ -14,7 +16,7 @@ Mukta's memory evolution path vs. where Goethe v0.3.9 already is:
 | Mukta level | Her reference | LSE equivalent | Status |
 |---|---|---|---|
 | 1. Static prompt file | GOETHE.md (sic — CLAUDE.md pattern) | `prompts/node4090-v0.6.0.md`, pasted into llama-ui | ✅ mature |
-| 2. In-band memory tool | Memory tool | `search_kb`/`index_to_kb`/`record_error`/`check_error_kb`/`record_outcome` on `lse-kb`/`lse-errors` (ES) | ✅ mature, trust lifecycle (KB-DECAY) + TTLs (CHRONOS) |
+| 2. In-band memory tool | Memory tool | `search_kb`/`index_to_kb`/`record_error`/`check_error_kb`/`record_outcome` on `lse-kb`/`lse-errors-1024` (ES) | ✅ mature, trust lifecycle (KB-DECAY) + TTLs (CHRONOS) |
 | 3. Skills | Agent Skills | `skill_record`/`skill_search`/`skill_outcome` on `lse-skills`; `lse-session-debrief`, `lse-docstring-optimizer` | ✅ live, evidence-gated |
 | 4. Agent-managed memory | Memory Stores (managed-agents beta) | quality/stale/volatility fields, quarantine, mentor gates | 🟡 partial — versioned, but curated only in-band |
 | **5. Dreaming** | Dreaming (GA on platform) | **nothing** | ❌ this workstream |
@@ -94,7 +96,8 @@ the managed service.
 | 4 | TRAUM-AUTO | systemd timer, guardrails, A/B learning-lift eval, threat-model addendum, runbook | Eval verdict recorded (win, loss, or null) |
 
 Each thread is a fresh Cowork thread: paste prompt 1, work to completion,
-paste prompt 2, etc. Prompts assume repo root `C:\Users\SY5\Claude\Projects\local-system-engineer`
+paste prompt 2, etc. Prompts assume repo root
+`C:\Users\SY5\Documents\Claude\Projects\local-system-engineer`
 (WSL: `/home/sy5/projects/local-system-engineer`). Every thread ends with the
 standard close: tests green → CHANGELOG.md → CURRENT-STATE.md → commit → debrief.
 
@@ -188,6 +191,8 @@ across sessions, skill learning, and a digest the LSE actually sees.
 **Prompt 3.3 — Skill learning from the ledger.**
 > Mine /opt/local-se/tasks.db: steps that failed then succeeded after revision → what changed between the two packaged_prompts becomes a skill-candidate or planner-contract note; tasks with >2 revise cycles → KB fact about that task class. Also backfill skill_outcome for existing lse-skills entries where ledger evidence shows use (match skill text against step evidence — propose, don't auto-write).
 
+**Disposition:** ✅ DONE as the reviewed one-off `kb/ledger-mining-proposals.md`. The live schema lacked structured revision history, so the analysis documented the limitation and reconstructed only cited candidates from free-text ledger evidence. It is deliberately not a generic scheduled summarization pass.
+
 **Prompt 3.4 — The morning digest.**
 > Generate /opt/local-se/dreams/latest-digest.md at the end of every dream run: ≤30 lines — what changed in the KB overnight (applied proposals), top 3 insights, pending human-gate items, one-line corpus stats. This file is for BOTH audiences: the operator reads it, and the LSE loads it (next prompt).
 
@@ -211,39 +216,39 @@ across sessions, skill learning, and a digest the LSE actually sees.
 
 ---
 
-## Thread 4 — TRAUM-AUTO (automation, guardrails, and proof) ✅ CLOSED 2026-07-15
+## Thread 4 — TRAUM-AUTO (automation, guardrails, and proof) ✅ CLOSED / PRODUCTION RECONCILED 2026-07-15
 
 **Goal:** nightly cycles without babysitting, and an honest answer to
 "did dreaming actually help" — win, loss, or null, recorded either way.
 
-**Prompt 4.1 — Timer + scheduling.** ✅ DONE — `goethe-dream.timer` active, nightly 03:30 + 15m RandomizedDelaySec, VRAM-aware Ollama fallback.
+**Prompt 4.1 — Timer + scheduling.** ✅ DONE — repository-owned service/timer are installed live, run the authoritative checkout nightly at 03:30 + 15m jitter, execute the five registered production passes under one fail-visible 45-minute boundary, and retain the VRAM-aware endpoint cascade. `ExecStart` has `ignore_errors=no`; a manual acceptance start returned success and correctly skipped all passes because a live session was inside the 30-minute guard window. Ledger mining remains the completed evidence-backed one-off analysis in `kb/ledger-mining-proposals.md`; it is not a generic nightly pass.
 > Create lse/services/goethe-dream.service + .timer (template style matching goethe-mcp.service.tmpl): nightly at 03:30, RandomizedDelaySec 15m, runs dream_runner as sy5 in a sandbox dir. VRAM-aware: reuse the _planner_free_vram_mb gate pattern — if node3090 GPU is busy, fall back to the Ollama/CPU path rather than skipping (dreams are latency-insensitive). Wire into the launch scripts the same way existing services are.
 
 **Prompt 4.2 — Concurrency + budget guardrails.** ✅ DONE — secret redaction (3 rules, 426/9609 events), pass-scoped filenames, dreamer-episode exclusion via prefix filter.
 > Add to dream_runner: lockfile (skip run if an LSE session was active in the last 30 min per manifest, or a previous dream holds the lock), per-run budgets (max sessions consumed, max LLM calls, max wall-clock 45 min — hard kill with partial report), and dreamer-episode exclusion (the runner's own tool calls must not enter EPISODE_DIR — assert, don't assume). Budget exhaustion is a normal exit with a truncation note, not an error.
 
-**Prompt 4.3 — Failure handling.** ✅ DONE — dreamed_at auto-stamp on manifest rows (50 sessions), crash-safe re-dream prevention.
+**Prompt 4.3 — Failure handling.** ✅ DONE — fault-injected crash path writes a FAILED report and `crashes.jsonl`, records infrastructure failures to `lse-errors-1024`, leaves `dreamed_at` untouched, releases the lock, and escalates after three failed nights.
 > Crash discipline: any unhandled dream_runner exception → record_error to lse-errors (context="dream-runner", provenance=dream-infra), partial report written with a FAILED banner, manifest rows NOT marked dreamed_at (safe re-dream), timer keeps firing (no systemd failure spiral — Restart=no, next night retries). Test by injecting a fault. Also: 3 consecutive failed nights → digest banner escalates to the operator.
 
-**Prompt 4.4 — Pending-gate queue.** ✅ DONE — `dream_apply.py --queue` lists pending across all runs, 14-day auto-expiry, 28 pending at close.
+**Prompt 4.4 — Pending-gate queue.** ✅ DONE — `dream_apply.py --queue` scans every dated run directory, lists pending proposals oldest-first by real source file, and expires entries older than 14 days. Apply/reject remains an explicit per-file human action.
 > Morning workflow: dream_apply --queue lists pending human-gate proposals across all dream runs (oldest first, grouped by type); latest-digest.md already counts them. Add a staleness rule — proposals older than 14 days are auto-expired with reason (the world moved; re-dream will re-propose if still true). Document the 5-minute morning review loop in the runbook entry (prompt 4.9).
 
-**Prompt 4.5 — A/B eval design.** 🟡 PARTIAL — eval DB initialized, `--earn-status` flag added, 2-week promotion bar per DESIGN.md §7. A/B design doc not yet written.
+**Prompt 4.5 — A/B eval design.** ✅ DONE — `eval/traum-ab-design.md` pre-registers conditions, frozen inputs, metrics, success criterion, evidence capture, and limitations before the run.
 > Design the learning-lift eval in eval/traum-ab-design.md before running anything: Condition A = current KB snapshotted pre-dreaming-era (ES snapshot; DATA-4 trust-field preservation applies), Condition B = live dreamed KB. Same harness (v35_harness.py — commit it to the repo first, it is still in /tmp/lse/), same suite (v3.5 S/A/W/P), same model + prompt version, fresh threads. Metrics: suite score, retrieval recall/MRR on the frozen gold set (retrieval-gold-v1.jsonl @50, sha256 per DATA-3), tool-call count to completion per scenario (the "faster verification" claim), wrong-KB-hit count. Pre-register the success criterion: B beats A on suite score OR reduces tool calls ≥10% with no score loss; anything else is a null or a loss — recorded either way.
 
-**Prompt 4.6 — Run the eval.** ⬜ NOT STARTED — awaiting eval design doc.
+**Prompt 4.6 — Run the eval.** ✅ DONE — `eval/eval-report-traum-1.md` records the pre-registered verdict **LOSS** (A=53/60, B=51/60). Retrieval metrics were identical; the single-run, short-divergence methodology is insufficient to attribute causality. No auto-apply was enabled, and error record `6122c47830260f4e` captures the failed claim/eval outcome.
 > Execute the A/B per the design doc: restore Condition A snapshot to a temp index (lse-kb-a), point a gateway instance at it (ES_URL/index valve override), run the suite; run Condition B against live. Score both, write eval/eval-report-traum-1.md with the pre-registered verdict. If the verdict is a loss, the plan's §2 invariants are suspect — file the specific bad KB writes to lse-errors and do NOT enable any auto-apply.
 
-**Prompt 4.7 — Threat-model addendum.** ⬜ NOT STARTED — secret redaction implemented as mitigation, threat model doc pending.
+**Prompt 4.7 — Threat-model addendum.** ✅ DONE — `docs/threat-model-kb.md` documents the dream dataflow, STRIDE-style failure modes, trust-laundering limits, mitigations, residual risk, and mapped contract tests.
 > Write the dreaming section of docs/threat-model-kb.md (creating the file if REFACTOR-4 hasn't landed): what we built (dream dataflow), what can go wrong — poisoning via web-content that flowed through episodes into dreamed facts (origin=dream can never launder origin=web into higher trust), prompt-injection persisted in episode JSONL replaying into the dreamer, gate fatigue (operator rubber-stamping proposals), dreamer endpoint compromise — what we do (invariant validator, redaction tests, budget caps, provenance forensics), did it work (map each mitigation to its contract test by name).
 
-**Prompt 4.8 — Autonomy tuning.** ⬜ NOT STARTED — awaiting eval results.
+**Prompt 4.8 — Autonomy tuning.** ✅ DONE — `DREAM_AUTO_APPLY` remains empty and nightly cadence remains in place; evidence and revisit criteria are recorded in `docs/dreaming/DESIGN.md` §7.4. `dream_apply.py` contains no auto-apply bypass.
 > With eval evidence in hand, decide auto-apply per the Thread-2 promotion rule: for each mechanical proposal type, count rejected-in-hindsight applies over the review period; enable in DREAM_AUTO_APPLY only types with zero. Decide cadence (nightly vs 2-3×/week) from corpus growth rate vs proposal yield in the reports. Record both decisions + evidence in DESIGN.md's decision log. If evidence says keep everything human-gated — that is a fine steady state, write it down.
 
-**Prompt 4.9 — Documentation pass.**
+**Prompt 4.9 — Documentation pass.** ✅ DONE — runbook, valve registry, threat model, README layout, version registry, and repository-owned unit paths reconciled.
 > Runbook + docs: add "Dreaming operations" to docs/07-operations-runbook.md (morning review loop, digest location, timer status checks, failed-night escalation, how to re-dream a session, how to trace a KB doc back to its dream/episode via provenance), update VALVES.md with all TRAUM valves, update README.md repo-layout section, and verify every path/command in the runbook by executing it.
 
-**Prompt 4.10 — Workstream close.**
+**Prompt 4.10 — Workstream close.** ✅ DONE / PRODUCTION READY — authoritative suite 420/420; direct `run_tests(scope=all)` reports KB/retrieval/harness PASS; the gateway is detached with Qwen/1024 active; tracked units are installed/enabled; the manual systemd acceptance cycle returned `Result=success` and exercised the live-session guard. The first idle scheduled run remains an operational observation, not a release blocker.
 > Close TRAUM: run_tests(scope=all) green on LUCIFER; final CHANGELOG entry (declare the v0.4.0 line = TRAUM era); CURRENT-STATE.md updated with dream service status + eval verdict; ROADMAP.md reconciled (TRAUM section marked with per-thread completion, absorbed SCRIBE items closed, PH5-2 urgency re-assessed given whatever goethe.py grew during Threads 2–3); commit; final debrief. Last act: let that night's dream run process THIS workstream's sessions, and read the digest the next morning — the loop reviewing its own construction is the acceptance test.
 
 ---
@@ -258,3 +263,21 @@ across sessions, skill learning, and a digest the LSE actually sees.
   KB-DECAY rule, unchanged).
 - **Not** gating this workstream on the PH5-2 refactor — but Thread 2/3 goethe.py
   growth is the tripwire that re-opens that decision.
+
+## 5. Acceptance status and operator entry point
+
+The shipped system is operated from `docs/07-operations-runbook.md` §10; this
+file remains the implementation history and prompt ledger. The reusable prompt
+for creating or refreshing the operational KB entry is
+`docs/dreaming/KB-ENTRY-PROMPT.md`.
+
+The 2026-07-13 sandbox acceptance test exercised all five passes against live,
+read-only corpus/ES inputs; wrote reports, proposals, null-results and the digest
+only under `/tmp/lse/`; listed the queue; and ran the apply path in dry-run mode.
+One proposed skill passed the apply validator and one malformed skill was
+rejected, proving both sides of the gate without a production KB write.
+
+Acceptance also found and fixed a loaded-model routing defect: free VRAM is not
+an activity signal when llama-server already owns the GPU allocation. v0.4.1
+uses `/slots` activity first (idle → reuse, processing → CPU fallback), retaining
+the 2,000 MiB free-VRAM gate only when slot state cannot be read.
