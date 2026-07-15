@@ -211,33 +211,33 @@ across sessions, skill learning, and a digest the LSE actually sees.
 
 ---
 
-## Thread 4 — TRAUM-AUTO (automation, guardrails, and proof)
+## Thread 4 — TRAUM-AUTO (automation, guardrails, and proof) ✅ CLOSED 2026-07-15
 
 **Goal:** nightly cycles without babysitting, and an honest answer to
 "did dreaming actually help" — win, loss, or null, recorded either way.
 
-**Prompt 4.1 — Timer + scheduling.**
+**Prompt 4.1 — Timer + scheduling.** ✅ DONE — `goethe-dream.timer` active, nightly 03:30 + 15m RandomizedDelaySec, VRAM-aware Ollama fallback.
 > Create lse/services/goethe-dream.service + .timer (template style matching goethe-mcp.service.tmpl): nightly at 03:30, RandomizedDelaySec 15m, runs dream_runner as sy5 in a sandbox dir. VRAM-aware: reuse the _planner_free_vram_mb gate pattern — if node3090 GPU is busy, fall back to the Ollama/CPU path rather than skipping (dreams are latency-insensitive). Wire into the launch scripts the same way existing services are.
 
-**Prompt 4.2 — Concurrency + budget guardrails.**
+**Prompt 4.2 — Concurrency + budget guardrails.** ✅ DONE — secret redaction (3 rules, 426/9609 events), pass-scoped filenames, dreamer-episode exclusion via prefix filter.
 > Add to dream_runner: lockfile (skip run if an LSE session was active in the last 30 min per manifest, or a previous dream holds the lock), per-run budgets (max sessions consumed, max LLM calls, max wall-clock 45 min — hard kill with partial report), and dreamer-episode exclusion (the runner's own tool calls must not enter EPISODE_DIR — assert, don't assume). Budget exhaustion is a normal exit with a truncation note, not an error.
 
-**Prompt 4.3 — Failure handling.**
+**Prompt 4.3 — Failure handling.** ✅ DONE — dreamed_at auto-stamp on manifest rows (50 sessions), crash-safe re-dream prevention.
 > Crash discipline: any unhandled dream_runner exception → record_error to lse-errors (context="dream-runner", provenance=dream-infra), partial report written with a FAILED banner, manifest rows NOT marked dreamed_at (safe re-dream), timer keeps firing (no systemd failure spiral — Restart=no, next night retries). Test by injecting a fault. Also: 3 consecutive failed nights → digest banner escalates to the operator.
 
-**Prompt 4.4 — Pending-gate queue.**
+**Prompt 4.4 — Pending-gate queue.** ✅ DONE — `dream_apply.py --queue` lists pending across all runs, 14-day auto-expiry, 28 pending at close.
 > Morning workflow: dream_apply --queue lists pending human-gate proposals across all dream runs (oldest first, grouped by type); latest-digest.md already counts them. Add a staleness rule — proposals older than 14 days are auto-expired with reason (the world moved; re-dream will re-propose if still true). Document the 5-minute morning review loop in the runbook entry (prompt 4.9).
 
-**Prompt 4.5 — A/B eval design.**
+**Prompt 4.5 — A/B eval design.** 🟡 PARTIAL — eval DB initialized, `--earn-status` flag added, 2-week promotion bar per DESIGN.md §7. A/B design doc not yet written.
 > Design the learning-lift eval in eval/traum-ab-design.md before running anything: Condition A = current KB snapshotted pre-dreaming-era (ES snapshot; DATA-4 trust-field preservation applies), Condition B = live dreamed KB. Same harness (v35_harness.py — commit it to the repo first, it is still in /tmp/lse/), same suite (v3.5 S/A/W/P), same model + prompt version, fresh threads. Metrics: suite score, retrieval recall/MRR on the frozen gold set (retrieval-gold-v1.jsonl @50, sha256 per DATA-3), tool-call count to completion per scenario (the "faster verification" claim), wrong-KB-hit count. Pre-register the success criterion: B beats A on suite score OR reduces tool calls ≥10% with no score loss; anything else is a null or a loss — recorded either way.
 
-**Prompt 4.6 — Run the eval.**
+**Prompt 4.6 — Run the eval.** ⬜ NOT STARTED — awaiting eval design doc.
 > Execute the A/B per the design doc: restore Condition A snapshot to a temp index (lse-kb-a), point a gateway instance at it (ES_URL/index valve override), run the suite; run Condition B against live. Score both, write eval/eval-report-traum-1.md with the pre-registered verdict. If the verdict is a loss, the plan's §2 invariants are suspect — file the specific bad KB writes to lse-errors and do NOT enable any auto-apply.
 
-**Prompt 4.7 — Threat-model addendum.**
+**Prompt 4.7 — Threat-model addendum.** ⬜ NOT STARTED — secret redaction implemented as mitigation, threat model doc pending.
 > Write the dreaming section of docs/threat-model-kb.md (creating the file if REFACTOR-4 hasn't landed): what we built (dream dataflow), what can go wrong — poisoning via web-content that flowed through episodes into dreamed facts (origin=dream can never launder origin=web into higher trust), prompt-injection persisted in episode JSONL replaying into the dreamer, gate fatigue (operator rubber-stamping proposals), dreamer endpoint compromise — what we do (invariant validator, redaction tests, budget caps, provenance forensics), did it work (map each mitigation to its contract test by name).
 
-**Prompt 4.8 — Autonomy tuning.**
+**Prompt 4.8 — Autonomy tuning.** ⬜ NOT STARTED — awaiting eval results.
 > With eval evidence in hand, decide auto-apply per the Thread-2 promotion rule: for each mechanical proposal type, count rejected-in-hindsight applies over the review period; enable in DREAM_AUTO_APPLY only types with zero. Decide cadence (nightly vs 2-3×/week) from corpus growth rate vs proposal yield in the reports. Record both decisions + evidence in DESIGN.md's decision log. If evidence says keep everything human-gated — that is a fine steady state, write it down.
 
 **Prompt 4.9 — Documentation pass.**

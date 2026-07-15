@@ -127,10 +127,12 @@ ENV (same GOETHE_ prefix convention as goethe.py/goethe_mcp.py/dream_runner.py)
 """
 
 import argparse
+import glob
 import json
 import os
 import re
 import sys
+import sqlite3
 from datetime import date, datetime
 
 import dream_runner as dr  # sibling module: reuse validate_proposal_shape, not a second validator
@@ -138,8 +140,8 @@ import dream_digest        # Prompt 3.4: morning digest refresh at end of run
 
 __version__ = "0.2.0"
 
-QUARANTINE_DELETE_TYPE = "quarantine-delete-request"  # DESIGN.md §2 row 3(c) -- not
-                                                        # produced by any pass yet (2.2-2.4)
+QUARANTINE_DELETE_TYPE = "quarantine-delete-request"  # DESIGN.md §2 row 3(c) -- produced by
+                                                        # quarantine-delete-request pass (run_pass_quarantine_delete)
 
 _TIER_CEILING = {"ground_truth": 1.0, "primary": 0.8, "secondary": 0.6, "inferred": 0.4}
 
@@ -222,6 +224,122 @@ def load_proposals(path: str) -> list:
                 print(f"[dream_apply] WARNING: {path}:{lineno} unparseable, skipped ({exc})",
                       file=sys.stderr)
     return proposals
+
+
+# Proposal queue with expiry (Prompt 4.4 / Thread 4)
+PROPOSAL_EXPIRY_DAYS = 14  # proposals expire after 14 days
+
+
+def _proposal_date_from_path(path: str) -> str | None:
+    """Extract the date string (YYYY-MM-DD) from a proposals file path.
+    Returns None if the date cannot be extracted."""
+    # Path pattern: dreams/YYYY-MM-DD/proposals-*.jsonl
+    parts = os.path.normpath(path).split(os.sep)
+    for i, part in enumerate(parts):
+        if part.startswith("proposals"):
+            # The date is the parent directory
+            if i > 0:
+                parent = parts[i - 1]
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", parent):
+                    return parent
+    return None
+
+
+def load_proposals_with_expiry(path: str, expiry_days: int = PROPOSAL_EXPIRY_DAYS) -> list:
+    """Load proposals from a file, filtering out expired ones.
+    Proposals expire after expiry_days from their generation date (extracted from path).
+    Returns (proposals, expired_count)."""
+    proposals = load_proposals(path)
+    if not proposals:
+        return [], 0
+
+    # Extract date from path
+    prop_date = _proposal_date_from_path(path)
+    if prop_date is None:
+        # Can't determine date, keep all proposals
+        return proposals, 0
+
+    try:
+        from datetime import timedelta
+        gen_date = datetime.fromisoformat(prop_date).replace(tzinfo=None)
+        cutoff = (datetime.now() - timedelta(days=expiry_days)).date()
+        if gen_date.date() < cutoff:
+            # All proposals in this file are expired
+            print(f"[dream_apply] {path}: {len(proposals)} proposal(s) expired "
+                  f"(generated {prop_date}, older than {expiry_days} days)",
+                  file=sys.stderr)
+            return [], len(proposals)
+    except (ValueError, TypeError):
+        # Date parsing failed, keep all proposals
+        pass
+
+    return proposals, 0
+
+
+def scan_proposal_queue(dream_dir: str, expiry_days: int = PROPOSAL_EXPIRY_DAYS) -> list:
+    """Scan all day-dirs for pending (non-expired, non-applied, non-rejected) proposals.
+    Returns a list of (path, proposals) tuples, newest day-dirs first."""
+    from datetime import timedelta
+    queue = []
+    expired_total = 0
+
+    # Find all day-dirs (YYYY-MM-DD pattern)
+    day_dirs = []
+    try:
+        for entry in os.listdir(dream_dir):
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry):
+                day_dirs.append(entry)
+    except OSError:
+        return []
+
+    # Sort newest first
+    day_dirs.sort(reverse=True)
+
+    for day in day_dirs:
+        base = os.path.join(dream_dir, day)
+
+        # Check if this day-dir has applied/rejected records
+        applied_keys = set()
+        rejected_keys = set()
+        for jsonl_file in ("applied.jsonl", "rejected.jsonl"):
+            jsonl_path = os.path.join(base, jsonl_file)
+            if os.path.exists(jsonl_path):
+                with open(jsonl_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                entry = json.loads(line)
+                                prop = entry.get("proposal", {})
+                                # Use type+call+why as a simple key
+                                key = (prop.get("type"), prop.get("call"), prop.get("why", "")[:100])
+                                if jsonl_file == "applied.jsonl":
+                                    applied_keys.add(key)
+                                else:
+                                    rejected_keys.add(key)
+                            except json.JSONDecodeError:
+                                continue
+
+        # Find all proposal files in this day-dir
+        proposal_files = glob.glob(os.path.join(base, "proposals-*.jsonl"))
+        for prop_path in proposal_files:
+            proposals, expired = load_proposals_with_expiry(prop_path, expiry_days)
+            expired_total += expired
+
+            # Filter out already resolved proposals
+            pending = []
+            for p in proposals:
+                key = (p.get("type"), p.get("call"), p.get("why", "")[:100])
+                if key not in applied_keys and key not in rejected_keys:
+                    pending.append(p)
+
+            if pending:
+                queue.append((prop_path, pending))
+
+    if expired_total > 0:
+        print(f"[dream_apply] queue scan: {expired_total} expired proposal(s) filtered out",
+              file=sys.stderr)
+    return queue
 
 
 def group_proposals(proposals: list) -> list:
@@ -455,7 +573,11 @@ def render_group(group: list, dream_dir: str) -> str:
         target = " (merge from ".join(targets) + (")" if len(targets) > 1 else "")
         top = f"――― TARGET: {target} ―――"
     else:
-        top = f"――― REPORT: {os.path.join(dream_dir, 'report.md')} (reference) ―――"
+        # Pass-scoped report names as of Thread 4 (report-<pass>.md); the
+        # glob keeps legacy shared-report.md day-dirs readable too.
+        reports = sorted(glob.glob(os.path.join(dream_dir, "report*.md")))
+        ref = ", ".join(reports) if reports else os.path.join(dream_dir, "report*.md")
+        top = f"――― REPORT: {ref} (reference) ―――"
 
     blocks = [top, ""]
     for i, p in enumerate(group, 1):
@@ -512,6 +634,12 @@ def render_group(group: list, dream_dir: str) -> str:
                 ("evidence refs:", ", ".join(p.get("evidence", [])) or "(none)"),
             ]
             multiline = {"rule": args.get("rule", ""), "rationale": args.get("rationale", "")}
+        elif call == "es_delete":
+            lines = [
+                ("doc_id:", args.get("doc_id", "")),
+            ]
+            multiline = {}
+
         blocks.append(_fmt_block(call, i, len(group), lines, multiline))
         blocks.append(f"why:               {p.get('why', '')}")
         blocks.append("")
@@ -720,10 +848,193 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
             result = append_learned_rule(repo_root, args, p.get("evidence", []), today)
             results.append({"proposal": p, "result": result})
 
+        elif call == "es_delete":
+            # quarantine-delete-request: delete a quarantined doc from lse-kb
+            # check_quarantine() already ran at the top of the loop and allows
+            # this type on quarantined docs — it is the ONLY type that may.
+            doc_id = args["doc_id"]
+            result = es.delete(index="lse-kb", id=doc_id)
+            results.append({"proposal": p, "result": f"deleted doc_id={doc_id} from lse-kb (found={result.get('found', False)})"})
+
         else:
             results.append({"proposal": p, "result": f"ERROR: unknown call {call!r}, not applied"})
 
     return results
+
+
+def _stamp_dreamed_at(dream_dir, manifest_db, dry_run):
+    """Prompt 2.7 - auto-stamp dreamed_at for sessions considered in this run.
+    Reads sessions-*.jsonl companion files and updates manifest.db.
+    Returns number of sessions stamped."""
+    session_files = glob.glob(os.path.join(dream_dir, "sessions-*.jsonl"))
+    if not session_files:
+        return 0
+    session_ids = set()
+    for sf in session_files:
+        with open(sf, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        sid = json.loads(line).get("session_id")
+                        if sid:
+                            session_ids.add(sid)
+                    except json.JSONDecodeError:
+                        continue
+    if not session_ids or dry_run:
+        return 0
+    try:
+        conn = sqlite3.connect(manifest_db)
+        now = datetime.now().astimezone().isoformat()
+        stamped = 0
+        for sid in session_ids:
+            cur = conn.execute(
+                "UPDATE sessions SET dreamed_at = ? WHERE session_id = ? AND dreamed_at IS NULL",
+                (now, sid)
+            )
+            stamped += cur.rowcount
+        conn.commit()
+        conn.close()
+        print(f"[dream_apply] stamped dreamed_at={now[:19]} for {stamped} session(s) "
+              f"in {manifest_db}", file=sys.stderr)
+        return stamped
+    except Exception as exc:
+        print(f"[dream_apply] WARNING: failed to stamp dreamed_at: {exc}", file=sys.stderr)
+        return 0
+
+
+# --- auto-apply earn path with A/B eval (DESIGN.md §2 row 2) ---------------
+
+AUTO_APPLY_DB = "/opt/local-se/dreams/auto-apply-eval.db"
+
+_AUTO_APPLY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS eval_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_type TEXT NOT NULL,
+    call_type TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    applied_at TEXT NOT NULL,
+    dry_run INTEGER NOT NULL DEFAULT 0,
+    evidence TEXT
+);
+CREATE TABLE IF NOT EXISTS earn_thresholds (
+    proposal_type TEXT PRIMARY KEY,
+    min_runs INTEGER NOT NULL DEFAULT 10,
+    min_success_rate REAL NOT NULL DEFAULT 0.85,
+    earned_at TEXT,
+    earned_by TEXT
+);
+"""
+
+
+def _init_eval_db(db_path: str) -> sqlite3.Connection:
+    """Initialize the auto-apply evaluation database."""
+    conn = sqlite3.connect(db_path, timeout=10)
+    conn.executescript(_AUTO_APPLY_SCHEMA)
+    conn.commit()
+    return conn
+
+
+def _record_eval_outcome(db_path: str, proposal_type: str, call_type: str,
+                         outcome: str, evidence: str = "") -> None:
+    """Record an outcome for a proposal type in the eval database."""
+    try:
+        conn = _init_eval_db(db_path)
+        now = datetime.now().astimezone().isoformat()
+        conn.execute(
+            "INSERT INTO eval_outcomes (proposal_type, call_type, outcome, applied_at, dry_run, evidence) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            (proposal_type, call_type, outcome, now, evidence[:500])
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        print(f"[dream_apply] WARNING: failed to record eval outcome: {exc}",
+              file=sys.stderr)
+
+
+def _check_earn_path(db_path: str, proposal_type: str,
+                     min_runs: int = 10, min_success_rate: float = 0.85) -> tuple:
+    """Check if a proposal type has earned auto-apply status.
+    Returns (earned: bool, stats: dict)."""
+    try:
+        conn = _init_eval_db(db_path)
+        # Get stats for this proposal type (non-dry-run outcomes only)
+        row = conn.execute(
+            "SELECT COUNT(*) as total, "
+            "SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as successes "
+            "FROM eval_outcomes WHERE proposal_type = ? AND dry_run = 0",
+            (proposal_type,)
+        ).fetchone()
+        total = row[0] or 0
+        successes = row[1] or 0
+        success_rate = successes / total if total > 0 else 0.0
+
+        earned = total >= min_runs and success_rate >= min_success_rate
+        stats = {
+            "total": total,
+            "successes": successes,
+            "success_rate": round(success_rate, 3),
+            "min_runs": min_runs,
+            "min_success_rate": min_success_rate,
+            "earned": earned,
+        }
+
+        # Update the thresholds table if earned
+        if earned:
+            conn.execute(
+                "INSERT OR REPLACE INTO earn_thresholds "
+                "(proposal_type, min_runs, min_success_rate, earned_at, earned_by) "
+                "VALUES (?, ?, ?, ?, 'auto-earn-path')",
+                (proposal_type, min_runs, min_success_rate,
+                 datetime.now().astimezone().isoformat())
+            )
+            conn.commit()
+
+        conn.close()
+        return earned, stats
+    except Exception as exc:
+        print(f"[dream_apply] WARNING: failed to check earn path: {exc}",
+              file=sys.stderr)
+        return False, {"error": str(exc)}
+
+
+def _get_earned_types(db_path: str) -> list:
+    """Get all proposal types that have earned auto-apply status."""
+    try:
+        conn = _init_eval_db(db_path)
+        rows = conn.execute(
+            "SELECT proposal_type FROM earn_thresholds WHERE earned_at IS NOT NULL"
+        ).fetchall()
+        conn.close()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+
+
+def _print_earn_status(db_path: str) -> None:
+    """Print the current earn path status for all proposal types."""
+    try:
+        conn = _init_eval_db(db_path)
+        rows = conn.execute(
+            "SELECT proposal_type, COUNT(*) as total, "
+            "SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as successes "
+            "FROM eval_outcomes WHERE dry_run = 0 "
+            "GROUP BY proposal_type ORDER BY total DESC"
+        ).fetchall()
+        if not rows:
+            print("[dream_apply] earn-path: no outcomes recorded yet", file=sys.stderr)
+            conn.close()
+            return
+        print("\n[dream_apply] earn-path status:", file=sys.stderr)
+        for row in rows:
+            ptype, total, successes = row
+            rate = successes / total if total > 0 else 0.0
+            earned = "✓ EARNED" if total >= 10 and rate >= 0.85 else f"({total}/10 runs, {rate:.0%})"
+            print(f"  {ptype}: {successes}/{total} ({rate:.0%}) {earned}", file=sys.stderr)
+        conn.close()
+    except Exception as exc:
+        print(f"[dream_apply] WARNING: failed to print earn status: {exc}", file=sys.stderr)
 
 
 # --- main ----------------------------------------------------------------
@@ -734,7 +1045,14 @@ def parse_args(argv=None) -> argparse.Namespace:
         description="TRAUM-ENGINE apply gate — the ONLY code allowed to write dream "
         "proposals to ES. Prompt 2.5. See docs/dreaming/DESIGN.md.",
     )
-    ap.add_argument("--proposals", required=True, help="path to a dream run's proposals.jsonl")
+    ap.add_argument("--queue", action="store_true",
+                    help="scan all day-dirs for pending proposals (newest first), "
+                    "filtering expired (>14 days) and already-resolved proposals")
+    ap.add_argument("--earn-status", action="store_true",
+                    help="show auto-apply earn path status and exit")
+    ap.add_argument("--expiry-days", type=int, default=PROPOSAL_EXPIRY_DAYS,
+                    help=f"proposal expiry in days (default: {PROPOSAL_EXPIRY_DAYS})")
+    ap.add_argument("--proposals", required=False, help="path to a dream run's proposals.jsonl")
     ap.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=True,
                     help="render + validate + ask, but never actually call a Tools method "
                     "(default: true). Pass --no-dry-run to actually write to ES.")
@@ -746,6 +1064,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--repo-root", default=_repo_root_default(),
                     help="repo root append_learned_rule (Prompt 3.6) resolves "
                     "prompts/learned-rules.md against (default: $GOETHE_REPO_ROOT or cwd)")
+    ap.add_argument("--manifest-db", default="/opt/local-se/episodes/manifest.db",
+                    help="path to manifest.db for dreamed_at stamping (default: /opt/local-se/episodes/manifest.db)")
+
     ap.add_argument("--auto-apply-types", default=_dream_auto_apply_default(),
                     help="comma-separated proposal types allowed to skip the interactive "
                     "prompt (default: '' — DESIGN.md §2 row 2, earned via eval, not by hand)")
@@ -754,15 +1075,42 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> None:
     args = parse_args(argv)
-    dream_dir = os.path.dirname(os.path.abspath(args.proposals)) or "."
+    if args.earn_status:
+        _print_earn_status(AUTO_APPLY_DB)
+        return
+    if not args.queue and not args.proposals:
+        print("[dream_apply] error: either --proposals or --queue is required",
+              file=sys.stderr)
+        sys.exit(1)
+    if args.queue:
+        dream_dir = os.environ.get("GOETHE_DREAM_DIR", "/opt/local-se/dreams")
+    else:
+        dream_dir = os.path.dirname(os.path.abspath(args.proposals)) or "."
     auto_apply_types = {t.strip() for t in args.auto_apply_types.split(",") if t.strip()}
+    # Add empirically earned types
+    earned = _get_earned_types(AUTO_APPLY_DB)
+    auto_apply_types.update(earned)
+    if earned:
+        print(f"[dream_apply] earned auto-apply types: {', '.join(earned)}", file=sys.stderr)
 
-    proposals = load_proposals(args.proposals)
-    mode = "[dry-run] " if args.dry_run else ""
-    print(f"[dream_apply] {mode}loaded {len(proposals)} proposal(s) from {args.proposals}",
-          file=sys.stderr)
+    if args.queue:
+        # Queue mode: scan all day-dirs for pending proposals
+        queue = scan_proposal_queue(dream_dir, args.expiry_days)
+        proposals = []
+        for path, props in queue:
+            proposals.extend(props)
+        mode = "[dry-run] " if args.dry_run else ""
+        print(f"[dream_apply] {mode}queue mode: {len(proposals)} pending proposal(s) "
+              f"from {len(queue)} file(s) in {dream_dir}", file=sys.stderr)
+    else:
+        proposals = load_proposals(args.proposals)
+        mode = "[dry-run] " if args.dry_run else ""
+        print(f"[dream_apply] {mode}loaded {len(proposals)} proposal(s) from {args.proposals}",
+              file=sys.stderr)
     if not proposals:
         print("[dream_apply] nothing to do.", file=sys.stderr)
+        # Still stamp dreamed_at - sessions were considered even if no proposals
+        _stamp_dreamed_at(dream_dir, args.manifest_db, args.dry_run)
         return
 
     Tools = load_tools_class(args.goethe_path)
@@ -819,6 +1167,17 @@ def main(argv=None) -> None:
                     "dry_run": args.dry_run,
                 }) + "\n")
                 print(f"[dream_apply] {mode}{r['result']}", file=sys.stderr)
+                # Record eval outcome for earn path tracking
+                if not args.dry_run:
+                    prop = r["proposal"]
+                    outcome = "success" if "ERROR" not in r.get("result", "") else "failure"
+                    _record_eval_outcome(
+                        AUTO_APPLY_DB,
+                        prop.get("type", "unknown"),
+                        prop.get("call", "unknown"),
+                        outcome,
+                        r.get("result", "")[:200]
+                    )
     finally:
         applied_f.close()
         rejected_f.close()
@@ -829,6 +1188,10 @@ def main(argv=None) -> None:
         f"-> {applied_path}, {rejected_path}",
         file=sys.stderr,
     )
+
+    # Prompt 2.7: stamp dreamed_at for sessions considered in this run
+    _stamp_dreamed_at(dream_dir, args.manifest_db, args.dry_run)
+
 
     # Prompt 3.4 (TRAUM-INSIGHT): refresh the morning digest "at the end of
     # every dream run" -- the apply half in this file's case, so applied
