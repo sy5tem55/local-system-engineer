@@ -41,7 +41,7 @@
                                           └───────────┬───────────────┘
                                                        │ NEVER writes ES directly
                                                        ▼
-                        /opt/local-se/dreams/YYYY-MM-DD/{report.md, proposals.jsonl}
+                        /opt/local-se/dreams/YYYY-MM-DD/{report-<pass>.md, proposals-<pass>.jsonl}
                         proposal types: dedup | reverify | demote | skill-candidate
                                                        │
                                                        ▼
@@ -720,60 +720,64 @@ whole subcase or it doesn't.
 
 ### 7.4 Decision log
 
-**2026-07-12 — Prompt 4.8 (Thread 4, TRAUM-AUTO): `DREAM_AUTO_APPLY` stays
-`""`; cadence not yet decided; both deferred, not defaulted.**
+> Append-down. Each entry records a Prompt 4.8-class autonomy decision and
+> the evidence it rests on, BEFORE any valve changes in a running
+> deployment. Until an entry explicitly promotes a type,
+> `DREAM_AUTO_APPLY` stays `""` and every proposal type requires a human
+> yes, with no exceptions.
 
-*Evidence reviewed:*
-- Thread 4's own prerequisites are not built: no
-  `lse/services/goethe-dream.service`/`.timer` (Prompt 4.1), no
-  `eval/traum-ab-design.md` (Prompt 4.5), no `eval/eval-report-traum-1.md`
-  (Prompt 4.6), no `docs/threat-model-kb.md` (Prompt 4.7) exist anywhere in
-  the repo (repo-wide search, 2026-07-12). CURRENT-STATE.md independently
-  records "Thread 4 (TRAUM-AUTO, timer + A/B eval) **NOT STARTED**" as of
-  Thread 3's close, same date.
-- Exactly one real, applied dream run exists: 2026-07-11 (13 sessions, 368
-  docs) — 3 `dedup` merges applied, all confirmed correct by
-  `docs/dreaming/calibration-run-1.md` (production `linear`-mode
-  recall@1/recall@3/MRR bit-for-bit unchanged across ~84% corpus growth,
-  `min_score=4.2` re-swept and still holding 0-correct-lost); 8 `demote`
-  proposals (7 stale-contradiction + 1 error-cluster) rejected at the gate,
-  all confirmed correctly rejected per `dream-run-2026-07-11.md`'s
-  per-item breakdown (non-sequitur pairings, category mismatches, a
-  self-contradictory proposal). Zero rejected-in-hindsight applies found —
-  but across **one day, one run**, not §7.3's required 2 consecutive
-  weeks.
-- The 2026-07-12 "full cycle" run (`dream-run-2026-07-12-full-cycle.md`)
-  produced zero proposals of any type — a sandbox-environment null result
-  (no live ES/Ollama/manifest.db reachable), not a second real data point.
-- No A/B eval per Prompt 4.5/4.6's pre-registered design has been run; the
-  only retrieval numbers that exist are Thread 2's own before/after
-  calibration (§7 above cites the same run), which is not that design.
+**2026-07-13 — Prompt 4.8 (Thread 4): `DREAM_AUTO_APPLY` stays `""` — all
+types remain human-gated. Cadence: nightly retained.**
 
-*Auto-apply decision:* **`DREAM_AUTO_APPLY` remains `""`.** Per §7.3 rule
-#3 ("not 'low,' not 'one outlier we can explain,' zero... across the full
-2-week window"), a single clean day cannot clear the bar for either
-auto-apply candidate (`dedup` exact-duplicate subcase, `reverify`) — there
-is no 2-week window to evaluate yet, let alone a zero-rejected-in-hindsight
-one. This is the steady state §7.3/Prompt 4.8 explicitly permit: "If
-evidence says keep everything human-gated — that is a fine steady state,
-write it down."
+Auto-apply decision — no type promoted, on four independent grounds:
 
-*Cadence decision:* **Not decided — no cadence exists to tune.** Prompt
-4.8 asks to choose nightly vs 2-3×/week "from corpus growth rate vs
-proposal yield in the reports," which presupposes Prompt 4.1's timer
-infrastructure is running; it isn't. The two data points on hand (2026-
-07-11: 13 sessions / 368 docs / 4 total proposals; 2026-07-12: 0
-sessions / 0 proposals, sandbox-only) are too sparse, and too confounded
-by environment (one real run, one null-environment run), to fit a
-growth-rate-vs-yield curve. Cadence selection is deferred to whichever
-future Thread 4 session actually stands up Prompts 4.1–4.6 and can observe
-real nightly-vs-manual yield.
+1. **The §7.3 measurement window hasn't started.** The rule requires ≥2
+   consecutive weeks of gate-reviewed operation with a zero
+   rejected-in-hindsight count per type. The nightly timer
+   (`goethe-dream.timer`) was only installed and enabled 2026-07-13 —
+   every dream run before that was hand-driven in-thread. Week 1 of the
+   window begins with the first unattended cycle (2026-07-14 03:30).
+2. **The A/B eval provides no promotion evidence.**
+   `eval/eval-report-traum-1.md`: pre-registered verdict **LOSS**
+   (A=53/60 vs B=51/60; tool calls 34 vs 31 — both win-criterion legs
+   failed). Its §6 root-cause is methodological (≈15-min divergence
+   window between conditions, n=1 per condition, unpinned sampling) —
+   inconclusive rather than damning, but §7.3 requires positive eval
+   evidence FOR promotion, and an inconclusive loss is not that.
+3. **The threat model says the structural backstops are incomplete.**
+   `docs/threat-model-kb.md`: the origin-tag laundering protection is
+   today a blunt ceiling (origin=web/human/local-probe tagging is not
+   implemented in the live `index_to_kb` path), and gate-fatigue
+   mitigations are untested. Removing the human gate for any type now
+   would remove the one control that is demonstrably working.
+4. **Gate rejection history is nonzero.** Thread 2's calibration run
+   rejected 8 of 11 proposals at the gate (all 7 stale-contradiction + 1
+   error-cluster). The bar is zero rejected-in-hindsight; we are nowhere
+   near it even before hindsight is measurable.
 
-*Reassessment trigger:* once Prompts 4.1 (timer), 4.5 (A/B design), and
-4.6 (A/B run) exist, and at least 2 consecutive weeks of real (non-
-sandbox) applied/rejected logs are available per type, re-run this
-decision against §7.3's actual bar rather than extending it from this
-entry.
+Cadence decision — **nightly retained** (OnCalendar 03:30, ±15 min
+jitter), not reduced to 2–3×/week:
+
+- Corpus growth is bursty (24–92 episode files/day on active days, 0 on
+  idle days as of 2026-07-13; 13 manifest sessions, all dreamed) and
+  proposal yield modest but non-null (6 pending from the last full
+  cycle) — but nightly runs are cheap and self-limiting: 45-min
+  wall-clock + LLM-call budgets, VRAM gate diverts to node3090's CPU leg
+  when the GPU is busy, lockfile + 30-min session-activity guard, and
+  the null-result discipline makes idle nights near-free.
+- The `[DREAM]` session banner, the 14-day queue expiry, and §7.3's
+  2-consecutive-week windows all assume a fresh nightly digest; a
+  sparser cadence stales the banner and stretches the promotion
+  denominator for no measurable saving.
+- **Revisit trigger (recorded now, so drift is a decision, not
+  forgetfulness):** if 4 consecutive weeks of nightly runs produce only
+  null records, drop to 2–3×/week — as a new entry here.
+
+Eval re-run precondition (from `eval/eval-report-traum-1.md` §7): any
+future promotion attempt first needs a re-run with ≥1 week of real
+elapsed nightly dreaming between conditions and multiple trials (or
+pinned sampling). Not scheduled; it is the entry ticket for revisiting
+this decision, not a standing task.
 
 ### 7.5 Current implementation status
 
@@ -969,20 +973,18 @@ that edit is a human, in the next version bump, full stop.
 ### 8.6 Current status — seeded with a null result, not a fabricated rule
 
 The plan prompt asks to "seed learned-rules.md with any accepted insights
-from prompts 3.2–3.3." As of this prompt (3.6): Prompt 3.2 (the insights
-pass itself) has only ever been exercised against synthetic fixtures in
-this Cowork session (no live `/opt/local-se` corpus has been available to
-generate a real insight from — see the 2026-07-12 Prompt 3.4/3.5 CHANGELOG
-entries' own "no live ... available in this session" notes), and Prompt 3.3
-(ledger-mining from `tasks.db`) has not been implemented yet at all (still
-listed as not-done in both prior Thread 3 CHANGELOG entries). There is
-therefore no real, evidence-backed `prompt-rule` insight to seed —
-fabricating one to make this section look populated would violate the
-exact verbatim-evidence discipline this whole workstream exists to enforce.
-`prompts/learned-rules.md` is seeded with the header (§8.4) and one
+from prompts 3.2–3.3." At Thread 4 close, Prompt 3.3 was completed as the
+reviewed one-off analysis `kb/ledger-mining-proposals.md`. That analysis found
+the ledger lacks the structured failed→revised→succeeded history the prompt
+assumed, so it reconstructed a small set of cited candidates from free-text
+evidence and did not pretend a generic nightly summarizer could satisfy the
+requirement. There is still no accepted, evidence-backed `prompt-rule` insight
+to seed — fabricating one to make this section look populated would violate
+the exact verbatim-evidence discipline this workstream exists to enforce.
+`prompts/learned-rules.md` remains seeded with the header (§8.4) and one
 `## Pending` entry recording this as an explicit null result, per the
 project's PH3-2 discipline ("a pass that finds nothing emits ... so we can
 distinguish 'nothing there' from 'didn't look'" — plan Prompt 3.8, applied
-here one prompt early since §8.6 exists now). The first real entry in this
-file should come from an actual dream run once Prompt 3.3 ships and/or a
-live corpus is available.
+here one prompt early since §8.6 exists now). The first real entry should come
+from an accepted evidence-backed proposal, not from scheduled generic ledger
+summarization.
