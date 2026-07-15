@@ -1,7 +1,7 @@
 # LSE Valve Registry
 > Single source of truth for all MCP/tool valve configuration across LSE tools.
 > Update this file whenever a valve is added, removed, or its security posture changes.
-> Last updated: 2026-07-11 (Cowork) — added §4 TRAUM dreaming valves (Thread 2 close)
+> Last updated: 2026-07-15 (Cowork) — TRAUM Thread 4 close: added earn path + queue expiry valves
 > **Note:** OpenWebUI retired (2026-06-21). Valves are now env vars passed to goethe_mcp.py
 > via `GOETHE_<FIELD>` env vars or directly inside the tool's `Valves` class.
 > Override pattern: `GOETHE_ES_URL=http://... bash tools/start-goethe.sh`
@@ -94,7 +94,7 @@ No sensitive data. No action required.
 
 ### 4. TRAUM dreaming — `goethe_mcp.py` journaling + `tools/dream_runner.py` + `tools/dream_apply.py`
 
-TRAUM Thread 1/2 (`docs/traum-dreaming-plan.md`, `docs/dreaming/DESIGN.md`).
+TRAUM Threads 1-4 complete (`docs/traum-dreaming-plan.md`, `docs/dreaming/DESIGN.md`).
 No secrets — every valve here is a path, URL, or numeric threshold. All use
 the same `GOETHE_<FIELD>` env-var convention as the rest of the stack.
 
@@ -114,6 +114,12 @@ the same `GOETHE_<FIELD>` env-var convention as the rest of the stack.
 | `DREAM_ERROR_CLUSTER_THRESHOLD` | `0.80` | No | Env var OK | Cosine floor for grouping error/timeout occurrences into one cluster (error-cluster pass). |
 | `DREAM_DIGEST_PATH` | `/opt/local-se/dreams/latest-digest.md` | No | Env var OK | **`goethe.py`'s own valve** (v0.4.0-a, Prompt 3.5) — NOT read by `dream_runner.py`/`dream_apply.py`/`dream_digest.py` (those write the file; this only reads it back). Read once per session, on the first of EITHER `time_check()` or `search_kb`/`search_web` (Thread 3 close fix, 2026-07-12 — `time_check()` previously shared the once-per-session gate without ever reading this valve, silently dropping the `[DREAM]` line for any session that called `time_check()` first). Empty = `[DREAM]` banner disabled. Missing/unreadable/unparseable file = banner silently omitted, never an error. **Live-verified 2026-07-12** against LUCIFER's real gateway and a real digest (6 pending proposals) — confirmed banner text exactly matches the documented format. |
 | `DREAM_AUTO_APPLY` | `` (empty) | No | Env var OK | Comma-separated proposal `type`s allowed to skip `dream_apply.py`'s interactive confirm prompt. **Still empty as of TRAUM Thread 2's close (2026-07-11)** — see `docs/dreaming/DESIGN.md` §7 for the full eligibility table and the 2-consecutive-week zero-rejected-in-hindsight promotion bar (Thread 4's to earn, not set by hand). |
+
+**Thread 4 hardcoded values (not env-var gated — change in source if needed):**
+- `PROPOSAL_EXPIRY_DAYS = 14` (`dream_apply.py`) — proposals auto-expire after 14 days in `--queue` mode
+- `AUTO_APPLY_DB = /opt/local-se/dreams/auto-apply-eval.db` — SQLite eval DB for earn path tracking
+- Secret redaction: 3 patterns in `dream_runner.py` (`vault_*`, `get_vault_secret`, `set_vault_secret`) — hardcoded, not configurable
+
 | `PATH` (dream_apply) | alongside `dream_apply.py` | No | Env var OK | `GOETHE_PATH` — where `dream_apply.py` dynamically loads `goethe.py`'s `Tools` class from (same mechanism `goethe_mcp.py` uses). |
 | `REPO_ROOT` | current working directory | No | Env var OK | `GOETHE_REPO_ROOT` (Prompt 3.6) — repo root `dream_apply.py`'s `append_learned_rule()` resolves `prompts/learned-rules.md` against. Run `dream_apply.py` from the repo root (same assumption its own usage examples already make with relative `--proposals` paths) or set this explicitly. |
 

@@ -720,10 +720,60 @@ whole subcase or it doesn't.
 
 ### 7.4 Decision log
 
-*Empty as of this writing (Thread 2, Prompt 2.6) — populated by Thread 4,
-Prompt 4.8, once eval evidence exists. Until an entry is added here,
-`DREAM_AUTO_APPLY` stays `""` and every proposal type requires a human yes,
-with no exceptions.*
+**2026-07-12 — Prompt 4.8 (Thread 4, TRAUM-AUTO): `DREAM_AUTO_APPLY` stays
+`""`; cadence not yet decided; both deferred, not defaulted.**
+
+*Evidence reviewed:*
+- Thread 4's own prerequisites are not built: no
+  `lse/services/goethe-dream.service`/`.timer` (Prompt 4.1), no
+  `eval/traum-ab-design.md` (Prompt 4.5), no `eval/eval-report-traum-1.md`
+  (Prompt 4.6), no `docs/threat-model-kb.md` (Prompt 4.7) exist anywhere in
+  the repo (repo-wide search, 2026-07-12). CURRENT-STATE.md independently
+  records "Thread 4 (TRAUM-AUTO, timer + A/B eval) **NOT STARTED**" as of
+  Thread 3's close, same date.
+- Exactly one real, applied dream run exists: 2026-07-11 (13 sessions, 368
+  docs) — 3 `dedup` merges applied, all confirmed correct by
+  `docs/dreaming/calibration-run-1.md` (production `linear`-mode
+  recall@1/recall@3/MRR bit-for-bit unchanged across ~84% corpus growth,
+  `min_score=4.2` re-swept and still holding 0-correct-lost); 8 `demote`
+  proposals (7 stale-contradiction + 1 error-cluster) rejected at the gate,
+  all confirmed correctly rejected per `dream-run-2026-07-11.md`'s
+  per-item breakdown (non-sequitur pairings, category mismatches, a
+  self-contradictory proposal). Zero rejected-in-hindsight applies found —
+  but across **one day, one run**, not §7.3's required 2 consecutive
+  weeks.
+- The 2026-07-12 "full cycle" run (`dream-run-2026-07-12-full-cycle.md`)
+  produced zero proposals of any type — a sandbox-environment null result
+  (no live ES/Ollama/manifest.db reachable), not a second real data point.
+- No A/B eval per Prompt 4.5/4.6's pre-registered design has been run; the
+  only retrieval numbers that exist are Thread 2's own before/after
+  calibration (§7 above cites the same run), which is not that design.
+
+*Auto-apply decision:* **`DREAM_AUTO_APPLY` remains `""`.** Per §7.3 rule
+#3 ("not 'low,' not 'one outlier we can explain,' zero... across the full
+2-week window"), a single clean day cannot clear the bar for either
+auto-apply candidate (`dedup` exact-duplicate subcase, `reverify`) — there
+is no 2-week window to evaluate yet, let alone a zero-rejected-in-hindsight
+one. This is the steady state §7.3/Prompt 4.8 explicitly permit: "If
+evidence says keep everything human-gated — that is a fine steady state,
+write it down."
+
+*Cadence decision:* **Not decided — no cadence exists to tune.** Prompt
+4.8 asks to choose nightly vs 2-3×/week "from corpus growth rate vs
+proposal yield in the reports," which presupposes Prompt 4.1's timer
+infrastructure is running; it isn't. The two data points on hand (2026-
+07-11: 13 sessions / 368 docs / 4 total proposals; 2026-07-12: 0
+sessions / 0 proposals, sandbox-only) are too sparse, and too confounded
+by environment (one real run, one null-environment run), to fit a
+growth-rate-vs-yield curve. Cadence selection is deferred to whichever
+future Thread 4 session actually stands up Prompts 4.1–4.6 and can observe
+real nightly-vs-manual yield.
+
+*Reassessment trigger:* once Prompts 4.1 (timer), 4.5 (A/B design), and
+4.6 (A/B run) exist, and at least 2 consecutive weeks of real (non-
+sandbox) applied/rejected logs are available per type, re-run this
+decision against §7.3's actual bar rather than extending it from this
+entry.
 
 ### 7.5 Current implementation status
 

@@ -60,6 +60,7 @@ ENV (same GOETHE_ prefix convention as dream_runner.py/dream_apply.py)
 """
 
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -149,6 +150,21 @@ def load_jsonl(path: str) -> list[dict]:
             except json.JSONDecodeError:
                 continue
     return out
+
+
+def day_dir_files(base: str, stem: str, ext: str) -> list[str]:
+    """All of a day-dir's files for one output family, pass-scoped names
+    first, legacy shared name last: report-<pass>.md + report.md, or
+    proposals-<pass>.jsonl + proposals.jsonl. dream_runner.py writes
+    pass-scoped names as of Thread 4 (the shared names lost earlier passes'
+    output to per-pass overwrite — see write_report()'s docstring); day-dirs
+    from Threads 2–3 still carry the legacy shared file, so readers take
+    the union. Sorted for deterministic ordering."""
+    scoped = sorted(glob.glob(os.path.join(base, f"{stem}-*.{ext}")))
+    legacy = os.path.join(base, f"{stem}.{ext}")
+    if os.path.exists(legacy):
+        scoped.append(legacy)
+    return scoped
 
 
 def proposal_key(p: dict) -> str:
@@ -241,21 +257,20 @@ def gather_top_insights(cfg: DigestConfig, primary_date: str | None, n: int = 3)
     candidates = day_dirs[: max(1, cfg.lookback_days)]
 
     for d in candidates:
-        report_path = os.path.join(cfg.dream_dir, d, "report.md")
-        if not os.path.exists(report_path):
-            continue
-        try:
-            with open(report_path, "rt", encoding="utf-8") as f:
-                text = f.read()
-        except OSError:
-            continue
-        section = _extract_insights_section(text)
-        if section is None:
-            continue
-        insights = parse_insight_lines(section)
-        if insights:
-            insights.sort(key=lambda x: x["confidence"], reverse=True)
-            return insights[:n], d, None
+        day_insights: list[dict] = []
+        for report_path in day_dir_files(os.path.join(cfg.dream_dir, d), "report", "md"):
+            try:
+                with open(report_path, "rt", encoding="utf-8") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            section = _extract_insights_section(text)
+            if section is None:
+                continue
+            day_insights.extend(parse_insight_lines(section))
+        if day_insights:
+            day_insights.sort(key=lambda x: x["confidence"], reverse=True)
+            return day_insights[:n], d, None
 
     if not candidates:
         return [], None, "no dream cycles found yet"
@@ -278,7 +293,9 @@ def gather_pending(cfg: DigestConfig, primary_date: str | None) -> tuple[list[di
     pending: list[dict] = []
     for d in day_dirs:
         base = os.path.join(cfg.dream_dir, d)
-        proposals = load_jsonl(os.path.join(base, "proposals.jsonl"))
+        proposals = []
+        for path in day_dir_files(base, "proposals", "jsonl"):
+            proposals.extend(load_jsonl(path))
         if not proposals:
             continue
         applied = load_jsonl(os.path.join(base, "applied.jsonl"))
@@ -403,10 +420,21 @@ def render_digest(cfg: DigestConfig, today: str, primary_date: str | None,
             lines.append(f"   (from {insights_date}, most recent insights pass)")
     lines.append("")
 
+    # Count pending by type, with prompt-rule highlighted
+    from collections import Counter
+    type_counts = Counter(entry["proposal"].get("type", "?") for entry in pending)
+    prompt_rule_count = type_counts.get("prompt-rule", 0)
+
     lines.append(f"## Pending human-gate ({len(pending)})")
     if pending_note:
         lines.append(f"- {pending_note}")
     else:
+        # Show type breakdown
+        type_summary = ", ".join(f"{t}={c}" for t, c in type_counts.most_common())
+        lines.append(f"- Types: {type_summary}")
+        if prompt_rule_count:
+            lines.append(f"- ⚠ {prompt_rule_count} prompt-rule proposal(s) pending review")
+        lines.append("")
         for entry in pending[:6]:
             p = entry["proposal"]
             lines.append(

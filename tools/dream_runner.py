@@ -1005,7 +1005,7 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
 # --- proposal shape guard (structural only — NOT the hard-invariant validator) -
 
 REQUIRED_PROPOSAL_KEYS = {"type", "call", "args", "why"}
-KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact", "prompt-rule"}
+KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact", "prompt-rule", "quarantine-delete-request"}
 
 # Prompt 3.6: the ONLY file a prompt-rule proposal may ever target. Fixed
 # here as a constant (not read from a proposal's own args at generation
@@ -1063,6 +1063,11 @@ def validate_proposal_shape(p: dict) -> str | None:
             val = p.get("args", {}).get(key, "")
             if not isinstance(val, str) or not val.strip():
                 return f"prompt-rule proposal's args.{key} is missing or empty"
+    if p.get("type") == "quarantine-delete-request":
+        # Must have doc_id to know what to delete
+        if "doc_id" not in p.get("args", {}):
+            return "quarantine-delete-request proposal missing args.doc_id"
+
     provenance = p.get("args", {}).get("provenance")
     if provenance is not None and not re.fullmatch(r"dream-\d{4}-\d{2}-\d{2}", str(provenance)):
         # DESIGN.md §6.2: a Thread 2 dream always writes "dream-YYYY-MM-DD"
@@ -1946,6 +1951,53 @@ def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_d
 # its arguments — no file I/O, no network, no randomness, no LLM call — so
 # each is independently unit-testable against synthetic log lines/events.
 
+# --- agent-log secret redaction (Thread 4 prerequisite, 2026-07-12) --------
+# The Thread 3 close's live run surfaced a plaintext password inside a repeated
+# `sshpass -p` command in agent_commands.log. The log is written verbatim by
+# goethe.py's audit path (it has no redaction of its own), so the dreamer must
+# scrub at READ time, before anything reaches patterns.json, report files, or
+# an off-host LLM prompt. Rules 1 and 3 are goethe_mcp.py's episode-journaling
+# regexes (_BEARER_RE / _PATTERN_SECRET_RE) verbatim — same shapes, same
+# replacement-tag convention; rule 2 adds the credential-as-CLI-flag shape
+# (`sshpass -p`, `--password`, `curl -u user:pass`) that the assignment-style
+# rule 3 structurally cannot catch. (curl's bare `-u` is NOT matched: a
+# single-letter flag shared by `sort -u`/`python -u` would redact innocent
+# arguments and corrupt the frequency table; curl credentials still hit
+# rule 2 via --user or rule 3 via token-shaped values.)
+_REDACT_RULES = [
+    (re.compile(r"Bearer\s+[A-Za-z0-9\-_.]+"),
+     "[REDACTED:bearer-token]"),
+    (re.compile(r"(?i)((?:sshpass\s+(?:-p|--password)|--password|--user|--token|--api-key|--secret)"
+                r"[=\s]+)(\"[^\"]+\"|'[^']+'|\S+)"),
+     r"\1[REDACTED:cli-credential]"),
+    # SSHPASS env var form (sshpass -e reads from SSHPASS) — Thread 4 fix, 2026-07-15
+    (re.compile(r"(?i)(SSHPASS\s*=\s*)(\"[^\"]+\"|'[^']+'|\S+)"),
+     r"\1[REDACTED:cli-credential]"),
+    # curl POST data / URL query password fields — Thread 4 fix, 2026-07-15
+    (re.compile(r"(?i)((?:user)?password\s*=\s*)([^&\'\"]+)"),
+     r"\1[REDACTED:curl-credential]"),
+    # SMB username%password format (smbclient, mount -o user=...) — Thread 4 fix, 2026-07-15
+    (re.compile(r"(?i)(//\S+\s+-U\s+\S*%)(\S+)"),
+     r"\1[REDACTED:smb-credential]"),
+    (re.compile(r"(?i)([\w]*(?:key|token|secret|password)[\w]*)"
+                r"([\"']?\s*[:=]\s*[\"']?)[A-Za-z0-9\-_./+]{12,}"),
+     r"\1\2[REDACTED:pattern-match]"),
+]
+
+
+def redact_log_text(text: str) -> str:
+    """Scrub high-confidence secret shapes from one agent-log detail string.
+    Applied inside parse_agent_log_lines() so EVERY downstream consumer
+    (command_frequency, find_failure_retries, repeated-sequence mining,
+    patterns.json, the insights LLM prompt) only ever sees redacted text —
+    one choke point, not per-consumer discipline."""
+    if not text:
+        return text
+    for pattern, replacement in _REDACT_RULES:
+        text = pattern.sub(replacement, text)
+    return text
+
+
 _LOG_LINE_RE = re.compile(
     r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<tag>[A-Z][A-Z0-9]*): (?P<detail>.*)$"
 )
@@ -1980,7 +2032,7 @@ def parse_agent_log_lines(lines: list) -> list[dict]:
         if not m:
             continue
         tag = m.group("tag")
-        detail = m.group("detail")
+        detail = redact_log_text(m.group("detail"))
         cwd = None
         cwd_m = _CWD_SUFFIX_RE.search(detail)
         if cwd_m:
@@ -2891,6 +2943,149 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
 
     return all_proposals, "\n".join(narrative_lines), null_record
 
+# --- quarantine-delete-request pass (DESIGN.md §2 row 3(c)) ----------------
+
+def run_pass_quarantine_delete(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, error_docs) -> tuple:
+    """Find quarantined docs (stale=true AND quality_score<=0.2) and
+    generate quarantine-delete-request proposals for each one.
+    Deterministic — no LLM call, pure threshold check."""
+    if not kb_docs:
+        narrative = "quarantine-delete-request pass: lse-kb returned zero docs (empty index or ES unreachable this run) — nothing to check. Null result (PH3-2)."
+        return [], narrative, _null_record(
+            "quarantine-delete-request", "empty_kb", looked=False,
+            corpus_size={"kb_docs": 0, "quarantined_docs": 0},
+            thresholds={"max_quality": 0.2, "stale": True},
+        )
+
+    quarantined = []
+    for doc in kb_docs:
+        if doc.get("stale") and float(doc.get("quality_score", 1.0) or 1.0) <= 0.2:
+            quarantined.append(doc)
+
+    if not quarantined:
+        narrative = (
+            f"quarantine-delete-request pass: zero quarantined doc(s) "
+            f"(stale=true AND quality<=0.2) out of {len(kb_docs)} doc(s) "
+            f"examined. Null result (PH3-2) — nothing to delete."
+        )
+        return [], narrative, _null_record(
+            "quarantine-delete-request", "no_quarantined_docs", looked=True,
+            corpus_size={"kb_docs": len(kb_docs), "quarantined_docs": 0},
+            thresholds={"max_quality": 0.2, "stale": True},
+        )
+
+    proposals = []
+    for doc in quarantined:
+        proposals.append({
+            "type": "quarantine-delete-request",
+            "call": "es_delete",
+            "args": {"doc_id": doc["_id"]},
+            "why": (
+                f"quarantined doc (stale=true, quality={doc.get('quality_score', '?')}): "
+                f"{doc.get('title', '(no title)')[:80]}"
+            ),
+        })
+
+    narrative = (
+        f"quarantine-delete-request pass: {len(proposals)} quarantined doc(s) "
+        f"(stale=true AND quality<=0.2) out of {len(kb_docs)} doc(s) examined. "
+        f"Proposed for deletion."
+    )
+    return proposals, narrative, None
+
+# --- ledger-mining pass (tasks.db -> kb-fact proposals) ---------------------
+
+_LEDGER_MINE_SYSTEM_PROMPT = """You are the TRAUM dreamer's ledger-mining pass.
+
+You will be given completed task blocks from tasks.db (status=done). Each block
+has a goal, findings, and done_steps. Your job is to identify findings that
+are generalizable, reusable knowledge worth persisting in the lse-kb.
+
+A finding is worth mining when it:
+- Describes a fact, procedure, or configuration about this system
+- Is not already obvious from the task goal alone
+- Could be useful in future sessions (not one-off ephemeral state)
+
+A finding is NOT worth mining when it:
+- Is session-specific state ("file X was written at time Y")
+- Is a one-time action with no reusable knowledge
+- Is already well-known general knowledge
+
+For each worthy finding, produce a kb-fact proposal with:
+- title: concise, descriptive (max 80 chars)
+- content: the finding as a standalone KB entry (self-contained, no context needed)
+- topic: the knowledge domain (e.g. "pfsense", "docker", "ssh", "systemd")
+- quality_score: 0.5 (modest — unverified draft pending human review)
+- source_tier: "inferred" (mined from task ledger, not ground-truth verified)
+
+Return ONLY this JSON object — no prose, no thinking, no code fences:
+{"proposals": [
+  {"title": "...", "content": "...", "topic": "...",
+   "quality_score": 0.5, "source_tier": "inferred",
+   "why": "one line: why this finding is worth mining"}
+],
+ "skipped": [
+  {"task_id": "...", "why": "one line: why this task produced no mineable findings"}
+]}
+Zero proposals (everything in skipped) is a valid, expected outcome."""
+
+
+def run_pass_ledger_mining(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, error_docs) -> tuple:
+    """Mine tasks.db for completed tasks with reusable findings -> kb-fact proposals.
+    Uses the local model to judge which findings are worth persisting."""
+    task_blocks = read_task_blocks(cfg, limit=100)
+    done_tasks = [t for t in task_blocks if t["status"] == "done"]
+    if not done_tasks:
+        narrative = "ledger-mining pass: no completed tasks in tasks.db — nothing to mine. Null result (PH3-2)."
+        return [], narrative, _null_record(
+            "ledger-mining", "no_done_tasks", looked=False,
+            corpus_size={"total_tasks": len(task_blocks), "done_tasks": 0},
+            thresholds={},
+        )
+
+    # Prepare task summaries for the LLM
+    task_summaries = []
+    for t in done_tasks[:30]:
+        task_summaries.append({
+            "task_id": t["task_id"],
+            "goal": (t["goal"] or "")[:200],
+            "findings": (t["findings"] or "")[:500],
+            "done_steps": (t["done_steps"] or "")[:300],
+        })
+
+    user_content = "COMPLETED TASKS:\n" + json.dumps(task_summaries, indent=2)
+    env, err = request_dream_envelope(_LEDGER_MINE_SYSTEM_PROMPT, user_content, cfg)
+    if env is None:
+        narrative = f"ledger-mining pass: LLM unavailable ({err[:120]}) — cannot mine this run."
+        return [], narrative, _null_record(
+            "ledger-mining", "llm_unavailable", looked=False,
+            corpus_size={"total_tasks": len(task_blocks), "done_tasks": len(done_tasks)},
+            thresholds={},
+        )
+
+    proposals = []
+    raw_proposals = env.get("proposals", [])
+    for rp in raw_proposals:
+        proposals.append({
+            "type": "kb-fact",
+            "call": "index_to_kb",
+            "args": {
+                "title": rp.get("title", ""),
+                "content": rp.get("content", ""),
+                "topic": rp.get("topic", "general"),
+                "quality_score": rp.get("quality_score", 0.5),
+                "source_tier": rp.get("source_tier", "inferred"),
+                "provenance": f"dream-{date.today().isoformat()}",
+            },
+            "why": rp.get("why", ""),
+        })
+
+    narrative = (
+        f"ledger-mining pass: {len(proposals)} kb-fact proposal(s) from "
+        f"{len(done_tasks)} completed task(s) ({len(task_blocks)} total in tasks.db)."
+    )
+    return proposals, narrative, None
+
 
 PASS_FUNCS = {
     "dedup": run_pass_dedup,
@@ -2898,6 +3093,8 @@ PASS_FUNCS = {
     "error-cluster": run_pass_error_cluster,
     "patterns": run_pass_patterns,
     "insights": run_pass_insights,
+    "quarantine-delete-request": run_pass_quarantine_delete,
+    "ledger-mining": run_pass_ledger_mining,
 }
 
 # --- output: report.md + proposals.jsonl ------------------------------------
@@ -2911,17 +3108,23 @@ def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: s
     didn't-look verdict, the corpus size examined, and the thresholds
     applied. The record is ALSO appended (never overwritten) to
     <dream-dir>/<date>/null-results.jsonl, the same "at" convention
-    dream_apply.py already uses for applied.jsonl/rejected.jsonl: unlike
-    report.md and proposals.jsonl (both single-pass-per-invocation
-    snapshots — see this module's write_patterns_json/dream_digest.py's
-    gather_top_insights docstring for the documented per-pass-overwrite
-    limitation), a full dream cycle runs all five passes in sequence
-    against the SAME day-dir, and null-results.jsonl is the one place
-    every pass's null verdict for the day survives that sequence intact."""
+    dream_apply.py already uses for applied.jsonl/rejected.jsonl.
+
+    PASS-SCOPED FILENAMES (Thread 4 prerequisite, 2026-07-12): output is
+    report-<pass>.md / proposals-<pass>.jsonl, NOT the shared report.md /
+    proposals.jsonl of Threads 2–3. The Thread 3 close found the shared
+    names silently discarded earlier passes' REAL pending proposals when a
+    full cycle ran multiple passes against the same day-dir (recovered by
+    hand that close; Prompt 3.8's append-mode null-results.jsonl fixed it
+    for null verdicts only). Per-pass names make a later pass structurally
+    unable to clobber an earlier one, while re-running the SAME pass still
+    overwrites only its own snapshot (correct: latest run of a pass wins).
+    Readers glob: dream_digest.py and dream_apply --queue scan
+    proposals*.jsonl / report*.md, so legacy day-dirs stay readable."""
     today = date.today().isoformat()
     out_dir = os.path.join(cfg.dream_dir, today)
-    report_path = os.path.join(out_dir, "report.md")
-    proposals_path = os.path.join(out_dir, "proposals.jsonl")
+    report_path = os.path.join(out_dir, f"report-{cfg.pass_name}.md")
+    proposals_path = os.path.join(out_dir, f"proposals-{cfg.pass_name}.jsonl")
     null_results_path = os.path.join(out_dir, "null-results.jsonl")
 
     lines = [
@@ -2969,6 +3172,11 @@ def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: s
     with open(proposals_path, "wt", encoding="utf-8") as f:
         for p in proposals:
             f.write(json.dumps(p) + "\n")
+    # Write session IDs for dreamed_at stamping (Prompt 2.7)
+    sessions_path = os.path.join(out_dir, f"sessions-{cfg.pass_name}.jsonl")
+    with open(sessions_path, "wt", encoding="utf-8") as f:
+        for s in sessions:
+            f.write(json.dumps({"session_id": s["session_id"]}) + "\n")
     if null_record is not None:
         record = {**null_record, "date": today,
                   "generated_at": datetime.now().astimezone().isoformat()}
@@ -3168,7 +3376,7 @@ def main(argv=None) -> None:
     kb_docs: list = []
     error_docs: list = []
     try:
-        if cfg.pass_name in ("dedup", "stale-contradiction"):
+        if cfg.pass_name in ("dedup", "stale-contradiction", "quarantine-delete-request"):
             kb_docs = search_index(cfg, "lse-kb", {"query": {"match_all": {}}, "size": 500,
                                                     "_source": KB_SOURCE_FIELDS})
         if cfg.pass_name == "error-cluster":

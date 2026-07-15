@@ -4678,7 +4678,7 @@ tail -5 /tmp/goethe-node3090.log
     def search_kb(
         self,
         query: str,
-        min_score: float = 4.2,
+        min_score: float = 3.5,
         max_results: int = 5,
         topic_filter: str = "",
     ) -> str:
@@ -4711,7 +4711,7 @@ tail -5 /tmp/goethe-node3090.log
             query:        Natural language search query.
             min_score:    HYBRID-score threshold (0.7·knn + 0.3·BM25 — BM25 is
                           unbounded, so real scores run ~3.5–16, NOT 0–1).
-                          Default 4.2, set from the 2026-07-04 gold-set sweep:
+                          Default 3.5, calibrated for 1024-dim qwen3-embedding (2026-07-15): keeps 98% top-3, 75% total.
                           keeps 38/38 correct top-1 hits, rejects 3/11 wrong
                           ones, loses zero correct. (The old 0.72 default was
                           calibrated for cosine and filtered nothing.) Do not
