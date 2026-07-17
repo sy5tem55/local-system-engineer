@@ -1666,6 +1666,16 @@ class Tools:
             log_path = self.valves.LOG_FILE
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                try:
+                    from redact import redact_sensitive_text  # tools/redact.py — P0 write-time redaction (2026-07-17)
+                except ImportError:
+                    import os as _os, sys as _sys
+                    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+                    from redact import redact_sensitive_text
+                entry = redact_sensitive_text(entry)
+            except Exception:
+                pass  # redaction must never break the audit log; raw fallback = pre-P0 behavior
             with open(log_path, "a") as f:
                 f.write(f"[{ts}] {entry}\n")
         except Exception:
