@@ -2407,6 +2407,11 @@ def redact_log_text(text: str) -> str:
         return text
     for pattern, replacement in _REDACT_RULES:
         text = pattern.sub(replacement, text)
+    try:
+        from redact import redact_sensitive_text  # shared module supersedes the 3-rule local set (P1, 2026-07-17)
+        text = redact_sensitive_text(text)
+    except Exception:
+        pass
     return text
 
 
