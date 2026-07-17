@@ -250,6 +250,12 @@ def mask_secret(
 
 
 def _mask_token(token: str) -> str:
+    # LSE ADAPTATION (2026-07-17): idempotency — never re-mask text that an
+    # upstream rule already redacted (e.g. dream_runner's local rules emit
+    # [REDACTED:pattern-match] BEFORE this module's sweep runs; masking the
+    # marker itself breaks contract tests and destroys forensic markers).
+    if token.startswith("[REDACTED"):
+        return token
     """Mask a log token — conservative 18-char floor, preserves 6 prefix / 4 suffix."""
     # Empty input: historically this returned "***" rather than "". Preserve.
     if not token:
