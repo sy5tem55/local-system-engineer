@@ -442,6 +442,11 @@ def _redact_text(text: str, secret_values: set) -> str:
             text = text.replace(val, "[REDACTED:valve-secret]")
     text = _BEARER_RE.sub("[REDACTED:bearer-token]", text)
     text = _PATTERN_SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED:pattern-match]", text)
+    try:
+        from redact import redact_sensitive_text  # shared sweep: 37 vendor prefixes, JWTs, URL query params (2026-07-17)
+        text = redact_sensitive_text(text)
+    except Exception:
+        pass  # DESIGN.md: journaling failures must never break the tool call
     return text
 
 
