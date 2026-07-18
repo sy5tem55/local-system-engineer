@@ -207,8 +207,15 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       original condition is now breached, not approaching: **schedule PH5-2
       before the next feature workstream that touches goethe.py**, and treat
       any further goethe.py growth as blocked on it.
-- [~] **PH5-3** — REFACTOR-4 threat-model doc (`docs/threat-model-kb.md`) — includes the P0-2
+- [x] **PH5-3** — REFACTOR-4 threat-model doc (`docs/threat-model-kb.md`) — includes the P0-2
       gateway exposure as its first worked example, plus KB poisoning origin-tags.
+      **✅ COMPLETED (2026-07-18, Cowork, Goethe v0.4.2):** §5 written — P0-2 worked example
+      (binding/CORS/token status verified live; rotation = the deferred residual) + §5.3
+      still-open surfaces. Origin-tags IMPLEMENTED, not just documented: `index_to_kb origin=`
+      ∈ {web, human, local-probe} stored on docs, `TrustPolicy.apply_origin` enforces
+      web-never-mints-ground_truth (auto-downgrade to primary + warning). 4 new contract
+      tests (TestOriginTags), suite 424 green. §2's stale "no origin=web tagging" claim
+      annotated with an UPDATE pointer to §5.2.
       **PARTIAL (2026-07-12, TRAUM Prompt 4.7):** the file now exists with the
       DREAMING chapter fully worked (Shostack ×4, mitigations mapped to named
       contract tests). Still open: the P0-2 gateway worked example, and the

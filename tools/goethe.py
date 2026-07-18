@@ -1,5 +1,5 @@
 """
-title: LSE Goethe v0.4.1
+title: LSE Goethe v0.4.2
 author: local-system-engineer
 version: 0.4.0-a
 requirements: elasticsearch==8.19.3, requests
@@ -15,7 +15,9 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
-    Goethe v0.4.1 (2026-07-18): PH5-1/PH5-2 refactor — TrustPolicy + KB surface
+    Goethe v0.4.2 (2026-07-18): PH5-3 origin tags — index_to_kb origin= param,
+    TrustPolicy.apply_origin asymmetric trust rule (web never mints ground_truth).
+    Previous — v0.4.1 (2026-07-18): PH5-1/PH5-2 refactor — TrustPolicy + KB surface
     extracted to goethe_kb.py (KBMixin); tool list unchanged; contract tests 420 green.
     Previous — v0.4.0-a: TRAUM Thread 3 (TRAUM-INSIGHT), Prompt 3.5 — [DREAM]
               banner. Wired tools/dream_digest.py's latest-digest.md into
