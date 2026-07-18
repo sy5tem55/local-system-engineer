@@ -78,3 +78,59 @@ Verify they appear after restarting the stack:
 ```bash
 curl -s http://localhost:8080/metrics | grep kv_cache
 ```
+
+---
+
+## Wrong Version Number In llama-ui Corner (e.g. "build = 20" instead of "b10011")
+
+**Symptom:** `--version` / the llama-ui bottom-right corner shows a small integer
+(seen: 20, 64) that looks nothing like the real GitHub release tags (b10xxx).
+Commit hash and compiler string ARE correct — only the build NUMBER is wrong.
+Easy to mistake for a broken compile or a llama.cpp bug; it is neither.
+
+**Root cause:** `cmake/build-info.cmake` derives `LLAMA_BUILD_NUMBER` from
+`git rev-list --count HEAD` (see also `scripts/build-info.sh`). If the repo is a
+**shallow clone** (`.git/shallow` exists — created by `git clone --depth=N` or an
+old shallow fetch), `rev-list --count` can only see the commits present locally
+and returns that small count, not the true total.
+
+**Diagnosis (read-only, confirms before touching anything):**
+```bash
+cd /home/sy5/llama.cpp
+ls -la .git/shallow 2>&1         # exists = confirmed shallow
+git rev-list --count HEAD        # the wrong small number, matches the corner
+git describe --tags              # the REAL identity, e.g. "b10005-6-gbf2c86ddc"
+cat build/common/build-info.cpp  # LLAMA_BUILD_NUMBER hardcoded at last configure
+```
+If `git describe --tags` shows a real bNNNNN-like tag while `rev-list --count`
+is small (or `.git/shallow` exists), this is the shallow-clone bug — not a
+compiler or flag problem. Do not change `-DCMAKE_*` flags to chase this; they
+are unrelated.
+
+**Fix:**
+```bash
+cd /home/sy5/llama.cpp
+git fetch --unshallow             # deepens to full history (network-only, ~seconds)
+# fallback if --unshallow errors on an already-shallow clone:
+#   git fetch --depth=1000000 origin
+```
+This step alone does NOT touch the running binary or process — safe to run
+with llama-server live. Verify: `.git/shallow` should now be gone and
+`git rev-list --count HEAD` should match `git describe --tags`'s number.
+
+Then, per the LIVE SERVICE RULE (pgrep-before-rebuild): **stop llama-server**,
+rebuild (`cmake --build build --target llama-server -j$(nproc)`, same flags as
+the Verified Rebuild Command above — flags are NOT the cause and need no
+change), **restart**. The corner will show the correct build number only after
+this rebuild regenerates `build/common/build-info.cpp`.
+
+**Verified 2026-07-18 on LUCIFER:** before fix, `.git/shallow` present (3 lines),
+`rev-list --count` = 20, `describe --tags` = `b10005-6-gbf2c86ddc`. After
+`git fetch --unshallow` (2.7s): `.git/shallow` gone, `rev-list --count` = 10011,
+matches `describe --tags` = `b10011` exactly (repo was sitting exactly on a
+tagged release, hence no `-N-gHASH` suffix). Binary rebuild deferred — apply
+via LIVE SERVICE RULE when ready to cycle the model.
+
+**Prevention:** never `git clone --depth=N` this repo. If a shallow clone is
+ever created (accidentally, or by a tool/script), run `git fetch --unshallow`
+immediately as part of setup, before the first build.
