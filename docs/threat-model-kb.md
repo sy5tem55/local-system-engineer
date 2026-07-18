@@ -100,7 +100,11 @@ rule exists to prevent ("web-origin can never carry `source_tier=ground_truth`
 without local-probe corroboration") — except that rule is written for docs
 tagged `origin=web`, and **nothing in the live write path tags anything
 `origin=web` today** (confirmed: `grep -n "origin" tools/goethe.py` inside
-`index_to_kb` returns nothing). The only origin tag that actually exists in
+`index_to_kb` returns nothing).
+> **UPDATE 2026-07-18 (PH5-3):** no longer true — `index_to_kb` (now in
+> `goethe_kb.py`) takes `origin=` and `TrustPolicy.apply_origin` enforces the
+> asymmetric trust rule in code. See §5.2. The paragraph below stands as the
+> historical record of the 4.7-era state. The only origin tag that actually exists in
 the running system is `origin=dream`. So the honest current mitigation
 isn't "dream can't launder web into higher trust because we can tell them
 apart" — it's the blunter "dream-origin docs can never claim
@@ -317,12 +321,77 @@ script found. This was written as an intended mitigation in the design
 doc and never actually built. Recorded here as an open item, not silently
 dropped.
 
-## 5. General KB threat model (REFACTOR-4 / PH5-3) — not written here
+## 5. General KB threat model (REFACTOR-4 / PH5-3) — completed 2026-07-18
 
-Out of scope for Prompt 4.7. The original REFACTOR-4 ROADMAP item covers a
-broader surface this file does not address: `fetch_url→index_to_kb`
-poisoning outside the dreaming path, tier self-grant, NTP spoof,
-test-runner exec, the P0-2 MCP gateway exposure (LAN-wide RCE surface with
-a token that was at one point git-committed), and ES running unauthenticated
-on the LAN. Whoever picks up PH5-3 in full should treat §1–§4 above as the
-dreaming-specific chapter of that larger doc, not redo them.
+§1–§4 above are the dreaming-specific chapter. This section covers the
+broader REFACTOR-4 surface. Shostack's four questions, same discipline.
+
+### 5.1 Worked example: the P0-2 MCP gateway exposure
+
+**What we built.** `goethe_mcp.py` re-exposes every public `Tools` method —
+including `execute_command`, `ssh_run`, `write_file` — over HTTP (:9700).
+Whoever can POST to that port with the token IS the LSE, with all its gates
+but none of its judgment. This is the single highest-value target in the
+stack: not KB poisoning, direct actuation.
+
+**What can go wrong.**
+- *Token compromise:* `GOETHE_MCP_TOKEN` was at one point committed to git
+  history — treat as public. Anyone on the LAN (or with a copy of the repo
+  before the purge) holding it gets RCE-with-safety-rails on LUCIFER.
+- *Binding drift:* an `0.0.0.0` bind or a `CORS '*'` regression turns "LAN
+  attacker" into "any browser tab on any LAN host" (drive-by POST via JS).
+- *Schema abuse:* the gateway faithfully forwards args; every gate lives
+  INSIDE the tool methods. A gateway bug that bypasses method bodies
+  (e.g. a debug endpoint) would bypass every gate at once.
+
+**What we do about it** (status verified live 2026-07-18):
+- Launcher v2.1.3 binds **127.0.0.1:9700** (confirmed via `ss -tlnp`) — the
+  LAN surface is gone; llama-ui reaches it same-host.
+- CORS scoped to `http://127.0.0.1:8080` (launch arg, not `'*'`).
+- Token sourced from `~/.lse/secrets` (not in repo); `_TokenGuard` rejects
+  tokenless requests — verified today: bare `curl /mcp` → `401
+  {"error":"unauthorized"}`.
+- **Residual (P0-2, deferred to end-of-roadmap rotation batch by operator
+  decision 2026-07-18):** the git-history token itself has not been rotated.
+  Until rotation, defense rests entirely on the 127.0.0.1 binding.
+- Same audit still owed to `start-goethe-node3090.sh` at rotation time.
+
+**Did it work.** Binding + 401 verified live; rotation checklist tracked in
+`kb/secrets-propagation-report.md` (Goethe MCP tokens are item 7).
+
+### 5.2 Origin tags — IMPLEMENTED (PH5-3, 2026-07-18)
+
+The gap §2 called out ("nothing in the live write path tags anything
+`origin=web` today") is closed. `index_to_kb` (now in `goethe_kb.py`)
+takes `origin=` ∈ {web, human, local-probe}; anything else stores
+`"unspecified"`; `origin=dream` remains reserved for the dream apply path's
+unconditional stamp. **Asymmetric trust rule enforced in code
+(`TrustPolicy.apply_origin`):** `origin=web` can never carry
+`source_tier=ground_truth` — auto-downgraded to `primary`, ceiling 0.8,
+with an `ORIGIN DOWNGRADE` warning in the return value. Ground truth is
+reserved for `local-probe` (live command output) and `human`.
+
+Laundering defense is now layered: the blunt "dream never mints
+ground_truth" ceiling (§2) PLUS provenance that survives the hop — a dream
+proposal whose underlying evidence was a fetched page distills from a doc
+whose `origin=web` is now actually recorded.
+
+Mitigation → contract test map (extends §4):
+
+| Mitigation | Test |
+|---|---|
+| origin stored on new docs | `tests/test_kb_contracts.py::TestOriginTags::test_origin_stored` |
+| unknown/missing origin → "unspecified" | `::test_missing_or_invalid_origin_unspecified` |
+| web can never mint ground_truth | `::test_web_origin_never_ground_truth` |
+| local-probe ground_truth untouched | `::test_local_probe_ground_truth_untouched` |
+
+### 5.3 Still-open surfaces (tracked, not mitigated here)
+
+- *ES unauthenticated on localhost:9200:* anyone with shell on the node can
+  rewrite trust fields directly, bypassing every TrustPolicy gate. Accepted
+  for now (single-operator machine); revisit if the node ever multi-tenants.
+- *NTP spoof vs CHRONOS:* `time_check` cross-checks TLS date headers
+  (report-only) — spoofing both NTP and TLS simultaneously is out of scope.
+- *Tier self-grant:* capped by evidence gates (≥40-char tool output for
+  ground_truth) + origin rule above; residual risk is fabricated evidence
+  strings, mitigated by `kb_verify` regression probes.
