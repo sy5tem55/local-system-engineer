@@ -1083,3 +1083,29 @@ not by reading the code and predicting it could.
 - Open WebUI (:3000) is DECOMMISSIONED — replaced by llama-ui served by llama-server itself; health checks must stop expecting :3000
 - Playwright now runs as ws://127.0.0.1:3001 (websocket — plain HTTP curl to :3001 is not a valid health probe)
 - lse-stack-health-check skill's stack map is stale on both rows above
+
+## Session 2026-07-18 — Roadmap close-out: PH5 refactor, DATA, Run 8 staging
+
+### What worked
+- PH5-2 extraction pattern: move methods verbatim into `KBMixin` in a new module, `class Tools(KBMixin)` — goethe_mcp discovers tools via `dir(inst)`, so inheritance keeps the MCP tool list byte-identical (verified: `--list` diff empty, 38/38)
+- Release-gate pair for any goethe.py surgery: tool-list diff (HEAD copy vs working tree via `--list`) + `pytest tests/` — the contract suite caught the one real extraction bug immediately
+- Usage-data verdicts from the episode journal: mine /opt/local-se/episodes/*/*.jsonl by `.tool` field — 0 search_rfc calls in 6,967 → retired via SKIP_TOOLS (reversible one-liner)
+
+### What failed and why
+- **Attempted:** git commit from the Cowork sandbox on the Windows-mounted repo
+  **Failed because:** sandbox git can create but not unlink its own `.git/index.lock` ("Operation not permitted" on the mount) — every git write op fails at lock cleanup
+  **Fix:** run git via WSL instead: `cd /home/sy5/projects/local-system-engineer && rm -f .git/index.lock && git ...` — same working tree as C:\Users\SY5\Claude\Projects\local-system-engineer
+- **Attempted:** goethe.py → goethe_kb.py method extraction after scanning the block for module-level assignments only
+  **Failed because:** the block used goethe.py's module-level imports (datetime, json, os, Optional) — 55 contract tests failed with "name 'datetime' is not defined"
+  **Fix:** when extracting, scan for imported names too; goethe_kb.py needs its own import json/os, from datetime import datetime, from typing import Optional
+- **Attempted:** curl sear_primary :8088 on node3090 (neural-search verification)
+  **Failed because:** container was down after host reboot — `restart: always` does NOT restart a container that was manually stopped before the reboot
+  **Fix:** docker compose -f /home/sy5/searxng-deployment/docker-compose.yml up -d
+
+### Key facts
+- Cowork's goethe stdio MCP instance keeps pre-restart code in memory for the whole session — restarting the :9700 HTTP gateway does NOT refresh it (run_tests(all) lacked the new "data" scope until respawn)
+- goethe_mcp tool discovery = sorted(dir(inst)) minus underscore/SKIP_TOOLS — inherited methods count; SKIP_TOOLS is the reversible retirement mechanism
+- llama-server build identities (live 2026-07-18): LUCIFER v20 bf2c86ddc at /home/sy5/llama.cpp/build/bin/, node3090 v64 e8f19cc0a at /opt/llama.cpp/bin/
+- Gold-set lint caught 2 ghost rows on first run (q43/q44 expected a kb doc that never existed) — provenance-required linting pays for itself immediately
+- The same hardcoded GOETHE_MCP_TOKEN appeared in BOTH node prompts (v0.6.0 + node3090-v0.2.1) AND git history — rotate Goethe MCP tokens early in the rotation batch, not as item 7
+- Run 8 prerequisites: --reasoning-budget -1 (currently 8192), v0.6.1 prompt pasted, fresh threads, do NOT restart gateway mid-run (tool count now 37)
