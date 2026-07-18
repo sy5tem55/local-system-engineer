@@ -63,7 +63,7 @@ import sys
 import time
 import typing
 
-__version__ = "1.11.1"
+__version__ = "1.11.2"
 # 1.11.1 — fix a real redaction gap Prompt 1.8's contract tests caught: the
 #           RESULT of a _SENSITIVE_TOOLS call (get_vault_secret, etc.) was only
 #           run through the generic value/pattern redaction in _redact_text,
@@ -140,7 +140,10 @@ INJECTED = {
 }
 
 # Methods that require a chat-frontend DB — not functional via MCP, excluded from tool exposure.
-SKIP_TOOLS = {"compact_context"}
+# search_rfc: RETIRED PH4-3 (2026-07-18) — 0 calls across 6,967 journaled tool
+# calls (full episode corpus). lse-rfc-kb ES index (1490 chunks) kept dormant;
+# to revive, remove from this set. Candidate future home: lse-web-idx ingest.
+SKIP_TOOLS = {"compact_context", "search_rfc"}
 
 
 def _goethe_version(path: str) -> str:
