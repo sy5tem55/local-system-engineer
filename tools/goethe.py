@@ -1,5 +1,5 @@
 """
-title: LSE Goethe v0.4.2
+title: LSE Goethe v0.4.3
 author: local-system-engineer
 version: 0.4.0-a
 requirements: elasticsearch==8.19.3, requests
@@ -15,7 +15,11 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
-    Goethe v0.4.2 (2026-07-18): PH5-3 origin tags — index_to_kb origin= param,
+    Goethe v0.4.3 (2026-07-18): PH3-4 docstring optimizer pass (SCRIBE-5) —
+    time_check delegation-edge GOOD/BAD, run_tests scope-misuse GOOD/BAD,
+    assert_state explicit GATE. Audit: 0 FAIL, 3 WARN fixed, planner/kb_verify/
+    mentor_demote already exemplary.
+    Previous — v0.4.2 (2026-07-18): PH5-3 origin tags — index_to_kb origin= param,
     TrustPolicy.apply_origin asymmetric trust rule (web never mints ground_truth).
     Previous — v0.4.1 (2026-07-18): PH5-1/PH5-2 refactor — TrustPolicy + KB surface
     extracted to goethe_kb.py (KBMixin); tool list unchanged; contract tests 420 green.
@@ -3608,6 +3612,10 @@ tail -5 /tmp/goethe-node3090.log
           Surface the discrepancy; the human decides. Only produce a delegation
           block if the user explicitly asks to fix the clock. Executing or
           auto-delegating a clock change unasked is a protocol violation.
+          GOOD: offset 4.2s found -> report it + show the suggested command.
+                User replies "yes fix it" -> NOW raise the delegation block.
+          BAD:  offset found -> immediately emit sudo_delegation_block
+                <- unasked delegation. The report IS the deliverable.
 
         GATE: call at most once per session unless the user asks again — results
         do not change mid-session.
@@ -3730,6 +3738,12 @@ tail -5 /tmp/goethe-node3090.log
 
         GATE: at most once per scope per session unless code changed in
         between. Do NOT run to "double-check" a scope that just passed.
+          GOOD: run_tests("harness") after editing goethe_kb.py
+                <- code changed, scope targeted, output is the evidence
+          BAD:  run_tests("rules") because 'all' felt incomplete
+                <- GPU-minutes LLM eval; only when the user names it
+          BAD:  run_tests("kb") twice in one session with no code change
+                <- the first green result was already the evidence
 
         Args:
             scope: one of kb | retrieval | rules | harness | all.
@@ -3864,6 +3878,11 @@ tail -5 /tmp/goethe-node3090.log
               ← mutating verb. REJECTED — this tool proves, it never fixes.
         BAD:  assert_state("df -h | grep sda", "9[0-9]%")
               ← pipe. REJECTED — put the filter in the regex instead.
+
+        GATE: call whenever you are about to CLAIM a state ("service is up",
+        "file exists", "port is free") in a finding, evidence= field, or
+        response — one assert per claim. Do NOT call for states you are not
+        about to assert, and never as a substitute for reading file content.
 
         AFTER THE RESULT:
           PASS ✅ → paste the returned block as evidence where needed.

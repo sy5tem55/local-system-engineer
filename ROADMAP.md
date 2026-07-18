@@ -158,8 +158,13 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       frontmatter via MCP). Then **full eval re-run** — Run 7's 63/63 was scored on
       OWUI + openwebui-tool v1.5.18 and does not certify the current stack. New baseline =
       Run 8 on Goethe v0.3.x + llama-ui, with `tools/system-prompt` canonical version from P0-5.
-- [ ] **PH3-4** — Run `lse-docstring-optimizer` on every new tool docstring from Phases 1–3
+- [x] **PH3-4** — Run `lse-docstring-optimizer` on every new tool docstring from Phases 1–3
       (kb_verify, time_check, run_tests, assert_state, mentor_demote, planner) — SCRIBE-5.
+      **✅ DONE (2026-07-18, Cowork, Goethe v0.4.3):** full 8-dimension audit on all six.
+      Result: 0 FAIL; planner/kb_verify/mentor_demote exemplary (no changes); 3 WARNs fixed —
+      time_check delegation-edge GOOD/BAD pair, run_tests scope-misuse GOOD/BAD (rules =
+      GPU-minutes, double-check reruns), assert_state explicit GATE line (one assert per
+      claimed state). Docstring-only release; tests unaffected (424 green); gateway restarted.
 
 ### Phase 4 — Data quality + the self-writing loop (Workstreams D+E)
 
