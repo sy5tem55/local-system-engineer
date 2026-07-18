@@ -147,8 +147,26 @@ def index_file(filepath: Path, es: Elasticsearch, reindex: bool = False) -> int:
         _id = doc_id(filepath, i)
 
         # Skip if already indexed and not reindexing
-        if not reindex and es.exists(index=ES_INDEX, id=_id):
+        exists = es.exists(index=ES_INDEX, id=_id)
+        if not reindex and exists:
             continue
+
+        # DATA-4 (2026-07-18): a reseed must NOT reset earned trust. Snapshot
+        # trust metadata from the existing doc and re-apply it below — quality,
+        # outcome stats, staleness, volatility, tier, origin all survive.
+        trust = {}
+        if reindex and exists:
+            try:
+                _src = es.get(index=ES_INDEX, id=_id)["_source"]
+                for fld in ("quality_score", "refinement_count", "success_count",
+                            "failure_count", "failure_streak", "stale",
+                            "demote_reason", "volatility", "source_tier",
+                            "evidence", "verified_against", "origin",
+                            "created_at", "version"):
+                    if fld in _src and _src[fld] is not None:
+                        trust[fld] = _src[fld]
+            except Exception as e:
+                print(f"  ⚠️  trust snapshot failed for {_id}: {e} — seeding fresh")
 
         try:
             embedding = get_embedding(chunk)
@@ -172,6 +190,9 @@ def index_file(filepath: Path, es: Elasticsearch, reindex: bool = False) -> int:
             "version":          1
         }
 
+        doc.update(trust)  # DATA-4: earned trust wins over seed defaults
+        if trust.get("version"):
+            doc["version"] = trust["version"] + 1
         es.index(index=ES_INDEX, id=_id, document=doc)
         indexed += 1
 

@@ -1,5 +1,5 @@
 """
-title: LSE Goethe v0.4.3
+title: LSE Goethe v0.4.4
 author: local-system-engineer
 version: 0.4.0-a
 requirements: elasticsearch==8.19.3, requests
@@ -15,7 +15,9 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
-    Goethe v0.4.3 (2026-07-18): PH3-4 docstring optimizer pass (SCRIBE-5) —
+    Goethe v0.4.4 (2026-07-18): PH4-1 DATA — run_tests "data" scope
+    (dataset_lint in scope=all).
+    Previous — v0.4.3 (2026-07-18): PH3-4 docstring optimizer pass (SCRIBE-5) —
     time_check delegation-edge GOOD/BAD, run_tests scope-misuse GOOD/BAD,
     assert_state explicit GATE. Audit: 0 FAIL, 3 WARN fixed, planner/kb_verify/
     mentor_demote already exemplary.
@@ -3727,8 +3729,10 @@ tail -5 /tmp/goethe-node3090.log
                       run while the user is mid-conversation with the model.
           harness   — pytest tests/ (contract suites) AND pytest scripts/
                       (legacy harness; failures there are FINDINGS, report them)
-          all       — kb + retrieval + pytest tests/ (rules and scripts/ run
-                      only when explicitly named; 'all' takes ~1-2 minutes)
+          data      — scripts/dataset_lint.py: gold-set schema/provenance/
+                      dup/expected-file lint (DATA-2, read-only, <5s)
+          all       — kb + retrieval + pytest tests/ + data (rules and
+                      scripts/ run only when explicitly named; ~1-2 minutes)
 
         EVIDENCE RULE — mandatory:
           The verbatim output below each section IS the evidence. Paste the
@@ -3752,7 +3756,7 @@ tail -5 /tmp/goethe-node3090.log
         import sys as _sys  # noqa: PLC0415
 
         self._log(f"RUN-TESTS: scope={scope}")
-        scopes = ("kb", "retrieval", "rules", "harness", "all")
+        scopes = ("kb", "retrieval", "rules", "harness", "data", "all")
         if scope not in scopes:
             return f"run_tests: unknown scope '{scope}'. Valid: {', '.join(scopes)}."
         repo = self.valves.REPO_DIR.rstrip("/")
@@ -3801,7 +3805,7 @@ tail -5 /tmp/goethe-node3090.log
             except Exception as exc:
                 return "FAIL", f"  {exc}"
 
-        want = (scope,) if scope != "all" else ("kb", "retrieval", "harness")
+        want = (scope,) if scope != "all" else ("kb", "retrieval", "harness", "data")
         for sc in want:
             if sc == "kb":
                 st, body = _kb_scope()
@@ -3810,6 +3814,11 @@ tail -5 /tmp/goethe-node3090.log
                 st, body = _cmd_scope(
                     sc, "rag/eval_retrieval.py",
                     [py, "rag/eval_retrieval.py", "--self-test"], 90)
+                sections.append((sc, st, body))
+            elif sc == "data":
+                st, body = _cmd_scope(
+                    sc, "scripts/dataset_lint.py",
+                    [py, "scripts/dataset_lint.py"], 60)
                 sections.append((sc, st, body))
             elif sc == "rules":
                 st, body = _cmd_scope(
