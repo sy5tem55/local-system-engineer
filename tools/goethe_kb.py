@@ -44,6 +44,31 @@ class TrustPolicy:
         tier = source_tier if source_tier in cls.TIER_CEILING else default
         return tier, cls.TIER_CEILING[tier]
 
+    # REFACTOR-4 origin tags (PH5-3, 2026-07-18). "dream" is stamped by the
+    # dream apply path, never claimed via index_to_kb.
+    ORIGINS = ("web", "human", "local-probe", "dream")
+
+    @classmethod
+    def apply_origin(cls, origin: str, tier: str, ceiling: float) -> tuple:
+        """Normalize an origin tag and enforce the ASYMMETRIC TRUST RULE:
+        web-origin content can never carry source_tier=ground_truth — a fetched
+        page is at best a primary source; ground truth is reserved for output
+        of commands/probes run against the live system (origin=local-probe) or
+        operator statements (origin=human). Returns (origin, tier, ceiling, warn).
+        """
+        origin = origin if origin in cls.ORIGINS else "unspecified"
+        warn = ""
+        if origin == "web" and tier == "ground_truth":
+            tier = "primary"
+            ceiling = min(ceiling, cls.TIER_CEILING["primary"])
+            warn = (
+                " | ORIGIN DOWNGRADE: origin=web cannot carry "
+                "source_tier=ground_truth (asymmetric trust rule) — stored as "
+                "primary, ceiling 0.8. Ground truth requires origin=local-probe "
+                "(live command output) or origin=human."
+            )
+        return origin, tier, ceiling, warn
+
 
 class KBMixin:
     """KB/skill tool methods mixed into goethe.Tools. Uses self.valves,
@@ -309,9 +334,20 @@ class KBMixin:
         evidence: str = "",
         verified_against: str = "",
         volatility: str = "slow",
+        origin: str = "",
     ) -> str:
         """
         Index a document into the LSE knowledge base (lse-kb index).
+
+        ORIGIN TAG (REFACTOR-4, mandatory for new docs):
+          origin= declares WHERE the content came from:
+            "web"         — fetched page / search result
+            "human"       — operator told you
+            "local-probe" — output of a command run against the live system
+          Anything else is stored as "unspecified". ASYMMETRIC TRUST RULE:
+          origin="web" can NEVER carry source_tier=ground_truth — it is
+          auto-downgraded to primary (ceiling 0.8). origin="dream" is stamped
+          by the dream apply path only; do not claim it here.
 
         WHEN TO CALL:
           After finding high-quality information from search_web() or Playwright
@@ -366,8 +402,9 @@ class KBMixin:
         from datetime import timezone  # noqa: PLC0415
 
         tier, ceiling = TrustPolicy.ceiling(source_tier)
+        origin, tier, ceiling, origin_warn = TrustPolicy.apply_origin(origin, tier, ceiling)
         volatility = volatility if volatility in ("static", "slow", "fast") else "slow"
-        tier_warn = ""
+        tier_warn = origin_warn
         if tier == "ground_truth" and len((evidence or "").strip()) < 40:
             ceiling = 0.7
             tier_warn = (
@@ -431,6 +468,7 @@ class KBMixin:
                     "version": existing["_source"]["version"] + 1,
                     "source_url": source_url or None,
                     "volatility": volatility,
+                    **({"origin": origin} if origin != "unspecified" else {}),
                 }
                 # KB-DECAY recovery: re-indexing with tier-gated evidence above
                 # the quarantine floor clears stale + the failure streak.
@@ -478,6 +516,7 @@ class KBMixin:
                 "evidence": (evidence or "").strip()[:1000] or None,
                 "verified_against": (verified_against or "").strip() or None,
                 "volatility": volatility,
+                "origin": origin,
             }
             es.index(index="lse-kb", id=doc_hash, document=doc)
             return (

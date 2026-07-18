@@ -1185,3 +1185,55 @@ class TestChronosTimeCheck:
         # And the flag is still consumed -- search_kb must not repeat either banner.
         r_kb = tools.search_kb("resolver home.arpa", min_score=0.1)
         assert "[TIME]" not in r_kb and "[DREAM]" not in r_kb
+
+
+# ── PH5-3 (2026-07-18): REFACTOR-4 origin tags + asymmetric trust rule ────────
+
+
+class TestOriginTags:
+    def test_origin_stored(self, tools, es):
+        r = tools.index_to_kb(
+            content=PLAIN, title="origin local-probe", topic="general",
+            quality_score=0.5, source_tier="primary", origin="local-probe",
+        )
+        assert "KB created" in r
+        assert kb_doc(es, extract_doc_id(r))["origin"] == "local-probe"
+
+    def test_missing_or_invalid_origin_unspecified(self, tools, es):
+        r = tools.index_to_kb(
+            content=PLAIN, title="origin default", topic="general",
+            quality_score=0.5, source_tier="secondary",
+        )
+        assert kb_doc(es, extract_doc_id(r))["origin"] == "unspecified"
+        r2 = tools.index_to_kb(
+            content=PLAIN + " variant for invalid-origin test.",
+            title="origin bogus", topic="general",
+            quality_score=0.5, source_tier="secondary", origin="carrier-pigeon",
+        )
+        assert kb_doc(es, extract_doc_id(r2))["origin"] == "unspecified"
+
+    def test_web_origin_never_ground_truth(self, tools, es):
+        r = tools.index_to_kb(
+            content=PLAIN + " variant for web-downgrade test.",
+            title="web claims ground truth", topic="general",
+            quality_score=1.0, source_tier="ground_truth",
+            evidence=EVIDENCE_40, origin="web",
+        )
+        assert "ORIGIN DOWNGRADE" in r
+        doc = kb_doc(es, extract_doc_id(r))
+        assert doc["origin"] == "web"
+        assert doc["source_tier"] == "primary"
+        assert doc["quality_score"] <= 0.8
+
+    def test_local_probe_ground_truth_untouched(self, tools, es):
+        r = tools.index_to_kb(
+            content=PLAIN + " variant for probe-untouched test.",
+            title="probe ground truth", topic="general",
+            quality_score=1.0, source_tier="ground_truth",
+            evidence=EVIDENCE_40, origin="local-probe",
+        )
+        assert "ORIGIN DOWNGRADE" not in r
+        doc = kb_doc(es, extract_doc_id(r))
+        assert doc["origin"] == "local-probe"
+        assert doc["source_tier"] == "ground_truth"
+        assert doc["quality_score"] == pytest.approx(1.0)
