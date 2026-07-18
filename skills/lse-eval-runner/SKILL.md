@@ -36,7 +36,8 @@ An eval run is long. The runner's job is PROMPT → WAIT → GRADE — nothing e
    version. A mismatched prompt invalidates the run.
 4. FRESH TOOL SURFACE: llama-ui snapshots the tool schema per conversation.
    Do NOT restart the gateway mid-run. Record the tool count from
-   `/tmp/goethe-gateway.log` (expect 37 as of Goethe v0.4.4 / goethe_mcp
+   `/tmp/goethe-gateway.log` (expect 47 on LUCIFER: goethe.py 37 + vaultwarden/pfsense/net-discovery
+   add-ons; node3090 gateway loads goethe.py only = 37. As of Goethe v0.4.4 / goethe_mcp
    v1.11.2 — search_rfc retired PH4-3, KB surface refactored to goethe_kb.py
    PH5-2 with tool-list parity verified; count changes = investigate first).
 
