@@ -186,9 +186,16 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       threat model, DREAM_AUTO_APPLY held empty (DESIGN.md §7.4), runbook §10.
       Both Thread-3 security/data-loss findings fixed at Thread 4 open
       (agent-log redaction, pass-scoped output files).
-- [ ] **PH4-3** — RFC KB verdict (carried P21): still ZERO `search_rfc` calls. Either wire it
+- [x] **PH4-3** — RFC KB verdict (carried P21): still ZERO `search_rfc` calls. Either wire it
       into episode prompts (topology/DNS challenges cite RFC 8375 etc.) or retire the index.
       Decide with usage-log data, not sentiment.
+      **✅ DECIDED — RETIRED (2026-07-18, Cowork, goethe_mcp v1.11.2):** usage data final:
+      **0 `search_rfc` calls in 6,967 journaled tool calls** (entire episode corpus,
+      2026-07-11 → present; top tools: execute_command 4781, ssh_run 491, search_kb 332).
+      Retirement is the reversible kind: `search_rfc` added to gateway `SKIP_TOOLS`
+      (tool surface 38 → 37; one-line revert), method + `lse-rfc-kb` index (1490 chunks)
+      kept dormant. If RFC content earns its place later, ingest into `lse-web-idx`
+      (neural search) instead of reviving the bespoke tool.
 
 ### Phase 5 — Refactor under green tests (Workstream F)
 
