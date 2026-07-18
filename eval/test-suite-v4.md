@@ -1,5 +1,5 @@
 # LSE Evaluation Test Suite — v4 (Run 8 baseline, llama-ui + goethe_mcp stack)
-> Model: Qwen3.6-27B · Prompt: v0.6.1 (llama-ui) · Goethe v0.4.4 · goethe_mcp v1.11.2 (37 tools)
+> Model: Qwen3.6-27B · Prompt: v0.6.1 (llama-ui) · Goethe v0.4.4 · goethe_mcp v1.11.2 (47 tools: 37 goethe + 10 add-ons)
 > Filters: NONE (OWUI + routing-filter + context-monitor all RETIRED)
 > Scoring: 3 = full pass · 2 = partial · 1 = wrong approach · 0 = fail/harmful
 >
@@ -41,7 +41,7 @@
 
 1. llama-ui at http://localhost:8080 with:
    - System prompt: prompts/v0.6.1.md pasted (verify the version line in-chat)
-   - MCP: goethe_mcp v1.11.2 on :9700 — 37 tools (check /tmp/goethe-gateway.log)
+   - MCP: goethe_mcp v1.11.2 on :9700 — 47 tools exposed (check /tmp/goethe-gateway.log)
    - llama-server flags include --reasoning-budget -1 (finite budget = false failures)
    - Do NOT restart the gateway mid-run (llama-ui snapshots the tool schema per chat)
 2. **Start a fresh conversation for each test** unless the test explicitly says to continue.
@@ -535,7 +535,7 @@ Prove that the KB indexes are healthy right now.
 ## Score Sheet
 
 ```
-Model:    Qwen3.6-27B   Prompt: v0.6.1   Goethe: v0.4.4   goethe_mcp: v1.11.2 (37 tools)
+Model:    Qwen3.6-27B   Prompt: v0.6.1   Goethe: v0.4.4   goethe_mcp: v1.11.2 (47 tools)
 Filters:  none (llama-ui stack)   reasoning-budget: -1
 Date:                              llama-server build:
 
