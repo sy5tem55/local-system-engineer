@@ -10,8 +10,26 @@
 
 ## Verified Rebuild Command (Fully Optimized)
 
+> **UPDATED 2026-07-18:** the previous version of this command pinned
+> `git checkout b9496` — a stale commit that was already ~570 builds behind
+> by the time it was written, and would silently get MORE stale every time
+> this doc was followed without updating the pin. Replaced with `git pull`
+> (repo is on `master`, not detached — confirmed live) so the command always
+> targets the true latest. **Also added the missing LIVE SERVICE RULE
+> stop/restart bracket** — the old command rebuilt the binary with no check
+> for a running llama-server, which corrupts the live process. This, not the
+> version pin, was the more likely cause of "the usual problems."
+
 ```bash
-cd /home/sy5/llama.cpp && git fetch && git checkout b9496 && cd build && rm -f CMakeCache.txt && cmake .. \
+# 1. Check whether llama-server is running BEFORE touching anything
+pgrep -a llama-server
+
+# 2. If it's running, stop it (per the LIVE SERVICE RULE — never rebuild live)
+kill <PID>
+# confirm it's gone: pgrep -a llama-server  ->  no output
+
+# 3. Pull latest + rebuild (flags unchanged, still correct for this host)
+cd /home/sy5/llama.cpp && git pull && cd build && rm -f CMakeCache.txt && cmake .. \
   -DCMAKE_C_COMPILER=gcc-14 \
   -DCMAKE_CXX_COMPILER=g++-14 \
   -DGGML_CUDA=ON \
@@ -20,7 +38,17 @@ cd /home/sy5/llama.cpp && git fetch && git checkout b9496 && cd build && rm -f C
   -DGGML_AVX2=ON \
   -DGGML_AVX_VNNI=ON \
   && make -j$(nproc) 2>&1 | tee /tmp/build.log
+
+# 4. Verify the new binary BEFORE relaunching
+/home/sy5/llama.cpp/build/bin/llama-server --version
+
+# 5. Relaunch via the usual start script/launcher
 ```
+
+Before pulling, also check `git status --short` for untracked files at the
+repo root (seen live: a stray `common.cpp`) — unlikely to conflict with the
+pull, but worth a look; llama.cpp's real source lives under `src/`/`common/`,
+not the repo root.
 
 ### Flags explained
 

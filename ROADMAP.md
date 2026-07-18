@@ -416,6 +416,13 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       preservation logic (keep the higher/more-recent trust fields, don't just delete).
       Verify with `run_tests(scope="data")` extended to flag duplicate source_path-normalized
       titles, or a dedicated `--check-duplicates` mode on `dataset_lint.py`'s KB-facing cousin.
+      **CONCRETE LIVE INSTANCE (2026-07-18):** `doc_id=d63cb472db11e468`, title "llama.cpp
+      Build Reference", `source_path=/opt/local-se/kb/llama-cpp-build.md`, version=1 — this
+      orphan still carries the STALE `git checkout b9496` command, corrected today in the
+      canonical `../kb/llama-cpp-build.md` doc (`doc_id=2dc0aefc5ec7e155`, version=3) which
+      also adds the missing LIVE SERVICE RULE stop/restart bracket. Until DATA-5 lands, if
+      `search_kb` ever ranks the orphan above the canonical doc, a future session gets the
+      stale/dangerous command back. Use this pair as the first DATA-5 test case.
 - [x] **DATA-1** — All gold/eval data is **self-harvested from own telemetry**:
       grow `eval/retrieval-gold-v2.jsonl` by mining the goethe log for real
       `search_kb` misses and mis-rankings (the q01 "classic miss" pattern —
