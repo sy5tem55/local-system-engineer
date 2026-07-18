@@ -57,20 +57,33 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       llama-server a6647b1 / Ollama 0.22.1 ×5 models / ES 8.13.0 / SearxNG 2026.5.8-pinned +
       port map). Remaining: VERSION.md registry + sha256/black-norm hashes; reconcile
       llama-server build identity (a6647b1 source build vs recorded b9577) per node.
+      **✅ DONE (2026-07-18, Cowork):** VERSION.md reconciled — goethe.py v0.4.0-a live-verified
+      (7238 lines, raw `ba0c1a2015c89098…`), goethe_mcp `__version__` 1.11.1 (815 lines,
+      `1d903a29ca63ec50…`; registry's v1.9.3 was stale). llama-server identity settled: BOTH
+      recorded builds obsolete — LUCIFER = version 20 (`bf2c86ddc`), node3090 = version 64
+      (`e8f19cc0a`). System-prompt row updated to v0.6.0 canonical.
 - [ ] **P0-2** — **SEC: goethe_mcp exposure.** Rotate `GOETHE_MCP_TOKEN` (old one is in git
       history — treat as public); move it into `~/.lse/secrets` (already sourced by
       start-goethe.sh); decide binding: 127.0.0.1 if only llama-ui on LUCIFER needs it, else
       bind the LAN IP + pfSense allow-rule scoped to node3090; CORS `'*'` → the actual llama-ui
       origin. Same audit for `start-goethe-node3090.sh`. Verify with `ss -tlnp` + a tokenless
       curl (expect 401).
-- [ ] **P0-3** — Purge superseded copies from `tools/` (= REFACTOR-3): cogitator v1.7.0–v1.7.24,
+- [x] **P0-3** — Purge superseded copies from `tools/` (= REFACTOR-3): cogitator v1.7.0–v1.7.24,
       openwebui-tool v1.4.0–v1.6.4, goethe-v0.2.1/v0.2.2, goethe_mcp_v1.8.0,
       backupfromOWUI1.7.12.py, lse-context-monitor v1.0–1.2, lse-routing-filter v1.0–1.1,
       vaultwarden v1.0/v1.2, root `lse-stack-launch-1.05…1.077`. Sentimental → `.backups/`.
       Gitignore `__pycache__/`. Git tag `pre-purge` first.
-- [ ] **P0-4** — Documentation cleanup (carried): delete `docs/searxng-settings-patch-v2.yml`;
+      **✅ DONE (2026-07-18, Cowork):** bulk of the named versions were already purged 2026-07-02
+      (`.backups/pre-purge-20260702`); final sweep moved 29 files (system-prompt v0.5.16–19,
+      `goethe - 110726.py`, *.bak/*.bak.step5, stray root eval logs) → `.backups/pre-purge-20260718/`;
+      tag `pre-purge` set; commit `be53e52`. `__pycache__/` gitignored.
+- [x] **P0-4** — Documentation cleanup (carried): delete `docs/searxng-settings-patch-v2.yml`;
       archive `docs/searxng-config.md`; move `mesh_builder.py` + `portrait_3d_pifuhd.py` out of
       root; grep-audit remaining OWUI references across docs/ + kb/ + skills/.
+      **✅ DONE (2026-07-18, Cowork):** both searxng files already gone (only
+      `docs/searxng-operations.md` remains); mesh/portrait scripts already in `tools/`;
+      OWUI grep-audit: references confined to historical docs (docs/01–10, dreaming reports,
+      hermes specs) — no operative doc or skill instructs OWUI usage.
 - [x] **P0-5** — Prompt lineage reconcile: `tools/system-prompt-v0.5.19.md` ("ready to deploy")
       vs `prompts/node4090-v0.5.20/21.md` (newer) — pick ONE canonical dir (`prompts/`), confirm
       what is actually pasted into llama-ui on each node, deploy/record it.
@@ -84,9 +97,12 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       DISCIPLINE, ledger-first HANDOVER. tools/system-prompt-v0.5.x = superseded (purge with
       P0-3). OPERATOR: paste v0.6.0 into llama-ui on node4090 + start fresh threads;
       node3090's prompt (v0.1.0) needs its own smaller update — follow-up.
-- [ ] **P0-6** — Carried P21 leftovers: ES index-existence probe added to stack health check
+- [x] **P0-6** — Carried P21 leftovers: ES index-existence probe added to stack health check
       (`curl -s localhost:9200/lse-kb,lse-errors,lse-rfc-kb,lse-search-cache/_count`); delete
       vestigial `lse-kb.sqlite` (0 bytes, unreferenced).
+      **✅ VERIFIED DONE (2026-07-18, Cowork):** probe already present in
+      `skills/lse-stack-health-check/SKILL.md` (5-index `_count`, P21 addition); `lse-kb.sqlite`
+      no longer exists anywhere in the repo.
 
 ### Phase 1 — Safety net, then KB trust lifecycle (Workstreams C→A)
 
