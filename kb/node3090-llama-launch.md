@@ -24,7 +24,3 @@
 - Prompt: ~131 tok/s | Generation: ~40 tok/s
 - Disable thinking: chat_template_kwargs: {"enable_thinking": false}
 
-## Hermes Gateway
-- Provider config (v27): provider: custom + custom_providers list (NOT llamacpp)
-- API: http://127.0.0.1:8642/v1/ (key in /home/hermes-admin/.hermes/.env)
-- Start: bash /opt/local-se/scripts/start-hermes-gateway.sh

@@ -35,3 +35,17 @@ tokens.md
 token*.json
 **/token*.json
 **/tokens.md
+
+# Log files — may contain secrets, never commit
+*.log
+*.jsonl
+
+# Logs archive (redacted but still operational data)
+/opt/local-se/logs-archive/
+
+# Backup directory (may contain sensitive snapshots)
+/opt/local-se/bkp/
+
+# Dream run artifacts (proposals, patterns, etc.)
+/opt/local-se/dreams/*.jsonl
+/opt/local-se/dreams/*.db
