@@ -168,8 +168,24 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 
 ### Phase 4 — Data quality + the self-writing loop (Workstreams D+E)
 
-- [ ] **PH4-1** — DATA-1..4 (self-harvested gold sets — no HF/Kaggle; `dataset_lint.py`;
+- [x] **PH4-1** — DATA-1..4 (self-harvested gold sets — no HF/Kaggle; `dataset_lint.py`;
       sha256-frozen datasets; reseed preserves trust fields).
+      **✅ SHIPPED (2026-07-18, Cowork, Goethe v0.4.4):**
+      **DATA-1:** `scripts/harvest_gold.py` — re-runnable episode-journal miner; every
+      search_kb NO-RESULTS miss → provenance-stamped candidate row (81 harvested from
+      6,967 journaled calls) in `eval/retrieval-gold-v2-candidates.jsonl`; promotion to
+      gold requires HUMAN labeling of expected[] (auto-labeling would poison the set —
+      most misses are KB gaps, not retrieval failures). `retrieval-gold-v2.jsonl` seeded
+      from v1 with provenance backfill (48 rows).
+      **DATA-2:** `scripts/dataset_lint.py` — schema/provenance-required/dup/expected-file
+      lint; first run immediately caught 2 ghost rows (q43/q44 expected a doc that never
+      existed — moved to candidates as needs-relabel).
+      **DATA-3:** `eval/SHA256SUMS` frozen (v1 `a5fe1380…`, v2 `8ca454e2…`).
+      **DATA-4:** `03-kb-seed.py --reindex` now snapshots + re-applies all 13 trust fields
+      (quality/stats/stale/volatility/tier/origin/…); version increments, created_at
+      survives; `kb-reseed-procedure.md` updated.
+      Lint wired into `run_tests` as new `data` scope, included in `scope=all` (PROVE-1).
+      Tests 424/424; lint 0 findings; gateway restarted on v0.4.4.
 - [x] **PH4-2** — SCRIBE-1..4 **ABSORBED INTO TRAUM** (2026-07-11) — **ALL 4
       THREADS COMPLETE (2026-07-13)**. Thread 1 (TRAUM-CORPUS) ✅ 2026-07-11:
       episode journaling live on the gateway (goethe_mcp v1.11.1),
@@ -378,21 +394,21 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 
 ### Workstream D — DATA: clean, always-relevant datasets (no HF/Kaggle)
 
-- [ ] **DATA-1** — All gold/eval data is **self-harvested from own telemetry**:
+- [x] **DATA-1** — All gold/eval data is **self-harvested from own telemetry**:
       grow `eval/retrieval-gold-v2.jsonl` by mining the goethe log for real
       `search_kb` misses and mis-rankings (the q01 "classic miss" pattern —
       every real retrieval failure becomes a gold row); episode outcomes from
       `leaderboard.db`; skill `evidence_log` entries as verification-format exemplars.
-- [ ] **DATA-2** — `scripts/dataset_lint.py`: JSONL schema validation (required
+- [x] **DATA-2** — `scripts/dataset_lint.py`: JSONL schema validation (required
       fields per dataset type), duplicate-query detection, provenance field
       REQUIRED on every row (episode id / log line / incident doc — unattributed
       rows rejected, same rule as skill_record), expected-file existence check
       against `kb/`. Run in PROVE-1 `scope=all`.
-- [ ] **DATA-3** — Freeze + fingerprint datasets like models: sha256 in
+- [x] **DATA-3** — Freeze + fingerprint datasets like models: sha256 in
       `eval/SHA256SUMS`, version-bumped filenames (`freeze_bench.py` already does
       this for the bench — extend to gold sets). A changed gold set silently
       invalidates every historical eval number; the hash makes that loud.
-- [ ] **DATA-4** — KB reseed hygiene: `03-kb-seed.py --reindex` must preserve
+- [x] **DATA-4** — KB reseed hygiene: `03-kb-seed.py --reindex` must preserve
       trust fields (quality/stats/stale/volatility) — today a reseed would reset
       earned trust. Snapshot trust metadata before reindex, re-apply after
       (extend `kb-reseed-procedure.md`).

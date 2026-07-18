@@ -69,3 +69,16 @@ curl -s -X POST localhost:9200/lse-kb/_delete_by_query -H 'Content-Type: applica
   auto-create on write — absence is invisible until something reads).
 - 2026-06-12: full recovery — indices recreated from canonical scripts, KB consolidated to one real
   dir, reseed 53 → 131 docs (77 file + 54 organic), verified duplicate-free.
+
+
+## DATA-4 (2026-07-18): trust-field preservation on `--reindex`
+
+`03-kb-seed.py --reindex` now snapshots trust metadata from each existing doc
+BEFORE re-embedding and re-applies it after: `quality_score`,
+`refinement_count`, `success_count`, `failure_count`, `failure_streak`,
+`stale`, `demote_reason`, `volatility`, `source_tier`, `evidence`,
+`verified_against`, `origin`, `created_at` all survive a reseed; `version`
+increments instead of resetting to 1. A reseed refreshes CONTENT + EMBEDDING
+only — earned trust is never reset. Verify after any reseed:
+`run_tests("kb")` + spot-check one previously-demoted doc still shows its
+demoted quality in `search_kb`.
