@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-07-18 (Cowork): PH5-1/PH5-2 — Goethe v0.4.1: TrustPolicy + goethe_kb.py extraction; P0 closed (except rotation); neural-search claim verified live
+
+- **Neural-search verification (operator request):** all 5 design phases confirmed live on node3090 — lazy sidecars (cold 4.1 s / warm 137 ms), lse-web-idx 44,751 chunks, :8092 API active, `!nl` SearxNG engine returns neural results, recrawl timer armed. Finding: `sear_primary` was down post-reboot (manual pre-reboot stop cleared `restart: always` trigger) — restarted, :8088 → 200.
+- **P0-1/P0-3/P0-4/P0-6 closed** (commits `be53e52`, follow-up): VERSION.md live-reconciled (goethe_mcp was recorded v1.9.3, live `__version__` 1.11.1; llama-server LUCIFER `bf2c86ddc` v20 / node3090 `e8f19cc0a` v64 — both recorded builds obsolete); 29-file final purge → `.backups/pre-purge-20260718/`; OWUI grep-audit clean (historical docs only). **P0-2 rotation deferred to end-of-roadmap batch per operator** — but launcher v2.1.3 already implements the binding/CORS/secrets-location hardening; tokenless curl → 401 verified today.
+- **PH5-1 (REFACTOR-1):** `TrustPolicy` in new `tools/goethe_kb.py` — single `TIER_CEILING` + `ceiling(tier, default)`; kills the 3× duplicated dicts; defaults preserved ("inferred" for index_to_kb/skill_record, "secondary" for skill_outcome).
+- **PH5-2 (REFACTOR-2):** KB surface (goethe.py 4663–6067: `_embed`, `_es`, `search_kb`, `index_to_kb`, `record_error`, `check_error_kb`, `_resolve_kb_id`, `record_outcome`, `mentor_correct`, `kb_verify`, `mentor_demote`, `skill_search`, `skill_record`, `skill_outcome`) moved verbatim to `KBMixin`; `class Tools(KBMixin)`. goethe.py 7238 → 5851L. **Release gates: MCP tool-list diff EMPTY (38 pre/post via `--list` on HEAD copy vs working tree); contract tests 420/420.** One extraction bug caught by the suite (55 failures: block relied on goethe.py module-level `datetime`/`json`/`os`/`Optional` imports) — fixed, re-run green. Gateway restarted on v0.4.1 via `start-goethe.sh`.
+- Legacy `scripts/` harness findings (pre-existing, unchanged): `gymnasium` missing (challenge-env tests), `test_hermes_inbox.py` references purged `cogitator-v1.7.15.py`.
+
 ## 2026-07-15 (Codex): TRAUM production reconciliation — hardened Thread 4, Qwen/1024 index alignment, tracked timer, 420-test release gate
 
 Corrective close after auditing LSE commits `7348aef`, `fc85468`, and `87026fb` against `docs/traum-dreaming-plan.md`, the live stack, and the newer hardened work that had existed only in the timer checkout.

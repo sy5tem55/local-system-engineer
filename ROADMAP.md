@@ -187,8 +187,19 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 
 ### Phase 5 — Refactor under green tests (Workstream F)
 
-- [ ] **PH5-1** — REFACTOR-1 (single `TrustPolicy`, kills 3× `_TIER_CEILING`).
-- [ ] **PH5-2** — REFACTOR-2 (extract `goethe_kb.py`; MCP tool-list diff must be empty).
+- [x] **PH5-1** — REFACTOR-1 (single `TrustPolicy`, kills 3× `_TIER_CEILING`).
+      **✅ SHIPPED (2026-07-18, Cowork, Goethe v0.4.1):** `TrustPolicy` class in new
+      `goethe_kb.py` — one `TIER_CEILING` dict + `ceiling(tier, default)`; semantics
+      preserved exactly (index_to_kb/skill_record default "inferred", skill_outcome
+      default "secondary" — pinned by contract tests).
+- [x] **PH5-2** — REFACTOR-2 (extract `goethe_kb.py`; MCP tool-list diff must be empty).
+      **✅ SHIPPED (2026-07-18, Cowork, Goethe v0.4.1):** 14 KB/skill methods (goethe.py
+      lines 4663–6067) moved verbatim to `KBMixin` in `tools/goethe_kb.py` (1435L);
+      `Tools(KBMixin)` inherits — goethe_mcp discovers via `dir(inst)` so exposure is
+      identical. goethe.py 7238 → 5851 lines. **Gates: MCP tool-list diff EMPTY (38/38
+      pre/post), contract tests 420/420 green.** Gateway restarted on v0.4.1
+      (pid verified, tokenless curl → 401). Raw sha: goethe.py `47d9fd659615d6a1…`,
+      goethe_kb.py `82d4201dd69ddf2d…`. goethe.py growth unblocked.
       **Urgency re-assessed at TRAUM close (2026-07-13):** goethe.py is now
       7,228 lines (the "5819… do this before v0.4" bar above is stale — v0.4.0-a
       shipped anyway; TRAUM deliberately kept its ~140 goethe.py lines to the
