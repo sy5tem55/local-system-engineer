@@ -403,6 +403,19 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
 
 ### Workstream D — DATA: clean, always-relevant datasets (no HF/Kaggle)
 
+- [ ] **DATA-5** — `source_path` normalization for `lse-kb-1024` (found during Run 8 eval,
+      2026-07-18): `03-kb-seed.py`'s doc_id is a hash of the filepath string used at seed
+      time, so seeding the same `kb/*.md` file from different working directories (e.g.
+      `/opt/local-se/kb/foo.md` vs `../kb/foo.md`, both seen live) creates DUPLICATE,
+      un-deduplicated documents instead of updating one. Confirmed live: `llama-cpp-build.md`
+      has an orphaned absolute-path doc (quality 0.3, version 1, stale) coexisting with the
+      current relative-path doc (version 2, actively maintained) — likely affects other
+      kb/*.md files seeded across sessions. Fix: normalize to a canonical path (e.g.
+      `Path(filepath).resolve().relative_to(KB_DIR)`) before hashing in `doc_id()`; write a
+      one-time dedup pass that merges orphans into the canonical doc using DATA-4's trust-
+      preservation logic (keep the higher/more-recent trust fields, don't just delete).
+      Verify with `run_tests(scope="data")` extended to flag duplicate source_path-normalized
+      titles, or a dedicated `--check-duplicates` mode on `dataset_lint.py`'s KB-facing cousin.
 - [x] **DATA-1** — All gold/eval data is **self-harvested from own telemetry**:
       grow `eval/retrieval-gold-v2.jsonl` by mining the goethe log for real
       `search_kb` misses and mis-rankings (the q01 "classic miss" pattern —
