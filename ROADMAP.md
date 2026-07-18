@@ -153,11 +153,20 @@ v0.2.9 `hermes_plan`→`planner` rename + think-tag JSON extraction fix.
       threshold was a cosine-scale no-op against hybrid scores (~3.5–16); recalibrated to 4.2
       via sweep (38/38 correct kept, 3/11 wrong dropped, 0 correct lost). KB doc + re-sweep
       maintenance rule recorded. See CHANGELOG 2026-07-04.
-- [ ] **PH3-3** — Rewrite `skills/lse-eval-runner` for the llama-ui + goethe_mcp stack (pre-run
+- [~] **PH3-3** — Rewrite `skills/lse-eval-runner` for the llama-ui + goethe_mcp stack (pre-run
       checklist becomes `run_tests`-backed; drop OWUI Admin steps; version checks read goethe.py
       frontmatter via MCP). Then **full eval re-run** — Run 7's 63/63 was scored on
       OWUI + openwebui-tool v1.5.18 and does not certify the current stack. New baseline =
       Run 8 on Goethe v0.3.x + llama-ui, with `tools/system-prompt` canonical version from P0-5.
+      **REWRITE ✅ / RUN 8 STAGED (2026-07-18, Cowork):** skill was already rewritten as v2
+      (2026-07-04) — run_tests-backed checklist, zero OWUI steps, MCP version fingerprinting;
+      today: stale tool-count patched (45 → 37, goethe_mcp v1.11.2 post-search_rfc-retirement).
+      Pre-run checks GREEN today on v0.4.4: run_tests all PASS (424 tests + lint), gateway 401,
+      llama-server up. **OPERATOR before Run 8 (decision 2026-07-18: operator runs it):**
+      (1) relaunch llama-server with `--reasoning-budget -1` (currently 8192 — finite budget
+      = false "Reasoning Cancelled" failures); (2) confirm `prompts/v0.6.0.md` is the pasted
+      llama-ui prompt on node4090; (3) fresh threads; then follow `skills/lse-eval-runner`
+      end-to-end and write `eval/eval-report-v9.md` (report numbering: Run 8 = report v9).
 - [x] **PH3-4** — Run `lse-docstring-optimizer` on every new tool docstring from Phases 1–3
       (kb_verify, time_check, run_tests, assert_state, mentor_demote, planner) — SCRIBE-5.
       **✅ DONE (2026-07-18, Cowork, Goethe v0.4.3):** full 8-dimension audit on all six.
