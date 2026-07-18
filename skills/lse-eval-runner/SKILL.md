@@ -43,9 +43,9 @@ An eval run is long. The runner's job is PROMPT → WAIT → GRADE — nothing e
 
 ## RUN MECHANICS
 
-1. Suite: `eval/test-suite-v2.md` (categories S/A/W/P, 0–3 per test, score
-   sheet template at the bottom). The suite header still names OWUI-era
-   versions — IGNORE the header stack line; prompts and pass criteria stand.
+1. Suite: **`eval/test-suite-v4.md`** — the ONLY current suite (22 tests,
+   categories S/P/M/W/A/L/R, 0–3 each, max 66; score sheet at the bottom).
+   v2/v3.x are OWUI-era history — do not run them.
 2. ONE FRESH llama-ui CONVERSATION PER TEST (new chat at :8080), unless a
    test explicitly says continue. Paste the "Send this" block exactly.
 3. Score 3/2/1/0 against the printed pass criteria, with two adjudication
