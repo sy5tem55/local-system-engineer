@@ -5290,9 +5290,14 @@ tail -5 /tmp/goethe-node3090.log
             return f"Unknown node '{node}'. Known: {list(self._NODE_REGISTRY.keys())}"
 
         url = f"http://{reg['hostname']}:{reg['agent_port']}/v1/chat/completions"
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+        _no_tools = (
+            "You have NO tools, functions, or command execution on this node. "
+            "Reply in plain text only. Never emit <tool_call>, <function=...>, "
+            "or JSON function-call blocks. If action is needed, describe the "
+            "exact command for the operator to run instead."
+        )
+        _sys = (system_prompt + "\n\n" + _no_tools) if system_prompt else _no_tools
+        messages = [{"role": "system", "content": _sys}]
         messages.append({"role": "user", "content": prompt})
 
         payload: dict = {
@@ -5309,6 +5314,14 @@ tail -5 /tmp/goethe-node3090.log
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
             self._log(f"QUERY-NODE-AGENT: got {len(content)} chars from {node}")
+            if "<tool_call>" in content or "<function=" in content:
+                content += (
+                    "\n\n[goethe note: the node agent emitted a tool-call block "
+                    "above, but node agents have NO tools -- NOTHING was "
+                    "executed on the node. Treat it as a suggested command: "
+                    "review it, then run it yourself via execute_command or "
+                    "ssh_run if appropriate.]"
+                )
             return content
         except _req.exceptions.ConnectionError:
             return (
