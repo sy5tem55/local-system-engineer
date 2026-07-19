@@ -4112,7 +4112,20 @@ def main(argv=None) -> None:
         # own docstring. Deliberately the LAST statement in the try block,
         # inside it (not after) so it still runs via `finally` -> release_lock
         # even if this specific check is what fails.
-        assert_no_episode_writes(cfg.episode_dir, episode_snapshot)
+        try:
+            assert_no_episode_writes(cfg.episode_dir, episode_snapshot)
+        except AssertionError as _aerr:
+            if cfg.ignore_guards:
+                print(
+                    "[dream_runner] WARNING (downgraded by --ignore-guards): "
+                    "EPISODE_DIR changed during this manual run -- expected when "
+                    "the live gateway is serving sessions concurrently; the "
+                    "nightly quiet-hours run keeps the hard invariant. "
+                    f"Details: {_aerr}",
+                    file=sys.stderr,
+                )
+            else:
+                raise
     except Exception as exc:
         # Prompt 4.3: crash discipline. Handle (record_error, partial
         # FAILED report, digest refresh), THEN re-raise the ORIGINAL
