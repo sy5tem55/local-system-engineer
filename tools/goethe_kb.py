@@ -84,7 +84,7 @@ class KBMixin:
             f"{self.valves.OLLAMA_URL}/api/embed",
             json={
                 "model": self.valves.EMBED_MODEL,
-                "input": "search_query: " + text[:5000],
+                "input": text[:5000],  # qwen3-embedding: no task prefix (nomic-only convention, removed 2026-07-19)
             },
             timeout=15,
         )
@@ -229,6 +229,9 @@ class KBMixin:
                 runs = s.get("empirical_runs", 0) or 0
                 fails = s.get("failure_count", 0) or 0
                 mult = 1.0 - 0.3 * (fails / runs) if runs else 1.0
+                # quality-weighted rank (2026-07-19): 0.35-quality design-doc
+                # chunks stop outranking 0.7-quality specific ops docs
+                mult *= 0.5 + (s.get("quality_score") or 0.5)
                 if s.get("stale"):
                     mult *= 0.5
                 if _is_expired(s):
@@ -236,6 +239,17 @@ class KBMixin:
                 return h.get("_score", 0) * mult
 
             hits.sort(key=_trust_rank, reverse=True)
+
+            def _body(c, rank):
+                c = (c or "").strip()
+                cap = 3500 if rank == 1 else 900
+                if len(c) <= cap:
+                    return c
+                return (
+                    c[:cap].rstrip()
+                    + f"\n    …[truncated {len(c) - cap} chars — "
+                    "use read_file on source above for full text]"
+                )
             lines = [f"KB results for '{query}' ({len(hits)} found):\n"]
             for i, h in enumerate(hits, 1):
                 s = h["_source"]
@@ -264,7 +278,7 @@ class KBMixin:
                     f"{_flags}"
                     f"    source: {src}\n"
                     f"    (pass doc_id above to record_outcome/mentor_correct)\n"
-                    f"    {s['content'][:5000].strip()}\n"
+                    f"    {_body(s['content'], i)}\n"
                 )
             return _tb + "\n".join(lines)
         except Exception as e:
