@@ -1631,8 +1631,34 @@ class Tools(KBMixin):
 
     def _is_allowed_read(self, path: str) -> bool:
         normed = self._norm(path)
-        return any(
+        if any(
             normed.startswith(p.rstrip("/") + "/") for p in self._ALLOWED_READ_PREFIXES
+        ):
+            return True
+        gp = self._perms_mod()
+        return bool(gp and gp.check_path("read", normed))
+
+    def _perms_mod(self):
+        """goethe_perms module if available (DB-backed user grants, v1.8.0)."""
+        try:
+            import goethe_perms  # noqa: PLC0415
+
+            return goethe_perms
+        except Exception:
+            return None
+
+    def _perm_note(self, kind: str, target: str, reason: str = "") -> str:
+        """File a pending grant request; returns text for the BLOCKED message."""
+        gp = self._perms_mod()
+        if not gp:
+            return ""
+        rid = gp.file_request(kind, target, reason)
+        if rid is None:
+            return ""
+        return (
+            f" Pending grant request #{rid} filed - the user can allow this "
+            f"with: goethe-perm approve {rid} (review first: goethe-perm "
+            "pending). Do NOT retry until the user confirms approval."
         )
 
     # Shell/session config files that must never be written by the agent
@@ -1677,7 +1703,8 @@ class Tools(KBMixin):
                 extra = extra.strip()
                 if extra and normed.startswith(extra.rstrip("/") + "/"):
                     return True
-        return False
+        gp = self._perms_mod()
+        return bool(gp and gp.check_path("write", normed))
 
     def _log(self, entry: str) -> None:
         """Append a timestamped line to the audit log (best-effort)."""
@@ -2441,13 +2468,38 @@ tail -5 /tmp/goethe-node3090.log
                     "This operation cannot be performed by the agent under any circumstances."
                 )
 
+        # ── DB-granted privileged commands (goethe_perms, user-approved) ─────
+        _stripped = command.strip()
+        _priv_rest = None
+        if _stripped.startswith("sudo "):
+            _priv_rest = _stripped[5:].lstrip()
+            if _priv_rest.startswith("-n "):
+                _priv_rest = _priv_rest[3:].lstrip()
+        if _priv_rest and not any(
+            t in _priv_rest for t in (";", "|", "&", "`", "$(", "\n", ">", "<")
+        ):
+            _gp = self._perms_mod()
+            _gid = _gp.check_sudo(_priv_rest) if _gp else None
+            if _gid:
+                if not self._is_allowed_read(cwd):
+                    return (
+                        f"BLOCKED: working_dir '{cwd}' is outside allowed read paths."
+                    )
+                self._log(f"PRIV-GRANTED grant#{_gid}: {command}")
+                return None
+
         # ── Block privilege escalation anywhere in the command (v1.4.2 fix) ──
         for priv in self._PRIVILEGED_PREFIXES:
             if priv in cmd_lower:
                 self._log(f"PRIV-BLOCKED: {command}")
+                _note = ""
+                if _priv_rest:
+                    _note = self._perm_note(
+                        "sudo", _priv_rest, "agent requested privileged command"
+                    )
                 return (
                     f"BLOCKED: '{priv.strip()}' detected in command. "
-                    "Use sudo_delegation_block instead."
+                    "Use sudo_delegation_block instead." + _note
                 )
 
         # ── Block writes to privileged system paths ───────────────────────────
@@ -2480,7 +2532,11 @@ tail -5 /tmp/goethe-node3090.log
 
         # ── Validate working directory ────────────────────────────────────────
         if not self._is_allowed_read(cwd):
-            return f"BLOCKED: working_dir '{cwd}' is outside allowed read paths."
+            _rp = os.path.realpath(os.path.expanduser(cwd))
+            return (
+                f"BLOCKED: working_dir '{cwd}' is outside allowed read paths."
+                + self._perm_note("read", _rp, "working_dir blocked")
+            )
         return None
 
     def execute_command(self, command: str, working_dir: str = "") -> str:
@@ -2884,7 +2940,11 @@ tail -5 /tmp/goethe-node3090.log
           Trying workarounds before delegating is a protocol violation.
         """
         if not self._is_allowed_read(path):
-            return f"BLOCKED: '{path}' is outside allowed read paths."
+            _rp = os.path.realpath(os.path.expanduser(path))
+            return (
+                f"BLOCKED: '{path}' is outside allowed read paths (resolves to "
+                f"'{_rp}')." + self._perm_note("read", _rp, "read_file blocked")
+            )
 
         resolved = os.path.realpath(os.path.expanduser(path))
         if not os.path.isfile(resolved):
@@ -3021,9 +3081,11 @@ tail -5 /tmp/goethe-node3090.log
         For files under /etc/ or other privileged paths, use sudo_delegation_block.
         """
         if not self._is_allowed_write(path):
+            _rp = os.path.realpath(os.path.expanduser(path))
             return (
-                f"BLOCKED: '{path}' is outside allowed write paths. "
-                "Use sudo_delegation_block for privileged paths."
+                f"BLOCKED: '{path}' is outside allowed write paths (resolves to "
+                f"'{_rp}'). Use sudo_delegation_block for privileged paths."
+                + self._perm_note("write", _rp, "write_file blocked")
             )
 
         resolved = os.path.realpath(os.path.expanduser(path))
