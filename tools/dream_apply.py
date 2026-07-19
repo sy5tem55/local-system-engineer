@@ -961,6 +961,7 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def main(argv=None) -> None:
+    os.environ["GOETHE_DREAM_APPLY"] = "1"  # authorizes dream-provenance skill_record
     args = parse_args(argv)
 
     if args.queue:
