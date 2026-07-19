@@ -33,7 +33,7 @@ except ImportError:
 # ── Config ────────────────────────────────────────────────────────────────────
 OLLAMA_URL   = "http://127.0.0.1:11434"
 EMBED_MODEL  = "qwen3-embedding:0.6b"  # 1024-dim, matches goethe.py valve + live ES mapping (fixed 2026-07-18, was stale nomic-embed-text/768-dim)
-EMBED_PREFIX = "search_document: "   # nomic-embed-text uses task prefixes
+EMBED_PREFIX = ""   # qwen3-embedding: no task prefix (nomic-only convention, removed 2026-07-19)
 ES_INDEX     = "lse-kb"
 CHUNK_SIZE   = 3000    # chars — nomic handles 8192 tokens ≈ ~6000 chars, stay safe
 CHUNK_OVERLAP= 300

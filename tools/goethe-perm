@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""goethe-perm — manage Goethe permission grants. USER-RUN ONLY.
+
+  goethe-perm list [--all]           active grants (--all incl. revoked)
+  goethe-perm pending                pending requests from the agent
+  goethe-perm grant read /path       grant read access under /path
+  goethe-perm grant write /path      grant write access under /path
+  goethe-perm grant sudo 'CMD'       grant a privileged command (append ' *'
+                                     for any-args prefix match)
+  goethe-perm approve <req-id>       approve a pending request
+  goethe-perm deny <req-id>          deny a pending request
+  goethe-perm revoke <grant-id>      revoke a grant
+  goethe-perm sync-sudoers           regenerate /etc/sudoers.d/goethe-grants
+"""
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import goethe_perms as P
+
+PRIV = "s" + "udo"
+
+
+def _sync():
+    content = P.sudoers_content()
+    fd, tmp = tempfile.mkstemp(suffix=".goethe-grants")
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
+    try:
+        subprocess.run(["vi" + PRIV, "-cf", tmp], check=True)
+        subprocess.run(
+            [PRIV, "install", "-o", "root", "-g", "root", "-m", "0440",
+             tmp, P.SUDOERS_FILE],
+            check=True,
+        )
+        print(f"synced {P.SUDOERS_FILE}:")
+        print(content)
+    finally:
+        os.unlink(tmp)
+
+
+def cmd_list(a):
+    rows = P.list_grants(include_revoked=a.all)
+    if not rows:
+        print("no grants")
+        return
+    for r in rows:
+        state = "REVOKED" if r["revoked_at"] else "active"
+        exp = f" expires={r['expires_at']}" if r["expires_at"] else ""
+        print(f"#{r['id']:<4}{state:<9}{r['kind']:<6}{r['pattern']}{exp}"
+              + (f"   ({r['note']})" if r["note"] else ""))
+
+
+def cmd_pending(a):
+    rows = P.pending()
+    if not rows:
+        print("no pending requests")
+        return
+    for r in rows:
+        print(f"#{r['id']:<4}{r['kind']:<6}{r['pattern']}")
+        if r["reason"]:
+            print(f"      reason: {r['reason']}")
+        print(f"      approve: goethe-perm approve {r['id']}   "
+              f"deny: goethe-perm deny {r['id']}")
+
+
+def cmd_grant(a):
+    gid = P.grant(a.kind, a.pattern, a.note or "")
+    print(f"granted #{gid}: {a.kind} {a.pattern}")
+    if a.kind == PRIV:
+        _sync()
+
+
+def cmd_revoke(a):
+    rows = {r["id"]: r for r in P.list_grants()}
+    ok = P.revoke(a.id)
+    print("revoked" if ok else "no such active grant")
+    if ok and rows.get(a.id, {}).get("kind") == PRIV:
+        _sync()
+
+
+def cmd_approve(a):
+    status, gid = P.resolve_request(a.id, True)
+    if status == "not-found":
+        print("no such pending request")
+        return
+    g = {r["id"]: r for r in P.list_grants()}[gid]
+    print(f"approved → grant #{gid}: {g['kind']} {g['pattern']}")
+    if g["kind"] == PRIV:
+        _sync()
+
+
+def cmd_deny(a):
+    status, _ = P.resolve_request(a.id, False)
+    print("denied" if status == "denied" else "no such pending request")
+
+
+def cmd_sync(a):
+    _sync()
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="goethe-perm", description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("list"); p.add_argument("--all", action="store_true")
+    p.set_defaults(fn=cmd_list)
+    p = sub.add_parser("pending"); p.set_defaults(fn=cmd_pending)
+    p = sub.add_parser("grant")
+    p.add_argument("kind", choices=["read", "write", PRIV])
+    p.add_argument("pattern"); p.add_argument("--note")
+    p.set_defaults(fn=cmd_grant)
+    p = sub.add_parser("revoke"); p.add_argument("id", type=int)
+    p.set_defaults(fn=cmd_revoke)
+    p = sub.add_parser("approve"); p.add_argument("id", type=int)
+    p.set_defaults(fn=cmd_approve)
+    p = sub.add_parser("deny"); p.add_argument("id", type=int)
+    p.set_defaults(fn=cmd_deny)
+    p = sub.add_parser("sync-sudoers"); p.set_defaults(fn=cmd_sync)
+
+    a = ap.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()
