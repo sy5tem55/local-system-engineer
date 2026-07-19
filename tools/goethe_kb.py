@@ -1284,6 +1284,15 @@ class KBMixin:
                            ground_truth=1.0 ceiling (live test); primary=0.8;
                            secondary=0.6; inferred=0.4. Stored in document.
         """
+        if (provenance or "").lower().startswith("dream") and os.environ.get(
+            "GOETHE_DREAM_APPLY"
+        ) != "1":
+            return (
+                f"SKILL rejected: provenance '{provenance}' is dream-cycle output. "
+                "Dream proposals must pass the human gate via dream_apply.py -- "
+                "direct skill_record is not permitted for them. "
+                "Run: python3 tools/dream_apply.py --queue"
+            )
         import hashlib  # noqa: PLC0415
         import re  # noqa: PLC0415
 
