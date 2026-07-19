@@ -74,22 +74,43 @@ class KBMixin:
     """KB/skill tool methods mixed into goethe.Tools. Uses self.valves,
     self._log, self._strip_years, self._budget_gate from the host class."""
 
+    _EMBED_CACHE = None  # class-level LRU {sha256(model+text): vector}, cap 256
+
     # ── RAG private helpers ──────────────────────────────────────────────────
 
     def _embed(self, text: str) -> list:
-        """Embedding from the configured Ollama model (1024-dim in production)."""
+        """Embedding from the configured Ollama model (1024-dim in production).
+        LRU-cached (256 entries) so repeated queries never re-hit the CPU
+        embedder; timeout=(3s connect, 8s read) so a busy embedder fails fast
+        into search_kb's keyword-only fallback instead of blocking the
+        gateway (2026-07-19 hang post-mortem)."""
+        import hashlib  # noqa: PLC0415
         import requests  # noqa: PLC0415
+        from collections import OrderedDict  # noqa: PLC0415
 
+        if KBMixin._EMBED_CACHE is None:
+            KBMixin._EMBED_CACHE = OrderedDict()
+        cache = KBMixin._EMBED_CACHE
+        key = hashlib.sha256(
+            (self.valves.EMBED_MODEL + "\x00" + text[:5000]).encode()
+        ).hexdigest()
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
         r = requests.post(
             f"{self.valves.OLLAMA_URL}/api/embed",
             json={
                 "model": self.valves.EMBED_MODEL,
                 "input": text[:5000],  # qwen3-embedding: no task prefix (nomic-only convention, removed 2026-07-19)
             },
-            timeout=15,
+            timeout=(3, 8),
         )
         r.raise_for_status()
-        return r.json()["embeddings"][0]
+        vec = r.json()["embeddings"][0]
+        cache[key] = vec
+        if len(cache) > 256:
+            cache.popitem(last=False)
+        return vec
 
     def _es(self):
         """Lazy Elasticsearch 8.x client."""
@@ -148,7 +169,16 @@ class KBMixin:
         self._log(f"SEARCH-KB: {query}")
         _tb = self._consume_time_banner()  # CHRONOS-2 (v0.3.1)
         try:
-            embedding = self._embed(query)
+            _kw_only = False
+            embedding = None
+            try:
+                embedding = self._embed(query)
+            except Exception as _emb_exc:
+                _kw_only = True
+                self._log(
+                    f"SEARCH-KB: embedder unavailable ({_emb_exc}) -- "
+                    "keyword-only fallback"
+                )
             es = self._es()
             filter_clause = [{"term": {"topic": topic_filter}}] if topic_filter else []
             body = {
@@ -190,8 +220,12 @@ class KBMixin:
                 ],
                 "size": max_results,
             }
+            if _kw_only:
+                body.pop("knn", None)
+                body["query"]["bool"]["must"][0]["multi_match"]["boost"] = 1.0
             resp = es.search(index="lse-kb", body=body)
-            hits = [h for h in resp["hits"]["hits"] if h.get("_score", 0) >= min_score]
+            _floor = 0.0 if _kw_only else min_score
+            hits = [h for h in resp["hits"]["hits"] if h.get("_score", 0) >= _floor]
             if not hits:
                 return _tb + (
                     f"KB miss — no results above threshold {min_score} for '{query}'.\n"
@@ -250,7 +284,13 @@ class KBMixin:
                     + f"\n    …[truncated {len(c) - cap} chars — "
                     "use read_file on source above for full text]"
                 )
-            lines = [f"KB results for '{query}' ({len(hits)} found):\n"]
+            _fb = (
+                "[KEYWORD-ONLY FALLBACK -- embedder busy/unavailable; semantic "
+                "ranking degraded, treat ordering as approximate]\n"
+                if _kw_only
+                else ""
+            )
+            lines = [_fb + f"KB results for '{query}' ({len(hits)} found):\n"]
             for i, h in enumerate(hits, 1):
                 s = h["_source"]
                 src = s.get("source_path") or s.get("source_url") or "unknown"
