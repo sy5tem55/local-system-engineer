@@ -45,6 +45,9 @@ echo "[start-goethe-node3090] syncing goethe.py and goethe_mcp.py to node3090...
 rsync -az --info=name \
   "${LOCAL_DIR}/goethe.py" \
   "${LOCAL_DIR}/goethe_mcp.py" \
+  "${LOCAL_DIR}/goethe_kb.py" \
+  "${LOCAL_DIR}/goethe_perms.py" \
+  "${LOCAL_DIR}/redact.py" \
   "${USER}@${NODE}:${REMOTE_DIR}/"
 
 echo "[start-goethe-node3090] killing any existing goethe_mcp.py on node3090..."
