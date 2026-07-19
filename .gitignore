@@ -49,3 +49,5 @@ token*.json
 # Dream run artifacts (proposals, patterns, etc.)
 /opt/local-se/dreams/*.jsonl
 /opt/local-se/dreams/*.db
+.pytest_cache/
+tasks.db
