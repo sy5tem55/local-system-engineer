@@ -201,5 +201,7 @@ local-system-engineer/
 │   ├── v35_harness.py           ← v3.5 suite harness (reconstruction; original was never committed)
 │   └── retrieval-gold-v1.jsonl  ← frozen retrieval gold set (sha256 in traum-ab-design.md)
 │
+├── lse/services/                ← systemd unit templates (goethe-mcp, llama-server, goethe-dream ×2)
+│
 └── docs/dreaming/               ← TRAUM design + run artifacts (DESIGN.md, corpus-audit, calibration)
 ```
