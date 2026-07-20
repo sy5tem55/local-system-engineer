@@ -1111,6 +1111,92 @@ class Tools(KBMixin):
             "Typical locations: ~/llama.cpp/build/bin/llama-server or "
             "/usr/local/bin/llama-server.",
         )
+
+        # ── Planner backend selection (v1.13.0) ────────────────────────────
+        # _call_node_planner (above) is untouched and is exactly what backend
+        # 'local' calls. These four valves add three more backends behind a
+        # single dispatcher (_call_planner_backend) — see that method for the
+        # routing table. Every *_API_KEY valve name ends in API_KEY so it's
+        # picked up for free by goethe_mcp's _SECRET_FIELD_RE log redaction,
+        # same convention HERMES_API_KEY already relies on.
+        PLANNER_BACKEND: str = Field(
+            default="local",
+            description="Default planner backend: 'local' (existing llama-server/"
+            "Ollama/Gemma cascade — _call_node_planner, unchanged) | 'chatgpt' "
+            "(OpenAI — Codex CLI OAuth session if `codex login` has run, else "
+            "PLANNER_OPENAI_API_KEY) | 'claude' (Anthropic Messages API — Claude "
+            "Code OAuth session if `claude login` has run, else "
+            "PLANNER_ANTHROPIC_API_KEY) | 'rest' (any OpenAI-compatible "
+            "/v1/chat/completions server via PLANNER_REST_URL — OpenRouter, "
+            "Groq, Together, vLLM, LM Studio, etc.). planner(..., backend=...) "
+            "overrides this for a single call without changing the default.",
+        )
+        PLANNER_REST_URL: str = Field(
+            default="",
+            description="Base URL for backend='rest' (e.g. "
+            "https://openrouter.ai/api or http://192.168.1.20:1234 for a LAN "
+            "LM Studio instance). POSTs to <url>/v1/chat/completions — the one "
+            "genuinely universal option since almost every inference server "
+            "and every gateway speaks this shape.",
+        )
+        PLANNER_REST_MODEL: str = Field(
+            default="",
+            description="Model name sent with backend='rest' requests. Required "
+            "by most gateways (OpenRouter, Together); llama.cpp/LM Studio "
+            "ignore it if the server is only loaded with one model.",
+        )
+        PLANNER_REST_API_KEY: str = Field(
+            default="",
+            description="Bearer token for backend='rest', sent as "
+            "'Authorization: Bearer <key>'. Leave empty for LAN servers with "
+            "no auth (llama-server, LM Studio, vLLM defaults).",
+        )
+        PLANNER_OPENAI_MODEL: str = Field(
+            default="gpt-4o",
+            description="Model for backend='chatgpt'. Verify this is still a "
+            "valid model name for your account/key before relying on it — "
+            "OpenAI's catalog moves faster than this default will be updated.",
+        )
+        PLANNER_OPENAI_API_KEY: str = Field(
+            default="",
+            description="Fallback credential for backend='chatgpt', used ONLY "
+            "when no Codex CLI OAuth session is found at all (see "
+            "PLANNER_CODEX_AUTH_PATHS). This is a normal pay-per-token OpenAI "
+            "API key — a DIFFERENT credential from a ChatGPT subscription "
+            "login, billed separately.",
+        )
+        PLANNER_ANTHROPIC_MODEL: str = Field(
+            default="claude-sonnet-5",
+            description="Model for backend='claude' (Anthropic Messages API).",
+        )
+        PLANNER_ANTHROPIC_API_KEY: str = Field(
+            default="",
+            description="Fallback credential for backend='claude', used ONLY "
+            "when no Claude Code OAuth session is found at all (see "
+            "PLANNER_CLAUDE_AUTH_PATHS). Sent as 'x-api-key' (standard "
+            "Anthropic API auth) rather than the Bearer-token form the OAuth "
+            "path uses.",
+        )
+        PLANNER_CODEX_AUTH_PATHS: str = Field(
+            default="~/.codex/auth.json",
+            description="Colon-separated candidate file paths for Codex CLI's "
+            "(`codex login`) stored OAuth session, checked in order — first "
+            "one that exists and parses wins. UNDOCUMENTED FILE FORMAT: this "
+            "path and shape come from observed Codex CLI behavior, not an "
+            "OpenAI spec, and may drift between Codex CLI versions. "
+            "_read_codex_oauth_token() degrades to None (not an exception) if "
+            "nothing usable is found, so backend='chatgpt' falls through to "
+            "PLANNER_OPENAI_API_KEY rather than failing outright.",
+        )
+        PLANNER_CLAUDE_AUTH_PATHS: str = Field(
+            default="~/.claude/.credentials.json:~/.config/claude/.credentials.json",
+            description="Colon-separated candidate file paths for Claude Code's "
+            "(`claude login`) stored OAuth session, checked in order. Same "
+            "undocumented-format caveat as PLANNER_CODEX_AUTH_PATHS — on "
+            "macOS this is normally in Keychain instead of a file, so this "
+            "path list is a Linux/WSL-oriented best effort, not a guarantee.",
+        )
+
         SEARCH_BUDGET: int = Field(
             default=15,
             description="Max search_web/search_reddit/fetch_url calls per rolling "
@@ -1491,6 +1577,293 @@ class Tools(KBMixin):
         finally:
             self._stop_gemma_server(proc)
 
+    # ── Planner backend dispatcher (v1.13.0) ─────────────────────────────────
+    # _call_node_planner (above) is now exactly one branch — 'local' — of a
+    # 4-way dispatch. Nothing about the local cascade changed: same valves,
+    # same 3-stage fallback, same callers. This section adds the other three
+    # branches and the router that picks between them.
+
+    def _resolve_backend_name(self, backend: str = "") -> str:
+        """backend override → PLANNER_BACKEND valve default → 'local'. Shared
+        by _call_planner_backend (to route the call) and planner() (to
+        record which backend actually produced a plan, for the ledger's
+        'backend' column and the Console's status panel) so the two never
+        drift apart."""
+        return (backend or self.valves.PLANNER_BACKEND or "local").strip().lower()
+
+    def _call_planner_backend(
+        self, task: str, context: str = "", no_think: bool = False, backend: str = ""
+    ) -> str:
+        """Route a planner LLM call to the selected backend.
+
+        This is now the ONLY entry point planner()/_request_plan_envelope()
+        call — _call_node_planner itself is unchanged and untouched, just no
+        longer called directly from planner(). Same return contract every
+        backend function here has always had: the model's raw reply string,
+        or 'ERROR: <reason>' on failure.
+
+        backend: '' → use the PLANNER_BACKEND valve's default. Otherwise one
+        of 'local' | 'chatgpt' | 'claude' | 'rest'.
+        """
+        b = self._resolve_backend_name(backend)
+        if b == "local":
+            return self._call_node_planner(task, context=context, no_think=no_think)
+        if b == "rest":
+            return self._call_rest_planner(task, context=context, no_think=no_think)
+        if b == "chatgpt":
+            return self._call_chatgpt_planner(task, context=context, no_think=no_think)
+        if b == "claude":
+            return self._call_claude_planner(task, context=context, no_think=no_think)
+        return (
+            f"ERROR: unknown planner backend {b!r} — must be one of "
+            "local | chatgpt | claude | rest"
+        )
+
+    def _openai_style_call(
+        self, base_url: str, model: str, api_key: str,
+        task: str, context: str, no_think: bool, timeout: int,
+    ) -> str:
+        """Shared POST /v1/chat/completions body-building + call, used by the
+        'rest' and 'chatgpt' backends (both speak the OpenAI chat-completions
+        shape; they differ only in URL/credential-sourcing). Anthropic does
+        NOT use this — its Messages API has a different envelope entirely,
+        see _call_claude_planner.
+
+        api_key, if non-empty, is sent as 'Authorization: Bearer <key>'.
+        """
+        import json as _json  # noqa: PLC0415
+        import urllib.error as _uerr  # noqa: PLC0415
+        import urllib.request as _ureq  # noqa: PLC0415
+
+        messages = [{"role": "system", "content": self._PLANNER_CONTRACT}]
+        user_content = task.strip()
+        if context:
+            user_content = f"CONTEXT:\n{context.strip()}\n\nTASK:\n{user_content}"
+        if no_think:
+            user_content += " /no_think"
+        messages.append({"role": "user", "content": user_content})
+
+        payload_obj: dict = {
+            "messages": messages,
+            "max_tokens": 8192,
+            "temperature": 0.3,
+            "response_format": {"type": "json_object"},
+        }
+        if model:
+            payload_obj["model"] = model
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        req = _ureq.Request(
+            f"{base_url.rstrip('/')}/v1/chat/completions",
+            data=_json.dumps(payload_obj).encode(),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with _ureq.urlopen(req, timeout=timeout) as resp:
+                data = _json.loads(resp.read().decode())
+                return data["choices"][0]["message"]["content"]
+        except _uerr.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:200]
+            return f"ERROR: HTTP {exc.code} — {body}"
+        except Exception as exc:
+            return f"ERROR: {exc}"
+
+    def _read_codex_oauth_token(self) -> Optional[str]:
+        """Best-effort read of an existing Codex CLI (`codex login`) OAuth
+        session — see PLANNER_CODEX_AUTH_PATHS for the documented caveat
+        that this file format is not an OpenAI-published spec. Tries each
+        candidate path in order; returns the first usable token found, or
+        None if nothing is found/parseable (never raises — a broken or
+        missing credentials file must degrade to the API-key fallback, not
+        crash the planner call)."""
+        import json as _json  # noqa: PLC0415
+
+        for raw in (self.valves.PLANNER_CODEX_AUTH_PATHS or "").split(":"):
+            p = os.path.expanduser(raw.strip())
+            if not p or not os.path.isfile(p):
+                continue
+            try:
+                with open(p, encoding="utf-8") as f:
+                    data = _json.load(f)
+                tok = (
+                    (data.get("tokens") or {}).get("access_token")
+                    or data.get("access_token")
+                    or data.get("OPENAI_API_KEY")
+                )
+                if tok:
+                    return tok
+            except Exception as e:
+                self._log(f"PLANNER-BACKEND: codex auth file {p} unreadable: {e}")
+        return None
+
+    def _read_claude_oauth_token(self) -> Optional[str]:
+        """Best-effort read of an existing Claude Code (`claude login`) OAuth
+        session — see PLANNER_CLAUDE_AUTH_PATHS for the same undocumented-
+        format caveat as _read_codex_oauth_token. Never raises; returns None
+        if nothing usable is found."""
+        import json as _json  # noqa: PLC0415
+
+        for raw in (self.valves.PLANNER_CLAUDE_AUTH_PATHS or "").split(":"):
+            p = os.path.expanduser(raw.strip())
+            if not p or not os.path.isfile(p):
+                continue
+            try:
+                with open(p, encoding="utf-8") as f:
+                    data = _json.load(f)
+                oauth = data.get("claudeAiOauth") or {}
+                tok = (
+                    oauth.get("accessToken")
+                    or data.get("accessToken")
+                    or data.get("access_token")
+                )
+                if tok:
+                    return tok
+            except Exception as e:
+                self._log(f"PLANNER-BACKEND: claude auth file {p} unreadable: {e}")
+        return None
+
+    def _call_rest_planner(self, task: str, context: str = "", no_think: bool = False) -> str:
+        """backend='rest' — any OpenAI-compatible /v1/chat/completions server.
+        The 'almost universally compatible' option: OpenRouter, Groq,
+        Together, a LAN vLLM/LM Studio/text-generation-webui instance, or
+        anything else that speaks this shape works here unmodified, just by
+        setting PLANNER_REST_URL (+ optionally _MODEL / _API_KEY)."""
+        url = (self.valves.PLANNER_REST_URL or "").strip()
+        if not url:
+            return "ERROR: backend='rest' requires the PLANNER_REST_URL valve to be set"
+        return self._openai_style_call(
+            url, self.valves.PLANNER_REST_MODEL, self.valves.PLANNER_REST_API_KEY,
+            task, context, no_think, timeout=120,
+        )
+
+    def _call_chatgpt_planner(self, task: str, context: str = "", no_think: bool = False) -> str:
+        """backend='chatgpt'. Order of attempts:
+          1. Codex CLI OAuth session, if `codex login` has been run on this
+             machine (_read_codex_oauth_token). CAVEAT, stated plainly rather
+             than papered over: this token is normally scoped to ChatGPT's
+             own apps, not the general pay-per-token API — whether it's
+             accepted by api.openai.com depends on your account. If it's
+             REJECTED, this reports that clearly instead of silently trying
+             something else, since silently switching auth mechanisms after
+             a real auth failure would hide what actually happened.
+          2. PLANNER_OPENAI_API_KEY — used only when no OAuth session was
+             found at all (not on OAuth rejection), since that's a distinct,
+             separately-billed credential and switching to it automatically
+             after an explicit auth failure could surprise-charge the user.
+        """
+        oauth_tok = self._read_codex_oauth_token()
+        if oauth_tok:
+            self._log("PLANNER-BACKEND: chatgpt — using Codex CLI OAuth session")
+            result = self._openai_style_call(
+                "https://api.openai.com", self.valves.PLANNER_OPENAI_MODEL,
+                oauth_tok, task, context, no_think, timeout=120,
+            )
+            if not result.startswith("ERROR:"):
+                return result
+            return (
+                result + " — a Codex CLI OAuth session was found but "
+                "api.openai.com rejected it. ChatGPT subscription-login "
+                "tokens are usually scoped to ChatGPT's own apps, not the "
+                "general API. Set PLANNER_OPENAI_API_KEY to a real OpenAI "
+                "API key, or use backend='rest' with an OpenAI-compatible "
+                "gateway instead."
+            )
+        api_key = self.valves.PLANNER_OPENAI_API_KEY or ""
+        if not api_key:
+            return (
+                "ERROR: backend='chatgpt' found no Codex CLI OAuth session "
+                f"(checked PLANNER_CODEX_AUTH_PATHS={self.valves.PLANNER_CODEX_AUTH_PATHS!r}) "
+                "and PLANNER_OPENAI_API_KEY is not set. Run `codex login`, "
+                "or set PLANNER_OPENAI_API_KEY to an OpenAI API key."
+            )
+        self._log("PLANNER-BACKEND: chatgpt — using PLANNER_OPENAI_API_KEY")
+        return self._openai_style_call(
+            "https://api.openai.com", self.valves.PLANNER_OPENAI_MODEL,
+            api_key, task, context, no_think, timeout=120,
+        )
+
+    def _call_claude_planner(self, task: str, context: str = "", no_think: bool = False) -> str:
+        """backend='claude' — the real Anthropic Messages API (NOT force-fit
+        into the OpenAI chat-completions shape; system prompt is a top-level
+        field, response content is a content-block list, not choices[0]).
+
+        Order of attempts, same reasoning as _call_chatgpt_planner:
+          1. Claude Code OAuth session, if `claude login` has been run
+             (_read_claude_oauth_token), sent as 'Authorization: Bearer
+             <token>' — this is how Claude Code itself authenticates
+             against api.anthropic.com when subscription-logged-in rather
+             than using an API key.
+          2. PLANNER_ANTHROPIC_API_KEY, sent as 'x-api-key' (the standard,
+             fully-documented API-key auth path) — used only when no OAuth
+             session was found at all.
+        """
+        import json as _json  # noqa: PLC0415
+        import urllib.error as _uerr  # noqa: PLC0415
+        import urllib.request as _ureq  # noqa: PLC0415
+
+        def _messages_call(extra_headers: dict) -> str:
+            user_content = task.strip()
+            if context:
+                user_content = f"CONTEXT:\n{context.strip()}\n\nTASK:\n{user_content}"
+            if no_think:
+                user_content += " (respond directly — no extended thinking needed)"
+            payload = {
+                "model": self.valves.PLANNER_ANTHROPIC_MODEL,
+                "max_tokens": 8192,
+                "system": self._PLANNER_CONTRACT,
+                "messages": [{"role": "user", "content": user_content}],
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "anthropic-version": "2023-06-01",
+                **extra_headers,
+            }
+            req = _ureq.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=_json.dumps(payload).encode(),
+                headers=headers,
+                method="POST",
+            )
+            try:
+                with _ureq.urlopen(req, timeout=120) as resp:
+                    data = _json.loads(resp.read().decode())
+                    parts = data.get("content") or []
+                    text = "".join(
+                        p.get("text", "") for p in parts if p.get("type") == "text"
+                    )
+                    return text or "ERROR: empty content in Anthropic response"
+            except _uerr.HTTPError as exc:
+                body = exc.read().decode(errors="replace")[:200]
+                return f"ERROR: HTTP {exc.code} — {body}"
+            except Exception as exc:
+                return f"ERROR: {exc}"
+
+        oauth_tok = self._read_claude_oauth_token()
+        if oauth_tok:
+            self._log("PLANNER-BACKEND: claude — using Claude Code OAuth session")
+            result = _messages_call({"Authorization": f"Bearer {oauth_tok}"})
+            if not result.startswith("ERROR:"):
+                return result
+            return (
+                result + " — a Claude Code OAuth session was found but was "
+                "rejected. Set PLANNER_ANTHROPIC_API_KEY to a standard "
+                "Anthropic API key, or run `claude login` again if the "
+                "session expired."
+            )
+        api_key = self.valves.PLANNER_ANTHROPIC_API_KEY or ""
+        if not api_key:
+            return (
+                "ERROR: backend='claude' found no Claude Code OAuth session "
+                f"(checked PLANNER_CLAUDE_AUTH_PATHS={self.valves.PLANNER_CLAUDE_AUTH_PATHS!r}) "
+                "and PLANNER_ANTHROPIC_API_KEY is not set. Run `claude login`, "
+                "or set PLANNER_ANTHROPIC_API_KEY to an Anthropic API key."
+            )
+        self._log("PLANNER-BACKEND: claude — using PLANNER_ANTHROPIC_API_KEY")
+        return _messages_call({"x-api-key": api_key})
+
     # ── Gemma planner helpers (v0.2.8) ───────────────────────────────────────
 
     def _planner_task_class(self, task: str) -> str:
@@ -1789,7 +2162,9 @@ class Tools(KBMixin):
 
     def _tasks_db(self):
         """SQLite handle for the task-block store (auto-creates schema).
-        v0.3.2: adds steps_json column (structured per-step plan ledger)."""
+        v0.3.2: adds steps_json column (structured per-step plan ledger).
+        v1.13.0: adds backend column (which planner backend produced/last
+        touched this task's plan — see planner()'s backend param)."""
         import sqlite3  # noqa: PLC0415
 
         conn = sqlite3.connect(self.valves.TASKS_DB, timeout=5)
@@ -1803,6 +2178,8 @@ class Tools(KBMixin):
         cols = [r[1] for r in conn.execute("PRAGMA table_info(task_blocks)")]
         if "steps_json" not in cols:
             conn.execute("ALTER TABLE task_blocks ADD COLUMN steps_json TEXT")
+        if "backend" not in cols:
+            conn.execute("ALTER TABLE task_blocks ADD COLUMN backend TEXT")
         return conn
 
     def task_checkpoint(
@@ -2456,10 +2833,61 @@ tail -5 /tmp/goethe-node3090.log
                     capture_output=True, timeout=10,
                 )
 
+    # Matches `<<[-]?'DELIM' ... DELIM` / `<<[-]?DELIM ... DELIM` heredoc blocks,
+    # including the body between the opening marker and the closing delimiter
+    # line. DOTALL so '.' spans newlines (body may be many lines); MULTILINE so
+    # '^' anchors the closing delimiter to the start of its own line — without
+    # that anchor, the delimiter word appearing mid-line elsewhere would also
+    # close the match, or a permissive body could bleed into 'the rest of the
+    # command'. Left as a plain string (not pre-compiled): this module imports
+    # `re` locally per-method rather than at module scope, so a class-body
+    # `re.compile(...)` would NameError at class-definition time. `re.sub`
+    # with a string pattern is fine here — cpython's re module memoises
+    # compiled patterns internally, and this runs once per command, not in
+    # a hot loop.
+    _HEREDOC_PATTERN = r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\2[ \t]*$"
+
+    def _strip_heredoc_bodies(self, command: str) -> str:
+        """Blank out heredoc payload bodies before running safety substring
+        scans over a command.
+
+        Why: a heredoc body is DATA being written to a file or piped
+        somewhere — not a command being executed. The old scan ran
+        _BLOCKED_COMMANDS/_PRIVILEGED_PREFIXES checks over the ENTIRE raw
+        command string including heredoc content, so writing a KB note that
+        merely *mentions* 'sudo install ...' as documentation text inside a
+        `cat >> file << 'EOF' ... EOF` block got hard-blocked as if it were
+        an actual privilege-escalation attempt. Keep the opening `<<DELIM`
+        and closing `DELIM` marker lines intact (so a redirect target like
+        `cat >> /etc/passwd << EOF` is still caught by the separate
+        priv-write-path check, which looks at the header line) and blank
+        only what's between them.
+        """
+        import re as _re  # noqa: PLC0415
+
+        def _replace(m: "_re.Match") -> str:
+            first_line = m.group(0).split("\n", 1)[0]
+            return f"{first_line}\n[HEREDOC BODY OMITTED FROM SAFETY SCAN]\n{m.group(2)}"
+
+        try:
+            return _re.sub(
+                self._HEREDOC_PATTERN, _replace, command,
+                flags=_re.MULTILINE | _re.DOTALL,
+            )
+        except Exception:
+            # Scanning must never crash the guard — fail closed by scanning
+            # the original text if the regex substitution itself errors.
+            return command
+
     def _validate_command_safety(self, command: str, cwd: str) -> Optional[str]:
         """Validate command safety. Returns error string if blocked, None if safe."""
+        # Heredoc bodies are data, not commands — strip them before any
+        # substring scan below. `command` itself (used for actual execution
+        # and for the leading-'sudo '-prefix check) stays untouched.
+        scan_command = self._strip_heredoc_bodies(command)
+
         # ── Block permanently forbidden commands ──────────────────────────────
-        cmd_lower = command.lower().strip()
+        cmd_lower = scan_command.lower().strip()
         for blocked in self._BLOCKED_COMMANDS:
             if blocked in cmd_lower:
                 self._log(f"HARD-BLOCKED: {command}")
@@ -2492,10 +2920,30 @@ tail -5 /tmp/goethe-node3090.log
         for priv in self._PRIVILEGED_PREFIXES:
             if priv in cmd_lower:
                 self._log(f"PRIV-BLOCKED: {command}")
-                _note = ""
-                if _priv_rest:
+                # File a request for EVERY match here, not just the narrow
+                # "command starts with a clean, unpunctuated 'sudo '" case.
+                # Before this fix, anything that didn't fit that shape (a
+                # chained `cmd1 && sudo cmd2`, `su ` instead of `sudo `, etc.)
+                # produced a dead-end BLOCKED message with no request filed
+                # and no `goethe-perm approve/deny` id to act on at all —
+                # the equivalent of a wall with no door. Every match now
+                # gets a door, even if check_sudo() can't auto-replay a
+                # multi-statement command on approval (see reason text).
+                if _priv_rest and not any(
+                    t in _priv_rest for t in (";", "|", "&", "`", "$(", "\n", ">", "<")
+                ):
                     _note = self._perm_note(
                         "sudo", _priv_rest, "agent requested privileged command"
+                    )
+                else:
+                    _note = self._perm_note(
+                        "sudo",
+                        scan_command.strip(),
+                        "agent command flagged by privileged-prefix scan "
+                        "(chained/complex command or non-'sudo' escalation word "
+                        "— approving files a record but won't auto-replay via "
+                        "check_sudo; re-run sudo_delegation_block or approve "
+                        "the exact simplified command instead)",
                     )
                 return (
                     f"BLOCKED: '{priv.strip()}' detected in command. "
@@ -2513,7 +2961,7 @@ tail -5 /tmp/goethe-node3090.log
             + r"|\b(?:cp|mv|dd|truncate)\b[^|;&\n]*\s" + _priv_re
             + r"|\bsed\s+-i\b[^|;&\n]*" + _priv_re
             + r"|\brm\s+[^|;&\n]*" + _priv_re,
-            command,
+            scan_command,
         )
         if _write_to_priv:
             self._log(f"WRITE-BLOCKED: {command}")
@@ -5622,11 +6070,17 @@ tail -5 /tmp/goethe-node3090.log
             )
 
 
-    def _load_ledger_for_revise(self, task_id: str, context: str) -> tuple[list, str] | str:
+    def _load_ledger_for_revise(
+        self, task_id: str, context: str
+    ) -> tuple[list, str, Optional[str]] | str:
         """Load ledger history for revise mode.
 
-        Returns (prior_done_steps, updated_context) on success,
-        or an error string on failure.
+        Returns (prior_done_steps, updated_context, stored_backend) on
+        success, or an error string on failure. stored_backend is whichever
+        backend the task was last planned/revised with (None for task
+        blocks written before v1.13.0's backend column existed) — planner()
+        uses it as the revise-mode default so you don't have to re-specify
+        backend='claude' etc. on every follow-up call for the same task_id.
         """
         import json as _json  # noqa: PLC0415
         if not task_id.strip():
@@ -5634,7 +6088,7 @@ tail -5 /tmp/goethe-node3090.log
         try:
             conn = self._tasks_db()
             row = conn.execute(
-                "SELECT goal, steps_json FROM task_blocks WHERE task_id=?",
+                "SELECT goal, steps_json, backend FROM task_blocks WHERE task_id=?",
                 (task_id.strip(),),
             ).fetchone()
             conn.close()
@@ -5643,6 +6097,7 @@ tail -5 /tmp/goethe-node3090.log
         if not row:
             return f"planner revise: no task block '{task_id}' in the ledger."
         old_steps = _json.loads(row[1]) if row[1] else []
+        stored_backend = row[2] or None
         prior_done_steps = [s for s in old_steps if s.get("status") == "done"]
         ledger_lines = []
         for s in old_steps:
@@ -5658,7 +6113,7 @@ tail -5 /tmp/goethe-node3090.log
             "ONLY the remaining work, number new steps after the highest "
             "completed step):\n" + "\n".join(ledger_lines)
         )
-        return prior_done_steps, context
+        return prior_done_steps, context, stored_backend
 
 
     def _synthesize_packaged_prompt(
@@ -5726,8 +6181,15 @@ tail -5 /tmp/goethe-node3090.log
         return new_steps
 
 
-    def _request_plan_envelope(self, task: str, context: str) -> tuple[dict | None, str | None]:
-        """Fetch plan envelope from node planner with two-attempt retry.
+    def _request_plan_envelope(
+        self, task: str, context: str, backend: str = ""
+    ) -> tuple[dict | None, str | None]:
+        """Fetch plan envelope from the selected planner backend with
+        two-attempt retry.
+
+        backend: '' → PLANNER_BACKEND valve default, else 'local' |
+        'chatgpt' | 'claude' | 'rest' — passed straight through to
+        _call_planner_backend, same resolution _resolve_backend_name() uses.
 
         Returns (envelope_dict, None) on success,
         or (None, error_message) on failure.
@@ -5736,7 +6198,9 @@ tail -5 /tmp/goethe-node3090.log
         fail_reason = ""
         plan_ctx = context
         for attempt in (1, 2):
-            reply = self._call_node_planner(task, context=plan_ctx, no_think=True)
+            reply = self._call_planner_backend(
+                task, context=plan_ctx, no_think=True, backend=backend
+            )
             if not reply or reply.startswith("ERROR:"):
                 return None, (
                     "PLANNER UNAVAILABLE — proceed with default budgets, "
@@ -5766,6 +6230,7 @@ tail -5 /tmp/goethe-node3090.log
         context: str = "",
         mode: str = "new",
         task_id: str = "",
+        backend: str = "",
     ) -> str:
         """
         Request a pre-flight ATOMIZED execution plan from the peer LSE instance
@@ -5776,12 +6241,26 @@ tail -5 /tmp/goethe-node3090.log
         The plan is written to the task ledger (tasks.db); execute the returned
         first step, then call plan_step_done() to strike it and receive the next.
 
-        Planner backend — 3-path cascade (v0.2.8):
-          1. node3090 llama-server :8080 (Qwen 27B, GPU) — primary
-          2. node3090 Ollama :11434 qwen3:4b (CPU) — fallback when GPU unavailable
-          3. Local Gemma GGUF spawn (VRAM-aware, port 8085) — last resort
-             Model selected by task size: E4B / 26B-A4B / 31B.
-             Vision tasks (image/png/jpg keywords) load the mmproj companion.
+        Planner backend — pick with backend= or the PLANNER_BACKEND valve
+        (v1.13.0, default 'local' — zero change from prior behavior unless
+        you explicitly opt in):
+          'local'   (default) 3-path cascade, unchanged since v0.2.8:
+                    1. node3090 llama-server :8080 (Qwen 27B, GPU) — primary
+                    2. node3090 Ollama :11434 qwen3:4b (CPU) — fallback
+                    3. Local Gemma GGUF spawn (VRAM-aware, port 8085) — last
+                       resort. Model by task size: E4B / 26B-A4B / 31B.
+                       Vision tasks (image/png/jpg keywords) load mmproj.
+          'chatgpt' OpenAI, via a Codex CLI OAuth session (`codex login`) if
+                    present, else PLANNER_OPENAI_API_KEY.
+          'claude'  Anthropic Messages API, via a Claude Code OAuth session
+                    (`claude login`) if present, else PLANNER_ANTHROPIC_API_KEY.
+          'rest'    Any OpenAI-compatible /v1/chat/completions server —
+                    PLANNER_REST_URL (+ _MODEL / _API_KEY). The broadly-
+                    compatible option: OpenRouter, Groq, Together, a LAN
+                    vLLM/LM Studio instance, etc.
+        mode='revise' on an existing task_id reuses whichever backend that
+        task was last planned with unless you pass backend= explicitly —
+        you don't need to repeat backend='claude' on every follow-up call.
 
         MANDATORY TRIGGER — the user asked for a plan:
           If the user's request contains "plan" / "get a plan" / "how should we
@@ -5844,6 +6323,11 @@ tail -5 /tmp/goethe-node3090.log
                      summary, and replaces only the remaining steps.
             task_id: Required for mode="revise" — the id returned by the
                      original planner call.
+            backend: '' (default) uses the PLANNER_BACKEND valve, or the
+                     task's own stored backend in revise mode. Otherwise one
+                     of 'local' | 'chatgpt' | 'claude' | 'rest' to override
+                     for this call only — the override does NOT change the
+                     valve default or overwrite what other tasks use.
 
         Returns the plan summary + packaged prompt, or a string starting with
         "PLANNER UNAVAILABLE" on any failure (all backends down, bad envelope).
@@ -5858,17 +6342,23 @@ tail -5 /tmp/goethe-node3090.log
         ]
         # ── v0.3.2 revise mode: feed the ledger back to the planner ──────────
         prior_done_steps: list = []
+        stored_backend: Optional[str] = None
         if mode == "revise":
             result = self._load_ledger_for_revise(task_id, context)
             if isinstance(result, str):
                 return result
-            prior_done_steps, context = result
+            prior_done_steps, context, stored_backend = result
         elif mode != "new":
             return "planner: mode must be 'new' or 'revise'."
+        # v1.13.0: an explicit backend= wins; otherwise a revise call reuses
+        # whatever backend the task was last planned with; a brand-new task
+        # falls through to the PLANNER_BACKEND valve inside
+        # _resolve_backend_name/_call_planner_backend.
+        effective_backend = backend or stored_backend or ""
         # ── v0.3.3: two-attempt envelope loop — truncated/malformed envelopes
         # (long thinking + tight completion budget) were the dominant
         # "PLANNER UNAVAILABLE" cause; one corrective retry recovers most.
-        env, error = self._request_plan_envelope(task, context)
+        env, error = self._request_plan_envelope(task, context, backend=effective_backend)
         if error:
             return error
         raw_steps = env.get("steps") or []
@@ -5910,18 +6400,20 @@ tail -5 /tmp/goethe-node3090.log
             status="open",
             task_id=tid,
         )
+        resolved_backend = self._resolve_backend_name(effective_backend)
         try:
             conn = self._tasks_db()
             with conn:
                 conn.execute(
-                    "UPDATE task_blocks SET steps_json=? WHERE task_id=?",
-                    (_json.dumps(all_steps), tid),
+                    "UPDATE task_blocks SET steps_json=?, backend=? WHERE task_id=?",
+                    (_json.dumps(all_steps), resolved_backend, tid),
                 )
             conn.close()
         except Exception as e:
             return f"planner: ledger steps write failed: {e}"
         return (
-            f"PLAN ENVELOPE accepted ({mode}): task_id={tid} | correlation_id={corr}\n"
+            f"PLAN ENVELOPE accepted ({mode}): task_id={tid} | correlation_id={corr} "
+            f"| backend={resolved_backend}\n"
             f"sessions_estimate={env.get('sessions_estimate', '?')} | "
             f"single_session={env.get('single_session', '?')} | "
             f"confidence={env.get('confidence', '?')} | "
