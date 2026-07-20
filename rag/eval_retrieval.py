@@ -23,7 +23,7 @@ USAGE
   python3 rag/eval_retrieval.py --mode rrf --verbose      # per-query detail
   python3 rag/eval_retrieval.py --threshold-report --mode linear
   python3 rag/eval_retrieval.py --self-test               # no ES/Ollama needed
-Requires (live modes): ES at --es-url, Ollama nomic-embed-text at --ollama-url.
+Requires (live modes): ES at --es-url, Ollama qwen3-embedding:0.6b at --ollama-url.
 """
 import argparse
 import json
@@ -33,8 +33,8 @@ from collections import Counter, defaultdict
 
 GOLD_DEFAULT = os.path.join(os.path.dirname(__file__), "..", "eval", "retrieval-gold-v1.jsonl")
 ES_INDEX = "lse-kb"
-EMBED_MODEL = "nomic-embed-text"
-EMBED_PREFIX = "search_query: "
+EMBED_MODEL = "qwen3-embedding:0.6b"
+EMBED_PREFIX = ""  # qwen3-embedding: no task prefix (nomic-only convention)
 RRF_K = 60
 MEASURE_SIZE = 10  # retrieve top-N for measurement; recall@k slices this
 

@@ -82,7 +82,7 @@ DNS: `*.home.arpa` via pfSense Unbound. Always use FQDNs.
 | `OWUI_DB_PATH` | `/home/sy5/owui/.../webui.db` | OpenWebUI SQLite DB (compact_context) |
 | `ES_URL` | `http://127.0.0.1:9200` | Elasticsearch (KB) |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama embeddings |
-| `EMBED_MODEL` | `nomic-embed-text` | 768-dim embedding model |
+| `EMBED_MODEL` | `qwen3-embedding:0.6b` | 1024-dim embedding model |
 | `PFSENSE_URL` | `https://pfsense.home.arpa` | pfSense base URL |
 | `PFSENSE_API_KEY` | `""` | pfSense REST key (read-only default) |
 | `PFSENSE_CA_CERT` | `/opt/local-se/cert/pfsense-webgui-ca.crt` | TLS CA cert |
@@ -163,7 +163,7 @@ sudo, su, doas
 
 ### 4.4 Knowledge Base
 
-Built on **Elasticsearch** (`lse-kb` index) + **Ollama** (`nomic-embed-text` 768-dim embeddings).
+Built on **Elasticsearch** (`lse-kb` index) + **Ollama** (`qwen3-embedding:0.6b` 1024-dim embeddings).
 
 | Function | Signature | Purpose |
 |---|---|---|

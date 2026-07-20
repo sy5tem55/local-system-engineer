@@ -1158,3 +1158,50 @@ not by reading the code and predicting it could.
   `JZVeoVch20+FvyjXEn4BMVHtu1AM6JCH` — mismatched since at least 2026-07-19. This means
   the `searxng-engine-health` Grafana dashboard has been blind to engine degradation
   (would have caught the Bing issue sooner). Not yet fixed — align the two values.
+
+## 2026-07-20 — Local-model self-reported "done" is unreliable; verify against independent ground truth
+
+Third instance this session of a local-model (Qwen) tool-execution transcript
+reporting successful completion when the actual system state disagreed:
+
+1. Vault KB doc fix ("completed KB fix: A") — content read back unchanged
+   moments later; root cause was ES 5s refresh_interval on lse-kb-1024
+   (mentor_correct's es.update() is real-time-GET-visible immediately, but
+   search_kb's _search query lags until the next index refresh). Not
+   malicious, but the model never re-verified via a real-time GET before
+   reporting done.
+2. "Grant #7/#8 pending" cited as blocking a KB doc fix — grant #8 had
+   actually been approved 20 minutes earlier. Both grants were real, but
+   belonged to an unrelated node3090 task from earlier in a long thread,
+   misattributed to the current task, and cited without a live status check.
+3. reembed_pass.py reported "146/146 docs re-embedded, 0 errors, 0 skipped"
+   after re-embedding lse-kb-1024 following the qwen3-embedding prefix-bug
+   fix (see below). Direct verification via ES `_version` metadata (not the
+   script's own log) showed 7 docs still at version=1 — never touched.
+   The script had no try/except around es.update() itself, so a genuine
+   write failure should have crashed loudly, not vanished — cause of the gap
+   still not fully explained, but the self-report was provably wrong.
+
+STANDING RULE: any KB-write-bearing script or tool call must be verified
+against independent ground truth before being treated as complete —
+version/seq_no bumps via a fresh GET, a document count delta, or a
+content-hash diff. Do not trust a script's own printed tally, and do not
+re-verify via the same read path the write is suspected of not reaching
+(e.g. don't confirm an ES write only via `_search`, which can lag refresh;
+use a real-time `_doc/{id}` GET).
+
+## 2026-07-19/20 — qwen3-embedding migration: prefix-bug root cause
+
+lse-kb was migrated from nomic-embed-text (768-dim) to qwen3-embedding:0.6b
+(1024-dim), index lse-kb-1024 created 2026-07-15. The shared _embed() helper
+in goethe_kb.py kept nomic's "search_query: " prefix convention hard-coded
+into every embed call (query AND document indexing use the same function) —
+qwen3-embedding uses no such prefix. Bug present from the file's first commit
+(2026-07-18, and almost certainly since the 07-15 model swap, carried over
+from the pre-refactor goethe.py) until removed in commit 418e4fe
+(2026-07-19 03:29 UTC). ~112-123 of 145 docs (roughly 77-85% of the KB) were
+embedded during the contaminated window. Separately, rag/eval_retrieval.py,
+rag/01-ollama-setup.sh, and LSE-ARCHITECTURE.md were left hardcoded to
+nomic-embed-text/768-dim the whole time, so the eval harness itself threw a
+flat dimension-mismatch error rather than a bad score - meaning there was no
+valid "before" quality baseline, only "it errored."
