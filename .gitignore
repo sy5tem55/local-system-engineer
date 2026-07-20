@@ -26,6 +26,9 @@ nohup.out
 # LSE product monorepo (docs/LSE-PRODUCT-ROADMAP.md) — its own repo with its own
 # remote once Phase 5 lands. Not tracked here; avoid it becoming an embedded/nested
 # repo blob in this one.
+# lse/ is an EMBEDDED GIT REPO of its own (the lse product tree) — ignored
+# here wholesale; its content (incl. the goethe-dream unit templates) is
+# committed inside lse/.git, not this repo.
 lse/
 
 # Security: credential files — never commit (audit 2026-07)
@@ -51,3 +54,26 @@ token*.json
 /opt/local-se/dreams/*.db
 .pytest_cache/
 tasks.db
+
+# Session handover/learnings — regenerated each session
+*session*.md
+Backups/
+hermes-skill/
+# Sanitation: never track these (removed from repo, kept on disk)
+*.docx
+searxng_settings.yaml
+ha-agent.py
+lse_agent.py
+pfsense-agent.py
+pfsense-agent.conf.example
+backups/
+# eval/ is ignored as a class (bulky run logs, scratch results), but the
+# TRAUM A/B artifacts the repo's own docs cite must be tracked (Thread 4
+# close decision, 2026-07-13): the frozen gold set (DATA-3), the harness,
+# the pre-registered design, its verdict report, and the v3.5 suite text.
+eval/*
+!eval/traum-ab-design.md
+!eval/eval-report-traum-1.md
+!eval/v35_harness.py
+!eval/retrieval-gold-v1.jsonl
+!eval/test-suite-v3.5.md
