@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# LSE RAG Stack — Step 1: Ollama + nomic-embed-text setup
+# LSE RAG Stack — Step 1: Ollama + qwen3-embedding:0.6b setup
 # Run once on the WSL host (Ubuntu-24.04) as sy5
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-EMBED_MODEL="nomic-embed-text"
+EMBED_MODEL="qwen3-embedding:0.6b"
 OLLAMA_PORT=11434
 
 echo "=== LSE RAG: Ollama + ${EMBED_MODEL} setup ==="
@@ -32,7 +32,7 @@ else
     echo "    Ollama already running"
 fi
 
-# ── 3. Pull nomic-embed-text ──────────────────────────────────────────────────
+# ── 3. Pull qwen3-embedding:0.6b ──────────────────────────────────────────────────
 echo "[3/4] Pulling ${EMBED_MODEL}..."
 OLLAMA_HOST="127.0.0.1:${OLLAMA_PORT}" ollama pull ${EMBED_MODEL}
 

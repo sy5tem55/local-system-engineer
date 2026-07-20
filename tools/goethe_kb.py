@@ -76,14 +76,38 @@ class KBMixin:
 
     _EMBED_CACHE = None  # class-level LRU {sha256(model+text): vector}, cap 256
 
+    # Stamped into every doc's embed_model_version field on write (index_to_kb,
+    # mentor_correct) so a future embedding-contract change (model swap, prefix/
+    # prompt-scheme change) can be detected and the stale subset re-embedded on
+    # purpose, instead of silently drifting the way the 2026-07-15->07-19
+    # qwen3-embedding prefix bug did (~112-123 of 145 docs embedded with a
+    # leftover nomic "search_query: " prefix, undetected for days). Bump the
+    # suffix any time _embed()'s prompt-construction changes, even if the
+    # model name doesn't.
+    _EMBED_PROMPT_SCHEME_VERSION = "v2-no-prefix"
+
     # ── RAG private helpers ──────────────────────────────────────────────────
+
+    # Embed input truncation. NOT set by the model's context window
+    # (qwen3-embedding:0.6b supports 32768 tokens per `ollama show`) — set by
+    # measured CPU inference latency instead: 5000 chars already took 6.77s
+    # against the (3s connect, 8s read) timeout below (2026-07-20 measurement,
+    # under modest concurrent load). Attention cost scales worse than linearly
+    # with sequence length on this CPU embedder, so raising this materially
+    # risks recreating the 2026-07-19 hang (search_kb's fail-fast timeout
+    # firing routinely, degrading every call to keyword-only fallback instead
+    # of the rare edge case it's meant for). Left at 5000 deliberately — do
+    # not raise without re-measuring latency at the new limit under load.
+    _EMBED_CHAR_LIMIT = 5000
 
     def _embed(self, text: str) -> list:
         """Embedding from the configured Ollama model (1024-dim in production).
         LRU-cached (256 entries) so repeated queries never re-hit the CPU
         embedder; timeout=(3s connect, 8s read) so a busy embedder fails fast
         into search_kb's keyword-only fallback instead of blocking the
-        gateway (2026-07-19 hang post-mortem)."""
+        gateway (2026-07-19 hang post-mortem). Input truncated to
+        _EMBED_CHAR_LIMIT — see that constant for why (latency, not context
+        window)."""
         import hashlib  # noqa: PLC0415
         import requests  # noqa: PLC0415
         from collections import OrderedDict  # noqa: PLC0415
@@ -91,8 +115,9 @@ class KBMixin:
         if KBMixin._EMBED_CACHE is None:
             KBMixin._EMBED_CACHE = OrderedDict()
         cache = KBMixin._EMBED_CACHE
+        truncated = text[: self._EMBED_CHAR_LIMIT]
         key = hashlib.sha256(
-            (self.valves.EMBED_MODEL + "\x00" + text[:5000]).encode()
+            (self.valves.EMBED_MODEL + "\x00" + truncated).encode()
         ).hexdigest()
         if key in cache:
             cache.move_to_end(key)
@@ -101,7 +126,9 @@ class KBMixin:
             f"{self.valves.OLLAMA_URL}/api/embed",
             json={
                 "model": self.valves.EMBED_MODEL,
-                "input": text[:5000],  # qwen3-embedding: no task prefix (nomic-only convention, removed 2026-07-19)
+                # qwen3-embedding: no task prefix (nomic-only convention,
+                # removed 2026-07-19 — see _EMBED_PROMPT_SCHEME_VERSION).
+                "input": truncated,
             },
             timeout=(3, 8),
         )
@@ -111,6 +138,13 @@ class KBMixin:
         if len(cache) > 256:
             cache.popitem(last=False)
         return vec
+
+    def _embed_model_version(self) -> str:
+        """Stamp for embed_model_version: which model + prompt-scheme produced
+        a doc's vector. Compare against this live value to find stale docs
+        after any future embedding-contract change, instead of discovering
+        the drift days later by accident."""
+        return f"{self.valves.EMBED_MODEL}|{self._EMBED_PROMPT_SCHEME_VERSION}"
 
     def _es(self):
         """Lazy Elasticsearch 8.x client."""
@@ -123,7 +157,7 @@ class KBMixin:
     def search_kb(
         self,
         query: str,
-        min_score: float = 3.5,
+        min_score: float = 4.0,
         max_results: int = 5,
         topic_filter: str = "",
     ) -> str:
@@ -156,11 +190,19 @@ class KBMixin:
             query:        Natural language search query.
             min_score:    HYBRID-score threshold (0.7·knn + 0.3·BM25 — BM25 is
                           unbounded, so real scores run ~3.5–16, NOT 0–1).
-                          Default 3.5, calibrated for 1024-dim qwen3-embedding (2026-07-15): keeps 98% top-3, 75% total.
-                          keeps 38/38 correct top-1 hits, rejects 3/11 wrong
-                          ones, loses zero correct. (The old 0.72 default was
-                          calibrated for cosine and filtered nothing.) Do not
-                          hand-tune — re-run rag/eval_retrieval.py
+                          Default 4.0, re-calibrated 2026-07-20 against
+                          rag/eval_retrieval.py --mode linear --threshold-report
+                          run AFTER the qwen3-embedding prefix-bug re-embed
+                          (see kb/session-learnings.md) and the embed_model_version
+                          backfill confirming full corpus consistency: cut=4.042
+                          is the highest threshold with zero rejected correct
+                          top-1 hits (44/44 kept) while cutting kept_wrong from
+                          6 to 4. The prior 3.5 default (2026-07-15) was
+                          calibrated one commit before the corpus-wide prefix
+                          fix landed, against a partially-contaminated
+                          embedding set — this run is the first calibration
+                          against verified-clean vectors. Do not hand-tune —
+                          re-run rag/eval_retrieval.py --mode linear
                           --threshold-report after major KB growth instead.
             max_results:  Max results to return. Default 5.
             topic_filter: Optional topic tag: 'comfyui', 'wan2.1', 'searxng',
@@ -486,11 +528,15 @@ class KBMixin:
         self._log(
             f"INDEX-KB: title={title} topic={topic} tier={tier} quality={quality_score}"
         )
-        # Store full content (up to 50000 chars); embed only first 8000 (nomic-embed-text token limit)
+        # Store full content (up to 50000 chars). embed_content used to cap at
+        # 8000 here "for nomic-embed-text's token limit" -- dead code even
+        # before the qwen3 migration, since _embed() itself re-truncates to
+        # _EMBED_CHAR_LIMIT (5000) internally; removed rather than left as a
+        # second, misleading truncation point. See _EMBED_CHAR_LIMIT for the
+        # real (latency-driven) constraint.
         content = content[:50000]
-        embed_content = content[:8000]
         try:
-            embedding = self._embed(embed_content)
+            embedding = self._embed(content)
             es = self._es()
             now = datetime.now(timezone.utc).isoformat()
             doc_hash = hashlib.sha256(content[:500].encode()).hexdigest()[:16]
@@ -522,6 +568,7 @@ class KBMixin:
                     "version": existing["_source"]["version"] + 1,
                     "source_url": source_url or None,
                     "volatility": volatility,
+                    "embed_model_version": self._embed_model_version(),
                     **({"origin": origin} if origin != "unspecified" else {}),
                 }
                 # KB-DECAY recovery: re-indexing with tier-gated evidence above
@@ -546,6 +593,19 @@ class KBMixin:
                         }
                     },
                 )
+                # KB writes are low-frequency; refresh immediately rather than
+                # waiting for the index's 5s refresh_interval, so a caller that
+                # re-verifies via search_kb right after this call doesn't see
+                # stale content (2026-07-20 postmortem: mentor_correct write
+                # looked "not applied" for exactly this reason). Best-effort:
+                # the write above already succeeded, so a refresh failure
+                # (unavailable on a test/mock ES client, or a transient ES
+                # hiccup) must never turn a successful write into a reported
+                # error.
+                try:
+                    es.indices.refresh(index="lse-kb")
+                except Exception:
+                    pass
                 return (
                     f"KB updated (refined): doc_id={existing['_id']} | "
                     f"quality {existing['_source']['quality_score']:.2f} → {new_q:.2f} | "
@@ -571,8 +631,13 @@ class KBMixin:
                 "verified_against": (verified_against or "").strip() or None,
                 "volatility": volatility,
                 "origin": origin,
+                "embed_model_version": self._embed_model_version(),
             }
             es.index(index="lse-kb", id=doc_hash, document=doc)
+            try:
+                es.indices.refresh(index="lse-kb")
+            except Exception:
+                pass
             return (
                 f"KB created: doc_id={doc_hash} | title='{title}' | "
                 f"topic={topic} | tier={tier} | quality={quality_score:.2f}{tier_warn}{wf_warn}"
@@ -933,6 +998,7 @@ class KBMixin:
                 "refinement_count": src.get("refinement_count", 0) + 1,
                 "updated_at": now,
                 "mentor_corrected_at": now,
+                "embed_model_version": self._embed_model_version(),
             }
             # KB-DECAY recovery: a human correction above the quarantine floor
             # is THE tier-gated re-elevation path — clear stale + failure streak.
@@ -940,6 +1006,16 @@ class KBMixin:
                 _mc_doc["stale"] = False
                 _mc_doc["consecutive_failures"] = 0
             es.update(index="lse-kb", id=doc_id, body={"doc": _mc_doc})
+            # Refresh immediately -- see index_to_kb's matching comment.
+            # This is exactly the write whose staleness confused both the LSE
+            # and me earlier in this session (5s refresh_interval on
+            # lse-kb-1024 vs. a search_kb re-check moments later).
+            # Best-effort -- never let a refresh failure mask the write above,
+            # which already succeeded.
+            try:
+                es.indices.refresh(index="lse-kb")
+            except Exception:
+                pass
             return (
                 f"Mentor correction applied: doc='{src.get('title', doc_id)}' | "
                 f"quality {old_quality:.2f} → {new_quality:.2f} | "
