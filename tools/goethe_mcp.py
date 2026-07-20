@@ -63,7 +63,17 @@ import sys
 import time
 import typing
 
-__version__ = "1.11.2"
+__version__ = "1.12.0"
+# 1.12.0 — Goethe Console: mount tools/goethe_ui.py (UIRouter) into the HTTP
+#           stack — GET /ui serves the dashboard (goethe_dashboard.html,
+#           static, no token needed), GET /api/ui/* are read-only JSON panels
+#           (KB trust lifecycle, TRAUM dream digest, tasks.db ledger, episode
+#           stats) gated by the SAME bearer token as /mcp. The router sits
+#           between _TokenGuard and CORSMiddleware so the static page loads in
+#           a plain browser while data stays token-gated; it does its own
+#           token check with the same normalisation _TokenGuard uses. Import
+#           is fail-safe: a missing/broken goethe_ui.py logs a warning and the
+#           MCP surface is completely unaffected. Disable with GOETHE_UI=off.
 # 1.11.1 — fix a real redaction gap Prompt 1.8's contract tests caught: the
 #           RESULT of a _SENSITIVE_TOOLS call (get_vault_secret, etc.) was only
 #           run through the generic value/pattern redaction in _redact_text,
@@ -677,6 +687,23 @@ def build_http_app(mcp, token: str, cors_origin: str):
                 await self.app(scope, receive, send)
 
         app = _TokenGuard(app)
+
+    # Goethe Console (v1.12.0) — /ui + /api/ui/*. Mounted OUTSIDE _TokenGuard
+    # so the static page is browser-loadable; the router token-gates /api/ui/*
+    # itself. Fail-safe: any load error leaves the MCP surface untouched.
+    if os.environ.get("GOETHE_UI", "on").lower() not in ("off", "0", ""):
+        try:
+            _ui_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "goethe_ui.py")
+            _ui_spec = importlib.util.spec_from_file_location("goethe_ui", _ui_path)
+            _ui_mod = importlib.util.module_from_spec(_ui_spec)
+            _ui_spec.loader.exec_module(_ui_mod)
+            app = _ui_mod.UIRouter(app, token=token)
+            print(f"[goethe_mcp] Goethe Console mounted at /ui "
+                  f"(goethe_ui v{_ui_mod.__version__})", file=sys.stderr)
+        except Exception as e:
+            print(f"[goethe_mcp] WARNING: Goethe Console disabled ({e}) — "
+                  "MCP surface unaffected", file=sys.stderr)
 
     # CORSMiddleware — intercepts OPTIONS before token check or routing.
     # DELETE is required: llama-ui sends DELETE /mcp?session_id=... to terminate

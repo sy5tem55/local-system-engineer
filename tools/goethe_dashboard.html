@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goethe Console</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#12161f; --panel2:#181d29; --line:#232a3a;
+    --text:#d7dce6; --dim:#8b93a7; --faint:#5a6274;
+    --accent:#7aa2f7; --good:#9ece6a; --warn:#e0af68; --bad:#f7768e;
+    --purple:#bb9af7; --cyan:#7dcfff;
+    --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.5 system-ui,'Segoe UI',sans-serif;padding:20px 24px 60px}
+  a{color:var(--accent)}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+  header h1{font-size:20px;font-weight:650;letter-spacing:.3px}
+  header h1 span{color:var(--accent)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:3px 12px;font-size:12px;color:var(--dim)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+  .dot.ok{background:var(--good)} .dot.bad{background:var(--bad)}
+  .spacer{flex:1}
+  .tok{display:flex;gap:6px;align-items:center}
+  .tok input{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 10px;font-family:var(--mono);font-size:12px;width:220px}
+  .tok button,button.rf{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px}
+  .tok button:hover,button.rf:hover{border-color:var(--accent)}
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;grid-column:span 12}
+  @media(min-width:1100px){
+    .span6{grid-column:span 6}.span4{grid-column:span 4}.span8{grid-column:span 8}
+  }
+  .panel h2{font-size:13px;text-transform:uppercase;letter-spacing:1.2px;color:var(--dim);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  .panel h2 .ms{margin-left:auto;font-size:10px;color:var(--faint);text-transform:none;letter-spacing:0}
+  .bignums{display:flex;gap:26px;flex-wrap:wrap;margin-bottom:16px}
+  .bn .v{font-size:26px;font-weight:650;font-family:var(--mono)}
+  .bn .l{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.8px}
+  .bn.good .v{color:var(--good)} .bn.warn .v{color:var(--warn)} .bn.bad .v{color:var(--bad)} .bn.accent .v{color:var(--accent)}
+  .hist{display:flex;align-items:flex-end;gap:4px;height:90px;margin:6px 0 2px}
+  .hist .bar{flex:1;background:linear-gradient(180deg,var(--accent),#3d59a1);border-radius:3px 3px 0 0;min-height:2px;position:relative}
+  .hist .bar.low{background:linear-gradient(180deg,var(--bad),#8c3a4b)}
+  .hist .bar.mid{background:linear-gradient(180deg,var(--warn),#8a6a3d)}
+  .hist .bar:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:2px 8px;border-radius:5px;font-size:11px;white-space:nowrap;color:var(--text);margin-bottom:4px;z-index:5}
+  .axis{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);font-family:var(--mono)}
+  .hbars{display:flex;flex-direction:column;gap:7px}
+  .hb{display:grid;grid-template-columns:110px 1fr 44px;gap:10px;align-items:center;font-size:12px}
+  .hb .k{color:var(--dim);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono)}
+  .hb .track{background:var(--panel2);border-radius:4px;height:14px;overflow:hidden}
+  .hb .fill{height:100%;border-radius:4px;background:var(--accent);min-width:2px}
+  .hb .n{font-family:var(--mono);color:var(--dim);font-size:11px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;color:var(--faint);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.6px;padding:4px 8px;border-bottom:1px solid var(--line)}
+  td{padding:6px 8px;border-bottom:1px solid rgba(35,42,58,.5);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  .q{font-family:var(--mono);font-weight:600}
+  .q.hi{color:var(--good)} .q.md{color:var(--warn)} .q.lo{color:var(--bad)}
+  .badge{display:inline-block;font-size:10px;padding:1px 8px;border-radius:10px;border:1px solid var(--line);color:var(--dim);font-family:var(--mono)}
+  .badge.gt{color:var(--good);border-color:rgba(158,206,106,.4)}
+  .badge.primary{color:var(--accent);border-color:rgba(122,162,247,.4)}
+  .badge.secondary{color:var(--warn);border-color:rgba(224,175,104,.4)}
+  .badge.inferred,.badge.untagged{color:var(--faint)}
+  .badge.stale{color:var(--bad);border-color:rgba(247,118,142,.5);font-weight:600}
+  .badge.fail{color:var(--bad)}
+  .digest{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-x:auto;max-height:340px;overflow-y:auto;color:var(--text)}
+  .digest .dim{color:var(--faint)}
+  .days{display:flex;gap:6px;align-items:flex-end;height:74px;margin-top:12px}
+  .day{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:2px;position:relative;min-width:22px}
+  .day .seg{border-radius:2px;min-height:0}
+  .day .seg.ok{background:var(--good)} .day .seg.error{background:var(--bad)}
+  .day .seg.denied{background:var(--purple)} .day .seg.timeout{background:var(--warn)}
+  .day:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:3px 9px;border-radius:5px;font-size:11px;white-space:pre;color:var(--text);margin-bottom:4px;z-index:5}
+  .daylbl{display:flex;gap:6px;margin-top:4px}
+  .daylbl div{flex:1;text-align:center;font-size:9.5px;color:var(--faint);font-family:var(--mono);min-width:22px}
+  .legend{display:flex;gap:14px;font-size:11px;color:var(--dim);margin-top:8px}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+  .prog{background:var(--panel2);border-radius:4px;height:8px;overflow:hidden;width:110px}
+  .prog i{display:block;height:100%;background:var(--good);border-radius:4px}
+  .empty{color:var(--faint);font-size:12.5px;padding:12px 0;font-style:italic}
+  .err{color:var(--bad);font-size:12.5px;padding:8px 0;font-family:var(--mono)}
+  .dream-days td{font-family:var(--mono);font-size:12px}
+  footer{margin-top:26px;color:var(--faint);font-size:11px;text-align:center}
+
+  /* Permissions panel — the one part of this console that writes. */
+  .badge.kind-read{color:var(--cyan);border-color:rgba(125,207,255,.4)}
+  .badge.kind-write{color:var(--warn);border-color:rgba(224,175,104,.4)}
+  .badge.kind-sudo{color:var(--bad);border-color:rgba(247,118,142,.4);font-weight:600}
+  .badge.scope-once{color:var(--accent);border-color:rgba(122,162,247,.4)}
+  .badge.scope-always{color:var(--faint)}
+  .cell-pattern{font-family:var(--mono);max-width:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cell-ts{color:var(--faint);font-size:11px;font-family:var(--mono);white-space:nowrap}
+  .actions{display:flex;gap:6px;flex-wrap:wrap}
+  .abtn{border-radius:6px;padding:4px 11px;font-size:11px;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-family:inherit;transition:filter .1s,opacity .1s}
+  .abtn:hover:not(:disabled){filter:brightness(1.25)}
+  .abtn:disabled{opacity:.4;cursor:default}
+  .abtn.always{color:var(--good);border-color:rgba(158,206,106,.45)}
+  .abtn.once{color:var(--accent);border-color:rgba(122,162,247,.45)}
+  .abtn.deny,.abtn.revoke{color:var(--bad);border-color:rgba(247,118,142,.45)}
+  .note{display:none;margin-top:12px;font-size:11.5px;color:var(--warn);background:rgba(224,175,104,.08);border:1px solid rgba(224,175,104,.3);border-radius:8px;padding:8px 12px}
+  .note code{font-family:var(--mono);color:var(--text)}
+
+  /* Backend status panel */
+  .backend-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;border:1px solid transparent}
+  .backend-row.active{border-color:rgba(122,162,247,.4);background:rgba(122,162,247,.07)}
+  .backend-row .bl{flex:1;min-width:0}
+  .backend-row .bl .name{font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px}
+  .backend-row .bl .detail{font-size:10.5px;color:var(--faint);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
+  .backend-row .tag{font-size:9.5px;padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
+  .backend-row .tag.now{color:var(--accent);border-color:rgba(122,162,247,.5)}
+  .badge.backend-local{color:var(--dim)}
+  .badge.backend-chatgpt{color:var(--good);border-color:rgba(158,206,106,.4)}
+  .badge.backend-claude{color:var(--purple);border-color:rgba(187,154,247,.4)}
+  .badge.backend-rest{color:var(--cyan);border-color:rgba(125,207,255,.4)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Goethe <span>Console</span></h1>
+  <div class="chips" id="chips"></div>
+  <div class="chips" id="chip-perms"></div>
+  <div class="spacer"></div>
+  <div class="tok">
+    <input id="token" type="password" placeholder="gateway token" autocomplete="off">
+    <button onclick="saveToken()">Set</button>
+    <button class="rf" onclick="refreshAll()" title="refresh all panels">&#8635; Refresh</button>
+  </div>
+</header>
+
+<div class="grid">
+
+  <div class="panel span8" id="p-perms-pending">
+    <h2>Permissions — Pending Approvals <span class="ms" id="perms-ms"></span></h2>
+    <div class="bignums" id="perms-nums"></div>
+    <table id="perms-pending"></table>
+  </div>
+
+  <div class="panel span4" id="p-perms-grants">
+    <h2>Active Grants</h2>
+    <table id="perms-grants"></table>
+    <div class="note" id="perms-sudo-note">
+      One or more active grants are kind <code>sudo</code>. Approving here only
+      writes the database row — it does not touch <code>/etc/sudoers.d/</code>.
+      Run <code>goethe-perm sync-sudoers</code> in a terminal to make a sudo
+      grant take effect at the OS level.
+    </div>
+  </div>
+
+  <div class="panel span4" id="p-backends">
+    <h2>Planner Backend <span class="ms" id="backend-ms"></span></h2>
+    <div id="backend-rows"></div>
+    <div style="font-size:10.5px;color:var(--faint);margin-top:10px">
+      'configured' means credentials were found — hosted backends aren't
+      live-pinged on refresh to avoid surprise API calls.
+    </div>
+  </div>
+
+  <div class="panel span8" id="p-kb">
+    <h2>Knowledge Base — Trust Lifecycle <span class="ms" id="kb-ms"></span></h2>
+    <div class="bignums" id="kb-nums"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px" id="kb-charts">
+      <div>
+        <div style="font-size:11px;color:var(--dim);margin-bottom:2px">QUALITY DISTRIBUTION</div>
+        <div class="hist" id="kb-hist"></div>
+        <div class="axis"><span>0.0</span><span>quarantine&nbsp;floor&nbsp;0.2</span><span>1.0</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div><div style="font-size:11px;color:var(--dim);margin-bottom:6px">SOURCE TIER</div><div class="hbars" id="kb-tiers"></div></div>
+        <div><div style="font-size:11px;color:var(--dim);margin-bottom:6px">VOLATILITY</div><div class="hbars" id="kb-vol"></div></div>
+      </div>
+    </div>
+    <div style="margin-top:18px">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:4px">LOWEST-TRUST DOCS (demotion candidates)</div>
+      <table id="kb-worst"></table>
+    </div>
+  </div>
+
+  <div class="panel span4" id="p-dream">
+    <h2>TRAUM — Dream Digest <span class="ms" id="dream-ms"></span></h2>
+    <div id="dream-digest" class="digest empty">loading…</div>
+    <div style="margin-top:14px">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:4px">DREAM CYCLES (last 14 nights)</div>
+      <table class="dream-days" id="dream-days"></table>
+    </div>
+  </div>
+
+  <div class="panel span6" id="p-ledger">
+    <h2>Task Ledger — Plan &rarr; Execute &rarr; Verify <span class="ms" id="ledger-ms"></span></h2>
+    <div class="bignums" id="ledger-nums"></div>
+    <table id="ledger-table"></table>
+  </div>
+
+  <div class="panel span6" id="p-episodes">
+    <h2>Episodes — Tool Calls (7 days) <span class="ms" id="ep-ms"></span></h2>
+    <div class="bignums" id="ep-nums"></div>
+    <div class="days" id="ep-days"></div>
+    <div class="daylbl" id="ep-daylbl"></div>
+    <div class="legend">
+      <span><i style="background:var(--good)"></i>ok</span>
+      <span><i style="background:var(--bad)"></i>error</span>
+      <span><i style="background:var(--purple)"></i>denied</span>
+      <span><i style="background:var(--warn)"></i>timeout</span>
+    </div>
+    <div style="margin-top:14px"><div style="font-size:11px;color:var(--dim);margin-bottom:6px">TOP TOOLS</div><div class="hbars" id="ep-tools"></div></div>
+  </div>
+
+</div>
+<footer id="foot">Goethe Console — served by goethe_mcp · read-only except Permissions (approve/deny/revoke) · auto-refresh 60s</footer>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function token(){ return localStorage.getItem("goethe_token") || ""; }
+function saveToken(){
+  localStorage.setItem("goethe_token", $("token").value.trim());
+  refreshAll();
+}
+$("token").value = token();
+$("token").addEventListener("keydown", e => { if(e.key==="Enter") saveToken(); });
+
+async function api(path){
+  const headers = {};
+  if (token()) headers["Authorization"] = "Bearer " + token();
+  const r = await fetch(path, { headers });
+  if (r.status === 401) throw new Error("unauthorized — set the gateway token (GOETHE_MCP_TOKEN)");
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const d = await r.json();
+  if (d.error) throw new Error(d.error);
+  return d;
+}
+async function apiPost(path, body){
+  const headers = {"Content-Type": "application/json"};
+  if (token()) headers["Authorization"] = "Bearer " + token();
+  const r = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+  let d;
+  try { d = await r.json(); } catch { d = {}; }
+  if (r.status === 401) throw new Error("unauthorized — set the gateway token (GOETHE_MCP_TOKEN)");
+  if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
+  return d;
+}
+function showErr(el, e){ el.innerHTML = '<div class="err">'+esc(e.message||e)+'</div>'; }
+function bn(v,l,cls){ return '<div class="bn '+(cls||"")+'"><div class="v">'+esc(v)+'</div><div class="l">'+esc(l)+'</div></div>'; }
+function hbar(rows, color){
+  if(!rows || !rows.length) return '<div class="empty">no data</div>';
+  const max = Math.max(...rows.map(r=>r.count),1);
+  return rows.map(r =>
+    '<div class="hb"><div class="k" title="'+esc(r.key ?? r.tool)+'">'+esc(r.key ?? r.tool)+
+    '</div><div class="track"><div class="fill" style="width:'+(100*r.count/max)+'%;'+(color?'background:'+color:'')+'"></div></div>'+
+    '<div class="n">'+r.count+'</div></div>').join("");
+}
+function qcls(q){ return q >= 0.7 ? "hi" : q >= 0.4 ? "md" : "lo"; }
+function tierBadge(t){
+  const k = (t||"(untagged)").replace("ground_truth","gt").replace("(untagged)","untagged");
+  return '<span class="badge '+esc(k)+'">'+esc(t||"—")+'</span>';
+}
+
+// ---- overview / header chips ----
+async function loadOverview(){
+  try{
+    const d = await api("/api/ui/overview");
+    $("chips").innerHTML =
+      '<span class="chip"><span class="dot '+(d.es_ok?"ok":"bad")+'"></span>Elasticsearch</span>'+
+      '<span class="chip"><span class="dot '+(d.dream_digest_exists?"ok":"bad")+'"></span>TRAUM digest</span>'+
+      '<span class="chip"><span class="dot '+(d.tasks_db_exists?"ok":"bad")+'"></span>Ledger</span>'+
+      '<span class="chip"><span class="dot '+(d.episodes_enabled?"ok":"bad")+'"></span>Journaling</span>'+
+      '<span class="chip">'+ (d.kb_docs!=null ? d.kb_docs+" KB docs" : "KB offline") +'</span>'+
+      '<span class="chip">ui v'+esc(d.ui_version)+'</span>';
+  }catch(e){
+    $("chips").innerHTML = '<span class="chip"><span class="dot bad"></span>'+esc(e.message)+'</span>';
+  }
+}
+
+// ---- Permissions panel (the one part of this console that writes) ----
+function kindBadge(k){ return '<span class="badge kind-'+esc(k)+'">'+esc(k)+'</span>'; }
+function tsShort(s){ return esc((s||"").replace("T"," ").replace("Z","").slice(0,16)); }
+
+async function loadPerms(){
+  try{
+    const d = await api("/api/ui/perms");
+    const pend = d.pending || [], grants = d.grants || [];
+    $("perms-ms").textContent = d._elapsed_ms + "ms";
+
+    $("chip-perms").innerHTML = pend.length
+      ? '<span class="chip"><span class="dot bad"></span>'+pend.length+' pending approval'+(pend.length===1?"":"s")+'</span>'
+      : '<span class="chip"><span class="dot ok"></span>no pending approvals</span>';
+
+    const sudoGrants = grants.filter(g=>g.kind==="sudo").length;
+    $("perms-nums").innerHTML =
+      bn(pend.length,"pending", pend.length?"warn":"good") +
+      bn(grants.length,"active grants","accent") +
+      bn(sudoGrants,"sudo grants", sudoGrants?"bad":"");
+
+    $("perms-pending").innerHTML = pend.length
+      ? "<tr><th>id</th><th>kind</th><th>pattern</th><th>reason</th><th>requested</th><th></th></tr>" +
+        pend.map(r => (
+          "<tr>"+
+          "<td style='font-family:var(--mono);color:var(--dim)'>#"+r.id+"</td>"+
+          "<td>"+kindBadge(r.kind)+"</td>"+
+          "<td class='cell-pattern' title=\""+esc(r.pattern)+"\">"+esc(r.pattern)+"</td>"+
+          "<td style='color:var(--dim)'>"+esc(r.reason || "—")+"</td>"+
+          "<td class='cell-ts'>"+tsShort(r.requested_at)+"</td>"+
+          "<td><div class='actions'>"+
+            "<button class='abtn always' title='Approve — persistent, stays active until revoked' onclick='permAction(\"approve\","+r.id+",false,this)'>Always</button>"+
+            "<button class='abtn once' title='Approve — single use, auto-revokes after one match' onclick='permAction(\"approve\","+r.id+",true,this)'>Once</button>"+
+            "<button class='abtn deny' title='Deny — no grant created' onclick='permAction(\"deny\","+r.id+",false,this)'>Deny</button>"+
+          "</div></td></tr>"
+        )).join("")
+      : '<tr><td class="empty">no pending requests</td></tr>';
+
+    $("perms-grants").innerHTML = grants.length
+      ? "<tr><th>id</th><th>kind</th><th>pattern</th><th>scope</th><th></th></tr>" +
+        grants.map(g => (
+          "<tr>"+
+          "<td style='font-family:var(--mono);color:var(--dim)'>#"+g.id+"</td>"+
+          "<td>"+kindBadge(g.kind)+"</td>"+
+          "<td class='cell-pattern' title=\""+esc(g.pattern)+"\">"+esc(g.pattern)+"</td>"+
+          "<td>"+(g.one_time ? '<span class="badge scope-once">once</span>' : '<span class="badge scope-always">always</span>')+"</td>"+
+          "<td><button class='abtn revoke' title='Revoke this grant' onclick='permAction(\"revoke\","+g.id+",false,this)'>Revoke</button></td></tr>"
+        )).join("")
+      : '<tr><td class="empty">no active grants</td></tr>';
+
+    $("perms-sudo-note").style.display = sudoGrants ? "block" : "none";
+  }catch(e){ showErr($("perms-pending"), e); }
+}
+
+async function permAction(action, id, once, btn){
+  if (action === "approve" && !once &&
+      !confirm("Grant persistent (\"always\") access for request #"+id+"?\n\nThis stays active until you revoke it.")) {
+    return;
+  }
+  const row = btn.closest("tr");
+  row.querySelectorAll("button").forEach(b => b.disabled = true);
+  try{
+    await apiPost("/api/ui/perms/" + action, { id, once });
+    await loadPerms();
+  }catch(e){
+    row.querySelectorAll("button").forEach(b => b.disabled = false);
+    alert("Action failed: " + e.message);
+  }
+}
+
+// ---- Backend status panel ----
+async function loadBackends(){
+  try{
+    const d = await api("/api/ui/backends");
+    $("backend-ms").textContent = d._elapsed_ms + "ms";
+    $("backend-rows").innerHTML = (d.backends || []).map(b => {
+      const isActive = b.id === d.active;
+      const dotCls = b.id === "local" ? (b.health === "ok" ? "ok" : "bad") : (b.configured ? "ok" : "");
+      const sub = b.id === "local"
+        ? (b.health === "ok" ? "healthy" : "unreachable") + (b.detail ? " · " + esc(b.detail) : "")
+        : (b.configured ? "configured (" + esc(b.auth_source || "") + ")" : "not configured")
+          + (b.detail ? " · " + esc(b.detail) : "");
+      return '<div class="backend-row'+(isActive?" active":"")+'">'+
+        '<span class="dot '+dotCls+'"></span>'+
+        '<div class="bl"><div class="name">'+esc(b.label)+
+          (isActive ? '<span class="tag now">active</span>' : '')+
+        '</div><div class="detail">'+sub+'</div></div>'+
+      '</div>';
+    }).join("");
+  }catch(e){ showErr($("backend-rows"), e); }
+}
+function backendBadge(b){
+  const k = b || "local";
+  return '<span class="badge backend-'+esc(k)+'">'+esc(k)+'</span>';
+}
+
+// ---- KB panel ----
+async function loadKB(){
+  const panel = $("p-kb");
+  try{
+    const d = await api("/api/ui/kb");
+    $("kb-ms").textContent = d._elapsed_ms + "ms";
+    const gt = (d.tiers.find(t=>t.key==="ground_truth")||{}).count || 0;
+    $("kb-nums").innerHTML =
+      bn(d.total,"docs","accent") +
+      bn(d.avg_quality!=null ? d.avg_quality.toFixed(2) : "—","avg quality", d.avg_quality>=0.6?"good":"warn") +
+      bn(gt,"ground truth","good") +
+      bn(d.decaying,"decaying", d.decaying?"warn":"") +
+      bn(d.quarantined,"quarantined", d.quarantined?"bad":"good");
+    const max = Math.max(...d.quality_histogram.map(b=>b.count),1);
+    $("kb-hist").innerHTML = d.quality_histogram.map(b=>{
+      const cls = b.bucket < 0.25 ? "low" : b.bucket < 0.55 ? "mid" : "";
+      return '<div class="bar '+cls+'" style="height:'+(100*b.count/max)+'%" data-tip="q '+
+             b.bucket.toFixed(1)+'–'+(b.bucket+0.1).toFixed(1)+': '+b.count+' docs"></div>';
+    }).join("");
+    $("kb-tiers").innerHTML = hbar(d.tiers);
+    $("kb-vol").innerHTML = hbar(d.volatility,"var(--cyan)");
+    $("kb-worst").innerHTML =
+      "<tr><th>doc</th><th>topic</th><th>tier</th><th>q</th><th>fails</th><th></th></tr>" +
+      d.worst.map(w=>{
+        const q = w.quality_score ?? 0;
+        return "<tr><td title='"+esc(w.doc_id)+"'>"+esc((w.title||"").slice(0,60))+"</td>"+
+          "<td style='color:var(--dim)'>"+esc(w.topic||"")+"</td>"+
+          "<td>"+tierBadge(w.source_tier)+"</td>"+
+          "<td class='q "+qcls(q)+"'>"+q.toFixed(2)+"</td>"+
+          "<td style='font-family:var(--mono);color:"+(w.consecutive_failures?"var(--bad)":"var(--faint)")+"'>"+(w.consecutive_failures||0)+"</td>"+
+          "<td>"+(w.stale?'<span class="badge stale">QUARANTINED</span>':"")+"</td></tr>";
+      }).join("");
+  }catch(e){ showErr(panel.querySelector("#kb-nums")||panel, e); }
+}
+
+// ---- TRAUM panel ----
+async function loadDream(){
+  try{
+    const d = await api("/api/ui/dream");
+    $("dream-ms").textContent = d._elapsed_ms + "ms";
+    const dg = $("dream-digest");
+    if(d.digest){
+      dg.classList.remove("empty");
+      dg.innerHTML = esc(d.digest).replace(/^(#.*)$/m,'<span style="color:var(--purple);font-weight:600">$1</span>');
+    } else {
+      dg.innerHTML = "no digest yet — has the dream timer run? (goethe-dream.timer, 03:30)";
+    }
+    if(d.digest_mtime) dg.innerHTML += '\n<span class="dim">— generated '+esc(d.digest_mtime)+'</span>';
+    const rows = d.days.map(day=>{
+      const sc = day.status_counts||{};
+      const scStr = Object.keys(sc).length
+        ? Object.entries(sc).map(([k,v])=>k+":"+v).join(" ") : "—";
+      return "<tr><td>"+esc(day.date)+"</td>"+
+        "<td>"+day.proposals+" proposal"+(day.proposals===1?"":"s")+"</td>"+
+        "<td style='color:var(--dim)'>"+esc(scStr)+"</td>"+
+        "<td>"+(day.failed_banner?'<span class="badge fail">FAILED</span>':"")+
+              (day.crashes?' <span class="badge fail">'+day.crashes+' crash</span>':"")+
+              (day.null_results?' <span class="badge">'+day.null_results+' null</span>':"")+"</td></tr>";
+    }).join("");
+    $("dream-days").innerHTML = rows
+      ? "<tr><th>night</th><th>proposals</th><th>status</th><th>flags</th></tr>"+rows
+      : '<tr><td class="empty">no dream day-dirs found</td></tr>';
+  }catch(e){ showErr($("dream-digest"), e); }
+}
+
+// ---- Ledger panel ----
+async function loadLedger(){
+  try{
+    const d = await api("/api/ui/ledger");
+    $("ledger-ms").textContent = d._elapsed_ms + "ms";
+    const c = d.counts || {};
+    $("ledger-nums").innerHTML =
+      bn(c.open||0,"open", c.open?"accent":"") +
+      bn(c.done||0,"done","good") +
+      Object.entries(c).filter(([k])=>k!=="open"&&k!=="done")
+            .map(([k,v])=>bn(v,k,"warn")).join("");
+    const rows = (d.tasks||[]).slice(0,12).map(t=>{
+      let prog = "";
+      if(t.steps_total){
+        const pct = Math.round(100*(t.steps_done||0)/t.steps_total);
+        prog = '<div class="prog" title="'+t.steps_done+'/'+t.steps_total+' steps"><i style="width:'+pct+'%"></i></div>'+
+               '<span style="font-size:10.5px;color:var(--dim);font-family:var(--mono)">'+t.steps_done+"/"+t.steps_total+"</span>";
+      } else prog = '<span style="color:var(--faint)">—</span>';
+      return "<tr><td style='font-family:var(--mono);color:var(--dim)'>"+esc((t.task_id||"").slice(0,8))+"</td>"+
+        "<td>"+esc((t.goal||"").slice(0,70))+"</td>"+
+        "<td><span class='badge "+(t.status==="done"?"gt":t.status==="open"?"primary":"")+"'>"+esc(t.status)+"</span></td>"+
+        "<td style='display:flex;gap:8px;align-items:center'>"+prog+"</td>"+
+        "<td>"+backendBadge(t.backend)+"</td>"+
+        "<td style='color:var(--faint);font-size:11px;font-family:var(--mono)'>"+esc((t.updated_at||"").slice(0,16))+"</td></tr>";
+    }).join("");
+    $("ledger-table").innerHTML = rows
+      ? "<tr><th>id</th><th>goal</th><th>status</th><th>steps</th><th>backend</th><th>updated</th></tr>"+rows
+      : '<tr><td class="empty">no task blocks yet — planner() writes them</td></tr>';
+  }catch(e){ showErr($("ledger-table"), e); }
+}
+
+// ---- Episodes panel ----
+async function loadEpisodes(){
+  try{
+    const d = await api("/api/ui/episodes");
+    $("ep-ms").textContent = d._elapsed_ms + "ms";
+    const days = d.days || [];
+    const total = days.reduce((a,x)=>a+x.total,0);
+    const errs  = days.reduce((a,x)=>a+(x.exit.error||0)+(x.exit.timeout||0),0);
+    const denied= days.reduce((a,x)=>a+(x.exit.denied||0),0);
+    const okPct = total ? Math.round(100*(total-errs-denied)/total) : 0;
+    $("ep-nums").innerHTML =
+      bn(total,"calls / 7d","accent") + bn(okPct+"%","ok rate", okPct>=90?"good":"warn") +
+      bn(errs,"errors+timeouts", errs?"bad":"good") + bn(denied,"denied","warn");
+    const max = Math.max(...days.map(x=>x.total),1);
+    $("ep-days").innerHTML = days.map(x=>{
+      const h = k => (74 * (x.exit[k]||0) / max);
+      const tip = x.date+"\n"+x.total+" calls, "+x.sessions+" sessions\nok "+(x.exit.ok||0)+
+                  " · err "+(x.exit.error||0)+" · denied "+(x.exit.denied||0)+" · t/o "+(x.exit.timeout||0);
+      return '<div class="day" data-tip="'+esc(tip)+'">'+
+        '<div class="seg timeout" style="height:'+h("timeout")+'px"></div>'+
+        '<div class="seg denied" style="height:'+h("denied")+'px"></div>'+
+        '<div class="seg error" style="height:'+h("error")+'px"></div>'+
+        '<div class="seg ok" style="height:'+h("ok")+'px"></div></div>';
+    }).join("");
+    $("ep-daylbl").innerHTML = days.map(x=>"<div>"+x.date.slice(5)+"</div>").join("");
+    $("ep-tools").innerHTML = hbar(d.top_tools,"var(--purple)");
+  }catch(e){ showErr($("ep-days"), e); }
+}
+
+function refreshAll(){
+  loadOverview(); loadPerms(); loadBackends(); loadKB(); loadDream(); loadLedger(); loadEpisodes();
+}
+refreshAll();
+setInterval(refreshAll, 60000);
+</script>
+</body>
+</html>
