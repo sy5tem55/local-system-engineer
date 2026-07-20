@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS grants(
   note TEXT DEFAULT '',
   created_at TEXT NOT NULL,
   expires_at TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  one_time INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS requests(
   id INTEGER PRIMARY KEY,
@@ -52,6 +53,12 @@ def _db():
     conn = sqlite3.connect(DB_PATH, timeout=5)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    # Migration: DBs created before the one_time column existed. IF NOT EXISTS
+    # in _SCHEMA only helps a fresh table; pre-existing tables need ALTER TABLE.
+    try:
+        conn.execute("ALTER TABLE grants ADD COLUMN one_time INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # column already present
     return conn
 
 
@@ -72,9 +79,21 @@ def _active(conn, kind):
 # ── checks (called from goethe.py guards) ────────────────────────────────
 
 
+def _consume_if_one_time(conn, row):
+    """A grant created via 'approve --once' is valid for exactly one match.
+    Revoke it in the same transaction as the check that used it, so a race
+    between two calls can't both slip through on the same one-time grant."""
+    if row["one_time"]:
+        conn.execute(
+            "UPDATE grants SET revoked_at=? WHERE id=? AND revoked_at IS NULL",
+            (_now(), row["id"]),
+        )
+        _audit(conn, "consume-once", f"#{row['id']} {row['kind']}:{row['pattern']}")
+
+
 def check_path(kind, realpath):
     """kind: 'read'|'write'. realpath: symlink-resolved path (trailing / ok).
-    Returns matching grant id, or None."""
+    Returns matching grant id, or None. One-time grants are consumed on match."""
     try:
         with _db() as conn:
             p = realpath.rstrip("/") + "/"
@@ -84,6 +103,7 @@ def check_path(kind, realpath):
                     + "/"
                 )
                 if p.startswith(pref):
+                    _consume_if_one_time(conn, r)
                     return r["id"]
     except Exception:
         return None
@@ -93,7 +113,7 @@ def check_path(kind, realpath):
 def check_sudo(command):
     """command: the command WITHOUT the leading privilege word. A grant ending
     in ' *' is a prefix match (any args); otherwise whitespace-normalized
-    exact match. Returns grant id or None."""
+    exact match. Returns grant id or None. One-time grants are consumed on match."""
     try:
         with _db() as conn:
             cmd = " ".join(command.split())
@@ -102,8 +122,10 @@ def check_sudo(command):
                 if pat.endswith(" *"):
                     stem = pat[:-2]
                     if cmd == stem or cmd.startswith(stem + " "):
+                        _consume_if_one_time(conn, r)
                         return r["id"]
                 elif cmd == pat:
+                    _consume_if_one_time(conn, r)
                     return r["id"]
     except Exception:
         return None
@@ -135,14 +157,18 @@ def file_request(kind, pattern, reason=""):
 # ── management (goethe-perm CLI) ─────────────────────────────────────────
 
 
-def grant(kind, pattern, note="", expires_at=None):
+def grant(kind, pattern, note="", expires_at=None, one_time=False):
     with _db() as conn:
         cur = conn.execute(
-            "INSERT INTO grants(kind,pattern,note,created_at,expires_at) "
-            "VALUES(?,?,?,?,?)",
-            (kind, pattern, note, _now(), expires_at),
+            "INSERT INTO grants(kind,pattern,note,created_at,expires_at,one_time) "
+            "VALUES(?,?,?,?,?,?)",
+            (kind, pattern, note, _now(), expires_at, 1 if one_time else 0),
         )
-        _audit(conn, "grant", f"#{cur.lastrowid} {kind}:{pattern}")
+        _audit(
+            conn,
+            "grant",
+            f"#{cur.lastrowid} {kind}:{pattern}" + (" [one-time]" if one_time else ""),
+        )
         return cur.lastrowid
 
 
@@ -175,8 +201,11 @@ def pending():
         ]
 
 
-def resolve_request(rid, approve, note=""):
-    """Approve → creates the grant. Returns (status, grant_id|None)."""
+def resolve_request(rid, approve, note="", once=False):
+    """Approve → creates a grant (persistent unless once=True, which consumes
+    itself after a single matching use — the 'yes, just this time' case, vs.
+    a plain approve which is 'always'). Deny → no grant, request marked denied.
+    Returns (status, grant_id|None)."""
     with _db() as conn:
         row = conn.execute(
             "SELECT * FROM requests WHERE id=? AND status='pending'", (rid,)
@@ -189,12 +218,25 @@ def resolve_request(rid, approve, note=""):
             (status, _now(), rid),
         )
         _audit(conn, status, f"request #{rid} {row['kind']}:{row['pattern']}")
-    gid = grant(row["kind"], row["pattern"], note or row["reason"]) if approve else None
+    gid = (
+        grant(row["kind"], row["pattern"], note or row["reason"], one_time=once)
+        if approve
+        else None
+    )
     return (status, gid)
 
 
 def sudoers_content():
-    """Render sudoers lines for all active sudo grants."""
+    """Render sudoers lines for all active sudo grants.
+
+    Note: one-time grants are included here too, so the single agent-issued
+    command they cover can run without an interactive password prompt. The
+    DB-side check_sudo() still consumes (revokes) the grant after first use;
+    re-run 'goethe-perm sync-sudoers' afterwards to drop the now-revoked
+    entry from the sudoers file, or just leave it — a revoked grant is no
+    longer matched by check_sudo() so the agent can't reuse it even though
+    the stale sudoers line is still technically present until the next sync.
+    """
     lines = [
         "# Managed by goethe-perm — DO NOT EDIT (regenerate: goethe-perm sync-sudoers)"
     ]
