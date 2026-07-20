@@ -1109,3 +1109,52 @@ not by reading the code and predicting it could.
 - Gold-set lint caught 2 ghost rows on first run (q43/q44 expected a kb doc that never existed) — provenance-required linting pays for itself immediately
 - The same hardcoded GOETHE_MCP_TOKEN appeared in BOTH node prompts (v0.6.0 + node3090-v0.2.1) AND git history — rotate Goethe MCP tokens early in the rotation batch, not as item 7
 - Run 8 prerequisites: --reasoning-budget -1 (currently 8192), v0.6.1 prompt pasted, fresh threads, do NOT restart gateway mid-run (tool count now 37)
+
+## Session 2026-07-20 — Bing engine soft-block + config-guard root requirement
+
+### What worked
+- MITM/DNS-hijack ruled out definitively via: cross-resolver DNS check (8.8.8.8, 1.1.1.1,
+  9.9.9.9, local Pi-hole all agree on CNAME chain, differ only in anycast edge IP) +
+  `openssl s_client -verify_return_error` showing `Verify return code: 0 (ok)` chaining
+  to a real Microsoft-issued cert + WHOIS confirming resolved IPs are Akamai-owned.
+  This is the standard playbook when a search result looks tampered with — check DNS
+  agreement across resolvers, then TLS chain validation, before suspecting the network.
+- `sudo_delegation_block` with a direct elevated `install` + `docker compose restart`
+  command, bypassing the guard script entirely, when an immediate config deploy is
+  needed instead of waiting for the 10-min systemd timer.
+
+### What failed and why
+- **Attempted:** diagnosing garbled SearXNG results (e.g. a random pizzeria domain
+  showing up for a TLS/networking query) by checking for a rogue local `json_engine`
+  or MITM
+  **Failed because:** the actual cause was upstream — Bing's anti-scraping defense
+  doesn't hard-fail SearXNG's request (no exception raised), it returns a soft-blocked
+  filler SERP with unrelated content. SearXNG's engine parser doesn't validate result
+  relevance, so the junk gets folded straight into results as if legitimate. This
+  bypasses `suspended_times` entirely since no `SearxEngine*Exception` is ever raised —
+  qwant/brave hard-fail (visibly suspended in logs), bing silently degrades instead.
+  **Fix:** set `disabled: true` on the `bing` engine block in settings.yml and remove
+  it from `keep_only`; duckduckgo covers general web without this failure mode.
+- **Attempted:** running `scripts/searxng-config-guard.sh` manually via execute_command
+  (non-root) to deploy a canonical settings.yml change immediately
+  **Failed because:** `set -euo pipefail` + `log()` piping through `tee -a
+  /var/log/searxng-config-guard.log` — that file is root-owned, so `tee` gets
+  `Permission denied`, and the script dies right after logging "DRIFT... repairing"
+  but *before* the actual root-owned `install` copy runs. It looks like it started
+  the repair and silently didn't finish, not like a permissions error.
+  **Fix:** don't run the guard script unprivileged. Use the delegation-block tool with
+  an elevated `install -m 0644 -o root -g root <canonical> <live>` followed by an
+  elevated `docker compose restart searxng`, run directly by the human operator.
+
+### Key facts
+- Canonical SearXNG config lives at
+  `/mnt/c/Users/SY5/Claude/Projects/local-system-engineer/docker/searxng_data/settings.yml`
+  (same file editable via Claude's Read/Edit tools on the Windows side) — live copy is
+  `/home/sy5/docker/searxng_data/settings.yml`, kept in sync by a root-owned systemd
+  timer running `searxng-config-guard.sh` every 10 min.
+- `searxng-logger` sidecar has been failing every 15s with HTTP 401 on `/metrics`:
+  `docker-compose.yml` sets `SEARXNG_METRICS_PASSWORD=searxng-metrics-token` (a
+  placeholder literal) but `settings.yml`'s real `open_metrics` token is
+  `JZVeoVch20+FvyjXEn4BMVHtu1AM6JCH` — mismatched since at least 2026-07-19. This means
+  the `searxng-engine-health` Grafana dashboard has been blind to engine degradation
+  (would have caught the Bing issue sooner). Not yet fixed — align the two values.
