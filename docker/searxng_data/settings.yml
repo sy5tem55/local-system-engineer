@@ -16,7 +16,6 @@ use_default_settings:
       - duckduckgo
       - duckduckgo images
       - duckduckgo news
-      - bing
       - mojeek
       - qwant
       - brave
@@ -78,8 +77,10 @@ engines:
   - name: brave
     weight: 1
   - name: bing
-    weight: 1
-    disabled: false
+    disabled: true     # 2026-07-19: soft-blocked by MS anti-bot, silently injecting
+                        # unrelated filler content (pizzeria, unrelated SaaS pages)
+                        # into results instead of erroring. Not caught by SearXNG's
+                        # normal suspend logic since Bing doesn't return a clean error.
   # ── Pinned ON (ship disabled:true in the image; explicit so bumps can't drop them) ──
   - name: mojeek
     weight: 1
