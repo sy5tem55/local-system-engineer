@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.4.5
+title: LSE Goethe v0.4.6
 author: local-system-engineer
-version: 0.4.5
+version: 0.4.6
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -9,13 +9,30 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   record_error, check_error_kb, record_outcome, mentor_correct, kb_verify, mentor_demote,
   time_check, run_tests, assert_state, pfsense_graphql, pfsense_query,
   pfsense_log_summary, start_node_agent, stop_node_agent, search_reddit, planner,
-  plan_step_done, skill_search, skill_record,
+  plan_status, plan_step_done, skill_search, skill_record,
   skill_outcome, task_checkpoint, and task_resume. Web tools share a code-enforced
   anti-spiral budget. All commands are logged to a persistent audit file. Privileged
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
-    Goethe v0.4.5 (2026-07-21): planner timeout/cascade fix (LSE-debugged).
+    Goethe v0.4.6 (2026-07-21): planner is async by default. v0.4.5 sized the
+    call timeout to the work (120->240s), but that only moved the ceiling — it
+    did not remove it. Plan generation is 90-130s on the local backend
+    (measured against the real contract: a 6-step plan for a live task is 3,908
+    tokens / 94.1s at ~42 tok/s), and the MCP transport gives up around 60s. So
+    a plan could be built correctly and still reach the caller as a bare
+    "Request timed out". planner() now seeds the ledger, hands generation to a
+    daemon thread, and returns a task_id receipt in under a second; the new
+    plan_status(task_id) collects the finished plan — the exact string planner()
+    used to return. planner(wait=True) keeps the old synchronous path for tests
+    and callers with a long timeout. Two ledger columns added (plan_status,
+    plan_result) via the existing migration. The rendering half of planner() was
+    lifted verbatim into _finalize_plan() so both paths emit identical output.
+    Chosen over shrinking the envelope: measured field breakdown is 28%
+    packaged_prompt prose and 72% atomization (depends_on/inputs/output/verify),
+    so trimming to fit buys little and spends it on plan quality — and async
+    costs nothing, since the model gets as long as it needs.
+    Previous — v0.4.5 (2026-07-21): planner timeout/cascade fix (LSE-debugged).
     Intermittent "planner failed, never clear why" traced to a contradiction
     introduced in v0.3.3: max_tokens was raised 2048→8192 to stop envelope
     truncation, but the call timeout stayed at 120s. At the measured ~42 tok/s
@@ -2250,6 +2267,14 @@ class Tools(KBMixin):
         cols = [r[1] for r in conn.execute("PRAGMA table_info(task_blocks)")]
         if "steps_json" not in cols:
             conn.execute("ALTER TABLE task_blocks ADD COLUMN steps_json TEXT")
+        # v0.4.6: async planner. plan_status is 'generating' | 'ready' |
+        # 'failed'; plan_result holds the finished caller-facing plan text so
+        # plan_status() can hand back the exact string the old synchronous
+        # planner() would have returned.
+        if "plan_status" not in cols:
+            conn.execute("ALTER TABLE task_blocks ADD COLUMN plan_status TEXT")
+        if "plan_result" not in cols:
+            conn.execute("ALTER TABLE task_blocks ADD COLUMN plan_result TEXT")
         if "backend" not in cols:
             conn.execute("ALTER TABLE task_blocks ADD COLUMN backend TEXT")
         return conn
@@ -2318,18 +2343,28 @@ class Tools(KBMixin):
             conn = self._tasks_db()
             with conn:
                 row = conn.execute(
-                    "SELECT checkpoints, created_at, steps_json FROM task_blocks "
-                    "WHERE task_id=?",
+                    "SELECT checkpoints, created_at, steps_json, plan_status, "
+                    "plan_result FROM task_blocks WHERE task_id=?",
                     (tid,),
                 ).fetchone()
                 n = (row[0] + 1) if row else 1
                 created = row[1] if row else now
                 steps_json = row[2] if row else None  # carry the v0.3.2 step ledger
+                # v0.4.6: carry the async plan state too. This is INSERT OR
+                # REPLACE with a fixed column list, so any column not named here
+                # is reset to NULL — the same trap steps_json is carried for.
+                # _finalize_plan() checkpoints the finished plan BEFORE the
+                # worker marks it ready, so without this a poll landing in that
+                # window saw plan_status=NULL and got the terminal-sounding
+                # "no async plan attached" instead of "still generating".
+                plan_status_c = row[3] if row else None
+                plan_result_c = row[4] if row else None
                 conn.execute(
                     "INSERT OR REPLACE INTO task_blocks "
                     "(task_id, goal, status, plan, done_steps, findings, unverified, "
-                    "next_prompt, checkpoints, created_at, updated_at, steps_json) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "next_prompt, checkpoints, created_at, updated_at, steps_json, "
+                    "plan_status, plan_result) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         tid,
                         goal,
@@ -2343,6 +2378,8 @@ class Tools(KBMixin):
                         created,
                         now,
                         steps_json,
+                        plan_status_c,
+                        plan_result_c,
                     ),
                 )
             conn.close()
@@ -6303,6 +6340,7 @@ tail -5 /tmp/goethe-node3090.log
         mode: str = "new",
         task_id: str = "",
         backend: str = "",
+        wait: bool = False,
     ) -> str:
         """
         Request a pre-flight ATOMIZED execution plan from the peer LSE instance
@@ -6401,12 +6439,31 @@ tail -5 /tmp/goethe-node3090.log
                      for this call only — the override does NOT change the
                      valve default or overwrite what other tasks use.
 
-        Returns the plan summary + packaged prompt, or a string starting with
-        "PLANNER UNAVAILABLE" on any failure (all backends down, bad envelope).
+        ASYNC BY DEFAULT (v0.4.6) — this call returns in well under a second:
+          Plan generation takes 90-130s on the local backend (measured: a real
+          6-step plan is 3,908 tokens / 94.1s at ~42 tok/s), which is longer
+          than the MCP transport will wait. So planner() now seeds the ledger,
+          hands generation to a background thread, and returns immediately with
+          task_id and plan_status='generating'.
+          YOU MUST THEN POLL: call plan_status(task_id) until it reports ready.
+          plan_status returns the exact plan text planner() used to return.
+          Do NOT re-call planner() while a plan is generating — that starts a
+          second generation against the same ledger row.
+
+        Args (continued):
+            wait: False (default) = async, return a task_id to poll.
+                  True = block until the plan is built and return it directly.
+                  Only use wait=True from tests or a caller you know has a
+                  timeout above ~240s; over MCP it will time out.
+
+        Returns (async, default) a short GENERATING receipt with the task_id to
+        poll, or (wait=True) the plan summary + packaged prompt. Any failure is
+        a string starting with "PLANNER UNAVAILABLE".
         """
         import hashlib  # noqa: PLC0415
         import json as _json  # noqa: PLC0415
         import re as _re  # noqa: PLC0415
+        import threading as _threading  # noqa: PLC0415
 
         self._log(f"NODE-PLAN: mode={mode} {task[:80]}")
         corr = hashlib.sha256((task + datetime.now().isoformat()).encode()).hexdigest()[
@@ -6427,12 +6484,101 @@ tail -5 /tmp/goethe-node3090.log
         # falls through to the PLANNER_BACKEND valve inside
         # _resolve_backend_name/_call_planner_backend.
         effective_backend = backend or stored_backend or ""
+        # v0.3.3: NEVER trust a model-supplied task_id — live smoke showed the
+        # model copying the schema example ("a1b2c3d4") verbatim, which would
+        # collide every plan onto one ledger row. corr already hashes task+now.
+        # v0.4.6: hoisted above the dispatch — the async path needs it to seed
+        # the ledger row before generation starts.
+        tid = task_id.strip() if mode == "revise" else corr[:8]
         # ── v0.3.3: two-attempt envelope loop — truncated/malformed envelopes
         # (long thinking + tight completion budget) were the dominant
         # "PLANNER UNAVAILABLE" cause; one corrective retry recovers most.
+        # ── v0.4.6: async dispatch ───────────────────────────────────────
+        # Generation is 90-130s; the MCP transport gives up around 60s. Making
+        # the caller wait was the reason a *successful* plan still surfaced as
+        # "Request timed out". Seed the ledger, generate off-thread, poll.
+        if not wait:
+            seed = self.task_checkpoint(
+                goal=task.strip()[:300],
+                plan="(generating)",
+                done="",
+                findings="",
+                next_prompt="(plan is still generating — call plan_status)",
+                unverified="entire plan — not generated yet",
+                status="open",
+                task_id=tid,
+            )
+            if isinstance(seed, str) and seed.lower().startswith("task_checkpoint:"):
+                return f"planner: could not seed ledger row: {seed}"
+            try:
+                conn = self._tasks_db()
+                with conn:
+                    conn.execute(
+                        "UPDATE task_blocks SET plan_status='generating', "
+                        "plan_result=NULL WHERE task_id=?", (tid,),
+                    )
+                conn.close()
+            except Exception as e:
+                return f"planner: ledger seed write failed: {e}"
+
+            def _worker() -> None:
+                try:
+                    env, error = self._request_plan_envelope(
+                        task, context, backend=effective_backend
+                    )
+                    out = error if error else self._finalize_plan(
+                        env, task, mode, tid, corr,
+                        prior_done_steps, effective_backend,
+                    )
+                    state = "failed" if (error or out.startswith("PLANNER UNAVAILABLE")) \
+                        else "ready"
+                except Exception as exc:  # never let the thread die silently
+                    out, state = f"PLANNER UNAVAILABLE — planner thread crashed: {exc}", "failed"
+                self._log(f"NODE-PLAN: async task_id={tid} -> {state}")
+                try:
+                    c = self._tasks_db()
+                    with c:
+                        c.execute(
+                            "UPDATE task_blocks SET plan_status=?, plan_result=? "
+                            "WHERE task_id=?", (state, out, tid),
+                        )
+                    c.close()
+                except Exception as exc:
+                    self._log(f"NODE-PLAN: async ledger write failed for {tid}: {exc}")
+
+            _threading.Thread(target=_worker, name=f"planner-{tid}", daemon=True).start()
+            return (
+                f"PLAN GENERATING: task_id={tid} | correlation_id={corr} | "
+                f"backend={self._resolve_backend_name(effective_backend)} | mode={mode}\n"
+                f"Typical build time is 90-130s on the local backend.\n"
+                f"NEXT: call plan_status('{tid}') to collect it. Poll that, and "
+                f"do NOT call planner() again for this task while it generates."
+            )
+
+        # ── wait=True: synchronous path (pre-v0.4.6 behaviour, unchanged) ────
         env, error = self._request_plan_envelope(task, context, backend=effective_backend)
         if error:
             return error
+        return self._finalize_plan(
+            env, task, mode, tid, corr, prior_done_steps, effective_backend,
+        )
+
+    def _finalize_plan(
+        self,
+        env: dict,
+        task: str,
+        mode: str,
+        tid: str,
+        corr: str,
+        prior_done_steps: list,
+        effective_backend: str,
+    ) -> str:
+        """INTERNAL (v0.4.6) — everything that happens once an envelope lands:
+        normalize steps, merge revise history, write the ledger, render the
+        caller-facing text. Lifted out of planner() verbatim so the sync path
+        and the async worker thread emit byte-identical output."""
+        import json as _json  # noqa: PLC0415
+
         raw_steps = env.get("steps") or []
         legacy_packaged = str(env.get("packaged_prompt", "")).strip()
         goal = str(env.get("goal_summary") or task.strip()[:300])
@@ -6450,7 +6596,6 @@ tail -5 /tmp/goethe-node3090.log
         # v0.3.3: NEVER trust a model-supplied task_id — live smoke showed the
         # model copying the schema example ("a1b2c3d4") verbatim, which would
         # collide every plan onto one ledger row. corr already hashes task+now.
-        tid = task_id.strip() if mode == "revise" else corr[:8]
         plan_lines = "; ".join(
             f"step {s['n']}: {s['what']} "
             f"(web={s.get('web_calls', 0)}, tools={s.get('tool_calls', 0)}, "
@@ -6499,6 +6644,68 @@ tail -5 /tmp/goethe-node3090.log
             f"plan_step_done('{tid}', {first['n']}, evidence=<verify output>) "
             "to strike it and receive the next step. Estimates are NOT facts (P2).\n"
             f"---\n{next_prompt}"
+        )
+
+
+    def plan_status(self, task_id: str) -> str:
+        """
+        Collect an async plan started by planner() (v0.4.6).
+
+        GATE: call this ONLY after planner() returned "PLAN GENERATING", using
+        the task_id it gave you. This is the collection half of planner —
+        without it the plan is built and left sitting in the ledger.
+
+        POLLING DISCIPLINE:
+          - Plans take 90-130s on the local backend. If this returns
+            'still generating', WAIT and call again — do not treat it as a
+            failure and do not re-call planner(), which would start a second
+            generation against the same ledger row.
+          - When ready, the return value IS the plan: summary, abort criteria,
+            and the first step's packaged prompt. Execute ONLY that step, then
+            call plan_step_done() exactly as with a synchronous plan.
+          - 'failed' is terminal for this attempt — read the reason. Re-call
+            planner() only after you understand why it failed.
+
+        Args:
+            task_id: The id from planner()'s "PLAN GENERATING" receipt.
+        """
+        if not task_id.strip():
+            return "plan_status: task_id is required."
+        tid = task_id.strip()
+        try:
+            conn = self._tasks_db()
+            row = conn.execute(
+                "SELECT plan_status, plan_result, created_at, updated_at "
+                "FROM task_blocks WHERE task_id=?", (tid,),
+            ).fetchone()
+            conn.close()
+        except Exception as e:
+            return f"plan_status: ledger read failed: {e}"
+        if row is None:
+            return f"plan_status: no task block with id {tid!r}."
+        state, result, created, updated = row[0], row[1], row[2], row[3]
+        if state == "ready" and result:
+            return result
+        if state == "failed":
+            return result or "PLANNER UNAVAILABLE — plan failed with no reason recorded."
+        if state == "generating":
+            elapsed = ""
+            try:
+                from datetime import datetime as _dt  # noqa: PLC0415
+                secs = int((_dt.now() - _dt.fromisoformat(str(updated or created))).total_seconds())
+                elapsed = f" (~{secs}s elapsed)"
+            except Exception:
+                pass
+            return (
+                f"PLAN STILL GENERATING: task_id={tid}{elapsed}. "
+                "Typical build time is 90-130s on the local backend. "
+                f"Wait, then call plan_status('{tid}') again. "
+                "Do NOT call planner() again for this task."
+            )
+        return (
+            f"plan_status: task {tid} has no async plan attached "
+            f"(plan_status={state!r}). It was probably built with wait=True; "
+            "use task_resume to load it."
         )
 
     def _plan_step_prompt(self, goal: str, all_steps: list, step: dict) -> str:
