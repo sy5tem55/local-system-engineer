@@ -70,6 +70,16 @@ class TrustPolicy:
         return origin, tier, ceiling, warn
 
 
+# search_kb output budget (2026-07-21). Adaptive rather than fixed per-rank:
+# the total char budget is split across however many hits actually came back,
+# so the common 1-3 hit search never truncates (corpus p99 is 3310 chars)
+# while a 5-hit search still can't blow up the context. The old fixed
+# 900-char cap on ranks 2+ truncated ~90% of non-top results mid-sentence.
+_BODY_BUDGET = 14000    # total content chars across all hits
+_BODY_CAP_MIN = 2500    # floor per hit, even when many hits
+_BODY_CAP_TOP_MIN = 4000  # rank 1 never gets less than this
+
+
 class KBMixin:
     """KB/skill tool methods mixed into goethe.Tools. Uses self.valves,
     self._log, self._strip_years, self._budget_gate from the host class."""
@@ -316,9 +326,13 @@ class KBMixin:
 
             hits.sort(key=_trust_rank, reverse=True)
 
+            _n_hits = max(1, len(hits))
+            _share = max(_BODY_CAP_MIN, _BODY_BUDGET // _n_hits)
+
             def _body(c, rank):
+                # Adaptive share of _BODY_BUDGET — see the constants above.
                 c = (c or "").strip()
-                cap = 3500 if rank == 1 else 900
+                cap = max(_share, _BODY_CAP_TOP_MIN) if rank == 1 else _share
                 if len(c) <= cap:
                     return c
                 return (

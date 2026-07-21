@@ -28,6 +28,9 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
                              once=true: single-use, auto-revokes after one match)
   POST /api/ui/perms/deny     {id}        → deny a pending request ("no")
   POST /api/ui/perms/revoke   {id}        → revoke an active grant
+  POST /api/ui/perms/grant  {kind,pattern} → create a proactive grant
+                            (read/write only; sudo stays CLI-only because it
+                            needs root to regenerate the sudoers file)
 
 Every /api/ui/* endpoint above the perms ones is READ-ONLY by construction: ES
 access is a POST to _search only, sqlite opens with mode=ro, dream/episode
@@ -540,6 +543,34 @@ def _perm_action(action: str, rid: int, once: bool) -> dict:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+def _perm_grant(kind: str, pattern: str, note: str = "") -> dict:
+    """Create a proactive ("Active") grant from the Console — the operator
+    deciding up front, rather than reacting to an agent request. Mirrors
+    `goethe-perm grant <kind> <path>`.
+
+    read/write only. A sudo grant is deliberately NOT creatable here: it has
+    to regenerate /etc/sudoers.d/goethe-grants via visudo+install as root,
+    which this unprivileged web process cannot (and should not) do. Those
+    stay CLI-only so the privileged step happens under the operator's own
+    shell.
+    """
+    if _perms is None:
+        return {"error": "goethe_perms module not importable"}
+    kind = (kind or "").strip().lower()
+    pattern = (pattern or "").strip()
+    if kind not in ("read", "write"):
+        return {"error": "kind must be 'read' or 'write' "
+                         "(sudo grants: use the goethe-perm CLI)"}
+    if not pattern.startswith("/"):
+        return {"error": "pattern must be an absolute path"}
+    try:
+        gid = _perms.grant(kind, pattern, note or "granted via Goethe Console")
+        return {"status": "granted", "grant_id": gid,
+                "kind": kind, "pattern": pattern}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 _PERM_ACTION_PATHS = {
     "/api/ui/perms/approve": "approve",
     "/api/ui/perms/deny": "deny",
@@ -642,6 +673,28 @@ class UIRouter:
         # one path in the router that isn't a plain GET, and how narrow its
         # blast radius is (goethe_perms.py's requests/grants tables, and
         # nothing else).
+        if path == "/api/ui/perms/grant" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            try:
+                payload = await self._read_json_body(receive)
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 400,
+                    json.dumps({"error": f"bad body: {e}"}).encode(),
+                    "application/json")
+                return
+            data = await asyncio.to_thread(
+                _perm_grant, payload.get("kind", ""), payload.get("pattern", ""),
+                payload.get("note", ""))
+            await self._respond(
+                send, 400 if "error" in data else 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
         if path in _PERM_ACTION_PATHS and method == "POST":
             if not self._authorized(scope):
                 await self._respond(send, 401, b'{"error":"unauthorized"}',
