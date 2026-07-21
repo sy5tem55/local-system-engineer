@@ -83,6 +83,9 @@
   footer{margin-top:26px;color:var(--faint);font-size:11px;text-align:center}
 
   /* Permissions panel — the one part of this console that writes. */
+  #grant-form{display:flex;gap:6px;align-items:center;margin:0 0 10px;flex-wrap:wrap}
+  #grant-form input{flex:1;min-width:150px}
+  #grant-msg{flex-basis:100%;margin:2px 0 0}
   .badge.kind-read{color:var(--cyan);border-color:rgba(125,207,255,.4)}
   .badge.kind-write{color:var(--warn);border-color:rgba(224,175,104,.4)}
   .badge.kind-sudo{color:var(--bad);border-color:rgba(247,118,142,.4);font-weight:600}
@@ -137,6 +140,15 @@
 
   <div class="panel span4" id="p-perms-grants">
     <h2>Active Grants</h2>
+    <form id="grant-form" onsubmit="return createGrant(event)">
+      <select id="grant-kind">
+        <option value="read">read</option>
+        <option value="write">write</option>
+      </select>
+      <input id="grant-path" type="text" placeholder="/absolute/path" autocomplete="off">
+      <button type="submit">Grant</button>
+      <div class="note" id="grant-msg"></div>
+    </form>
     <table id="perms-grants"></table>
     <div class="note" id="perms-sudo-note">
       One or more active grants are kind <code>sudo</code>. Approving here only
@@ -323,6 +335,21 @@ async function loadPerms(){
 
     $("perms-sudo-note").style.display = sudoGrants ? "block" : "none";
   }catch(e){ showErr($("perms-pending"), e); }
+}
+
+async function createGrant(ev){
+  ev.preventDefault();
+  const kind = $("grant-kind").value;
+  const pattern = $("grant-path").value.trim();
+  const msg = $("grant-msg");
+  if(!pattern.startsWith("/")){ msg.textContent = "path must be absolute"; return false; }
+  try{
+    const r = await apiPost("/api/ui/perms/grant", { kind, pattern });
+    msg.textContent = r.error ? ("error: " + r.error)
+                              : ("granted #" + r.grant_id + " — " + kind + " " + pattern);
+    if(!r.error){ $("grant-path").value = ""; loadPerms(); }
+  }catch(e){ msg.textContent = "error: " + e.message; }
+  return false;
 }
 
 async function permAction(action, id, once, btn){
