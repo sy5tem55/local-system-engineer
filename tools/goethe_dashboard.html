@@ -83,9 +83,16 @@
   footer{margin-top:26px;color:var(--faint);font-size:11px;text-align:center}
 
   /* Permissions panel — the one part of this console that writes. */
-  #grant-form{display:flex;gap:6px;align-items:center;margin:0 0 10px;flex-wrap:wrap}
-  #grant-form input{flex:1;min-width:150px}
-  #grant-msg{flex-basis:100%;margin:2px 0 0}
+  #grant-form{display:flex;gap:6px;align-items:center;margin-bottom:10px}
+  #grant-form select,#grant-form input{background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);border-radius:6px;padding:4px 9px;font-family:var(--mono);font-size:11.5px}
+  #grant-form select{cursor:pointer;color:var(--cyan)}
+  #grant-form select.w{color:var(--warn)}
+  #grant-form input{flex:1;min-width:0}
+  #grant-form input::placeholder{color:var(--faint)}
+  #grant-form select:focus,#grant-form input:focus{outline:none;border-color:var(--accent)}
+  #grant-msg{font-family:var(--mono);font-size:11px;margin-bottom:12px;color:var(--faint)}
+  #grant-msg.ok{color:var(--good)} #grant-msg.bad{color:var(--bad)}
   .badge.kind-read{color:var(--cyan);border-color:rgba(125,207,255,.4)}
   .badge.kind-write{color:var(--warn);border-color:rgba(224,175,104,.4)}
   .badge.kind-sudo{color:var(--bad);border-color:rgba(247,118,142,.4);font-weight:600}
@@ -141,14 +148,15 @@
   <div class="panel span4" id="p-perms-grants">
     <h2>Active Grants</h2>
     <form id="grant-form" onsubmit="return createGrant(event)">
-      <select id="grant-kind">
+      <select id="grant-kind" onchange="this.classList.toggle('w',this.value==='write')">
         <option value="read">read</option>
         <option value="write">write</option>
       </select>
-      <input id="grant-path" type="text" placeholder="/absolute/path" autocomplete="off">
-      <button type="submit">Grant</button>
-      <div class="note" id="grant-msg"></div>
+      <input id="grant-path" type="text" placeholder="/absolute/path"
+             autocomplete="off" spellcheck="false">
+      <button type="submit" class="abtn always">Grant</button>
     </form>
+    <div id="grant-msg"></div>
     <table id="perms-grants"></table>
     <div class="note" id="perms-sudo-note">
       One or more active grants are kind <code>sudo</code>. Approving here only
@@ -342,13 +350,15 @@ async function createGrant(ev){
   const kind = $("grant-kind").value;
   const pattern = $("grant-path").value.trim();
   const msg = $("grant-msg");
-  if(!pattern.startsWith("/")){ msg.textContent = "path must be absolute"; return false; }
+  const set = (cls, text) => { msg.className = cls; msg.textContent = text; };
+  if(!pattern.startsWith("/")){ set("bad", "path must be absolute"); return false; }
   try{
     const r = await apiPost("/api/ui/perms/grant", { kind, pattern });
-    msg.textContent = r.error ? ("error: " + r.error)
-                              : ("granted #" + r.grant_id + " — " + kind + " " + pattern);
-    if(!r.error){ $("grant-path").value = ""; loadPerms(); }
-  }catch(e){ msg.textContent = "error: " + e.message; }
+    if(r.error){ set("bad", r.error); return false; }
+    set("ok", "granted #" + r.grant_id + " \u00b7 " + kind + " " + pattern);
+    $("grant-path").value = "";
+    loadPerms();
+  }catch(e){ set("bad", e.message); }
   return false;
 }
 
