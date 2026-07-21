@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.4.6
+title: LSE Goethe v0.4.7
 author: local-system-engineer
-version: 0.4.6
+version: 0.4.7
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -15,7 +15,26 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
-    Goethe v0.4.6 (2026-07-21): planner is async by default. v0.4.5 sized the
+    Goethe v0.4.7 (2026-07-21): planner docstring reordered above the MCP
+    description cut. Field report: "get a plan to enable IPv6 on Home Assistant"
+    produced a hand-written prose plan and no planner() call at all. Cause is
+    not the async change — the first 1024 chars were byte-identical between
+    v0.4.4 and v0.4.6, and registration/schema were verified clean (39 tools,
+    planner present, wait= in schema). goethe_mcp.py registers tools with
+    description=__doc__[:1024], and planner's docstring was 7,408 chars, so 86%
+    was discarded — including the MANDATORY TRIGGER block at char 1,974 that
+    names "get a plan" verbatim and forbids writing a plan in prose. The model
+    never saw the rule it broke. The visible window was instead spent on backend
+    cascade internals, still advertising the Ollama stage deleted in v0.4.5, and
+    cut off mid-word. Reordered so MANDATORY TRIGGER (char 136) and the ASYNC
+    poll contract (char 589) both complete inside the window; backend detail,
+    step loop and Args moved below it; stale Ollama text corrected. Also
+    goethe_mcp.py now uses inspect.getdoc() instead of __doc__ — __doc__ keeps
+    the 8-space source indent and .strip() only trims the ends, so ~240 chars of
+    every tool's budget was leading whitespace (8,768 chars reclaimed across 39
+    tools). NOTE: 29 of 39 tools are still over the 1024 cut — planner is fixed,
+    the rest are not audited yet.
+    Previous — v0.4.6 (2026-07-21): planner is async by default. v0.4.5 sized the
     call timeout to the work (120->240s), but that only moved the ceiling — it
     did not remove it. Plan generation is 90-130s on the local backend
     (measured against the real contract: a 6-step plan for a live task is 3,908
@@ -6343,42 +6362,27 @@ tail -5 /tmp/goethe-node3090.log
         wait: bool = False,
     ) -> str:
         """
-        Request a pre-flight ATOMIZED execution plan from the peer LSE instance
-        BEFORE starting a complex task (contract v2, Goethe v0.3.2). Every step is
-        a tightly scoped unit (<=5 tool calls, ONE verifiable outcome) with its own
-        self-contained packaged_prompt, so each step can run in a FRESH context
-        window — this is how 131k context ceilings are managed on long work.
-        The plan is written to the task ledger (tasks.db); execute the returned
-        first step, then call plan_step_done() to strike it and receive the next.
-
-        Planner backend — pick with backend= or the PLANNER_BACKEND valve
-        (v1.13.0, default 'local' — zero change from prior behavior unless
-        you explicitly opt in):
-          'local'   (default) 3-path cascade, unchanged since v0.2.8:
-                    1. node3090 llama-server :8080 (Qwen 27B, GPU) — primary
-                    2. node3090 Ollama :11434 qwen3:4b (CPU) — fallback
-                    3. Local Gemma GGUF spawn (VRAM-aware, port 8085) — last
-                       resort. Model by task size: E4B / 26B-A4B / 31B.
-                       Vision tasks (image/png/jpg keywords) load mmproj.
-          'chatgpt' OpenAI, via a Codex CLI OAuth session (`codex login`) if
-                    present, else PLANNER_OPENAI_API_KEY.
-          'claude'  Anthropic Messages API, via a Claude Code OAuth session
-                    (`claude login`) if present, else PLANNER_ANTHROPIC_API_KEY.
-          'rest'    Any OpenAI-compatible /v1/chat/completions server —
-                    PLANNER_REST_URL (+ _MODEL / _API_KEY). The broadly-
-                    compatible option: OpenRouter, Groq, Together, a LAN
-                    vLLM/LM Studio instance, etc.
-        mode='revise' on an existing task_id reuses whichever backend that
-        task was last planned with unless you pass backend= explicitly —
-        you don't need to repeat backend='claude' on every follow-up call.
+        Get an ATOMIZED execution plan for a multi-step task. Writes to the
+        tasks.db ledger; you execute ONE step, then call plan_step_done().
 
         MANDATORY TRIGGER — the user asked for a plan:
-          If the user's request contains "plan" / "get a plan" / "how should we
-          approach", or assigns a multi-phase audit/overhaul/migration, calling
-          planner() is REQUIRED. NEVER hand-write a plan in prose instead, and
-          NEVER create ad-hoc tracking files (active-task.md, plan.md, …) — the
-          tasks.db ledger written by THIS tool is the single source of truth
-          that survives session loss and that plan_step_done operates on.
+          If the request contains "plan", "get a plan", "how should we
+          approach", or assigns a multi-phase audit/migration/overhaul,
+          calling planner() is REQUIRED.
+          GOOD: "get a plan to enable IPv6" -> planner("enable IPv6 on ...")
+          BAD:  "get a plan ..." -> you write the phases out in prose
+                <- protocol violation: no ledger, no step loop.
+          NEVER hand-write a plan in prose. NEVER create plan.md.
+
+        ASYNC — returns a RECEIPT in under a second, never a plan:
+          You get "PLAN GENERATING: task_id=<id>". You MUST then call
+          plan_status(task_id) to collect the plan. It takes 90-170s; while
+          it says "still generating", wait and call plan_status again.
+          NEVER call planner() twice for one task. Not calling plan_status is
+          a protocol violation: the plan is built and left in the ledger.
+
+        DO NOT call for single-fact lookups, procedures under 3 steps (execute
+        directly), or resuming carried-over work (that is task_resume).
 
         GATE — planner comes before EXECUTION, not before reading:
           Information gathering does NOT close the planning window. search_kb,
@@ -6386,9 +6390,6 @@ tail -5 /tmp/goethe-node3090.log
           checks, config reads) BEFORE planner are correct — KB-FIRST still
           applies — and their findings belong in context=. The window closes
           when you start CHANGING state or producing deliverables.
-          Do NOT call for single-fact lookups or short well-defined procedures
-          (<3 steps) — execute directly instead.
-          Do NOT call when resuming carried-over work (that is task_resume).
 
         GOOD: search_kb ×2 → pfsense_graphql reads → planner("audit DNS infra",
               context="<topology + findings from the reads>")
@@ -6396,18 +6397,15 @@ tail -5 /tmp/goethe-node3090.log
         GOOD: planner("Find the verbatim Goethe quote on architecture as
               frozen music and verify it against a primary source")
               ← research-shaped, spiral risk: plan first
-        BAD:  user says "get a plan" → you write a phase list in prose and a
-              tracking markdown file
-              ← protocol violation: that plan has no ledger, no plan_step_done
-              loop, and dies with your context window.
         BAD:  planner("What is the hostname of node3090?")
               ← single fact; use execute_command.
         BAD:  10 web searches, then planner
               ← web searches burn budget and ARE execution. Reads of local/KB
               state are fine; web-search spirals before planning are not.
 
-        AFTER A PLAN IS RETURNED — mandatory step loop:
-          1. Execute ONLY the step in the packaged prompt at the END of the result.
+        AFTER A PLAN IS COLLECTED — mandatory step loop:
+          1. Execute ONLY the step in the packaged prompt at the END of the
+             plan_status() result.
           2. Run that step's verify check and call
              plan_step_done(task_id, step_n, evidence=<verify output>).
           3. plan_step_done returns the NEXT step's packaged prompt — repeat.
@@ -6423,6 +6421,23 @@ tail -5 /tmp/goethe-node3090.log
           Do NOT retry planner more than once per task. The absence of a
           plan is NOT permission to skip checkpointing.
 
+        Planner backend — pick with backend= or the PLANNER_BACKEND valve
+        (default 'local'):
+          'local'   (default) node3090 llama-server :8080 (Qwen 27B, GPU) —
+                    primary. Falls back to a VRAM-aware local Gemma GGUF spawn
+                    (port 8085; E4B / 26B-A4B / 31B by task size, mmproj for
+                    vision tasks). The Ollama CPU stage was removed in v0.4.5:
+                    0 successes in 5 logged attempts, +300s per failure.
+          'chatgpt' OpenAI, via a Codex CLI OAuth session (`codex login`) if
+                    present, else PLANNER_OPENAI_API_KEY.
+          'claude'  Anthropic Messages API, via a Claude Code OAuth session
+                    (`claude login`) if present, else PLANNER_ANTHROPIC_API_KEY.
+          'rest'    Any OpenAI-compatible /v1/chat/completions server —
+                    PLANNER_REST_URL (+ _MODEL / _API_KEY): OpenRouter, Groq,
+                    Together, a LAN vLLM/LM Studio instance, etc.
+        mode='revise' on an existing task_id reuses whichever backend that task
+        was last planned with unless you pass backend= explicitly.
+
         Args:
             task:    The user's task, verbatim or lightly cleaned — do not
                      pre-digest it; the planner needs the original shape.
@@ -6436,29 +6451,11 @@ tail -5 /tmp/goethe-node3090.log
             backend: '' (default) uses the PLANNER_BACKEND valve, or the
                      task's own stored backend in revise mode. Otherwise one
                      of 'local' | 'chatgpt' | 'claude' | 'rest' to override
-                     for this call only — the override does NOT change the
-                     valve default or overwrite what other tasks use.
-
-        ASYNC BY DEFAULT (v0.4.6) — this call returns in well under a second:
-          Plan generation takes 90-130s on the local backend (measured: a real
-          6-step plan is 3,908 tokens / 94.1s at ~42 tok/s), which is longer
-          than the MCP transport will wait. So planner() now seeds the ledger,
-          hands generation to a background thread, and returns immediately with
-          task_id and plan_status='generating'.
-          YOU MUST THEN POLL: call plan_status(task_id) until it reports ready.
-          plan_status returns the exact plan text planner() used to return.
-          Do NOT re-call planner() while a plan is generating — that starts a
-          second generation against the same ledger row.
-
-        Args (continued):
-            wait: False (default) = async, return a task_id to poll.
-                  True = block until the plan is built and return it directly.
-                  Only use wait=True from tests or a caller you know has a
-                  timeout above ~240s; over MCP it will time out.
-
-        Returns (async, default) a short GENERATING receipt with the task_id to
-        poll, or (wait=True) the plan summary + packaged prompt. Any failure is
-        a string starting with "PLANNER UNAVAILABLE".
+                     for this call only.
+            wait:    False (default) = async, return a task_id to poll.
+                     True = block until the plan is built and return it
+                     directly. Only for tests or callers with a >240s timeout;
+                     over MCP it will time out.
         """
         import hashlib  # noqa: PLC0415
         import json as _json  # noqa: PLC0415
