@@ -2004,10 +2004,19 @@ class Tools(KBMixin):
 
     def _is_allowed_read(self, path: str) -> bool:
         normed = self._norm(path)
-        if any(
-            normed.startswith(p.rstrip("/") + "/") for p in self._ALLOWED_READ_PREFIXES
-        ):
-            return True
+        # Literal (symlink-UNresolved) form as well: an allowed prefix such as
+        # /opt/local-se/ contains symlinked subdirs (kb -> /mnt/c/...). Judging
+        # only by realpath silently revoked read access to the KB the allowlist
+        # was written to grant (2026-07-19 paradox: LSE could not read its own
+        # KB). Read-side only -- the read allowlist is already broad
+        # (/home, /etc, /var/log, /tmp), so honouring an operator-created
+        # symlink under it grants nothing new in practice. _is_allowed_write
+        # deliberately stays realpath-strict.
+        literal = os.path.normpath(os.path.expanduser(path)).rstrip("/") + "/"
+        for pref in self._ALLOWED_READ_PREFIXES:
+            pref = pref.rstrip("/") + "/"
+            if normed.startswith(pref) or literal.startswith(pref):
+                return True
         gp = self._perms_mod()
         return bool(gp and gp.check_path("read", normed))
 
