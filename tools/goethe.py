@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.4.4
+title: LSE Goethe v0.4.5
 author: local-system-engineer
-version: 0.4.4
+version: 0.4.5
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -15,7 +15,28 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
-    Goethe v0.4.4 (2026-07-18): PH4-1 DATA — run_tests "data" scope
+    Goethe v0.4.5 (2026-07-21): planner timeout/cascade fix (LSE-debugged).
+    Intermittent "planner failed, never clear why" traced to a contradiction
+    introduced in v0.3.3: max_tokens was raised 2048→8192 to stop envelope
+    truncation, but the call timeout stayed at 120s. At the measured ~42 tok/s
+    on node3090 that is a hard ~5,000-token delivery ceiling, so any plan the
+    request itself permitted between ~5k and 8,192 tokens could never arrive —
+    the model completed (finish_reason=stop) and the client hung up regardless.
+    Reproduced: a complete 8-step envelope = 5,231 tokens in 125.3s, killed at
+    120s. Short plans fit under the ceiling; complex ones cannot, which is the
+    whole of the "works most of the time" pattern. Fixes: (1) timeout 120→240,
+    sized to the 8,192 the request already allows; (2) finish_reason=="length"
+    now logged as truncation instead of surfacing as "JSON parse failed", which
+    had been misdirecting diagnosis at model formatting; (3) the Ollama CPU
+    fallback is removed — 0 successes across 5 logged invocations, +300s per
+    failure, and it was the main reason the 663s cascade outlived the MCP
+    transport that was waiting on it; (4) all-slots-busy is now logged, since
+    /health reports liveness and a probe-OK call can still queue.
+    max_tokens deliberately NOT lowered to 4096: that truncates real envelopes
+    (measured 5,231), and because the parser cannot distinguish truncation from
+    corruption it would burn both retries and report the wrong cause — trading
+    a loud, honest timeout for a silent, mislabelled one.
+    Previous — v0.4.4 (2026-07-18): PH4-1 DATA — run_tests "data" scope
     (dataset_lint in scope=all).
     Previous — v0.4.3 (2026-07-18): PH3-4 docstring optimizer pass (SCRIBE-5) —
     time_check delegation-edge GOOD/BAD, run_tests scope-misuse GOOD/BAD,
@@ -1467,7 +1488,20 @@ class Tools(KBMixin):
         try:
             with _ureq.urlopen(req, timeout=timeout) as resp:
                 data = _json.loads(resp.read().decode())
-                return data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                # v0.4.5: finish_reason was discarded, so a reply cut off at
+                # max_tokens was indistinguishable from a malformed one. The
+                # envelope parser then reported it as "JSON parse failed",
+                # pointing at model formatting when the real cause was the
+                # token budget. Surface it explicitly instead.
+                if choice.get("finish_reason") == "length":
+                    used = data.get("usage", {}).get("completion_tokens", "?")
+                    self._log(
+                        "NODE-PLAN: reply TRUNCATED at max_tokens "
+                        f"(completion_tokens={used}) — the JSON will not parse. "
+                        "This is a budget problem, not a model formatting problem."
+                    )
+                return choice["message"]["content"]
         except _uerr.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:200]
             return f"ERROR: HTTP {exc.code} — {body}"
@@ -1540,20 +1574,49 @@ class Tools(KBMixin):
             probe_ok = False
 
         if probe_ok:
+            # v0.4.5: /health is LIVENESS, not READINESS — llama-server answers
+            # {"status":"ok"} whenever a model is loaded, even with every slot
+            # busy. A probe-OK request can still queue behind an in-flight
+            # generation and spend its budget waiting. Queueing is acceptable
+            # (that is what the timeout is for), so this does not gate the call
+            # — it just makes the wait explainable after the fact.
+            try:
+                with _ureq.urlopen(f"{llm_url}/slots", timeout=3) as _r:
+                    _slots = _json.loads(_r.read().decode())
+                _busy = [s for s in _slots if s.get("is_processing")]
+                if _busy and len(_busy) == len(_slots):
+                    self._log(
+                        f"NODE-PLAN: {llm_url} live but all {len(_slots)} slot(s) "
+                        "busy — this call will queue before it generates"
+                    )
+            except Exception as _exc:
+                self._log(f"NODE-PLAN: /slots unreadable ({_exc}) — trusting /health")
             self._log(f"NODE-PLAN: llama-server probe OK → {llm_url}")
-            result = _llm_call(llm_url, model="", timeout=120)
+            # v0.4.5: was 120s. v0.3.3 raised max_tokens 2048→8192 to stop
+            # envelope truncation but left this at 120s, which at the measured
+            # ~42 tok/s on node3090 (Qwen3.6-27B-Q4_K_M) caps delivery at
+            # ~5,000 tokens. Any envelope between ~5k and the 8,192 the request
+            # permits was structurally impossible to return: the model finished
+            # (finish_reason=stop) and the client hung up anyway. Measured: a
+            # complete 8-step plan = 5,231 tokens / 125.3s. 8192/42 ≈ 196s, so
+            # 240s covers the full permitted envelope plus prompt and margin.
+            # This is a ceiling, not a cost — short plans still return in ~20s.
+            result = _llm_call(llm_url, model="", timeout=240)
             if not result.startswith("ERROR:"):
                 return result
             self._log(f"NODE-PLAN: llama-server call failed ({result[:80]}), trying Ollama")
 
-        # ── Step 2: Ollama CPU fallback ───────────────────────────────────────
-        ollama_url = self.valves.NODE3090_OLLAMA_URL.rstrip("/")
-        fallback_model = self.valves.NODE3090_PLANNER_FALLBACK_MODEL
-        self._log(f"NODE-PLAN: Ollama fallback → {ollama_url} model={fallback_model}")
-        result = _llm_call(ollama_url, model=fallback_model, timeout=300)
-        if not result.startswith("ERROR:"):
-            return result
-        self._log(f"NODE-PLAN: Ollama fallback failed ({result[:80]}), trying Gemma spawn")
+        # ── Step 2: (removed v0.4.5) Ollama CPU fallback ──────────────────────
+        # Was: _llm_call(NODE3090_OLLAMA_URL, qwen3:4b, timeout=300).
+        # Removed on evidence: every invocation in the audit log failed with
+        # "timed out" — 2026-07-08, 07-12 (x2), 07-14, 07-21. Zero successes.
+        # A 4B model on CPU cannot emit an 8k-token JSON envelope inside 300s,
+        # so this stage only added five minutes to every failure and pushed the
+        # total cascade (3+120+300+60+180 = 663s) far past the MCP transport
+        # timeout — which is why the caller saw a bare "Request timed out" while
+        # the informative NODE-PLAN log lines were still being written.
+        # The valves NODE3090_OLLAMA_URL / NODE3090_PLANNER_FALLBACK_MODEL are
+        # left defined so existing configs keep loading; they are now unused.
 
         # ── Step 3: Gemma GGUF local spawn (VRAM-aware, v0.2.8) ──────────────
         vision = any(
