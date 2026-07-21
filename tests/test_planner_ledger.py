@@ -135,7 +135,7 @@ def read_block(t, tid):
 
 class TestPlannerNewPlan:
     def test_envelope_writes_step_ledger(self, tools):
-        r = tools.planner("migrate DNS to pi-hole", wait=True)
+        r = tools.planner("migrate DNS to pi-hole")
         assert "PLAN ENVELOPE accepted (new)" in r
         assert "steps=2 atomized" in r
         tid = plan_tid(r)
@@ -157,7 +157,7 @@ class TestPlannerNewPlan:
             tools, "_call_node_planner",
             lambda task, context="", no_think=False: json.dumps(env),
         )
-        r = tools.planner("migrate DNS to pi-hole", wait=True)
+        r = tools.planner("migrate DNS to pi-hole")
         assert "PLAN ENVELOPE accepted" in r
         assert "YOU ARE EXECUTING STEP 1 ONLY" in r
 
@@ -176,7 +176,7 @@ class TestPlannerNewPlan:
             return next(replies)
 
         monkeypatch.setattr(tools, "_call_node_planner", fake)
-        r = tools.planner("migrate DNS to pi-hole", wait=True)
+        r = tools.planner("migrate DNS to pi-hole")
         assert "PLAN ENVELOPE accepted" in r
         assert len(contexts) == 2
         assert "PREVIOUS REPLY REJECTED" in contexts[1]
@@ -186,7 +186,7 @@ class TestPlannerNewPlan:
             tools, "_call_node_planner",
             lambda task, context="", no_think=False: '{"intent": "plan"}',
         )
-        r = tools.planner("migrate DNS to pi-hole", wait=True)
+        r = tools.planner("migrate DNS to pi-hole")
         assert "PLANNER UNAVAILABLE" in r
         assert "after retry" in r
         assert "no 'steps'" in r
@@ -197,7 +197,7 @@ class TestPlannerNewPlan:
 
 class TestPlanStepDone:
     def _plan(self, tools):
-        return plan_tid(tools.planner("migrate DNS to pi-hole", wait=True))
+        return plan_tid(tools.planner("migrate DNS to pi-hole"))
 
     def test_strike_returns_next_step_with_ledger(self, tools):
         tid = self._plan(tools)
@@ -259,7 +259,7 @@ class TestPlanStepDone:
 
 class TestPlannerRevise:
     def test_revise_merges_done_history(self, tools, monkeypatch):
-        tid = plan_tid(tools.planner("migrate DNS to pi-hole", wait=True))
+        tid = plan_tid(tools.planner("migrate DNS to pi-hole"))
         tools.plan_step_done(tid, 1, evidence=GOOD_EVIDENCE)
         tools.plan_step_done(
             tid, 2, evidence="dig SERVFAIL; FTL config invalid line 12",
@@ -272,7 +272,7 @@ class TestPlannerRevise:
             return json.dumps(ENV_REVISED)
 
         monkeypatch.setattr(tools, "_call_node_planner", fake_planner)
-        r = tools.planner("migrate DNS to pi-hole", mode="revise", task_id=tid, wait=True)
+        r = tools.planner("migrate DNS to pi-hole", mode="revise", task_id=tid)
         assert "PLAN ENVELOPE accepted (revise)" in r
         assert "(+1 already done)" in r
         # the planner saw the ledger, including the failure evidence
@@ -325,63 +325,10 @@ class TestPlannerForceUrl:
             tools, "_call_node_planner", goethe.Tools._call_node_planner.__get__(tools)
         )
         tools.valves.PLANNER_FORCE_URL = "http://fake-gemma:8085"
-        r = tools.planner("migrate DNS to pi-hole", wait=True)
+        r = tools.planner("migrate DNS to pi-hole")
         assert "PLAN ENVELOPE accepted" in r
         assert calls[0] == "http://fake-gemma:8085/health"
         assert calls[1].startswith("http://fake-gemma:8085/v1/chat/completions")
         # v0.3.3 payload contract: envelope headroom + server-side think kill
         assert bodies[0]["max_tokens"] == 8192
         assert bodies[0]["thinking_budget_tokens"] == 0
-
-
-class TestPlannerAsync:
-    """v0.4.6 — async is now the default. planner() must return a receipt
-    immediately and plan_status() must hand back the SAME text the synchronous
-    path produces. _call_node_planner is monkeypatched, so the worker thread
-    finishes in milliseconds and these stay deterministic."""
-
-    def _await(self, tools, tid, tries=200):
-        import time
-        for _ in range(tries):
-            r = tools.plan_status(tid)
-            if not r.startswith("PLAN STILL GENERATING"):
-                return r
-            time.sleep(0.02)
-        raise AssertionError("plan never became ready")
-
-    def test_planner_returns_receipt_not_plan(self, tools):
-        r = tools.planner("migrate DNS to pi-hole")
-        assert r.startswith("PLAN GENERATING")
-        assert "plan_status(" in r
-        assert "PLAN ENVELOPE accepted" not in r
-
-    def test_async_result_matches_sync_result(self, tools):
-        tid = plan_tid(tools.planner("migrate DNS to pi-hole"))
-        got = self._await(tools, tid)
-        assert "PLAN ENVELOPE accepted (new)" in got
-        # the ledger must carry the same atomized steps the sync path writes
-        assert "step 1:" in got and "step 2:" in got
-
-    def test_plan_status_reports_generating_then_ready(self, tools):
-        tid = plan_tid(tools.planner("migrate DNS to pi-hole"))
-        final = self._await(tools, tid)
-        assert final.startswith("PLAN ENVELOPE accepted")
-        # a second collection is idempotent — the plan stays available
-        assert tools.plan_status(tid) == final
-
-    def test_plan_status_unknown_id(self, tools):
-        assert "no task block" in tools.plan_status("nosuchid")
-
-    def test_plan_status_requires_id(self, tools):
-        assert "required" in tools.plan_status("")
-
-    def test_failed_envelope_surfaces_via_plan_status(self, tools, monkeypatch):
-        # patch the INSTANCE, matching the tools fixture — a class-level patch
-        # is shadowed by the instance attribute the fixture already set
-        monkeypatch.setattr(
-            tools, "_call_node_planner",
-            lambda task, context="", no_think=False: "not json at all",
-        )
-        tid = plan_tid(tools.planner("migrate DNS to pi-hole"))
-        got = self._await(tools, tid)
-        assert got.startswith("PLANNER UNAVAILABLE")
