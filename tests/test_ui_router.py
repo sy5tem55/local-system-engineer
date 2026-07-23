@@ -178,6 +178,160 @@ def test_ledger_stats_missing_db_is_empty_not_error(tmp_path, monkeypatch):
     assert d["tasks"] == [] and d["counts"] == {}
 
 
+def test_ledger_stats_returns_every_task_without_display_cap(
+        tmp_path, monkeypatch):
+    db = tmp_path / "tasks.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE task_blocks (task_id TEXT PRIMARY KEY, goal TEXT, "
+        "status TEXT, checkpoints INTEGER, created_at TEXT, updated_at TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO task_blocks VALUES (?,?,?,?,?,?)",
+        [
+            (
+                f"task-{i:02d}",
+                f"fixture {i}",
+                "open",
+                0,
+                "2026-07-01",
+                f"2026-07-{(i % 28) + 1:02d}",
+            )
+            for i in range(57)
+        ],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("GOETHE_TASKS_DB", str(db))
+
+    d = ui.ledger_stats()
+    assert len(d["tasks"]) == 57
+    assert d["counts"] == {"open": 57}
+
+
+def test_delete_task_block_archives_complete_row_before_delete(
+        tmp_path, monkeypatch):
+    db = tmp_path / "tasks.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE task_blocks (task_id TEXT PRIMARY KEY, goal TEXT, "
+        "status TEXT, plan TEXT, done_steps TEXT, findings TEXT, "
+        "unverified TEXT, next_prompt TEXT, checkpoints INTEGER, "
+        "created_at TEXT, updated_at TEXT, steps_json TEXT, backend TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO task_blocks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "stale-task-42",
+            "remove stale fixture",
+            "open",
+            "one,two",
+            "one",
+            "finding",
+            "two",
+            "resume",
+            3,
+            "2026-06-01",
+            "2026-06-02",
+            '[{"status":"done"}]',
+            "local",
+        ),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("GOETHE_TASKS_DB", str(db))
+
+    result = ui.delete_task_block("stale-task-42")
+    assert result == {
+        "status": "deleted",
+        "task_id": "stale-task-42",
+        "goal": "remove stale fixture",
+        "previous_status": "open",
+        "archived": True,
+    }
+
+    conn = sqlite3.connect(db)
+    assert conn.execute(
+        "SELECT 1 FROM task_blocks WHERE task_id='stale-task-42'"
+    ).fetchone() is None
+    archived = conn.execute(
+        "SELECT task_id,row_json FROM task_blocks_deleted"
+    ).fetchone()
+    conn.close()
+    assert archived[0] == "stale-task-42"
+    snapshot = json.loads(archived[1])
+    assert snapshot["goal"] == "remove stale fixture"
+    assert snapshot["findings"] == "finding"
+    assert snapshot["backend"] == "local"
+
+
+@pytest.mark.parametrize(
+    "task_id",
+    [None, "", "x" * 129, "bad\nid"],
+)
+def test_delete_task_block_rejects_invalid_exact_id(
+        task_id, tmp_path, monkeypatch):
+    db = tmp_path / "tasks.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE task_blocks (task_id TEXT PRIMARY KEY, goal TEXT)"
+    )
+    conn.execute("INSERT INTO task_blocks VALUES ('safe-id','keep me')")
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("GOETHE_TASKS_DB", str(db))
+
+    assert "error" in ui.delete_task_block(task_id)
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM task_blocks").fetchone()[0] == 1
+    conn.close()
+
+
+def test_task_delete_route_is_authenticated_and_exact(
+        tmp_path, monkeypatch):
+    db = tmp_path / "tasks.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE task_blocks (task_id TEXT PRIMARY KEY, goal TEXT, "
+        "status TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO task_blocks VALUES ('exact-task','stale','open')"
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("GOETHE_TASKS_DB", str(db))
+    app = ui.UIRouter(_Inner(), token="sekrit")
+
+    status, _body = _run(
+        app,
+        "/api/ui/ledger/delete",
+        method="POST",
+        json_body={"task_id": "exact-task"},
+    )
+    assert status == 401
+
+    status, body = _run(
+        app,
+        "/api/ui/ledger/delete",
+        method="POST",
+        auth="Bearer sekrit",
+        json_body={"task_id": "exact-task"},
+    )
+    assert status == 200
+    assert _json_of(body)["archived"] is True
+
+    status, body = _run(
+        app,
+        "/api/ui/ledger/delete",
+        method="POST",
+        auth="Bearer sekrit",
+        json_body={"task_id": "exact-task"},
+    )
+    assert status == 409
+    assert "no task block" in _json_of(body)["error"]
+
+
 def test_dream_stats_reads_digest_and_day_dirs(tmp_path, monkeypatch):
     (tmp_path / "latest-digest.md").write_text(
         "# TRAUM dream digest — generated 2026-07-19\n- applied: 3 merges\n",
@@ -332,6 +486,21 @@ def test_dashboard_marks_unsafe_legacy_sudo_grants_not_installable():
     assert "Delete all" in html
     assert 'permAction(\\"delete\\"' in html
     assert "/api/ui/perms/delete-invalid" in html
+
+
+def test_dashboard_renders_complete_scrollable_deletable_ledger():
+    with open(
+        os.path.join(_HERE, "..", "tools", "goethe_dashboard.html"),
+        encoding="utf-8",
+    ) as dashboard:
+        html = dashboard.read()
+    assert ".slice(0,12)" not in html
+    assert 'class="ledger-scroll"' in html
+    assert "scrollbar-width:none" in html
+    assert "overscroll-behavior:contain" in html
+    assert "/api/ui/ledger/delete" in html
+    assert "deleteLedgerTask" in html
+    assert "task will disappear from the active ledger" in html
 
 
 if __name__ == "__main__":

@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-07-23 (Codex): Goethe Console v0.3.0 — complete, scrollable Task Ledger
+
+- Removed the API's 25-task cap and the dashboard's 12-task slice, so every
+  task block is available in the Task Ledger.
+- The task table now has a fixed-height, wheel-scrollable viewport with a
+  visually hidden scrollbar, contained overscroll, keyboard focus, and a
+  sticky header.
+- Added a confirmed Delete column. The token-gated endpoint accepts one exact
+  task ID and atomically snapshots the complete row into
+  `task_blocks_deleted` before deleting it from the active ledger.
+
 ## 2026-07-23 (Codex): Goethe Console v0.2.2 — delete invalid permission requests
 
 - Unapprovable legacy sudo requests can now be permanently deleted from the

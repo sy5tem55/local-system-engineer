@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-goethe_ui.py — Goethe Console: gateway-served dashboard + read-only JSON APIs.
+goethe_ui.py — Goethe Console: gateway-served dashboard + token-gated JSON APIs.
 ==============================================================================
-version: 0.2.2
+version: 0.3.0
 
 Surfaces Goethe's two differentiators — the empirical KB trust lifecycle and
 the TRAUM dreaming workstream — on a web UI served by the goethe_mcp gateway
@@ -19,6 +19,7 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
   GET  /api/ui/kb         → KB trust: aggs + worst/newest docs    (token-gated)
   GET  /api/ui/dream      → TRAUM digest + day-dir proposal map   (token-gated)
   GET  /api/ui/ledger     → tasks.db task blocks + step progress  (token-gated)
+  POST /api/ui/ledger/delete {task_id} → archive + delete a task  (token-gated)
   GET  /api/ui/episodes   → 7-day episode call stats by exit_class(token-gated)
   GET  /api/ui/perms      → goethe_perms pending requests + grants(token-gated)
   GET  /api/ui/backends   → planner backend config status (read-only,      (token-gated)
@@ -34,10 +35,11 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
                             (read/write only; sudo stays CLI-only because it
                             needs root to regenerate the sudoers file)
 
-Every /api/ui/* endpoint above the perms ones is READ-ONLY by construction: ES
-access is a POST to _search only, sqlite opens with mode=ro, dream/episode
-access is os.scandir + open-for-read. The /api/ui/perms/* actions are
-this module's ONE deliberate exception to that invariant — added 2026-07-20
+Every GET /api/ui/* endpoint is READ-ONLY by construction: ES access is a POST
+to _search only, sqlite opens with mode=ro, and dream/episode access is
+os.scandir + open-for-read. The permission actions and task-ledger deletion are
+the deliberate, token-gated write exceptions. Permission actions were added
+2026-07-20
 so the yes/no/always approval flow (previously CLI-only via `goethe-perm`,
 and before that not reachable at all — see session-learnings.md 2026-07-20)
 is visible and actionable from the Console instead of requiring a terminal.
@@ -45,8 +47,12 @@ The exception is intentionally as narrow as possible:
   - It can only touch rows in goethe_perms' own `requests`/`grants` SQLite
     tables (resolve a pending request, delete an unapprovable pending request,
     or revoke one existing grant) —
-    see goethe_perms.py for the actual SQL. It cannot read/write any other
-    path, run any command, or touch ES/tasks.db/dreams/episodes.
+    see goethe_perms.py for the actual SQL. It cannot run commands or touch
+    ES/dreams/episodes.
+  - Task deletion accepts one exact task_id, snapshots the complete row into
+    tasks.db's task_blocks_deleted archive, and then deletes only that row from
+    task_blocks in the same SQLite transaction. It cannot select a database
+    path or execute arbitrary SQL.
   - It NEVER writes /etc/sudoers.d/goethe-grants. Approving a 'sudo' kind
     request first passes goethe_perms' exact-command safety validation, then
     only creates a DB row; making that grant take effect at the OS level
@@ -55,8 +61,9 @@ The exception is intentionally as narrow as possible:
     surfaces this reminder in the UI rather than doing it for you.
   - Gated by the same bearer token as every other /api/ui/* route — no new
     trust boundary, just a new capability behind the existing one.
-Nothing else in this module can mutate state. The bearer token uses the same
-normalisation as goethe_mcp._TokenGuard ("Bearer <t>" or raw "<t>").
+Nothing else in this module can mutate state. Both write surfaces use the same
+bearer token normalisation as goethe_mcp._TokenGuard ("Bearer <t>" or raw
+"<t>").
 
 CONFIG (env, mirrors the GOETHE_* valve-override convention)
   GOETHE_ES_URL          default http://127.0.0.1:9200
@@ -80,7 +87,7 @@ import sys
 import time
 import urllib.request
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 # 0.1.1 — kb_stats 400 fix: terms aggs on source_tier/volatility/origin must
 #          target the .keyword subfield — live lse-kb-1024 maps them as text
 #          (the trust-migration keyword mapping didn't survive the 1024-dim
@@ -92,6 +99,8 @@ __version__ = "0.2.2"
 # 0.2.2 — Invalid legacy sudo requests can be permanently deleted one at a
 #          time or in one bulk cleanup. Server-side guards protect approvable
 #          requests and active grants from the delete path.
+# 0.3.0 — Ledger returns every task block. Exact-ID Console deletion archives
+#          the full row transactionally before removing it from the live table.
 
 # goethe_perms.py lives next to this file but this module is loaded via
 # importlib.util.spec_from_file_location (not a normal package import — see
@@ -320,7 +329,7 @@ def ledger_stats() -> dict:
         sel = "task_id, goal, status, checkpoints, created_at, updated_at" + extra_cols
         rows = conn.execute(
             f"SELECT {sel} FROM task_blocks "
-            "ORDER BY updated_at DESC LIMIT 25").fetchall()
+            "ORDER BY updated_at DESC").fetchall()
         steps_idx = 6 if has_steps else None
         backend_idx = 6 + (1 if has_steps else 0) if has_backend else None
         for r in rows:
@@ -350,6 +359,69 @@ def ledger_stats() -> dict:
     finally:
         conn.close()
     return out
+
+
+def delete_task_block(task_id) -> dict:
+    """Archive and delete exactly one task block from the configured ledger."""
+    if not isinstance(task_id, str):
+        return {"error": "task_id must be a string"}
+    task_id = task_id.strip()
+    if not task_id or len(task_id) > 128:
+        return {"error": "task_id must contain 1 to 128 characters"}
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in task_id):
+        return {"error": "task_id cannot contain control characters"}
+
+    path = _tasks_db_path()
+    if not os.path.isfile(path):
+        return {"error": "task ledger database not found"}
+
+    conn = sqlite3.connect(path, timeout=5)
+    conn.row_factory = sqlite3.Row
+    try:
+        with conn:
+            row = conn.execute(
+                "SELECT * FROM task_blocks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if row is None:
+                return {"error": f"no task block {task_id!r}"}
+
+            snapshot = {key: row[key] for key in row.keys()}
+            deleted_at = datetime.datetime.now(
+                datetime.timezone.utc
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS task_blocks_deleted ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "task_id TEXT NOT NULL, deleted_at TEXT NOT NULL, "
+                "row_json TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO task_blocks_deleted(task_id,deleted_at,row_json) "
+                "VALUES(?,?,?)",
+                (
+                    task_id,
+                    deleted_at,
+                    json.dumps(snapshot, ensure_ascii=False, default=str),
+                ),
+            )
+            deleted = conn.execute(
+                "DELETE FROM task_blocks WHERE task_id=?", (task_id,)
+            ).rowcount
+            if deleted != 1:
+                raise sqlite3.DatabaseError(
+                    f"expected to delete one task block, deleted {deleted}"
+                )
+        return {
+            "status": "deleted",
+            "task_id": task_id,
+            "goal": snapshot.get("goal", ""),
+            "previous_status": snapshot.get("status", ""),
+            "archived": True,
+        }
+    except sqlite3.Error as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    finally:
+        conn.close()
 
 
 def backend_status() -> dict:
@@ -519,8 +591,8 @@ _PANELS = {
 
 
 # --------------------------------------------------------------------------
-# Permissions actions — the one deliberate write surface. See the module
-# docstring's ROUTES section for the scope this is held to.
+# Permission actions — one of the two deliberate write surfaces. See the
+# module docstring's ROUTES section for the scope this is held to.
 # --------------------------------------------------------------------------
 
 def _perm_action(action: str, rid: int, once: bool) -> dict:
@@ -695,9 +767,30 @@ class UIRouter:
                 "application/json")
             return
 
+        if path == "/api/ui/ledger/delete" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            try:
+                payload = await self._read_json_body(receive)
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 400,
+                    json.dumps({"error": f"bad body: {e}"}).encode(),
+                    "application/json")
+                return
+            data = await asyncio.to_thread(
+                delete_task_block, payload.get("task_id")
+            )
+            await self._respond(
+                send, 409 if "error" in data else 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
         # Permissions actions — see module docstring for why this is the
-        # one path in the router that isn't a plain GET, and how narrow its
-        # blast radius is (goethe_perms.py's requests/grants tables, and
+        # narrow blast radius (goethe_perms.py's requests/grants tables, and
         # nothing else).
         if path == "/api/ui/perms/grant" and method == "POST":
             if not self._authorized(scope):
