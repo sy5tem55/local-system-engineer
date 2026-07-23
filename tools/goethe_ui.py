@@ -2,7 +2,7 @@
 """
 goethe_ui.py — Goethe Console: gateway-served dashboard + read-only JSON APIs.
 ==============================================================================
-version: 0.1.1
+version: 0.2.1
 
 Surfaces Goethe's two differentiators — the empirical KB trust lifecycle and
 the TRAUM dreaming workstream — on a web UI served by the goethe_mcp gateway
@@ -45,8 +45,9 @@ The exception is intentionally as narrow as possible:
     see goethe_perms.py for the actual SQL. It cannot read/write any other
     path, run any command, or touch ES/tasks.db/dreams/episodes.
   - It NEVER writes /etc/sudoers.d/goethe-grants. Approving a 'sudo' kind
-    request still only creates a DB row; making that grant take effect at
-    the OS level still requires the human to run
+    request first passes goethe_perms' exact-command safety validation, then
+    only creates a DB row; making that grant take effect at the OS level
+    still requires the human to run
     `goethe-perm sync-sudoers` themselves in a terminal. The Console
     surfaces this reminder in the UI rather than doing it for you.
   - Gated by the same bearer token as every other /api/ui/* route — no new
@@ -76,7 +77,7 @@ import sys
 import time
 import urllib.request
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 # 0.1.1 — kb_stats 400 fix: terms aggs on source_tier/volatility/origin must
 #          target the .keyword subfield — live lse-kb-1024 maps them as text
 #          (the trust-migration keyword mapping didn't survive the 1024-dim

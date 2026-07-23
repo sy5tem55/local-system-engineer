@@ -98,6 +98,7 @@
   .badge.kind-sudo{color:var(--bad);border-color:rgba(247,118,142,.4);font-weight:600}
   .badge.scope-once{color:var(--accent);border-color:rgba(122,162,247,.4)}
   .badge.scope-always{color:var(--faint)}
+  .badge.invalid{color:var(--bad);border-color:rgba(247,118,142,.6);font-weight:600}
   .cell-pattern{font-family:var(--mono);max-width:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cell-ts{color:var(--faint);font-size:11px;font-family:var(--mono);white-space:nowrap}
   .actions{display:flex;gap:6px;flex-wrap:wrap}
@@ -159,10 +160,11 @@
     <div id="grant-msg"></div>
     <table id="perms-grants"></table>
     <div class="note" id="perms-sudo-note">
-      One or more active grants are kind <code>sudo</code>. Approving here only
-      writes the database row — it does not touch <code>/etc/sudoers.d/</code>.
-      Run <code>goethe-perm sync-sudoers</code> in a terminal to make a sudo
-      grant take effect at the OS level.
+      Valid <code>sudo</code> grants authorize one exact, shell-free command.
+      Approval here only writes the database row; run
+      <code>goethe-perm sync-sudoers</code> in a terminal to install valid
+      grants. Unsafe legacy grants are marked <strong>not installable</strong>
+      and ignored during sync; revoke and recreate them as exact commands.
     </div>
   </div>
 
@@ -314,31 +316,38 @@ async function loadPerms(){
 
     $("perms-pending").innerHTML = pend.length
       ? "<tr><th>id</th><th>kind</th><th>pattern</th><th>reason</th><th>requested</th><th></th></tr>" +
-        pend.map(r => (
-          "<tr>"+
+        pend.map(r => {
+          const invalid = r.kind === "sudo" && r.sudoers_valid === false;
+          const actions = invalid
+            ? "<span class='badge invalid' title=\""+esc(r.sudoers_error || "unsafe sudo request")+"\">not approvable</span>"+
+              "<button class='abtn deny' title='Deny — no grant created' onclick='permAction(\"deny\","+r.id+",false,this)'>Deny</button>"
+            : "<button class='abtn always' title='Approve — persistent, stays active until revoked' onclick='permAction(\"approve\","+r.id+",false,this)'>Always</button>"+
+              "<button class='abtn once' title='Approve — single use, auto-revokes after one match' onclick='permAction(\"approve\","+r.id+",true,this)'>Once</button>"+
+              "<button class='abtn deny' title='Deny — no grant created' onclick='permAction(\"deny\","+r.id+",false,this)'>Deny</button>";
+          return "<tr>"+
           "<td style='font-family:var(--mono);color:var(--dim)'>#"+r.id+"</td>"+
           "<td>"+kindBadge(r.kind)+"</td>"+
           "<td class='cell-pattern' title=\""+esc(r.pattern)+"\">"+esc(r.pattern)+"</td>"+
           "<td style='color:var(--dim)'>"+esc(r.reason || "—")+"</td>"+
           "<td class='cell-ts'>"+tsShort(r.requested_at)+"</td>"+
-          "<td><div class='actions'>"+
-            "<button class='abtn always' title='Approve — persistent, stays active until revoked' onclick='permAction(\"approve\","+r.id+",false,this)'>Always</button>"+
-            "<button class='abtn once' title='Approve — single use, auto-revokes after one match' onclick='permAction(\"approve\","+r.id+",true,this)'>Once</button>"+
-            "<button class='abtn deny' title='Deny — no grant created' onclick='permAction(\"deny\","+r.id+",false,this)'>Deny</button>"+
-          "</div></td></tr>"
-        )).join("")
+          "<td><div class='actions'>"+actions+"</div></td></tr>";
+        }).join("")
       : '<tr><td class="empty">no pending requests</td></tr>';
 
     $("perms-grants").innerHTML = grants.length
       ? "<tr><th>id</th><th>kind</th><th>pattern</th><th>scope</th><th></th></tr>" +
-        grants.map(g => (
-          "<tr>"+
+        grants.map(g => {
+          const invalid = g.kind === "sudo" && g.sudoers_valid === false;
+          const scope = invalid
+            ? '<span class="badge invalid" title="'+esc(g.sudoers_error || "unsafe sudo grant")+'">not installable</span>'
+            : (g.one_time ? '<span class="badge scope-once">once</span>' : '<span class="badge scope-always">always</span>');
+          return "<tr>"+
           "<td style='font-family:var(--mono);color:var(--dim)'>#"+g.id+"</td>"+
           "<td>"+kindBadge(g.kind)+"</td>"+
           "<td class='cell-pattern' title=\""+esc(g.pattern)+"\">"+esc(g.pattern)+"</td>"+
-          "<td>"+(g.one_time ? '<span class="badge scope-once">once</span>' : '<span class="badge scope-always">always</span>')+"</td>"+
-          "<td><button class='abtn revoke' title='Revoke this grant' onclick='permAction(\"revoke\","+g.id+",false,this)'>Revoke</button></td></tr>"
-        )).join("")
+          "<td>"+scope+"</td>"+
+          "<td><button class='abtn revoke' title='Revoke this grant' onclick='permAction(\"revoke\","+g.id+",false,this)'>Revoke</button></td></tr>";
+        }).join("")
       : '<tr><td class="empty">no active grants</td></tr>';
 
     $("perms-sudo-note").style.display = sudoGrants ? "block" : "none";

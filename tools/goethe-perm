@@ -5,8 +5,8 @@
   goethe-perm pending                pending requests from the agent
   goethe-perm grant read /path       grant read access under /path
   goethe-perm grant write /path      grant write access under /path
-  goethe-perm grant sudo 'CMD'       grant a privileged command (append ' *'
-                                     for any-args prefix match)
+  goethe-perm grant sudo 'CMD ARGS'  grant one exact privileged command
+                                     (omit leading sudo; no shell syntax)
   goethe-perm approve <req-id>       approve a pending request (persistent — "always")
   goethe-perm approve <req-id> --once  approve for a single use only — "yes, just this time"
   goethe-perm deny <req-id>          deny a pending request — "no"
@@ -51,8 +51,12 @@ def cmd_list(a):
     for r in rows:
         state = "REVOKED" if r["revoked_at"] else "active"
         exp = f" expires={r['expires_at']}" if r["expires_at"] else ""
+        invalid = (
+            f"   [NOT INSTALLABLE: {r['sudoers_error']}]"
+            if r.get("sudoers_valid") is False else ""
+        )
         print(f"#{r['id']:<4}{state:<9}{r['kind']:<6}{r['pattern']}{exp}"
-              + (f"   ({r['note']})" if r["note"] else ""))
+              + invalid + (f"   ({r['note']})" if r["note"] else ""))
 
 
 def cmd_pending(a):
@@ -64,9 +68,13 @@ def cmd_pending(a):
         print(f"#{r['id']:<4}{r['kind']:<6}{r['pattern']}")
         if r["reason"]:
             print(f"      reason: {r['reason']}")
-        print(f"      always: goethe-perm approve {r['id']}   "
-              f"once: goethe-perm approve {r['id']} --once   "
-              f"no: goethe-perm deny {r['id']}")
+        if r.get("sudoers_valid") is False:
+            print(f"      NOT APPROVABLE: {r['sudoers_error']}")
+            print(f"      deny: goethe-perm deny {r['id']}")
+        else:
+            print(f"      always: goethe-perm approve {r['id']}   "
+                  f"once: goethe-perm approve {r['id']} --once   "
+                  f"no: goethe-perm deny {r['id']}")
 
 
 def cmd_grant(a):
@@ -133,7 +141,10 @@ def main():
     p = sub.add_parser("sync-sudoers"); p.set_defaults(fn=cmd_sync)
 
     a = ap.parse_args()
-    a.fn(a)
+    try:
+        a.fn(a)
+    except ValueError as exc:
+        ap.error(str(exc))
 
 
 if __name__ == "__main__":

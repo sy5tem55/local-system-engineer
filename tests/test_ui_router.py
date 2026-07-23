@@ -234,5 +234,30 @@ def test_episode_stats_disabled_dir_is_empty(monkeypatch):
     assert d["days"] == []
 
 
+def test_console_surfaces_sudo_validation_errors(monkeypatch):
+    class UnsafePerms:
+        @staticmethod
+        def resolve_request(_rid, approve, once=False):
+            assert approve is True
+            raise ValueError("sudo grant cannot contain shell control operators")
+
+    monkeypatch.setattr(ui, "_perms", UnsafePerms)
+    data = ui._perm_action("approve", 6, once=False)
+    assert data == {
+        "error": "ValueError: sudo grant cannot contain shell control operators"
+    }
+
+
+def test_dashboard_marks_unsafe_legacy_sudo_grants_not_installable():
+    with open(
+        os.path.join(_HERE, "..", "tools", "goethe_dashboard.html"),
+        encoding="utf-8",
+    ) as dashboard:
+        html = dashboard.read()
+    assert "not installable" in html
+    assert "sudoers_valid === false" in html
+    assert "Unsafe legacy grants" in html
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
