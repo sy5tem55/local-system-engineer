@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-07-23 (Codex): Goethe v0.4.9 — fail-closed exact sudo grants
+
+- **Root cause fixed at both boundaries.** The privileged-prefix guard no
+  longer files approvable requests for pipelines, redirects, chained commands,
+  shell expansion, or non-`sudo` escalation forms. `goethe_perms` independently
+  rejects the same unsafe patterns at request, grant, approval, match, and
+  sudoers-render time.
+- **Sudoers output is now exact.** Stored patterns omit the leading `sudo`;
+  executables must resolve through a root-controlled, non-user-writable path;
+  arguments are exact and escaped; commands with no arguments render an
+  explicit `""`; wildcard/prefix grants are unsupported.
+- **Unsafe legacy rows fail closed.** They remain visible and revocable, but
+  are labeled `NOT INSTALLABLE` by the CLI/Console and render only as
+  `# SKIPPED` comments. Approval is atomic and duplicate active grants dedupe.
+- **Operator surface corrected.** The Console disables approval of invalid
+  legacy requests and explains that only valid exact grants are installed by
+  `goethe-perm sync-sudoers`.
+- **Verification:** 39 focused permission/UI tests passed, dashboard JavaScript
+  syntax checked, 321 non-ES tests passed, and a copied production permissions
+  DB generated a comments-only policy that `visudo -cf` accepted. The broader
+  suite reached 267 passing tests before its live Elasticsearch fixture timed
+  out; the two empty test indices left by that fixture were removed and cluster
+  health returned green.
+
 ## 2026-07-18 (Cowork): PH5-1/PH5-2 — Goethe v0.4.1: TrustPolicy + goethe_kb.py extraction; P0 closed (except rotation); neural-search claim verified live
 
 - **Neural-search verification (operator request):** all 5 design phases confirmed live on node3090 — lazy sidecars (cold 4.1 s / warm 137 ms), lse-web-idx 44,751 chunks, :8092 API active, `!nl` SearxNG engine returns neural results, recrawl timer armed. Finding: `sear_primary` was down post-reboot (manual pre-reboot stop cleared `restart: always` trigger) — restarted, :8088 → 200.

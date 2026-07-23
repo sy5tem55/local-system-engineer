@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.4.8
+title: LSE Goethe v0.4.9
 author: local-system-engineer
-version: 0.4.8
+version: 0.4.9
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -15,6 +15,12 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
+    Goethe v0.4.9 (2026-07-23): SUDO GRANT FAIL-CLOSED FIX. Only a leading,
+    exact, shell-free `sudo <command> [args...]` may file an approvable DB
+    request. Chained commands, pipelines, redirects, shell expansions, doas/su,
+    and other complex privilege matches are delegation-only and never become
+    sudoers rows. This closes the path that stored raw shell text and later
+    rendered `/usr/bin/sudo ... | ...` as a broken, over-broad Cmnd_Spec.
     Goethe v0.4.8 (2026-07-21): REVERT v0.4.6 — planner is synchronous again.
     Field report: the async split was a severe usability regression. v0.4.6 was
     correct about the transport ceiling (generation is 90-170s, the MCP
@@ -3048,34 +3054,22 @@ tail -5 /tmp/goethe-node3090.log
         for priv in self._PRIVILEGED_PREFIXES:
             if priv in cmd_lower:
                 self._log(f"PRIV-BLOCKED: {command}")
-                # File a request for EVERY match here, not just the narrow
-                # "command starts with a clean, unpunctuated 'sudo '" case.
-                # Before this fix, anything that didn't fit that shape (a
-                # chained `cmd1 && sudo cmd2`, `su ` instead of `sudo `, etc.)
-                # produced a dead-end BLOCKED message with no request filed
-                # and no `goethe-perm approve/deny` id to act on at all —
-                # the equivalent of a wall with no door. Every match now
-                # gets a door, even if check_sudo() can't auto-replay a
-                # multi-statement command on approval (see reason text).
                 if _priv_rest and not any(
                     t in _priv_rest for t in (";", "|", "&", "`", "$(", "\n", ">", "<")
                 ):
                     _note = self._perm_note(
                         "sudo", _priv_rest, "agent requested privileged command"
                     )
-                else:
-                    _note = self._perm_note(
-                        "sudo",
-                        scan_command.strip(),
-                        "agent command flagged by privileged-prefix scan "
-                        "(chained/complex command or non-'sudo' escalation word "
-                        "— approving files a record but won't auto-replay via "
-                        "check_sudo; re-run sudo_delegation_block or approve "
-                        "the exact simplified command instead)",
+                    return (
+                        f"BLOCKED: '{priv.strip()}' detected in command. "
+                        "Use sudo_delegation_block instead." + _note
                     )
                 return (
-                    f"BLOCKED: '{priv.strip()}' detected in command. "
-                    "Use sudo_delegation_block instead." + _note
+                    f"BLOCKED: '{priv.strip()}' detected in a chained or complex "
+                    "command. Complex shell text cannot become a sudo grant. "
+                    "Use sudo_delegation_block and split the privileged operation "
+                    "into one exact command without pipes, redirects, chaining, "
+                    "or shell expansion."
                 )
 
         # ── Block writes to privileged system paths ───────────────────────────
