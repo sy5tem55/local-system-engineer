@@ -349,6 +349,64 @@ def pending():
     return rows
 
 
+def _unapprovable_error(row):
+    """Return why a pending request cannot be approved, or an empty string."""
+    if row["kind"] != "sudo":
+        return ""
+    return sudo_pattern_error(row["pattern"])
+
+
+def delete_unapprovable_request(rid):
+    """Permanently delete one pending request that cannot be approved.
+
+    This is intentionally narrower than a general request deletion API:
+    approvable requests must use the normal approve/deny lifecycle, and
+    active grants must use revoke().
+    """
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM requests WHERE id=? AND status='pending'", (rid,)
+        ).fetchone()
+        if not row:
+            return False
+        error = _unapprovable_error(row)
+        if not error:
+            raise ValueError(
+                f"request #{rid} is approvable; approve or deny it instead"
+            )
+        deleted = conn.execute(
+            "DELETE FROM requests WHERE id=? AND status='pending'", (rid,)
+        ).rowcount
+        if deleted:
+            _audit(
+                conn,
+                "delete-unapprovable-request",
+                f"request #{rid} {row['kind']}:{row['pattern']} | {error}",
+            )
+        return bool(deleted)
+
+
+def delete_all_unapprovable_requests():
+    """Permanently delete every pending request that cannot be approved."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM requests WHERE status='pending' ORDER BY id"
+        ).fetchall()
+        invalid = [(row, _unapprovable_error(row)) for row in rows]
+        invalid = [(row, error) for row, error in invalid if error]
+        for row, error in invalid:
+            conn.execute(
+                "DELETE FROM requests WHERE id=? AND status='pending'",
+                (row["id"],),
+            )
+            _audit(
+                conn,
+                "delete-unapprovable-request",
+                f"request #{row['id']} {row['kind']}:{row['pattern']} | {error}",
+            )
+        return len(invalid)
+
+
 def resolve_request(rid, approve, note="", once=False):
     """Approve → creates a grant (persistent unless once=True, which consumes
     itself after a single matching use — the 'yes, just this time' case, vs.

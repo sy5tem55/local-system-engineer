@@ -167,6 +167,60 @@ def test_unsafe_legacy_request_cannot_be_approved_and_stays_pending():
     assert perms.list_grants() == []
 
 
+def test_unapprovable_request_can_be_permanently_deleted():
+    rid = _insert_legacy(
+        "sudo", "sudo docker start valkey 2>&1", table="requests"
+    )
+
+    assert perms.delete_unapprovable_request(rid) is True
+    assert perms.pending() == []
+    assert perms.delete_unapprovable_request(rid) is False
+
+    with perms._db() as conn:
+        assert conn.execute(
+            "SELECT 1 FROM requests WHERE id=?", (rid,)
+        ).fetchone() is None
+        audit = conn.execute(
+            "SELECT event,detail FROM audit ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert audit["event"] == "delete-unapprovable-request"
+    assert f"request #{rid}" in audit["detail"]
+
+
+def test_delete_refuses_approvable_request():
+    rid = perms.file_request(
+        "sudo", "systemctl start goethe-dream", "valid fixture"
+    )
+
+    with pytest.raises(ValueError, match="is approvable"):
+        perms.delete_unapprovable_request(rid)
+
+    assert [row["id"] for row in perms.pending()] == [rid]
+
+
+def test_bulk_delete_removes_only_unapprovable_requests():
+    bad_one = _insert_legacy(
+        "sudo", "sudo docker start valkey 2>&1", table="requests"
+    )
+    bad_two = _insert_legacy(
+        "sudo", "id && whoami", table="requests"
+    )
+    valid = perms.file_request("read", "/tmp/fixture", "valid fixture")
+
+    assert perms.delete_all_unapprovable_requests() == 2
+    assert [row["id"] for row in perms.pending()] == [valid]
+
+    with perms._db() as conn:
+        deleted_ids = {
+            row["detail"].split()[1]
+            for row in conn.execute(
+                "SELECT detail FROM audit "
+                "WHERE event='delete-unapprovable-request'"
+            )
+        }
+    assert deleted_ids == {f"#{bad_one}", f"#{bad_two}"}
+
+
 def test_clean_approval_is_atomic_and_duplicate_grants_are_deduped(fake_bin):
     fake_bin("systemctl")
     rid = perms.file_request(

@@ -2,7 +2,7 @@
 """
 goethe_ui.py — Goethe Console: gateway-served dashboard + read-only JSON APIs.
 ==============================================================================
-version: 0.2.1
+version: 0.2.2
 
 Surfaces Goethe's two differentiators — the empirical KB trust lifecycle and
 the TRAUM dreaming workstream — on a web UI served by the goethe_mcp gateway
@@ -27,6 +27,8 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
                             (once=false, default: persistent "always" grant;
                              once=true: single-use, auto-revokes after one match)
   POST /api/ui/perms/deny     {id}        → deny a pending request ("no")
+  POST /api/ui/perms/delete   {id}        → delete an unapprovable request
+  POST /api/ui/perms/delete-invalid {}    → delete all unapprovable requests
   POST /api/ui/perms/revoke   {id}        → revoke an active grant
   POST /api/ui/perms/grant  {kind,pattern} → create a proactive grant
                             (read/write only; sudo stays CLI-only because it
@@ -34,14 +36,15 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
 
 Every /api/ui/* endpoint above the perms ones is READ-ONLY by construction: ES
 access is a POST to _search only, sqlite opens with mode=ro, dream/episode
-access is os.scandir + open-for-read. The three /api/ui/perms/* actions are
+access is os.scandir + open-for-read. The /api/ui/perms/* actions are
 this module's ONE deliberate exception to that invariant — added 2026-07-20
 so the yes/no/always approval flow (previously CLI-only via `goethe-perm`,
 and before that not reachable at all — see session-learnings.md 2026-07-20)
 is visible and actionable from the Console instead of requiring a terminal.
 The exception is intentionally as narrow as possible:
   - It can only touch rows in goethe_perms' own `requests`/`grants` SQLite
-    tables (resolve one pending request, or revoke one existing grant) —
+    tables (resolve a pending request, delete an unapprovable pending request,
+    or revoke one existing grant) —
     see goethe_perms.py for the actual SQL. It cannot read/write any other
     path, run any command, or touch ES/tasks.db/dreams/episodes.
   - It NEVER writes /etc/sudoers.d/goethe-grants. Approving a 'sudo' kind
@@ -77,7 +80,7 @@ import sys
 import time
 import urllib.request
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 # 0.1.1 — kb_stats 400 fix: terms aggs on source_tier/volatility/origin must
 #          target the .keyword subfield — live lse-kb-1024 maps them as text
 #          (the trust-migration keyword mapping didn't survive the 1024-dim
@@ -86,6 +89,9 @@ __version__ = "0.2.1"
 #          three POST /api/ui/perms/* actions (approve/deny/revoke). See the
 #          module docstring's ROUTES section for the deliberate, narrow
 #          exception this carves out of the read-only contract.
+# 0.2.2 — Invalid legacy sudo requests can be permanently deleted one at a
+#          time or in one bulk cleanup. Server-side guards protect approvable
+#          requests and active grants from the delete path.
 
 # goethe_perms.py lives next to this file but this module is loaded via
 # importlib.util.spec_from_file_location (not a normal package import — see
@@ -519,8 +525,8 @@ _PANELS = {
 
 def _perm_action(action: str, rid: int, once: bool) -> dict:
     """Resolve a pending request (approve/deny) or revoke a grant. `action`
-    is one of 'approve' | 'deny' | 'revoke' — the router maps the URL path
-    to this before calling in, so this function never sees a raw path.
+    is one of 'approve' | 'deny' | 'delete' | 'revoke' — the router maps the
+    URL path to this before calling in, so this function never sees a raw path.
     Runs in a worker thread via asyncio.to_thread, same as the read panels.
     """
     if _perms is None:
@@ -536,6 +542,13 @@ def _perm_action(action: str, rid: int, once: bool) -> dict:
             if status == "not-found":
                 return {"error": f"no pending request #{rid}"}
             return {"status": status}
+        if action == "delete":
+            ok = _perms.delete_unapprovable_request(rid)
+            return (
+                {"status": "deleted"}
+                if ok
+                else {"error": f"no pending request #{rid}"}
+            )
         if action == "revoke":
             ok = _perms.revoke(rid)
             return {"status": "revoked"} if ok else {"error": f"no active grant #{rid}"}
@@ -572,9 +585,21 @@ def _perm_grant(kind: str, pattern: str, note: str = "") -> dict:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+def _perm_delete_invalid() -> dict:
+    """Permanently remove all pending requests that fail sudo validation."""
+    if _perms is None:
+        return {"error": "goethe_perms module not importable"}
+    try:
+        count = _perms.delete_all_unapprovable_requests()
+        return {"status": "deleted", "deleted": count}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 _PERM_ACTION_PATHS = {
     "/api/ui/perms/approve": "approve",
     "/api/ui/perms/deny": "deny",
+    "/api/ui/perms/delete": "delete",
     "/api/ui/perms/revoke": "revoke",
 }
 
@@ -690,6 +715,18 @@ class UIRouter:
             data = await asyncio.to_thread(
                 _perm_grant, payload.get("kind", ""), payload.get("pattern", ""),
                 payload.get("note", ""))
+            await self._respond(
+                send, 400 if "error" in data else 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        if path == "/api/ui/perms/delete-invalid" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            data = await asyncio.to_thread(_perm_delete_invalid)
             await self._respond(
                 send, 400 if "error" in data else 200,
                 json.dumps(data, ensure_ascii=False, default=str).encode(),

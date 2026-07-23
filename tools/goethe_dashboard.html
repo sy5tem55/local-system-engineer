@@ -107,7 +107,9 @@
   .abtn:disabled{opacity:.4;cursor:default}
   .abtn.always{color:var(--good);border-color:rgba(158,206,106,.45)}
   .abtn.once{color:var(--accent);border-color:rgba(122,162,247,.45)}
-  .abtn.deny,.abtn.revoke{color:var(--bad);border-color:rgba(247,118,142,.45)}
+  .abtn.deny,.abtn.revoke,.abtn.delete{color:var(--bad);border-color:rgba(247,118,142,.45)}
+  .perm-cleanup{display:none;align-items:center;justify-content:space-between;gap:12px;margin:-2px 0 12px;padding:8px 10px;border:1px solid rgba(247,118,142,.3);border-radius:8px;background:rgba(247,118,142,.06);color:var(--dim);font-size:11.5px}
+  .perm-cleanup strong{color:var(--bad)}
   .note{display:none;margin-top:12px;font-size:11.5px;color:var(--warn);background:rgba(224,175,104,.08);border:1px solid rgba(224,175,104,.3);border-radius:8px;padding:8px 12px}
   .note code{font-family:var(--mono);color:var(--text)}
 
@@ -143,6 +145,11 @@
   <div class="panel span8" id="p-perms-pending">
     <h2>Permissions — Pending Approvals <span class="ms" id="perms-ms"></span></h2>
     <div class="bignums" id="perms-nums"></div>
+    <div class="perm-cleanup" id="perms-cleanup">
+      <span id="perms-cleanup-label"></span>
+      <button class="abtn delete" id="perms-cleanup-btn"
+              onclick="deleteInvalidPerms(this)">Delete all</button>
+    </div>
     <table id="perms-pending"></table>
   </div>
 
@@ -227,7 +234,7 @@
   </div>
 
 </div>
-<footer id="foot">Goethe Console — served by goethe_mcp · read-only except Permissions (approve/deny/revoke) · auto-refresh 60s</footer>
+<footer id="foot">Goethe Console — served by goethe_mcp · read-only except Permissions (approve/deny/delete/revoke) · auto-refresh 60s</footer>
 
 <script>
 "use strict";
@@ -302,6 +309,8 @@ async function loadPerms(){
   try{
     const d = await api("/api/ui/perms");
     const pend = d.pending || [], grants = d.grants || [];
+    const invalidPend = pend.filter(r =>
+      r.kind === "sudo" && r.sudoers_valid === false);
     $("perms-ms").textContent = d._elapsed_ms + "ms";
 
     $("chip-perms").innerHTML = pend.length
@@ -314,13 +323,23 @@ async function loadPerms(){
       bn(grants.length,"active grants","accent") +
       bn(sudoGrants,"sudo grants", sudoGrants?"bad":"");
 
+    const cleanup = $("perms-cleanup");
+    cleanup.style.display = invalidPend.length ? "flex" : "none";
+    $("perms-cleanup-label").innerHTML = invalidPend.length
+      ? "<strong>"+invalidPend.length+"</strong> unapprovable legacy sudo request"+
+        (invalidPend.length===1 ? "" : "s")
+      : "";
+    $("perms-cleanup-btn").textContent =
+      "Delete all" + (invalidPend.length ? " ("+invalidPend.length+")" : "");
+    $("perms-cleanup-btn").dataset.count = invalidPend.length;
+
     $("perms-pending").innerHTML = pend.length
       ? "<tr><th>id</th><th>kind</th><th>pattern</th><th>reason</th><th>requested</th><th></th></tr>" +
         pend.map(r => {
           const invalid = r.kind === "sudo" && r.sudoers_valid === false;
           const actions = invalid
             ? "<span class='badge invalid' title=\""+esc(r.sudoers_error || "unsafe sudo request")+"\">not approvable</span>"+
-              "<button class='abtn deny' title='Deny — no grant created' onclick='permAction(\"deny\","+r.id+",false,this)'>Deny</button>"
+              "<button class='abtn delete' title='Permanently delete this invalid request' onclick='permAction(\"delete\","+r.id+",false,this)'>Delete</button>"
             : "<button class='abtn always' title='Approve — persistent, stays active until revoked' onclick='permAction(\"approve\","+r.id+",false,this)'>Always</button>"+
               "<button class='abtn once' title='Approve — single use, auto-revokes after one match' onclick='permAction(\"approve\","+r.id+",true,this)'>Once</button>"+
               "<button class='abtn deny' title='Deny — no grant created' onclick='permAction(\"deny\","+r.id+",false,this)'>Deny</button>";
@@ -376,6 +395,10 @@ async function permAction(action, id, once, btn){
       !confirm("Grant persistent (\"always\") access for request #"+id+"?\n\nThis stays active until you revoke it.")) {
     return;
   }
+  if (action === "delete" &&
+      !confirm("Permanently delete unapprovable request #"+id+"?\n\nThis removes the database row and cannot be undone.")) {
+    return;
+  }
   const row = btn.closest("tr");
   row.querySelectorAll("button").forEach(b => b.disabled = true);
   try{
@@ -384,6 +407,23 @@ async function permAction(action, id, once, btn){
   }catch(e){
     row.querySelectorAll("button").forEach(b => b.disabled = false);
     alert("Action failed: " + e.message);
+  }
+}
+
+async function deleteInvalidPerms(btn){
+  const count = Number(btn.dataset.count || 0);
+  if (!count) return;
+  if (!confirm("Permanently delete all "+count+" unapprovable legacy sudo request"+
+      (count===1 ? "" : "s")+"?\n\nThis cannot be undone. Valid pending requests and active grants are not affected.")) {
+    return;
+  }
+  btn.disabled = true;
+  try{
+    await apiPost("/api/ui/perms/delete-invalid", {});
+    await loadPerms();
+  }catch(e){
+    btn.disabled = false;
+    alert("Cleanup failed: " + e.message);
   }
 }
 
