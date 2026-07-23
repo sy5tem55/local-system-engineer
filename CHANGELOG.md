@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-07-23 (Codex): Goethe Console v0.2.2 — delete invalid permission requests
+
+- Unapprovable legacy sudo requests can now be permanently deleted from the
+  Console individually, or cleared together with **Delete all**.
+- Both delete paths validate request state and sudo safety again on the server.
+  Approve/deny remains the lifecycle for valid requests, while active grants
+  remain revocable only; deletion cannot cross those boundaries.
+- Deleted request details remain represented in the permission audit log.
+
 ## 2026-07-23 (Codex): Goethe v0.4.9 — fail-closed exact sudo grants
 
 - **Root cause fixed at both boundaries.** The privileged-prefix guard no

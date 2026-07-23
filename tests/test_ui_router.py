@@ -43,13 +43,22 @@ class _Inner:
         await send({"type": "http.response.body", "body": b"inner"})
 
 
-def _run(app, path, method="GET", auth=None):
+def _run(app, path, method="GET", auth=None, json_body=None):
     scope = {"type": "http", "path": path, "method": method,
              "headers": ([(b"authorization", auth.encode())] if auth else [])}
     messages = []
+    request_body = (
+        json.dumps(json_body).encode("utf-8")
+        if json_body is not None
+        else b""
+    )
 
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        return {
+            "type": "http.request",
+            "body": request_body,
+            "more_body": False,
+        }
 
     async def send(msg):
         messages.append(msg)
@@ -248,6 +257,69 @@ def test_console_surfaces_sudo_validation_errors(monkeypatch):
     }
 
 
+def test_console_deletes_only_unapprovable_request(monkeypatch):
+    calls = []
+
+    class FakePerms:
+        @staticmethod
+        def delete_unapprovable_request(rid):
+            calls.append(rid)
+            return True
+
+    monkeypatch.setattr(ui, "_perms", FakePerms)
+    data = ui._perm_action("delete", 17, once=False)
+    assert data == {"status": "deleted"}
+    assert calls == [17]
+
+
+def test_delete_request_route_requires_auth_and_integer_id(monkeypatch):
+    class FakePerms:
+        @staticmethod
+        def delete_unapprovable_request(rid):
+            assert rid == 17
+            return True
+
+    monkeypatch.setattr(ui, "_perms", FakePerms)
+    app = ui.UIRouter(_Inner(), token="sekrit")
+
+    status, _body = _run(
+        app,
+        "/api/ui/perms/delete",
+        method="POST",
+        json_body={"id": 17},
+    )
+    assert status == 401
+
+    status, body = _run(
+        app,
+        "/api/ui/perms/delete",
+        method="POST",
+        auth="Bearer sekrit",
+        json_body={"id": 17},
+    )
+    assert status == 200
+    assert _json_of(body)["status"] == "deleted"
+
+
+def test_bulk_delete_route_reports_deleted_count(monkeypatch):
+    class FakePerms:
+        @staticmethod
+        def delete_all_unapprovable_requests():
+            return 12
+
+    monkeypatch.setattr(ui, "_perms", FakePerms)
+    app = ui.UIRouter(_Inner(), token="sekrit")
+    status, body = _run(
+        app,
+        "/api/ui/perms/delete-invalid",
+        method="POST",
+        auth="Bearer sekrit",
+        json_body={},
+    )
+    assert status == 200
+    assert _json_of(body) == {"status": "deleted", "deleted": 12}
+
+
 def test_dashboard_marks_unsafe_legacy_sudo_grants_not_installable():
     with open(
         os.path.join(_HERE, "..", "tools", "goethe_dashboard.html"),
@@ -257,6 +329,9 @@ def test_dashboard_marks_unsafe_legacy_sudo_grants_not_installable():
     assert "not installable" in html
     assert "sudoers_valid === false" in html
     assert "Unsafe legacy grants" in html
+    assert "Delete all" in html
+    assert 'permAction(\\"delete\\"' in html
+    assert "/api/ui/perms/delete-invalid" in html
 
 
 if __name__ == "__main__":
