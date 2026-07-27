@@ -1,7 +1,7 @@
 """
-title: LSE Goethe v0.4.4
+title: LSE Goethe v0.4.9
 author: local-system-engineer
-version: 0.4.4
+version: 0.4.9
 requirements: elasticsearch==8.19.3, requests
 description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubuntu 24.04 agent.
   Provides execute_command, ssh_run, ssh_script, read_file, write_file, sudo_delegation_block,
@@ -15,7 +15,90 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   operations are blocked at the code level and routed through a delegation block.
 
   Changelog:
-    Goethe v0.4.4 (2026-07-18): PH4-1 DATA — run_tests "data" scope
+    Goethe v0.4.9 (2026-07-23): SUDO GRANT FAIL-CLOSED FIX. Only a leading,
+    exact, shell-free `sudo <command> [args...]` may file an approvable DB
+    request. Chained commands, pipelines, redirects, shell expansions, doas/su,
+    and other complex privilege matches are delegation-only and never become
+    sudoers rows. This closes the path that stored raw shell text and later
+    rendered `/usr/bin/sudo ... | ...` as a broken, over-broad Cmnd_Spec.
+    Goethe v0.4.8 (2026-07-21): REVERT v0.4.6 — planner is synchronous again.
+    Field report: the async split was a severe usability regression. v0.4.6 was
+    correct about the transport ceiling (generation is 90-170s, the MCP
+    transport gives up near 60s) but wrong about the remedy: it turned a
+    one-call tool into a two-call protocol, so getting a plan now depended on
+    the model reliably executing a poll loop it learned about from a truncated
+    tool description. That is a worse failure mode than the one it fixed — the
+    old bug was intermittent and loud, the new one was structural and silent.
+    Reverted d314e60: plan_status(), the wait= parameter, the plan_status /
+    plan_result ledger columns and the async tests are all gone; planner()
+    returns a plan directly again. KEPT: the v0.4.5 timeout work (120->240s,
+    Ollama stage removed) and the v0.4.7 docstring reorder, neither of which
+    changed the call interface. Net effect versus v0.4.4: same one-call
+    interface, roughly double the generation budget, and the MANDATORY TRIGGER
+    block now visible to the model. The transport ceiling above ~240s is
+    UNSOLVED and deliberately left that way — see v0.4.6 in this log for the
+    measurements if it is revisited. Lesson recorded: every commit in the
+    v0.4.5-v0.4.7 run was individually evidence-backed and the end-to-end
+    workflow was still never tested. Code paths were verified; the user's
+    actual experience was not.
+    Goethe v0.4.7 (2026-07-21): planner docstring reordered above the MCP
+    description cut. Field report: "get a plan to enable IPv6 on Home Assistant"
+    produced a hand-written prose plan and no planner() call at all. Cause is
+    not the async change — the first 1024 chars were byte-identical between
+    v0.4.4 and v0.4.6, and registration/schema were verified clean (39 tools,
+    planner present, wait= in schema). goethe_mcp.py registers tools with
+    description=__doc__[:1024], and planner's docstring was 7,408 chars, so 86%
+    was discarded — including the MANDATORY TRIGGER block at char 1,974 that
+    names "get a plan" verbatim and forbids writing a plan in prose. The model
+    never saw the rule it broke. The visible window was instead spent on backend
+    cascade internals, still advertising the Ollama stage deleted in v0.4.5, and
+    cut off mid-word. Reordered so MANDATORY TRIGGER (char 136) and the ASYNC
+    poll contract (char 589) both complete inside the window; backend detail,
+    step loop and Args moved below it; stale Ollama text corrected. Also
+    goethe_mcp.py now uses inspect.getdoc() instead of __doc__ — __doc__ keeps
+    the 8-space source indent and .strip() only trims the ends, so ~240 chars of
+    every tool's budget was leading whitespace (8,768 chars reclaimed across 39
+    tools). NOTE: 29 of 39 tools are still over the 1024 cut — planner is fixed,
+    the rest are not audited yet.
+    Previous — v0.4.6 (2026-07-21): planner is async by default. v0.4.5 sized the
+    call timeout to the work (120->240s), but that only moved the ceiling — it
+    did not remove it. Plan generation is 90-130s on the local backend
+    (measured against the real contract: a 6-step plan for a live task is 3,908
+    tokens / 94.1s at ~42 tok/s), and the MCP transport gives up around 60s. So
+    a plan could be built correctly and still reach the caller as a bare
+    "Request timed out". planner() now seeds the ledger, hands generation to a
+    daemon thread, and returns a task_id receipt in under a second; the new
+    plan_status(task_id) collects the finished plan — the exact string planner()
+    used to return. planner(wait=True) keeps the old synchronous path for tests
+    and callers with a long timeout. Two ledger columns added (plan_status,
+    plan_result) via the existing migration. The rendering half of planner() was
+    lifted verbatim into _finalize_plan() so both paths emit identical output.
+    Chosen over shrinking the envelope: measured field breakdown is 28%
+    packaged_prompt prose and 72% atomization (depends_on/inputs/output/verify),
+    so trimming to fit buys little and spends it on plan quality — and async
+    costs nothing, since the model gets as long as it needs.
+    Previous — v0.4.5 (2026-07-21): planner timeout/cascade fix (LSE-debugged).
+    Intermittent "planner failed, never clear why" traced to a contradiction
+    introduced in v0.3.3: max_tokens was raised 2048→8192 to stop envelope
+    truncation, but the call timeout stayed at 120s. At the measured ~42 tok/s
+    on node3090 that is a hard ~5,000-token delivery ceiling, so any plan the
+    request itself permitted between ~5k and 8,192 tokens could never arrive —
+    the model completed (finish_reason=stop) and the client hung up regardless.
+    Reproduced: a complete 8-step envelope = 5,231 tokens in 125.3s, killed at
+    120s. Short plans fit under the ceiling; complex ones cannot, which is the
+    whole of the "works most of the time" pattern. Fixes: (1) timeout 120→240,
+    sized to the 8,192 the request already allows; (2) finish_reason=="length"
+    now logged as truncation instead of surfacing as "JSON parse failed", which
+    had been misdirecting diagnosis at model formatting; (3) the Ollama CPU
+    fallback is removed — 0 successes across 5 logged invocations, +300s per
+    failure, and it was the main reason the 663s cascade outlived the MCP
+    transport that was waiting on it; (4) all-slots-busy is now logged, since
+    /health reports liveness and a probe-OK call can still queue.
+    max_tokens deliberately NOT lowered to 4096: that truncates real envelopes
+    (measured 5,231), and because the parser cannot distinguish truncation from
+    corruption it would burn both retries and report the wrong cause — trading
+    a loud, honest timeout for a silent, mislabelled one.
+    Previous — v0.4.4 (2026-07-18): PH4-1 DATA — run_tests "data" scope
     (dataset_lint in scope=all).
     Previous — v0.4.3 (2026-07-18): PH3-4 docstring optimizer pass (SCRIBE-5) —
     time_check delegation-edge GOOD/BAD, run_tests scope-misuse GOOD/BAD,
@@ -1467,7 +1550,20 @@ class Tools(KBMixin):
         try:
             with _ureq.urlopen(req, timeout=timeout) as resp:
                 data = _json.loads(resp.read().decode())
-                return data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                # v0.4.5: finish_reason was discarded, so a reply cut off at
+                # max_tokens was indistinguishable from a malformed one. The
+                # envelope parser then reported it as "JSON parse failed",
+                # pointing at model formatting when the real cause was the
+                # token budget. Surface it explicitly instead.
+                if choice.get("finish_reason") == "length":
+                    used = data.get("usage", {}).get("completion_tokens", "?")
+                    self._log(
+                        "NODE-PLAN: reply TRUNCATED at max_tokens "
+                        f"(completion_tokens={used}) — the JSON will not parse. "
+                        "This is a budget problem, not a model formatting problem."
+                    )
+                return choice["message"]["content"]
         except _uerr.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:200]
             return f"ERROR: HTTP {exc.code} — {body}"
@@ -1540,20 +1636,49 @@ class Tools(KBMixin):
             probe_ok = False
 
         if probe_ok:
+            # v0.4.5: /health is LIVENESS, not READINESS — llama-server answers
+            # {"status":"ok"} whenever a model is loaded, even with every slot
+            # busy. A probe-OK request can still queue behind an in-flight
+            # generation and spend its budget waiting. Queueing is acceptable
+            # (that is what the timeout is for), so this does not gate the call
+            # — it just makes the wait explainable after the fact.
+            try:
+                with _ureq.urlopen(f"{llm_url}/slots", timeout=3) as _r:
+                    _slots = _json.loads(_r.read().decode())
+                _busy = [s for s in _slots if s.get("is_processing")]
+                if _busy and len(_busy) == len(_slots):
+                    self._log(
+                        f"NODE-PLAN: {llm_url} live but all {len(_slots)} slot(s) "
+                        "busy — this call will queue before it generates"
+                    )
+            except Exception as _exc:
+                self._log(f"NODE-PLAN: /slots unreadable ({_exc}) — trusting /health")
             self._log(f"NODE-PLAN: llama-server probe OK → {llm_url}")
-            result = _llm_call(llm_url, model="", timeout=120)
+            # v0.4.5: was 120s. v0.3.3 raised max_tokens 2048→8192 to stop
+            # envelope truncation but left this at 120s, which at the measured
+            # ~42 tok/s on node3090 (Qwen3.6-27B-Q4_K_M) caps delivery at
+            # ~5,000 tokens. Any envelope between ~5k and the 8,192 the request
+            # permits was structurally impossible to return: the model finished
+            # (finish_reason=stop) and the client hung up anyway. Measured: a
+            # complete 8-step plan = 5,231 tokens / 125.3s. 8192/42 ≈ 196s, so
+            # 240s covers the full permitted envelope plus prompt and margin.
+            # This is a ceiling, not a cost — short plans still return in ~20s.
+            result = _llm_call(llm_url, model="", timeout=240)
             if not result.startswith("ERROR:"):
                 return result
             self._log(f"NODE-PLAN: llama-server call failed ({result[:80]}), trying Ollama")
 
-        # ── Step 2: Ollama CPU fallback ───────────────────────────────────────
-        ollama_url = self.valves.NODE3090_OLLAMA_URL.rstrip("/")
-        fallback_model = self.valves.NODE3090_PLANNER_FALLBACK_MODEL
-        self._log(f"NODE-PLAN: Ollama fallback → {ollama_url} model={fallback_model}")
-        result = _llm_call(ollama_url, model=fallback_model, timeout=300)
-        if not result.startswith("ERROR:"):
-            return result
-        self._log(f"NODE-PLAN: Ollama fallback failed ({result[:80]}), trying Gemma spawn")
+        # ── Step 2: (removed v0.4.5) Ollama CPU fallback ──────────────────────
+        # Was: _llm_call(NODE3090_OLLAMA_URL, qwen3:4b, timeout=300).
+        # Removed on evidence: every invocation in the audit log failed with
+        # "timed out" — 2026-07-08, 07-12 (x2), 07-14, 07-21. Zero successes.
+        # A 4B model on CPU cannot emit an 8k-token JSON envelope inside 300s,
+        # so this stage only added five minutes to every failure and pushed the
+        # total cascade (3+120+300+60+180 = 663s) far past the MCP transport
+        # timeout — which is why the caller saw a bare "Request timed out" while
+        # the informative NODE-PLAN log lines were still being written.
+        # The valves NODE3090_OLLAMA_URL / NODE3090_PLANNER_FALLBACK_MODEL are
+        # left defined so existing configs keep loading; they are now unused.
 
         # ── Step 3: Gemma GGUF local spawn (VRAM-aware, v0.2.8) ──────────────
         vision = any(
@@ -2929,34 +3054,22 @@ tail -5 /tmp/goethe-node3090.log
         for priv in self._PRIVILEGED_PREFIXES:
             if priv in cmd_lower:
                 self._log(f"PRIV-BLOCKED: {command}")
-                # File a request for EVERY match here, not just the narrow
-                # "command starts with a clean, unpunctuated 'sudo '" case.
-                # Before this fix, anything that didn't fit that shape (a
-                # chained `cmd1 && sudo cmd2`, `su ` instead of `sudo `, etc.)
-                # produced a dead-end BLOCKED message with no request filed
-                # and no `goethe-perm approve/deny` id to act on at all —
-                # the equivalent of a wall with no door. Every match now
-                # gets a door, even if check_sudo() can't auto-replay a
-                # multi-statement command on approval (see reason text).
                 if _priv_rest and not any(
                     t in _priv_rest for t in (";", "|", "&", "`", "$(", "\n", ">", "<")
                 ):
                     _note = self._perm_note(
                         "sudo", _priv_rest, "agent requested privileged command"
                     )
-                else:
-                    _note = self._perm_note(
-                        "sudo",
-                        scan_command.strip(),
-                        "agent command flagged by privileged-prefix scan "
-                        "(chained/complex command or non-'sudo' escalation word "
-                        "— approving files a record but won't auto-replay via "
-                        "check_sudo; re-run sudo_delegation_block or approve "
-                        "the exact simplified command instead)",
+                    return (
+                        f"BLOCKED: '{priv.strip()}' detected in command. "
+                        "Use sudo_delegation_block instead." + _note
                     )
                 return (
-                    f"BLOCKED: '{priv.strip()}' detected in command. "
-                    "Use sudo_delegation_block instead." + _note
+                    f"BLOCKED: '{priv.strip()}' detected in a chained or complex "
+                    "command. Complex shell text cannot become a sudo grant. "
+                    "Use sudo_delegation_block and split the privileged operation "
+                    "into one exact command without pipes, redirects, chaining, "
+                    "or shell expansion."
                 )
 
         # ── Block writes to privileged system paths ───────────────────────────
@@ -6242,42 +6355,25 @@ tail -5 /tmp/goethe-node3090.log
         backend: str = "",
     ) -> str:
         """
-        Request a pre-flight ATOMIZED execution plan from the peer LSE instance
-        BEFORE starting a complex task (contract v2, Goethe v0.3.2). Every step is
-        a tightly scoped unit (<=5 tool calls, ONE verifiable outcome) with its own
-        self-contained packaged_prompt, so each step can run in a FRESH context
-        window — this is how 131k context ceilings are managed on long work.
-        The plan is written to the task ledger (tasks.db); execute the returned
-        first step, then call plan_step_done() to strike it and receive the next.
-
-        Planner backend — pick with backend= or the PLANNER_BACKEND valve
-        (v1.13.0, default 'local' — zero change from prior behavior unless
-        you explicitly opt in):
-          'local'   (default) 3-path cascade, unchanged since v0.2.8:
-                    1. node3090 llama-server :8080 (Qwen 27B, GPU) — primary
-                    2. node3090 Ollama :11434 qwen3:4b (CPU) — fallback
-                    3. Local Gemma GGUF spawn (VRAM-aware, port 8085) — last
-                       resort. Model by task size: E4B / 26B-A4B / 31B.
-                       Vision tasks (image/png/jpg keywords) load mmproj.
-          'chatgpt' OpenAI, via a Codex CLI OAuth session (`codex login`) if
-                    present, else PLANNER_OPENAI_API_KEY.
-          'claude'  Anthropic Messages API, via a Claude Code OAuth session
-                    (`claude login`) if present, else PLANNER_ANTHROPIC_API_KEY.
-          'rest'    Any OpenAI-compatible /v1/chat/completions server —
-                    PLANNER_REST_URL (+ _MODEL / _API_KEY). The broadly-
-                    compatible option: OpenRouter, Groq, Together, a LAN
-                    vLLM/LM Studio instance, etc.
-        mode='revise' on an existing task_id reuses whichever backend that
-        task was last planned with unless you pass backend= explicitly —
-        you don't need to repeat backend='claude' on every follow-up call.
+        Get an ATOMIZED execution plan for a multi-step task. Writes to the
+        tasks.db ledger; you execute ONE step, then call plan_step_done().
 
         MANDATORY TRIGGER — the user asked for a plan:
-          If the user's request contains "plan" / "get a plan" / "how should we
-          approach", or assigns a multi-phase audit/overhaul/migration, calling
-          planner() is REQUIRED. NEVER hand-write a plan in prose instead, and
-          NEVER create ad-hoc tracking files (active-task.md, plan.md, …) — the
-          tasks.db ledger written by THIS tool is the single source of truth
-          that survives session loss and that plan_step_done operates on.
+          If the request contains "plan", "get a plan", "how should we
+          approach", or assigns a multi-phase audit/migration/overhaul,
+          calling planner() is REQUIRED.
+          GOOD: "get a plan to enable IPv6" -> planner("enable IPv6 on ...")
+          BAD:  "get a plan ..." -> you write the phases out in prose
+                <- protocol violation: no ledger, no step loop.
+          NEVER hand-write a plan in prose. NEVER create plan.md.
+
+        THIS CALL BLOCKS for 90-170s while the plan is generated. That is
+        expected — wait for it. Do NOT abandon the call, do NOT retry it, and
+        do NOT start writing a plan yourself while it runs. Calling planner()
+        a second time for the same task is a protocol violation.
+
+        DO NOT call for single-fact lookups, procedures under 3 steps (execute
+        directly), or resuming carried-over work (that is task_resume).
 
         GATE — planner comes before EXECUTION, not before reading:
           Information gathering does NOT close the planning window. search_kb,
@@ -6285,9 +6381,6 @@ tail -5 /tmp/goethe-node3090.log
           checks, config reads) BEFORE planner are correct — KB-FIRST still
           applies — and their findings belong in context=. The window closes
           when you start CHANGING state or producing deliverables.
-          Do NOT call for single-fact lookups or short well-defined procedures
-          (<3 steps) — execute directly instead.
-          Do NOT call when resuming carried-over work (that is task_resume).
 
         GOOD: search_kb ×2 → pfsense_graphql reads → planner("audit DNS infra",
               context="<topology + findings from the reads>")
@@ -6295,10 +6388,6 @@ tail -5 /tmp/goethe-node3090.log
         GOOD: planner("Find the verbatim Goethe quote on architecture as
               frozen music and verify it against a primary source")
               ← research-shaped, spiral risk: plan first
-        BAD:  user says "get a plan" → you write a phase list in prose and a
-              tracking markdown file
-              ← protocol violation: that plan has no ledger, no plan_step_done
-              loop, and dies with your context window.
         BAD:  planner("What is the hostname of node3090?")
               ← single fact; use execute_command.
         BAD:  10 web searches, then planner
@@ -6306,7 +6395,8 @@ tail -5 /tmp/goethe-node3090.log
               state are fine; web-search spirals before planning are not.
 
         AFTER A PLAN IS RETURNED — mandatory step loop:
-          1. Execute ONLY the step in the packaged prompt at the END of the result.
+          1. Execute ONLY the step in the packaged prompt at the END of the
+             planner() result.
           2. Run that step's verify check and call
              plan_step_done(task_id, step_n, evidence=<verify output>).
           3. plan_step_done returns the NEXT step's packaged prompt — repeat.
@@ -6321,6 +6411,23 @@ tail -5 /tmp/goethe-node3090.log
           Proceed WITHOUT a plan: default budgets apply, checkpoint early.
           Do NOT retry planner more than once per task. The absence of a
           plan is NOT permission to skip checkpointing.
+
+        Planner backend — pick with backend= or the PLANNER_BACKEND valve
+        (default 'local'):
+          'local'   (default) node3090 llama-server :8080 (Qwen 27B, GPU) —
+                    primary. Falls back to a VRAM-aware local Gemma GGUF spawn
+                    (port 8085; E4B / 26B-A4B / 31B by task size, mmproj for
+                    vision tasks). The Ollama CPU stage was removed in v0.4.5:
+                    0 successes in 5 logged attempts, +300s per failure.
+          'chatgpt' OpenAI, via a Codex CLI OAuth session (`codex login`) if
+                    present, else PLANNER_OPENAI_API_KEY.
+          'claude'  Anthropic Messages API, via a Claude Code OAuth session
+                    (`claude login`) if present, else PLANNER_ANTHROPIC_API_KEY.
+          'rest'    Any OpenAI-compatible /v1/chat/completions server —
+                    PLANNER_REST_URL (+ _MODEL / _API_KEY): OpenRouter, Groq,
+                    Together, a LAN vLLM/LM Studio instance, etc.
+        mode='revise' on an existing task_id reuses whichever backend that task
+        was last planned with unless you pass backend= explicitly.
 
         Args:
             task:    The user's task, verbatim or lightly cleaned — do not

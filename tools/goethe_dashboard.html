@@ -77,6 +77,12 @@
   .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
   .prog{background:var(--panel2);border-radius:4px;height:8px;overflow:hidden;width:110px}
   .prog i{display:block;height:100%;background:var(--good);border-radius:4px}
+  .ledger-scroll{max-height:440px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-ms-overflow-style:none}
+  .ledger-scroll::-webkit-scrollbar{display:none;width:0;height:0}
+  .ledger-scroll:focus-visible{outline:1px solid rgba(122,162,247,.55);outline-offset:4px;border-radius:4px}
+  #ledger-table tr:first-child th{position:sticky;top:0;z-index:2;background:var(--panel)}
+  #ledger-table .ledger-goal{min-width:180px}
+  #ledger-table .ledger-delete{text-align:right;white-space:nowrap}
   .empty{color:var(--faint);font-size:12.5px;padding:12px 0;font-style:italic}
   .err{color:var(--bad);font-size:12.5px;padding:8px 0;font-family:var(--mono)}
   .dream-days td{font-family:var(--mono);font-size:12px}
@@ -100,12 +106,23 @@
   .traum-separation strong{color:var(--dim)}
   footer{margin-top:26px;color:var(--faint);font-size:11px;text-align:center}
 
-  /* Permissions panel — the one part of this console that writes. */
+  /* Confirmed, token-gated write controls. */
+  #grant-form{display:flex;gap:6px;align-items:center;margin-bottom:10px}
+  #grant-form select,#grant-form input{background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);border-radius:6px;padding:4px 9px;font-family:var(--mono);font-size:11.5px}
+  #grant-form select{cursor:pointer;color:var(--cyan)}
+  #grant-form select.w{color:var(--warn)}
+  #grant-form input{flex:1;min-width:0}
+  #grant-form input::placeholder{color:var(--faint)}
+  #grant-form select:focus,#grant-form input:focus{outline:none;border-color:var(--accent)}
+  #grant-msg{font-family:var(--mono);font-size:11px;margin-bottom:12px;color:var(--faint)}
+  #grant-msg.ok{color:var(--good)} #grant-msg.bad{color:var(--bad)}
   .badge.kind-read{color:var(--cyan);border-color:rgba(125,207,255,.4)}
   .badge.kind-write{color:var(--warn);border-color:rgba(224,175,104,.4)}
   .badge.kind-sudo{color:var(--bad);border-color:rgba(247,118,142,.4);font-weight:600}
   .badge.scope-once{color:var(--accent);border-color:rgba(122,162,247,.4)}
   .badge.scope-always{color:var(--faint)}
+  .badge.invalid{color:var(--bad);border-color:rgba(247,118,142,.6);font-weight:600}
   .cell-pattern{font-family:var(--mono);max-width:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cell-ts{color:var(--faint);font-size:11px;font-family:var(--mono);white-space:nowrap}
   .actions{display:flex;gap:6px;flex-wrap:wrap}
@@ -114,7 +131,9 @@
   .abtn:disabled{opacity:.4;cursor:default}
   .abtn.always{color:var(--good);border-color:rgba(158,206,106,.45)}
   .abtn.once{color:var(--accent);border-color:rgba(122,162,247,.45)}
-  .abtn.deny,.abtn.revoke{color:var(--bad);border-color:rgba(247,118,142,.45)}
+  .abtn.deny,.abtn.revoke,.abtn.delete{color:var(--bad);border-color:rgba(247,118,142,.45)}
+  .perm-cleanup{display:none;align-items:center;justify-content:space-between;gap:12px;margin:-2px 0 12px;padding:8px 10px;border:1px solid rgba(247,118,142,.3);border-radius:8px;background:rgba(247,118,142,.06);color:var(--dim);font-size:11.5px}
+  .perm-cleanup strong{color:var(--bad)}
   .note{display:none;margin-top:12px;font-size:11.5px;color:var(--warn);background:rgba(224,175,104,.08);border:1px solid rgba(224,175,104,.3);border-radius:8px;padding:8px 12px}
   .note code{font-family:var(--mono);color:var(--text)}
 
@@ -150,17 +169,33 @@
   <div class="panel span8" id="p-perms-pending">
     <h2>Permissions — Pending Approvals <span class="ms" id="perms-ms"></span></h2>
     <div class="bignums" id="perms-nums"></div>
+    <div class="perm-cleanup" id="perms-cleanup">
+      <span id="perms-cleanup-label"></span>
+      <button class="abtn delete" id="perms-cleanup-btn"
+              onclick="deleteInvalidPerms(this)">Delete all</button>
+    </div>
     <table id="perms-pending"></table>
   </div>
 
   <div class="panel span4" id="p-perms-grants">
     <h2>Active Grants</h2>
+    <form id="grant-form" onsubmit="return createGrant(event)">
+      <select id="grant-kind" onchange="this.classList.toggle('w',this.value==='write')">
+        <option value="read">read</option>
+        <option value="write">write</option>
+      </select>
+      <input id="grant-path" type="text" placeholder="/absolute/path"
+             autocomplete="off" spellcheck="false">
+      <button type="submit" class="abtn always">Grant</button>
+    </form>
+    <div id="grant-msg"></div>
     <table id="perms-grants"></table>
     <div class="note" id="perms-sudo-note">
-      One or more active grants are kind <code>sudo</code>. Approving here only
-      writes the database row — it does not touch <code>/etc/sudoers.d/</code>.
-      Run <code>goethe-perm sync-sudoers</code> in a terminal to make a sudo
-      grant take effect at the OS level.
+      Valid <code>sudo</code> grants authorize one exact, shell-free command.
+      Approval here only writes the database row; run
+      <code>goethe-perm sync-sudoers</code> in a terminal to install valid
+      grants. Unsafe legacy grants are marked <strong>not installable</strong>
+      and ignored during sync; revoke and recreate them as exact commands.
     </div>
   </div>
 
@@ -263,7 +298,11 @@
   <div class="panel span6" id="p-ledger">
     <h2>Task Ledger — Plan &rarr; Execute &rarr; Verify <span class="ms" id="ledger-ms"></span></h2>
     <div class="bignums" id="ledger-nums"></div>
-    <table id="ledger-table"></table>
+    <div class="ledger-scroll" id="ledger-scroll" tabindex="0"
+         aria-label="Scrollable task ledger"
+         title="Scroll while the pointer is inside this task list">
+      <table id="ledger-table"></table>
+    </div>
   </div>
 
   <div class="panel span6" id="p-episodes">
@@ -281,7 +320,7 @@
   </div>
 
 </div>
-<footer id="foot">Goethe Console — served by goethe_mcp · authenticated typed TRAUM operations and existing Permissions actions · auto-refresh 60s</footer>
+<footer id="foot">Goethe Console — served by goethe_mcp · read-only except typed TRAUM operations and confirmed Permissions and Task Ledger actions · auto-refresh 60s</footer>
 
 <script>
 "use strict";
@@ -348,7 +387,7 @@ async function loadOverview(){
   }
 }
 
-// ---- Permissions panel (the one part of this console that writes) ----
+// ---- Permissions panel (confirmed, token-gated writes) ----
 function kindBadge(k){ return '<span class="badge kind-'+esc(k)+'">'+esc(k)+'</span>'; }
 function tsShort(s){ return esc((s||"").replace("T"," ").replace("Z","").slice(0,16)); }
 
@@ -356,6 +395,8 @@ async function loadPerms(){
   try{
     const d = await api("/api/ui/perms");
     const pend = d.pending || [], grants = d.grants || [];
+    const invalidPend = pend.filter(r =>
+      r.kind === "sudo" && r.sudoers_valid === false);
     $("perms-ms").textContent = d._elapsed_ms + "ms";
 
     $("chip-perms").innerHTML = pend.length
@@ -368,42 +409,80 @@ async function loadPerms(){
       bn(grants.length,"active grants","accent") +
       bn(sudoGrants,"sudo grants", sudoGrants?"bad":"");
 
+    const cleanup = $("perms-cleanup");
+    cleanup.style.display = invalidPend.length ? "flex" : "none";
+    $("perms-cleanup-label").innerHTML = invalidPend.length
+      ? "<strong>"+invalidPend.length+"</strong> unapprovable legacy sudo request"+
+        (invalidPend.length===1 ? "" : "s")
+      : "";
+    $("perms-cleanup-btn").textContent =
+      "Delete all" + (invalidPend.length ? " ("+invalidPend.length+")" : "");
+    $("perms-cleanup-btn").dataset.count = invalidPend.length;
+
     $("perms-pending").innerHTML = pend.length
       ? "<tr><th>id</th><th>kind</th><th>pattern</th><th>reason</th><th>requested</th><th></th></tr>" +
-        pend.map(r => (
-          "<tr>"+
+        pend.map(r => {
+          const invalid = r.kind === "sudo" && r.sudoers_valid === false;
+          const actions = invalid
+            ? "<span class='badge invalid' title=\""+esc(r.sudoers_error || "unsafe sudo request")+"\">not approvable</span>"+
+              "<button class='abtn delete' title='Permanently delete this invalid request' onclick='permAction(\"delete\","+r.id+",false,this)'>Delete</button>"
+            : "<button class='abtn always' title='Approve — persistent, stays active until revoked' onclick='permAction(\"approve\","+r.id+",false,this)'>Always</button>"+
+              "<button class='abtn once' title='Approve — single use, auto-revokes after one match' onclick='permAction(\"approve\","+r.id+",true,this)'>Once</button>"+
+              "<button class='abtn deny' title='Deny — no grant created' onclick='permAction(\"deny\","+r.id+",false,this)'>Deny</button>";
+          return "<tr>"+
           "<td style='font-family:var(--mono);color:var(--dim)'>#"+r.id+"</td>"+
           "<td>"+kindBadge(r.kind)+"</td>"+
           "<td class='cell-pattern' title=\""+esc(r.pattern)+"\">"+esc(r.pattern)+"</td>"+
           "<td style='color:var(--dim)'>"+esc(r.reason || "—")+"</td>"+
           "<td class='cell-ts'>"+tsShort(r.requested_at)+"</td>"+
-          "<td><div class='actions'>"+
-            "<button class='abtn always' title='Approve — persistent, stays active until revoked' onclick='permAction(\"approve\","+r.id+",false,this)'>Always</button>"+
-            "<button class='abtn once' title='Approve — single use, auto-revokes after one match' onclick='permAction(\"approve\","+r.id+",true,this)'>Once</button>"+
-            "<button class='abtn deny' title='Deny — no grant created' onclick='permAction(\"deny\","+r.id+",false,this)'>Deny</button>"+
-          "</div></td></tr>"
-        )).join("")
+          "<td><div class='actions'>"+actions+"</div></td></tr>";
+        }).join("")
       : '<tr><td class="empty">no pending requests</td></tr>';
 
     $("perms-grants").innerHTML = grants.length
       ? "<tr><th>id</th><th>kind</th><th>pattern</th><th>scope</th><th></th></tr>" +
-        grants.map(g => (
-          "<tr>"+
+        grants.map(g => {
+          const invalid = g.kind === "sudo" && g.sudoers_valid === false;
+          const scope = invalid
+            ? '<span class="badge invalid" title="'+esc(g.sudoers_error || "unsafe sudo grant")+'">not installable</span>'
+            : (g.one_time ? '<span class="badge scope-once">once</span>' : '<span class="badge scope-always">always</span>');
+          return "<tr>"+
           "<td style='font-family:var(--mono);color:var(--dim)'>#"+g.id+"</td>"+
           "<td>"+kindBadge(g.kind)+"</td>"+
           "<td class='cell-pattern' title=\""+esc(g.pattern)+"\">"+esc(g.pattern)+"</td>"+
-          "<td>"+(g.one_time ? '<span class="badge scope-once">once</span>' : '<span class="badge scope-always">always</span>')+"</td>"+
-          "<td><button class='abtn revoke' title='Revoke this grant' onclick='permAction(\"revoke\","+g.id+",false,this)'>Revoke</button></td></tr>"
-        )).join("")
+          "<td>"+scope+"</td>"+
+          "<td><button class='abtn revoke' title='Revoke this grant' onclick='permAction(\"revoke\","+g.id+",false,this)'>Revoke</button></td></tr>";
+        }).join("")
       : '<tr><td class="empty">no active grants</td></tr>';
 
     $("perms-sudo-note").style.display = sudoGrants ? "block" : "none";
   }catch(e){ showErr($("perms-pending"), e); }
 }
 
+async function createGrant(ev){
+  ev.preventDefault();
+  const kind = $("grant-kind").value;
+  const pattern = $("grant-path").value.trim();
+  const msg = $("grant-msg");
+  const set = (cls, text) => { msg.className = cls; msg.textContent = text; };
+  if(!pattern.startsWith("/")){ set("bad", "path must be absolute"); return false; }
+  try{
+    const r = await apiPost("/api/ui/perms/grant", { kind, pattern });
+    if(r.error){ set("bad", r.error); return false; }
+    set("ok", "granted #" + r.grant_id + " \u00b7 " + kind + " " + pattern);
+    $("grant-path").value = "";
+    loadPerms();
+  }catch(e){ set("bad", e.message); }
+  return false;
+}
+
 async function permAction(action, id, once, btn){
   if (action === "approve" && !once &&
       !confirm("Grant persistent (\"always\") access for request #"+id+"?\n\nThis stays active until you revoke it.")) {
+    return;
+  }
+  if (action === "delete" &&
+      !confirm("Permanently delete unapprovable request #"+id+"?\n\nThis removes the database row and cannot be undone.")) {
     return;
   }
   const row = btn.closest("tr");
@@ -414,6 +493,23 @@ async function permAction(action, id, once, btn){
   }catch(e){
     row.querySelectorAll("button").forEach(b => b.disabled = false);
     alert("Action failed: " + e.message);
+  }
+}
+
+async function deleteInvalidPerms(btn){
+  const count = Number(btn.dataset.count || 0);
+  if (!count) return;
+  if (!confirm("Permanently delete all "+count+" unapprovable legacy sudo request"+
+      (count===1 ? "" : "s")+"?\n\nThis cannot be undone. Valid pending requests and active grants are not affected.")) {
+    return;
+  }
+  btn.disabled = true;
+  try{
+    await apiPost("/api/ui/perms/delete-invalid", {});
+    await loadPerms();
+  }catch(e){
+    btn.disabled = false;
+    alert("Cleanup failed: " + e.message);
   }
 }
 
@@ -768,24 +864,48 @@ async function loadLedger(){
       bn(c.done||0,"done","good") +
       Object.entries(c).filter(([k])=>k!=="open"&&k!=="done")
             .map(([k,v])=>bn(v,k,"warn")).join("");
-    const rows = (d.tasks||[]).slice(0,12).map(t=>{
+    const rows = (d.tasks||[]).map(t=>{
       let prog = "";
       if(t.steps_total){
         const pct = Math.round(100*(t.steps_done||0)/t.steps_total);
         prog = '<div class="prog" title="'+t.steps_done+'/'+t.steps_total+' steps"><i style="width:'+pct+'%"></i></div>'+
                '<span style="font-size:10.5px;color:var(--dim);font-family:var(--mono)">'+t.steps_done+"/"+t.steps_total+"</span>";
       } else prog = '<span style="color:var(--faint)">—</span>';
-      return "<tr><td style='font-family:var(--mono);color:var(--dim)'>"+esc((t.task_id||"").slice(0,8))+"</td>"+
-        "<td>"+esc((t.goal||"").slice(0,70))+"</td>"+
+      return "<tr><td style='font-family:var(--mono);color:var(--dim)' title='"+esc(t.task_id||"")+"'>"+esc((t.task_id||"").slice(0,8))+"</td>"+
+        "<td class='ledger-goal'>"+esc((t.goal||"").slice(0,70))+"</td>"+
         "<td><span class='badge "+(t.status==="done"?"gt":t.status==="open"?"primary":"")+"'>"+esc(t.status)+"</span></td>"+
         "<td style='display:flex;gap:8px;align-items:center'>"+prog+"</td>"+
         "<td>"+backendBadge(t.backend)+"</td>"+
-        "<td style='color:var(--faint);font-size:11px;font-family:var(--mono)'>"+esc((t.updated_at||"").slice(0,16))+"</td></tr>";
+        "<td style='color:var(--faint);font-size:11px;font-family:var(--mono)'>"+esc((t.updated_at||"").slice(0,16))+"</td>"+
+        "<td class='ledger-delete'><button class='abtn delete' title='Archive and delete this task' "+
+          "data-task-id=\""+esc(t.task_id||"")+"\" data-task-goal=\""+esc(t.goal||"")+"\" "+
+          "data-task-status=\""+esc(t.status||"")+"\" onclick='deleteLedgerTask(this)'>Delete</button></td></tr>";
     }).join("");
     $("ledger-table").innerHTML = rows
-      ? "<tr><th>id</th><th>goal</th><th>status</th><th>steps</th><th>backend</th><th>updated</th></tr>"+rows
+      ? "<tr><th>id</th><th>goal</th><th>status</th><th>steps</th><th>backend</th><th>updated</th><th class='ledger-delete'>delete</th></tr>"+rows
       : '<tr><td class="empty">no task blocks yet — planner() writes them</td></tr>';
   }catch(e){ showErr($("ledger-table"), e); }
+}
+
+async function deleteLedgerTask(btn){
+  const taskId = btn.dataset.taskId || "";
+  const goal = btn.dataset.taskGoal || "";
+  const status = btn.dataset.taskStatus || "";
+  if (!confirm("Archive and delete task "+taskId.slice(0,8)+"?\n\n"+
+      goal.slice(0,180)+"\n\nStatus: "+status+
+      "\nThe task will disappear from the active ledger but remains recoverable from its archive.")) {
+    return;
+  }
+  const row = btn.closest("tr");
+  btn.disabled = true;
+  try{
+    await apiPost("/api/ui/ledger/delete", { task_id: taskId });
+    row.remove();
+    await loadLedger();
+  }catch(e){
+    btn.disabled = false;
+    alert("Task deletion failed: " + e.message);
+  }
 }
 
 // ---- Episodes panel ----
