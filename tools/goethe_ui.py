@@ -20,6 +20,7 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
   GET  /api/ui/dream      → TRAUM digest + legacy day-dir map     (token-gated)
   GET  /api/ui/traum/*    → typed TRAUM lifecycle/control API     (token-gated)
   GET  /api/ui/ledger     → tasks.db task blocks + step progress  (token-gated)
+  POST /api/ui/ledger/delete {task_id} → archive + delete a task  (token-gated)
   GET  /api/ui/episodes   → 7-day episode call stats by exit_class(token-gated)
   GET  /api/ui/perms      → goethe_perms pending requests + grants(token-gated)
   GET  /api/ui/backends   → planner backend config status (read-only,      (token-gated)
@@ -28,33 +29,46 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
                             (once=false, default: persistent "always" grant;
                              once=true: single-use, auto-revokes after one match)
   POST /api/ui/perms/deny     {id}        → deny a pending request ("no")
+  POST /api/ui/perms/delete   {id}        → delete an unapprovable request
+  POST /api/ui/perms/delete-invalid {}    → delete all unapprovable requests
   POST /api/ui/perms/revoke   {id}        → revoke an active grant
+  POST /api/ui/perms/grant  {kind,pattern} → create a proactive grant
+                            (read/write only; sudo stays CLI-only because it
+                            needs root to regenerate the sudoers file)
 
 TRAUM controls are a separate plane from Permissions.  They use the existing
 gateway bearer token but never read or write goethe_perms grants and never
 accept a raw command/path/environment/argv.  The timer API is read-only.
 
-The legacy overview/KB/dream/ledger/episodes/backends endpoints are read-only:
-ES access is a POST to _search only, sqlite opens with mode=ro, and dream/
-episode access is os.scandir + open-for-read. The three /api/ui/perms/* actions
-remain their own narrow exception, added 2026-07-20
+Every legacy GET /api/ui/* endpoint is READ-ONLY by construction: ES access is
+a POST to _search only, sqlite opens with mode=ro, and dream/episode access is
+os.scandir + open-for-read. The permission actions and task-ledger deletion are
+the deliberate, token-gated write exceptions. Permission actions were added
+2026-07-20
 so the yes/no/always approval flow (previously CLI-only via `goethe-perm`,
 and before that not reachable at all — see session-learnings.md 2026-07-20)
 is visible and actionable from the Console instead of requiring a terminal.
 The exception is intentionally as narrow as possible:
   - It can only touch rows in goethe_perms' own `requests`/`grants` SQLite
-    tables (resolve one pending request, or revoke one existing grant) —
-    see goethe_perms.py for the actual SQL. It cannot read/write any other
-    path, run any command, or touch ES/tasks.db/dreams/episodes.
+    tables (resolve a pending request, delete an unapprovable pending request,
+    or revoke one existing grant) —
+    see goethe_perms.py for the actual SQL. It cannot run commands or touch
+    ES/dreams/episodes.
+  - Task deletion accepts one exact task_id, snapshots the complete row into
+    tasks.db's task_blocks_deleted archive, and then deletes only that row from
+    task_blocks in the same SQLite transaction. It cannot select a database
+    path or execute arbitrary SQL.
   - It NEVER writes /etc/sudoers.d/goethe-grants. Approving a 'sudo' kind
-    request still only creates a DB row; making that grant take effect at
-    the OS level still requires the human to run
+    request first passes goethe_perms' exact-command safety validation, then
+    only creates a DB row; making that grant take effect at the OS level
+    still requires the human to run
     `goethe-perm sync-sudoers` themselves in a terminal. The Console
     surfaces this reminder in the UI rather than doing it for you.
   - Gated by the same bearer token as every other /api/ui/* route — no new
     trust boundary, just a new capability behind the existing one.
-Nothing else in this module can mutate state. The bearer token uses the same
-normalisation as goethe_mcp._TokenGuard ("Bearer <t>" or raw "<t>").
+Nothing else in this module can mutate state. Both write surfaces use the same
+bearer token normalisation as goethe_mcp._TokenGuard ("Bearer <t>" or raw
+"<t>").
 
 CONFIG (env, mirrors the GOETHE_* valve-override convention)
   GOETHE_ES_URL          default http://127.0.0.1:9200
@@ -88,6 +102,11 @@ __version__ = "0.4.0"
 #          three POST /api/ui/perms/* actions (approve/deny/revoke). See the
 #          module docstring's ROUTES section for the deliberate, narrow
 #          exception this carves out of the read-only contract.
+# 0.2.2 — Invalid legacy sudo requests can be permanently deleted one at a
+#          time or in one bulk cleanup. Server-side guards protect approvable
+#          requests and active grants from the delete path.
+# 0.3.0 — Ledger returns every task block. Exact-ID Console deletion archives
+#          the full row transactionally before removing it from the live table.
 
 # goethe_perms.py lives next to this file but this module is loaded via
 # importlib.util.spec_from_file_location (not a normal package import — see
@@ -324,7 +343,7 @@ def ledger_stats() -> dict:
         sel = "task_id, goal, status, checkpoints, created_at, updated_at" + extra_cols
         rows = conn.execute(
             f"SELECT {sel} FROM task_blocks "
-            "ORDER BY updated_at DESC LIMIT 25").fetchall()
+            "ORDER BY updated_at DESC").fetchall()
         steps_idx = 6 if has_steps else None
         backend_idx = 6 + (1 if has_steps else 0) if has_backend else None
         for r in rows:
@@ -354,6 +373,69 @@ def ledger_stats() -> dict:
     finally:
         conn.close()
     return out
+
+
+def delete_task_block(task_id) -> dict:
+    """Archive and delete exactly one task block from the configured ledger."""
+    if not isinstance(task_id, str):
+        return {"error": "task_id must be a string"}
+    task_id = task_id.strip()
+    if not task_id or len(task_id) > 128:
+        return {"error": "task_id must contain 1 to 128 characters"}
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in task_id):
+        return {"error": "task_id cannot contain control characters"}
+
+    path = _tasks_db_path()
+    if not os.path.isfile(path):
+        return {"error": "task ledger database not found"}
+
+    conn = sqlite3.connect(path, timeout=5)
+    conn.row_factory = sqlite3.Row
+    try:
+        with conn:
+            row = conn.execute(
+                "SELECT * FROM task_blocks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if row is None:
+                return {"error": f"no task block {task_id!r}"}
+
+            snapshot = {key: row[key] for key in row.keys()}
+            deleted_at = datetime.datetime.now(
+                datetime.timezone.utc
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS task_blocks_deleted ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "task_id TEXT NOT NULL, deleted_at TEXT NOT NULL, "
+                "row_json TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO task_blocks_deleted(task_id,deleted_at,row_json) "
+                "VALUES(?,?,?)",
+                (
+                    task_id,
+                    deleted_at,
+                    json.dumps(snapshot, ensure_ascii=False, default=str),
+                ),
+            )
+            deleted = conn.execute(
+                "DELETE FROM task_blocks WHERE task_id=?", (task_id,)
+            ).rowcount
+            if deleted != 1:
+                raise sqlite3.DatabaseError(
+                    f"expected to delete one task block, deleted {deleted}"
+                )
+        return {
+            "status": "deleted",
+            "task_id": task_id,
+            "goal": snapshot.get("goal", ""),
+            "previous_status": snapshot.get("status", ""),
+            "archived": True,
+        }
+    except sqlite3.Error as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    finally:
+        conn.close()
 
 
 def backend_status() -> dict:
@@ -523,14 +605,14 @@ _PANELS = {
 
 
 # --------------------------------------------------------------------------
-# Permissions actions — the one deliberate write surface. See the module
-# docstring's ROUTES section for the scope this is held to.
+# Permission actions — one of the two deliberate write surfaces. See the
+# module docstring's ROUTES section for the scope this is held to.
 # --------------------------------------------------------------------------
 
 def _perm_action(action: str, rid: int, once: bool) -> dict:
     """Resolve a pending request (approve/deny) or revoke a grant. `action`
-    is one of 'approve' | 'deny' | 'revoke' — the router maps the URL path
-    to this before calling in, so this function never sees a raw path.
+    is one of 'approve' | 'deny' | 'delete' | 'revoke' — the router maps the
+    URL path to this before calling in, so this function never sees a raw path.
     Runs in a worker thread via asyncio.to_thread, same as the read panels.
     """
     if _perms is None:
@@ -546,6 +628,13 @@ def _perm_action(action: str, rid: int, once: bool) -> dict:
             if status == "not-found":
                 return {"error": f"no pending request #{rid}"}
             return {"status": status}
+        if action == "delete":
+            ok = _perms.delete_unapprovable_request(rid)
+            return (
+                {"status": "deleted"}
+                if ok
+                else {"error": f"no pending request #{rid}"}
+            )
         if action == "revoke":
             ok = _perms.revoke(rid)
             return {"status": "revoked"} if ok else {"error": f"no active grant #{rid}"}
@@ -554,9 +643,49 @@ def _perm_action(action: str, rid: int, once: bool) -> dict:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+def _perm_grant(kind: str, pattern: str, note: str = "") -> dict:
+    """Create a proactive ("Active") grant from the Console — the operator
+    deciding up front, rather than reacting to an agent request. Mirrors
+    `goethe-perm grant <kind> <path>`.
+
+    read/write only. A sudo grant is deliberately NOT creatable here: it has
+    to regenerate /etc/sudoers.d/goethe-grants via visudo+install as root,
+    which this unprivileged web process cannot (and should not) do. Those
+    stay CLI-only so the privileged step happens under the operator's own
+    shell.
+    """
+    if _perms is None:
+        return {"error": "goethe_perms module not importable"}
+    kind = (kind or "").strip().lower()
+    pattern = (pattern or "").strip()
+    if kind not in ("read", "write"):
+        return {"error": "kind must be 'read' or 'write' "
+                         "(sudo grants: use the goethe-perm CLI)"}
+    if not pattern.startswith("/"):
+        return {"error": "pattern must be an absolute path"}
+    try:
+        gid = _perms.grant(kind, pattern, note or "granted via Goethe Console")
+        return {"status": "granted", "grant_id": gid,
+                "kind": kind, "pattern": pattern}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def _perm_delete_invalid() -> dict:
+    """Permanently remove all pending requests that fail sudo validation."""
+    if _perms is None:
+        return {"error": "goethe_perms module not importable"}
+    try:
+        count = _perms.delete_all_unapprovable_requests()
+        return {"status": "deleted", "deleted": count}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 _PERM_ACTION_PATHS = {
     "/api/ui/perms/approve": "approve",
     "/api/ui/perms/deny": "deny",
+    "/api/ui/perms/delete": "delete",
     "/api/ui/perms/revoke": "revoke",
 }
 
@@ -847,10 +976,65 @@ class UIRouter:
             await self._handle_traum(scope, receive, send, path, method)
             return
 
+        if path == "/api/ui/ledger/delete" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            try:
+                payload = await self._read_json_body(receive)
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 400,
+                    json.dumps({"error": f"bad body: {e}"}).encode(),
+                    "application/json")
+                return
+            data = await asyncio.to_thread(
+                delete_task_block, payload.get("task_id")
+            )
+            await self._respond(
+                send, 409 if "error" in data else 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
         # Permissions actions — see module docstring for why this is the
-        # one path in the router that isn't a plain GET, and how narrow its
-        # blast radius is (goethe_perms.py's requests/grants tables, and
+        # narrow blast radius (goethe_perms.py's requests/grants tables, and
         # nothing else).
+        if path == "/api/ui/perms/grant" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            try:
+                payload = await self._read_json_body(receive)
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 400,
+                    json.dumps({"error": f"bad body: {e}"}).encode(),
+                    "application/json")
+                return
+            data = await asyncio.to_thread(
+                _perm_grant, payload.get("kind", ""), payload.get("pattern", ""),
+                payload.get("note", ""))
+            await self._respond(
+                send, 400 if "error" in data else 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        if path == "/api/ui/perms/delete-invalid" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            data = await asyncio.to_thread(_perm_delete_invalid)
+            await self._respond(
+                send, 400 if "error" in data else 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
         if path in _PERM_ACTION_PATHS and method == "POST":
             if not self._authorized(scope):
                 await self._respond(send, 401, b'{"error":"unauthorized"}',
