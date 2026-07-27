@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-system-engineer.invalid/schemas/traum-eval-status-v2.schema.json",
+  "title": "TRAUM evaluation GUI status v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "registry_path",
+    "eval_id",
+    "plan_sha256",
+    "state_revision",
+    "stage",
+    "created_at",
+    "updated_at",
+    "min_elapsed_seconds",
+    "readiness",
+    "next_actions",
+    "invariants",
+    "pins",
+    "conditions",
+    "trials",
+    "analysis",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {"const": "traum.eval.status.v2"},
+    "registry_path": {"type": "string"},
+    "eval_id": {"type": "string", "pattern": "^traum-v2-"},
+    "plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "state_revision": {"type": "integer", "minimum": 1},
+    "stage": {
+      "enum": ["initialized", "baseline_wait", "b_window_ready", "b_window_open", "trials_running", "trials_complete", "analyzed"]
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "min_elapsed_seconds": {"type": "integer", "minimum": 3600},
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline_frozen",
+        "condition_b_not_before",
+        "elapsed_window_satisfied",
+        "condition_b_open",
+        "condition_b_captured",
+        "paired_trials_complete",
+        "analysis_complete"
+      ],
+      "properties": {
+        "baseline_frozen": {"type": "boolean"},
+        "condition_b_not_before": {"type": ["string", "null"], "format": "date-time"},
+        "elapsed_window_satisfied": {"type": "boolean"},
+        "condition_b_open": {"type": "boolean"},
+        "condition_b_captured": {"type": "boolean"},
+        "paired_trials_complete": {"type": "boolean"},
+        "analysis_complete": {"type": "boolean"}
+      }
+    },
+    "next_actions": {"type": "array", "items": {"type": "object"}},
+    "invariants": {
+      "type": "object",
+      "required": ["input_fingerprint", "network_calls_permitted", "production_writes_permitted", "auto_apply_enabled"],
+      "properties": {
+        "input_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "network_calls_permitted": {"const": false},
+        "production_writes_permitted": {"const": false},
+        "auto_apply_enabled": {"const": false}
+      }
+    },
+    "pins": {"type": "object"},
+    "conditions": {"type": "object"},
+    "trials": {"type": "object"},
+    "analysis": {"type": ["object", "null"]},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "artifact", "sha256", "size"],
+        "properties": {
+          "kind": {"type": "string"},
+          "condition": {"enum": ["A", "B"]},
+          "seed": {"type": "integer", "minimum": 0},
+          "artifact": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

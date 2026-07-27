@@ -381,7 +381,7 @@ class TestRunPassPatternsEndToEnd:
         assert proposals == []
         assert "Null result (PH3-2)" in narrative
         assert "zero compact-tag-line events" in narrative
-        assert null_record["looked"] is False
+        assert null_record["looked"] is True
         assert null_record["reason"] == "no_matching_events"
         assert null_record["corpus_size"]["raw_lines"] > 0
         assert null_record["corpus_size"]["events"] == 0

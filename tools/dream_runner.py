@@ -260,8 +260,9 @@ from datetime import date, datetime
 
 import episode_index as _epidx
 import dream_digest
+import traum_state
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 
 # --- config / valve-style env defaults --------------------------------------
@@ -605,6 +606,15 @@ class DreamConfig:
     budget_max_wall_clock_min: float = 45.0
     ignore_guards: bool = False
     budget: "DreamBudget | None" = None
+    # Canonical TRAUM lifecycle. Empty IDs mean a direct/pure function test;
+    # main() fills them for every real (non-preview) invocation.
+    state_db: str = ""
+    run_id: str = ""
+    attempt_id: str = ""
+    retry_of: str | None = None
+    run_profile: str = "single-pass"
+    requested_passes: tuple = ()
+    run_source: str = "cli"
 
 
 def build_config(args: argparse.Namespace) -> DreamConfig:
@@ -664,18 +674,41 @@ def build_config(args: argparse.Namespace) -> DreamConfig:
         session_active_window_min=args.session_active_window_min,
         budget_max_sessions=budget_max_sessions,
         budget_max_llm_calls=args.budget_max_llm_calls,
-        budget_max_wall_clock_min=args.budget_max_wall_clock_min,
+        budget_max_wall_clock_min=(
+            args.budget_max_wall_clock_s / 60.0
+            if args.budget_max_wall_clock_s is not None
+            else args.budget_max_wall_clock_min
+        ),
         ignore_guards=args.ignore_guards,
+        state_db=args.state_db or traum_state.default_db_path(dream_dir),
+        run_id=args.run_id or "",
+        attempt_id=args.attempt_id or "",
+        retry_of=args.retry_of,
+        run_profile=args.run_profile,
+        requested_passes=tuple(
+            p.strip() for p in (args.requested_passes or args.pass_name).split(",")
+            if p.strip()
+        ),
+        run_source=args.run_source,
     )
 
 
 # --- manifest.db (READ-ONLY) -------------------------------------------------
 
-def select_undreamed_sessions(cfg: DreamConfig) -> list[sqlite3.Row]:
-    """Sessions where dreamed_at IS NULL, newest-selection-bounded by
-    --sessions/--since, excluding the dreamer's own session_id prefix when
-    GOETHE_DREAM_RUNNER_SESSION_PREFIX is set (DESIGN.md §2 invariant 3(e) —
-    no dream-of-dreams). Never writes dreamed_at — only dream_apply.py does."""
+def select_undreamed_sessions(cfg: DreamConfig,
+                              state: "traum_state.TraumState | None" = None) -> list[sqlite3.Row]:
+    """Return sessions not yet consumed by *this pass*.
+
+    ``manifest.sessions.dreamed_at`` was a single global bit and could not
+    express that (for example) dedup completed while insights failed.  Real
+    runs now filter against ``traum_state.session_consumption`` by pass.  A
+    preview does not create a state database; when no store is supplied it
+    retains the legacy ``dreamed_at IS NULL`` view for compatibility.
+
+    The SQL limit is applied *after* canonical-state filtering.  Limiting
+    first was the starvation bug that repeatedly selected the same oldest 50
+    rows even when another ledger knew they were complete.
+    """
     if not os.path.exists(cfg.manifest_db):
         print(f"[dream_runner] manifest.db not found at {cfg.manifest_db} — nothing to do",
               file=sys.stderr)
@@ -683,8 +716,10 @@ def select_undreamed_sessions(cfg: DreamConfig) -> list[sqlite3.Row]:
     conn = sqlite3.connect(cfg.manifest_db, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
-        query = "SELECT * FROM sessions WHERE dreamed_at IS NULL"
+        query = "SELECT * FROM sessions WHERE 1=1"
         params: list = []
+        if state is None:
+            query += " AND dreamed_at IS NULL"
         if cfg.runner_session_prefix:
             query += " AND session_id NOT LIKE ?"
             params.append(f"{cfg.runner_session_prefix}%")
@@ -692,12 +727,16 @@ def select_undreamed_sessions(cfg: DreamConfig) -> list[sqlite3.Row]:
             query += " AND start_ts >= ?"
             params.append(cfg.since)
         query += " ORDER BY start_ts ASC"
-        if cfg.sessions_limit:
-            query += " LIMIT ?"
-            params.append(cfg.sessions_limit)
         rows = conn.execute(query, params).fetchall()
     finally:
         conn.close()
+    if state is not None:
+        allowed = state.unconsumed_session_ids(
+            cfg.pass_name, (row["session_id"] for row in rows)
+        )
+        rows = [row for row in rows if row["session_id"] in allowed]
+    if cfg.sessions_limit:
+        rows = rows[:cfg.sessions_limit]
     return rows
 
 
@@ -831,6 +870,8 @@ def record_crash_error(cfg: DreamConfig, error_text: str, context: str = "dream-
     import re as _re  # noqa: PLC0415
     from datetime import timezone as _timezone  # noqa: PLC0415
 
+    error_text = traum_state.redact_persisted_text(error_text) or "redacted crash"
+    context = traum_state.redact_persisted_text(context) or "dream-runner"
     normalised = _re.sub(r"\s+", " ", error_text.lower().strip())
     error_hash = _hashlib.sha256(normalised.encode()).hexdigest()[:16]
     now = datetime.now(_timezone.utc).isoformat()
@@ -864,7 +905,8 @@ def record_crash_error(cfg: DreamConfig, error_text: str, context: str = "dream-
             es.index(index="lse-errors-1024", id=error_hash, document=doc)
             return f"lse-errors-1024 created: new dream-infra crash recorded (hash={error_hash})"
     except Exception as exc:
-        msg = f"record_crash_error itself failed ({exc}) -- lse-errors-1024 was NOT updated"
+        safe_exc = traum_state.redact_persisted_text(exc)
+        msg = f"record_crash_error itself failed ({safe_exc}) -- lse-errors-1024 was NOT updated"
         print(f"[dream_runner] WARNING: {msg}", file=sys.stderr)
         return msg
 
@@ -895,6 +937,7 @@ def embed_kb_docs(cfg: DreamConfig, kb_docs: list) -> dict:
     index_to_kb uses for nomic-embed-text's token limit, tools/goethe.py:4893).
     A single doc's embed failure is logged and skipped, not fatal to the pass."""
     embeddings = {}
+    failures = []
     for doc in kb_docs:
         doc_id = doc.get("_id")
         content = (doc.get("content") or "").strip()
@@ -905,6 +948,13 @@ def embed_kb_docs(cfg: DreamConfig, kb_docs: list) -> dict:
         except Exception as exc:
             print(f"[dream_runner] WARNING: embed failed for doc_id={doc_id} ({exc}) — skipped",
                   file=sys.stderr)
+            failures.append((doc_id, str(exc)))
+    if failures:
+        raise DependencyBlocked(
+            "embedding-service",
+            f"{len(failures)}/{len(kb_docs)} KB embeddings failed; first="
+            f"{failures[0][0]}: {failures[0][1]}",
+        )
     return embeddings
 
 
@@ -1770,6 +1820,7 @@ def embed_items(cfg: DreamConfig, items: list) -> dict:
     lse-errors docs) -- same embed_text() call, same per-item failure
     tolerance."""
     embeddings = {}
+    failures = []
     for item in items:
         text = (item.get("embed_text") or "").strip()
         if not text:
@@ -1779,6 +1830,13 @@ def embed_items(cfg: DreamConfig, items: list) -> dict:
         except Exception as exc:
             print(f"[dream_runner] WARNING: embed failed for {item['key']} ({exc}) — skipped",
                   file=sys.stderr)
+            failures.append((item.get("key"), str(exc)))
+    if failures:
+        raise DependencyBlocked(
+            "embedding-service",
+            f"{len(failures)}/{len(items)} item embeddings failed; first="
+            f"{failures[0][0]}: {failures[0][1]}",
+        )
     return embeddings
 
 
@@ -2090,7 +2148,7 @@ def run_pass_dedup(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, err
     if not kb_docs:
         narrative = "dedup pass: lse-kb returned zero docs (empty index or ES unreachable this run) — nothing to dedup. Null result (PH3-2)."
         return [], narrative, _null_record(
-            "dedup", "empty_kb", looked=False,
+            "dedup", "empty_kb", looked=True,
             corpus_size={"kb_docs": 0, "embedded_docs": 0, "candidate_pairs": 0, "pairs_above_threshold": 0},
             thresholds=thresholds,
         )
@@ -2197,7 +2255,7 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
     if not kb_docs:
         narrative = "stale-contradiction pass: lse-kb returned zero docs (empty index or ES unreachable this run) — nothing to check. Null result (PH3-2)."
         return [], narrative, _null_record(
-            "stale-contradiction", "empty_kb", looked=False,
+            "stale-contradiction", "empty_kb", looked=True,
             corpus_size={"kb_docs": 0, "sessions_considered": len(sessions),
                          "sessions_with_candidates": 0, "reverify_candidates": 0,
                          "demote_confirmed": 0},
@@ -2296,7 +2354,7 @@ def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_d
             "lse-errors docs to cluster this run. Null result (PH3-2)."
         )
         return [], narrative, _null_record(
-            "error-cluster", "no_items", looked=False,
+            "error-cluster", "no_items", looked=True,
             corpus_size={"episode_items": 0, "error_doc_items": 0, "embedded_items": 0,
                          "clusters_found": 0, "clusters_qualifying": 0},
             thresholds=thresholds,
@@ -2712,8 +2770,14 @@ def write_patterns_json(cfg: DreamConfig, patterns: dict) -> str:
     dream-dir day directory and writes patterns.json (or --patterns-out)."""
     today = date.today().isoformat()
     out_dir = os.path.join(cfg.dream_dir, today)
-    out_path = cfg.patterns_out or os.path.join(out_dir, "patterns.json")
-    payload = {"generated_at": datetime.now().isoformat(timespec="seconds"), **patterns}
+    default_name = f"patterns-{cfg.attempt_id}.json" if cfg.attempt_id else "patterns.json"
+    out_path = cfg.patterns_out or os.path.join(out_dir, default_name)
+    payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "run_id": cfg.run_id or None,
+        "attempt_id": cfg.attempt_id or None,
+        **patterns,
+    }
 
     if cfg.dry_run:
         print(f"[dream_runner] [dry-run] would write patterns to: {out_path}", file=sys.stderr)
@@ -2773,7 +2837,7 @@ def run_pass_patterns(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
             "result (PH3-2)."
         )
         return [], narrative, _null_record(
-            "patterns", "no_matching_events", looked=False,
+            "patterns", "no_matching_events", looked=True,
             corpus_size={"raw_lines": len(raw_lines), "events": 0, "sessions_inferred": 0,
                          "command_frequency_rows": 0, "automation_candidates": 0,
                          "failure_retry": 0},
@@ -3301,7 +3365,7 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
             "Null result (PH3-2)."
         )
         return [], narrative, _null_record(
-            "insights", "no_data_to_feed", looked=False,
+            "insights", "no_data_to_feed", looked=True,
             corpus_size={"session_summaries": 0, "domains_with_data": 0,
                          "insights_accepted": 0, "proposals": 0},
             thresholds=thresholds,
@@ -3375,7 +3439,7 @@ PASS_FUNCS = {
 # --- output: report.md + proposals.jsonl ------------------------------------
 
 def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: str,
-                  null_record: dict | None = None) -> tuple[str, str]:
+                 null_record: dict | None = None) -> tuple[str, str]:
     """Prompt 3.8 adds `null_record` (optional, default None — every
     pre-3.8 call site with 2 positional args still works). When set,
     report.md gets a plain, dedicated "## Null result" section — not
@@ -3396,15 +3460,21 @@ def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: s
     overwrites only its own snapshot (correct: latest run of a pass wins).
     Readers glob: dream_digest.py and dream_apply --queue scan
     proposals*.jsonl / report*.md, so legacy day-dirs stay readable."""
+    proposals = traum_state.redact_persisted_value(proposals)
+    narrative = traum_state.redact_persisted_text(narrative) or ""
+    null_record = traum_state.redact_persisted_value(null_record)
     today = date.today().isoformat()
     out_dir = os.path.join(cfg.dream_dir, today)
-    report_path = os.path.join(out_dir, f"report-{cfg.pass_name}.md")
-    proposals_path = os.path.join(out_dir, f"proposals-{cfg.pass_name}.jsonl")
+    attempt_suffix = f"-{cfg.attempt_id}" if cfg.attempt_id else ""
+    report_path = os.path.join(out_dir, f"report-{cfg.pass_name}{attempt_suffix}.md")
+    proposals_path = os.path.join(out_dir, f"proposals-{cfg.pass_name}{attempt_suffix}.jsonl")
     null_results_path = os.path.join(out_dir, "null-results.jsonl")
 
     lines = [
         f"# TRAUM dream report — {today} — pass: {cfg.pass_name}",
         "",
+        f"Run ID: `{cfg.run_id or '(legacy)'}`",
+        f"Attempt ID: `{cfg.attempt_id or '(legacy)'}`",
         f"Sessions considered: {len(sessions)}",
         f"Proposals generated: {len(proposals)}",
         "",
@@ -3431,7 +3501,7 @@ def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: s
         lines.append(f"- corpus size examined: `{json.dumps(null_record['corpus_size'], sort_keys=True)}`")
         lines.append(f"- thresholds used: `{json.dumps(null_record['thresholds'], sort_keys=True)}`")
         lines.append("")
-    report_text = "\n".join(lines)
+    report_text = traum_state.redact_persisted_text("\n".join(lines)) or ""
 
     if cfg.dry_run:
         would_write = f"  {report_path}\n  {proposals_path}"
@@ -3446,12 +3516,14 @@ def write_report(cfg: DreamConfig, sessions, proposals: list[dict], narrative: s
         f.write(report_text)
     with open(proposals_path, "wt", encoding="utf-8") as f:
         for p in proposals:
-            f.write(json.dumps(p) + "\n")
+            f.write(json.dumps(traum_state.redact_persisted_value(p)) + "\n")
     if null_record is not None:
         record = {**null_record, "date": today,
+                  "run_id": cfg.run_id or None,
+                  "attempt_id": cfg.attempt_id or None,
                   "generated_at": datetime.now().astimezone().isoformat()}
         with open(null_results_path, "at", encoding="utf-8") as f:
-            f.write(json.dumps(record) + "\n")
+            f.write(json.dumps(traum_state.redact_persisted_value(record)) + "\n")
     return report_path, proposals_path
 
 
@@ -3482,15 +3554,21 @@ def write_failure_report(cfg: DreamConfig, exc: Exception, sessions_count: int =
 
     today = date.today().isoformat()
     out_dir = os.path.join(cfg.dream_dir, today)
-    report_path = os.path.join(out_dir, f"report-{cfg.pass_name}.md")
+    attempt_suffix = f"-{cfg.attempt_id}" if cfg.attempt_id else ""
+    report_path = os.path.join(out_dir, f"report-{cfg.pass_name}{attempt_suffix}.md")
     crashes_path = os.path.join(out_dir, "crashes.jsonl")
 
-    tb_text = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+    safe_error = traum_state.redact_persisted_text(exc) or "redacted exception"
+    tb_text = traum_state.redact_persisted_text(
+        "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+    ) or ""
     now = datetime.now().astimezone().isoformat(timespec="seconds")
 
     lines = [
         f"# TRAUM dream report — {today} — pass: {cfg.pass_name}",
         "",
+        f"Run ID: `{cfg.run_id or '(legacy)'}`",
+        f"Attempt ID: `{cfg.attempt_id or '(legacy)'}`",
         "## FAILED",
         "",
         f"This pass crashed with an unhandled exception at {now} and did NOT "
@@ -3499,24 +3577,25 @@ def write_failure_report(cfg: DreamConfig, exc: Exception, sessions_count: int =
         "",
         f"Sessions considered before the crash: {sessions_count}",
         "",
-        f"**Error:** `{type(exc).__name__}: {exc}`",
+        f"**Error:** `{type(exc).__name__}: {safe_error}`",
         "",
         "```",
         tb_text.rstrip(),
         "```",
         "",
-        "manifest.db's `dreamed_at` is untouched for every session this run "
-        "would have looked at — only dream_apply.py ever sets it, and this "
-        "pass never reached a point where it would have called that — so a "
-        "re-dream on the next successful run will naturally retry everything "
-        "this crash interrupted. Safe to re-dream.",
+        "The canonical per-session/per-pass consumption ledger is untouched "
+        "for every selected session. A successful retry will therefore select "
+        "everything this crash interrupted.",
+        "",
+        "Safe to re-dream: this failed attempt consumed no sessions and its "
+        "staged proposals were not published.",
         "",
         f"See lse-errors-1024 (context=dream-runner, provenance=dream-infra) for "
         "the same failure recorded as a searchable error-KB entry, and "
         f"`{crashes_path}` for this night's full crash log.",
         "",
     ]
-    report_text = "\n".join(lines)
+    report_text = traum_state.redact_persisted_text("\n".join(lines)) or ""
 
     if cfg.dry_run:
         print(f"[dream_runner] [dry-run] would write FAILED report to:\n  {report_path}\n  {crashes_path}",
@@ -3529,15 +3608,75 @@ def write_failure_report(cfg: DreamConfig, exc: Exception, sessions_count: int =
         f.write(report_text)
     crash_record = {
         "date": today,
+        "run_id": cfg.run_id or None,
+        "attempt_id": cfg.attempt_id or None,
         "pass": cfg.pass_name,
         "failed_at": now,
         "error_type": type(exc).__name__,
-        "error_text": str(exc)[:2000],
+        "error_text": safe_error[:2000],
         "sessions_considered": sessions_count,
     }
     with open(crashes_path, "at", encoding="utf-8") as f:
-        f.write(json.dumps(crash_record) + "\n")
+        f.write(json.dumps(traum_state.redact_persisted_value(crash_record)) + "\n")
     return report_path, crashes_path
+
+
+class DependencyBlocked(RuntimeError):
+    """A required corpus/model dependency was unavailable.
+
+    A blocked attempt is retryable and consumes no sessions.  It is neither
+    a healthy null finding nor a crash in TRAUM itself.
+    """
+
+    def __init__(self, dependency: str, detail: str):
+        self.dependency = dependency
+        self.detail = detail
+        super().__init__(f"{dependency}: {detail}")
+
+
+def write_blocked_report(cfg: DreamConfig, exc: DependencyBlocked,
+                         sessions_count: int = 0) -> tuple[str, str]:
+    """Write a typed BLOCKED artifact without polluting crash history."""
+    safe_dependency = traum_state.redact_persisted_text(exc.dependency) or "dependency"
+    safe_detail = traum_state.redact_persisted_text(exc.detail) or "redacted detail"
+    today = date.today().isoformat()
+    out_dir = os.path.join(cfg.dream_dir, today)
+    attempt_suffix = f"-{cfg.attempt_id}" if cfg.attempt_id else ""
+    report_path = os.path.join(out_dir, f"report-{cfg.pass_name}{attempt_suffix}.md")
+    blocked_path = os.path.join(out_dir, "blocked.jsonl")
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    report_text = traum_state.redact_persisted_text("\n".join([
+        f"# TRAUM dream report — {today} — pass: {cfg.pass_name}", "",
+        f"Run ID: `{cfg.run_id or '(legacy)'}`",
+        f"Attempt ID: `{cfg.attempt_id or '(legacy)'}`", "", "## BLOCKED", "",
+        f"Required dependency `{safe_dependency}` was unavailable at {now}.", "",
+        f"**Detail:** `{safe_detail[:2000]}`", "",
+        f"Sessions selected but not consumed: {sessions_count}", "",
+        "Retry after dependency health is restored. This is not a healthy null "
+        "result and not a TRAUM code crash.", "",
+    ])) or ""
+    if cfg.dry_run:
+        print(
+            f"[dream_runner] [dry-run] would write BLOCKED report to:\n  "
+            f"{report_path}\n  {blocked_path}", file=sys.stderr,
+        )
+        print(report_text)
+        return report_path, blocked_path
+    os.makedirs(out_dir, exist_ok=True)
+    with open(report_path, "wt", encoding="utf-8") as f:
+        f.write(report_text)
+    with open(blocked_path, "at", encoding="utf-8") as f:
+        f.write(json.dumps(traum_state.redact_persisted_value({
+            "date": today,
+            "run_id": cfg.run_id or None,
+            "attempt_id": cfg.attempt_id or None,
+            "pass": cfg.pass_name,
+            "blocked_at": now,
+            "dependency": safe_dependency,
+            "detail": safe_detail[:2000],
+            "sessions_considered": sessions_count,
+        })) + "\n")
+    return report_path, blocked_path
 
 
 # --- CLI ----------------------------------------------------------------
@@ -3568,6 +3707,21 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="dream output root (default: $GOETHE_DREAM_DIR or /opt/local-se/dreams)")
     ap.add_argument("--manifest-db", default=None,
                     help="path to manifest.db (default: <episode-dir>/manifest.db)")
+    ap.add_argument("--state-db", default=None,
+                    help="canonical TRAUM state database (default: <dream-dir>/traum-state.db)")
+    ap.add_argument("--run-id", default=os.environ.get("GOETHE_TRAUM_RUN_ID", ""),
+                    help="reuse a controller-created canonical run id")
+    ap.add_argument("--attempt-id", default="",
+                    help="reuse a controller-created canonical attempt id")
+    ap.add_argument("--retry-of", default=None,
+                    help="attempt id this invocation retries")
+    ap.add_argument("--run-profile", choices=("standard", "single-pass"),
+                    default=os.environ.get("GOETHE_TRAUM_RUN_PROFILE", "single-pass"))
+    ap.add_argument("--requested-passes",
+                    default=os.environ.get("GOETHE_TRAUM_RUN_PASSES", ""),
+                    help="comma-separated complete pass set for run aggregation")
+    ap.add_argument("--run-source", choices=("cli", "scheduled", "gui"),
+                    default=os.environ.get("GOETHE_TRAUM_RUN_SOURCE", "cli"))
     ap.add_argument("--es-url", default=_es_url_default())
     ap.add_argument("--tasks-db", default=_tasks_db_default())
     ap.add_argument("--agent-log", default=_agent_log_default())
@@ -3689,6 +3843,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     guard_group.add_argument("--budget-max-wall-clock-min", type=float,
                     default=_budget_max_wall_clock_min_default(),
                     help="hard per-run wall-clock budget in minutes (default: 45)")
+    guard_group.add_argument("--budget-max-wall-clock-s", type=float, default=None,
+                    help="controller override in seconds; takes precedence over the "
+                    "per-pass minutes setting so a cycle can share one deadline")
     guard_group.add_argument("--ignore-guards", action="store_true",
                     help="bypass the lock + recent-session-activity checks entirely "
                     "(manual/debug runs only -- NEVER set this on the scheduled "
@@ -3851,7 +4008,7 @@ def release_lock(cfg: DreamConfig) -> None:
             pass
 
 
-def _recent_session_active(cfg: DreamConfig) -> str:
+def _recent_session_active(cfg: DreamConfig, refresh_manifest: bool = True) -> str:
     """Empty string if no LSE session was recently active; otherwise a
     human-readable reason for the skip.
 
@@ -3862,12 +4019,13 @@ def _recent_session_active(cfg: DreamConfig) -> str:
     manifest.db on a schedule of its own, so without this refresh the
     check could easily miss a session that started minutes ago.
     """
-    try:
-        _epidx.build_manifest(cfg.episode_dir, cfg.manifest_db)
-    except Exception as exc:
-        print(f"[dream_runner] WARNING: manifest refresh before session-activity "
-              f"check failed ({exc}) -- checking against possibly-stale manifest.db",
-              file=sys.stderr)
+    if refresh_manifest:
+        try:
+            _epidx.build_manifest(cfg.episode_dir, cfg.manifest_db)
+        except Exception as exc:
+            print(f"[dream_runner] WARNING: manifest refresh before session-activity "
+                  f"check failed ({exc}) -- checking against possibly-stale manifest.db",
+                  file=sys.stderr)
 
     if not os.path.exists(cfg.manifest_db):
         return ""
@@ -3953,6 +4111,80 @@ def assert_no_episode_writes(episode_dir: str, before: dict[str, float]) -> None
         )
 
 
+class ProcessEpisodeWriteGuard:
+    """Reject episode-corpus writes attempted by this Python process only.
+
+    The former whole-tree before/after snapshot attributed writes from the
+    concurrently running gateway to TRAUM.  Python audit hooks observe this
+    process's own ``open``/``os.open`` calls and therefore enforce the real
+    no-dream-of-dreams boundary without racing unrelated operators.
+
+    ``manifest.db`` and its SQLite sidecars are explicitly allowed because
+    manifest refresh/locking is metadata, not episode journaling.
+    """
+
+    def __init__(self, episode_dir: str, manifest_db: str):
+        self.episode_dir = os.path.abspath(episode_dir)
+        self.manifest_db = os.path.abspath(manifest_db)
+        self.active = False
+
+    def _is_episode_path(self, path: str) -> bool:
+        try:
+            absolute = os.path.abspath(os.fsdecode(path))
+            if os.path.commonpath([absolute, self.episode_dir]) != self.episode_dir:
+                return False
+        except (OSError, TypeError, ValueError):
+            return False
+        if absolute == self.manifest_db or absolute.startswith(self.manifest_db + "-"):
+            return False
+        return absolute.endswith((".jsonl", ".jsonl.gz"))
+
+    def _audit(self, event, args):
+        if not self.active or not args:
+            return
+        if event in {"os.remove", "os.unlink", "os.truncate", "os.rmdir"}:
+            path = args[0]
+            if isinstance(path, (str, bytes)) and self._is_episode_path(path):
+                raise PermissionError(
+                    "INVARIANT VIOLATION (no-dream-of-dreams): this TRAUM process "
+                    f"attempted {event} on episode session file {os.fsdecode(path)!r}"
+                )
+            return
+        if event in {"os.rename", "os.replace"}:
+            for path in args[:2]:
+                if isinstance(path, (str, bytes)) and self._is_episode_path(path):
+                    raise PermissionError(
+                        "INVARIANT VIOLATION (no-dream-of-dreams): this TRAUM process "
+                        f"attempted {event} involving episode session file "
+                        f"{os.fsdecode(path)!r}"
+                    )
+            return
+        if event != "open":
+            return
+        path = args[0]
+        mode = args[1] if len(args) > 1 else None
+        flags = args[2] if len(args) > 2 else 0
+        writes = isinstance(mode, str) and any(ch in mode for ch in "wax+")
+        if isinstance(flags, int):
+            writes = writes or bool(flags & (
+                os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+            ))
+        if writes and isinstance(path, (str, bytes)) and self._is_episode_path(path):
+            raise PermissionError(
+                "INVARIANT VIOLATION (no-dream-of-dreams): this TRAUM process "
+                f"attempted to write episode session file {os.fsdecode(path)!r}"
+            )
+
+    def __enter__(self):
+        sys.addaudithook(self._audit)
+        self.active = True
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.active = False
+        return False
+
+
 def _handle_crash(cfg: DreamConfig, exc: Exception, sessions_count: int = 0) -> None:
     """Prompt 4.3 (TRAUM-AUTO) crash discipline -- called from main()'s
     `except Exception` handler for ANY unhandled exception during a real
@@ -3975,21 +4207,24 @@ def _handle_crash(cfg: DreamConfig, exc: Exception, sessions_count: int = 0) -> 
     crash happened) cannot mask or replace the exception main() is about
     to re-raise after this returns. Logs its own failures to stderr.
     """
-    print(f"[dream_runner] CRASH in pass={cfg.pass_name}: {type(exc).__name__}: {exc}",
+    safe_exc = traum_state.redact_persisted_text(exc) or "redacted exception"
+    print(f"[dream_runner] CRASH in pass={cfg.pass_name}: {type(exc).__name__}: {safe_exc}",
           file=sys.stderr)
 
     try:
         write_failure_report(cfg, exc, sessions_count=sessions_count)
     except Exception as report_exc:
+        safe_report_exc = traum_state.redact_persisted_text(report_exc)
         print(f"[dream_runner] WARNING: failed to write the FAILED report itself "
-              f"({report_exc}) -- continuing crash handling anyway", file=sys.stderr)
+              f"({safe_report_exc}) -- continuing crash handling anyway", file=sys.stderr)
 
     try:
-        result = record_crash_error(cfg, error_text=f"{type(exc).__name__}: {exc}",
+        result = record_crash_error(cfg, error_text=f"{type(exc).__name__}: {safe_exc}",
                                      context="dream-runner")
         print(f"[dream_runner] {result}", file=sys.stderr)
     except Exception as record_exc:
-        print(f"[dream_runner] WARNING: record_crash_error itself failed ({record_exc})",
+        safe_record_exc = traum_state.redact_persisted_text(record_exc)
+        print(f"[dream_runner] WARNING: record_crash_error itself failed ({safe_record_exc})",
               file=sys.stderr)
 
     try:
@@ -3998,42 +4233,131 @@ def _handle_crash(cfg: DreamConfig, exc: Exception, sessions_count: int = 0) -> 
             es_url=cfg.es_url, dry_run=cfg.dry_run,
         )
     except Exception as digest_exc:
-        print(f"[dream_runner] WARNING: post-crash digest refresh failed ({digest_exc})",
+        safe_digest_exc = traum_state.redact_persisted_text(digest_exc)
+        print(f"[dream_runner] WARNING: post-crash digest refresh failed ({safe_digest_exc})",
               file=sys.stderr)
 
 
-def main(argv=None) -> None:
+def _runner_state_config(cfg: DreamConfig) -> dict:
+    """Bounded, non-secret configuration snapshot for provenance."""
+    return {
+        "pass": cfg.pass_name,
+        "sessions_limit": cfg.sessions_limit,
+        "since": cfg.since,
+        "dry_run": cfg.dry_run,
+        "budget_max_sessions": cfg.budget_max_sessions,
+        "budget_max_llm_calls": cfg.budget_max_llm_calls,
+        "budget_max_wall_clock_min": cfg.budget_max_wall_clock_min,
+        "dedup_floor": cfg.dedup_floor,
+        "dedup_threshold": cfg.dedup_threshold,
+        "error_cluster_threshold": cfg.error_cluster_threshold,
+    }
+
+
+def _finish_attempt_best_effort(state, cfg: DreamConfig, outcome: str, **kwargs) -> None:
+    if state is None or not cfg.attempt_id:
+        return
+    try:
+        state.finish_attempt(cfg.attempt_id, outcome, **kwargs)
+    except Exception as state_exc:
+        safe_state_exc = traum_state.redact_persisted_text(state_exc)
+        print(f"[dream_runner] WARNING: canonical attempt finalization failed ({safe_state_exc})",
+              file=sys.stderr)
+
+
+def _raise_if_dependency_blocked(cfg: DreamConfig, narrative: str,
+                                 null_record: dict | None) -> None:
+    reason = (null_record or {}).get("reason")
+    if null_record is not None and null_record.get("looked") is False:
+        raise DependencyBlocked(reason or "incomplete-evidence", narrative)
+    if reason == "embedding_unavailable":
+        raise DependencyBlocked("embedding-service", narrative)
+    if "DREAMER UNAVAILABLE" in narrative:
+        raise DependencyBlocked("dream-llm", narrative)
+    if cfg.pass_name == "patterns" and reason == "log_missing_or_empty" \
+            and not os.path.exists(cfg.agent_log):
+        raise DependencyBlocked("agent-command-log", f"missing at {cfg.agent_log}")
+
+
+def main(argv=None) -> int:
     args = parse_args(argv)
     cfg = build_config(args)
 
     if args.sample_labels:
         _run_sample_labels(cfg)
-        return
+        return 0
 
-    # Prompt 4.2: lock + recent-session-activity guards. --ignore-guards is
-    # a manual/debug escape hatch ONLY -- goethe-dream.service.tmpl never
-    # sets it. Per-run budgets (below) always apply regardless. NOTE
-    # (Prompt 4.3): the guard-check phase itself is deliberately OUTSIDE
-    # the try/except crash handler below -- it runs before the lock is
-    # even acquired (nothing to release yet), and both guard functions
-    # already have their own internal exception handling that degrades to
-    # "don't block" rather than raising (see _recent_session_active's own
-    # docstring) -- an exception escaping THAT would itself be a bug in
-    # the guard code, a different failure class than a pass crashing.
+    # A preview is fully side-effect-free: no state database, lockfile,
+    # manifest rebuild, artifact, digest, proposal decision, or ES write.
+    state = None
+    if not cfg.dry_run:
+        state = traum_state.TraumState(cfg.state_db)
+        run = state.get_run(cfg.run_id) if cfg.run_id else None
+        if run is not None:
+            if (run["profile"] != cfg.run_profile
+                    or run["requested_passes"] != list(
+                        cfg.requested_passes or (cfg.pass_name,)
+                    )):
+                raise traum_state.ConflictError(
+                    f"run identity mismatch for controller id {cfg.run_id}"
+                )
+        else:
+            run = state.create_run(
+                cfg.run_profile, cfg.requested_passes or (cfg.pass_name,),
+                config=_runner_state_config(cfg), source=cfg.run_source,
+                run_id=cfg.run_id or None,
+            )
+        cfg.run_id = run["run_id"]
+        attempt = state.get_attempt(cfg.attempt_id) if cfg.attempt_id else None
+        if attempt is not None:
+            if (attempt["run_id"] != cfg.run_id
+                    or attempt["pass_name"] != cfg.pass_name
+                    or attempt["retry_of"] != cfg.retry_of):
+                raise traum_state.ConflictError(
+                    f"attempt identity mismatch for controller id {cfg.attempt_id}"
+                )
+        else:
+            attempt = state.start_attempt(
+                cfg.run_id, cfg.pass_name, retry_of=cfg.retry_of,
+                config=_runner_state_config(cfg), attempt_id=cfg.attempt_id or None,
+            )
+        cfg.attempt_id = attempt["attempt_id"]
+
+    lock_acquired = False
     if not cfg.ignore_guards:
-        block_reason = _recent_session_active(cfg)
+        block_reason = _recent_session_active(cfg, refresh_manifest=not cfg.dry_run)
         if block_reason:
-            print(f"[dream_runner] SKIPPING run (pass={cfg.pass_name}): {block_reason}",
+            exc = DependencyBlocked("recent-session-activity", block_reason)
+            print(f"[dream_runner] BLOCKED run (pass={cfg.pass_name}): {block_reason}",
                   file=sys.stderr)
-            return
-        if not acquire_lock(cfg):
-            print(f"[dream_runner] SKIPPING run (pass={cfg.pass_name}): another dream "
-                  f"run holds the lock at {cfg.lockfile}", file=sys.stderr)
-            return
+            artifacts = {}
+            if not cfg.dry_run:
+                report_path, blocked_path = write_blocked_report(cfg, exc)
+                artifacts = {"report": report_path, "blocked_log": blocked_path}
+            _finish_attempt_best_effort(
+                state, cfg, "BLOCKED", summary={"dependency": exc.dependency},
+                artifacts=artifacts, error=exc, exit_code=3,
+            )
+            return 3
+        if not cfg.dry_run:
+            lock_acquired = acquire_lock(cfg)
+            if not lock_acquired:
+                exc = DependencyBlocked("dream-lock", f"held at {cfg.lockfile}")
+                print(f"[dream_runner] BLOCKED run (pass={cfg.pass_name}): {exc.detail}",
+                      file=sys.stderr)
+                report_path, blocked_path = write_blocked_report(cfg, exc)
+                _finish_attempt_best_effort(
+                    state, cfg, "BLOCKED", summary={"dependency": exc.dependency},
+                    artifacts={"report": report_path, "blocked_log": blocked_path},
+                    error=exc, exit_code=3,
+                )
+                return 3
+        else:
+            print("[dream_runner] [dry-run] lock acquisition skipped (preview is read-only)",
+                  file=sys.stderr)
     else:
-        print("[dream_runner] --ignore-guards set: bypassing the lock + recent-session "
-              "checks (manual/debug run only -- never use this on the scheduled "
-              "nightly cycle)", file=sys.stderr)
+        print("[dream_runner] --ignore-guards set: bypassing lock + recent-session checks "
+              "(manual/debug run only)", file=sys.stderr)
 
     cfg.budget = DreamBudget(
         max_sessions=cfg.budget_max_sessions,
@@ -4043,106 +4367,184 @@ def main(argv=None) -> None:
 
     sessions: list = []
     try:
-        episode_snapshot = _snapshot_episode_session_files(cfg.episode_dir)
+        if state is not None and state.is_cancel_requested(cfg.run_id):
+            _finish_attempt_best_effort(state, cfg, "CANCELLED", exit_code=4)
+            return 4
 
-        sessions = select_undreamed_sessions(cfg)
-        mode = "[dry-run] " if cfg.dry_run else ""
-        print(f"[dream_runner] {mode}pass={cfg.pass_name} undreamed-sessions-selected={len(sessions)} "
-              f"(limit={cfg.sessions_limit}, since={cfg.since or '(none)'})", file=sys.stderr)
-
-        if not sessions:
-            print("[dream_runner] no undreamed sessions — episode-history context will be empty, "
-                  "but ES-only passes (dedup, error-cluster) still run against the live indices.",
-                  file=sys.stderr)
-
-        episodes_by_session = {row["session_id"]: read_session_episodes(cfg, row) for row in sessions}
-
-        kb_docs: list = []
-        error_docs: list = []
-        try:
-            if cfg.pass_name in ("dedup", "stale-contradiction"):
-                kb_docs = search_index(cfg, "lse-kb", {"query": {"match_all": {}}, "size": 500,
-                                                        "_source": KB_SOURCE_FIELDS})
-            if cfg.pass_name == "error-cluster":
-                error_docs = search_index(cfg, "lse-errors-1024", {"query": {"match_all": {}}, "size": 500,
-                                                                "_source": ERROR_SOURCE_FIELDS})
-        except Exception as exc:
-            print(f"[dream_runner] WARNING: ES read failed ({exc}) — proceeding with empty index view",
-                  file=sys.stderr)
-
-        pass_func = PASS_FUNCS[cfg.pass_name]
-        raw_proposals, narrative, null_record = pass_func(cfg, sessions, episodes_by_session, kb_docs, error_docs)
-
-        if cfg.budget.truncated:
-            narrative = (
-                f"{narrative}\n\n**BUDGET TRUNCATION (Prompt 4.2):** this pass stopped early — "
-                f"{cfg.budget.truncation_reason}. Results above are PARTIAL, not a complete pass "
-                "over the selected corpus — this is a normal, expected exit, not an error. Budget "
-                f"usage: sessions {cfg.budget.sessions_consumed}/{cfg.budget.max_sessions}, LLM "
-                f"calls {cfg.budget.llm_calls_made}/{cfg.budget.max_llm_calls}, wall-clock "
-                f"{cfg.budget.elapsed_s():.0f}s/{cfg.budget.max_wall_clock_s:.0f}s. manifest.db's "
-                "dreamed_at is untouched either way (only dream_apply.py sets it), so a re-dream "
-                "will naturally pick up whatever this run didn't reach."
+        with ProcessEpisodeWriteGuard(cfg.episode_dir, cfg.manifest_db):
+            sessions = select_undreamed_sessions(cfg, state=state)
+            mode = "[dry-run] " if cfg.dry_run else ""
+            print(
+                f"[dream_runner] {mode}pass={cfg.pass_name} "
+                f"unconsumed-sessions-selected={len(sessions)} "
+                f"(limit={cfg.sessions_limit}, since={cfg.since or '(none)'})",
+                file=sys.stderr,
             )
-            print(f"[dream_runner] BUDGET TRUNCATED: {cfg.budget.truncation_reason}", file=sys.stderr)
+            if not sessions:
+                print("[dream_runner] no unconsumed sessions — episode-history context is empty; "
+                      "corpus-only passes still run.", file=sys.stderr)
 
-        proposals = []
-        for p in raw_proposals:
-            err = validate_proposal_shape(p)
-            if err:
-                print(f"[dream_runner] WARNING: dropping malformed proposal ({err}): {p!r}",
-                      file=sys.stderr)
-                continue
-            proposals.append(p)
+            episodes_by_session = {
+                row["session_id"]: read_session_episodes(cfg, row) for row in sessions
+            }
+            kb_docs: list = []
+            error_docs: list = []
+            try:
+                if cfg.pass_name in ("dedup", "stale-contradiction"):
+                    kb_docs = search_index(
+                        cfg, "lse-kb", {"query": {"match_all": {}}, "size": 500,
+                                        "_source": KB_SOURCE_FIELDS},
+                    )
+                if cfg.pass_name == "error-cluster":
+                    error_docs = search_index(
+                        cfg, "lse-errors-1024",
+                        {"query": {"match_all": {}}, "size": 500,
+                         "_source": ERROR_SOURCE_FIELDS},
+                    )
+            except Exception as exc:
+                raise DependencyBlocked("elasticsearch", str(exc)) from exc
 
-        report_path, proposals_path = write_report(cfg, sessions, proposals, narrative, null_record)
-        null_suffix = f" null_result={null_record['reason']} (looked={null_record['looked']})" if null_record else ""
-        print(f"[dream_runner] {mode}done. report={report_path} proposals={proposals_path} "
-              f"n_proposals={len(proposals)}{null_suffix}", file=sys.stderr)
+            raw_proposals, narrative, null_record = PASS_FUNCS[cfg.pass_name](
+                cfg, sessions, episodes_by_session, kb_docs, error_docs
+            )
+            _raise_if_dependency_blocked(cfg, narrative, null_record)
 
-        # Prompt 3.4 (TRAUM-INSIGHT): refresh the morning digest "at the end of
-        # every dream run". Never allowed to turn a successful pass into a
-        # reported failure -- refresh_digest() swallows its own exceptions.
-        dream_digest.refresh_digest(
-            dream_dir=cfg.dream_dir, episode_dir=cfg.episode_dir, manifest_db=cfg.manifest_db,
-            es_url=cfg.es_url, dry_run=cfg.dry_run,
-        )
-
-        # Prompt 4.2: assert, don't assume -- see assert_no_episode_writes's
-        # own docstring. Deliberately the LAST statement in the try block,
-        # inside it (not after) so it still runs via `finally` -> release_lock
-        # even if this specific check is what fails.
-        try:
-            assert_no_episode_writes(cfg.episode_dir, episode_snapshot)
-        except AssertionError as _aerr:
-            if cfg.ignore_guards:
-                print(
-                    "[dream_runner] WARNING (downgraded by --ignore-guards): "
-                    "EPISODE_DIR changed during this manual run -- expected when "
-                    "the live gateway is serving sessions concurrently; the "
-                    "nightly quiet-hours run keeps the hard invariant. "
-                    f"Details: {_aerr}",
-                    file=sys.stderr,
+            if cfg.budget.truncated:
+                narrative = (
+                    f"{narrative}\n\n**BUDGET TRUNCATION:** this pass stopped early — "
+                    f"{cfg.budget.truncation_reason}. Results are partial and selected "
+                    "sessions remain unconsumed for a complete retry."
                 )
-            else:
-                raise
+                print(f"[dream_runner] BUDGET TRUNCATED: {cfg.budget.truncation_reason}",
+                      file=sys.stderr)
+
+            valid, malformed = [], []
+            kb_by_id = {d.get("_id"): d for d in kb_docs if d.get("_id")}
+            for raw in raw_proposals:
+                err = validate_proposal_shape(raw)
+                if err:
+                    print(f"[dream_runner] SYSTEM_REJECTED malformed proposal ({err}): {raw!r}",
+                          file=sys.stderr)
+                    malformed.append({
+                        "type": "malformed", "call": "none", "args": {},
+                        "why": err, "raw": raw,
+                        "_initial_state": "SYSTEM_REJECTED",
+                        "_initial_reason": f"malformed:{err}",
+                    })
+                    continue
+                proposal = dict(raw)
+                target_id = proposal.get("args", {}).get("doc_id")
+                if target_id in kb_by_id:
+                    proposal["expected_target_token"] = traum_state.document_token(
+                        kb_by_id[target_id]
+                    )
+                valid.append(proposal)
+
+            proposals = valid
+            if state is not None:
+                proposals_for_state = [*valid, *malformed]
+                if cfg.budget.truncated:
+                    proposals_for_state = [
+                        {**p, "_initial_state": "SYSTEM_REJECTED",
+                         "_initial_reason": "incomplete_budget_truncation"}
+                        for p in valid
+                    ] + malformed
+                stored = state.record_proposals(
+                    cfg.run_id, cfg.attempt_id, proposals_for_state
+                )
+                # Exact repeats/malformed entries are resolved automatically
+                # and never enter either the human inbox or legacy queue files.
+                proposals = [
+                    row["proposal"] for row in stored
+                    if row["state"] in {"STAGED", "PENDING"}
+                ]
+            elif cfg.budget.truncated:
+                # A preview may display the partial narrative, but never
+                # presents incomplete proposals as actionable output.
+                proposals = []
+
+            if state is not None and state.is_cancel_requested(cfg.run_id):
+                state.finish_attempt(cfg.attempt_id, "CANCELLED", exit_code=4)
+                return 4
+
+            report_path, proposals_path = write_report(
+                cfg, sessions, proposals, narrative, null_record
+            )
+            outcome = (
+                "BLOCKED" if cfg.budget.truncated
+                else ("NULL" if null_record is not None else "SUCCEEDED")
+            )
+            consume_ids = [] if cfg.budget.truncated else [row["session_id"] for row in sessions]
+            null_suffix = (
+                f" null_result={null_record['reason']} (looked={null_record['looked']})"
+                if null_record else ""
+            )
+            dream_digest.refresh_digest(
+                dream_dir=cfg.dream_dir, episode_dir=cfg.episode_dir,
+                manifest_db=cfg.manifest_db, es_url=cfg.es_url,
+                dry_run=cfg.dry_run,
+            )
+            if state is not None:
+                # This transaction is the publication point: it atomically
+                # terminalizes the attempt, consumes sessions, and promotes
+                # STAGED proposals to PENDING. Failure here is fatal; a real
+                # run may never exit 0 without durable canonical progress.
+                state.finish_attempt(
+                    cfg.attempt_id, outcome,
+                    summary={
+                        "sessions_selected": len(sessions),
+                        "sessions_consumed": len(consume_ids),
+                        "proposals_pending": len(proposals),
+                        "null_reason": (null_record or {}).get("reason"),
+                        "budget_truncated": cfg.budget.truncated,
+                    },
+                    artifacts={"report": report_path, "proposals": proposals_path},
+                    error=(DependencyBlocked("budget", cfg.budget.truncation_reason)
+                           if cfg.budget.truncated else None),
+                    exit_code=3 if cfg.budget.truncated else 0,
+                    consumed_session_ids=consume_ids,
+                )
+            print(f"[dream_runner] {mode}done. run={cfg.run_id or '(preview)'} "
+                  f"attempt={cfg.attempt_id or '(preview)'} report={report_path} "
+                  f"proposals={proposals_path} n_proposals={len(proposals)}{null_suffix}",
+                  file=sys.stderr)
+        return 3 if cfg.budget.truncated else 0
+    except DependencyBlocked as exc:
+        safe_exc = traum_state.redact_persisted_text(exc) or "redacted dependency failure"
+        print(f"[dream_runner] BLOCKED in pass={cfg.pass_name}: {safe_exc}", file=sys.stderr)
+        report_path, blocked_path = write_blocked_report(
+            cfg, exc, sessions_count=len(sessions)
+        )
+        if state is not None:
+            state.finish_attempt(
+                cfg.attempt_id, "BLOCKED", summary={"dependency": exc.dependency},
+                artifacts={"report": report_path, "blocked_log": blocked_path},
+                error=exc, exit_code=3,
+            )
+        return 3
     except Exception as exc:
-        # Prompt 4.3: crash discipline. Handle (record_error, partial
-        # FAILED report, digest refresh), THEN re-raise the ORIGINAL
-        # exception unchanged -- this process still exits non-zero (so
-        # `systemctl status`/journalctl correctly show this pass failed),
-        # but goethe-dream.service.tmpl has Restart=no (Type=oneshot's own
-        # default, made explicit -- see that file) so there is no
-        # systemd-level restart spiral, and each of its 5 ExecStart lines
-        # is "-"-prefixed so one crashed pass doesn't block the remaining
-        # four that same night. The .timer fires again tomorrow regardless
-        # of tonight's exit code -- that's the actual retry mechanism.
         _handle_crash(cfg, exc, sessions_count=len(sessions))
+        _finish_attempt_best_effort(
+            state, cfg, "FAILED", error=exc, exit_code=1,
+        )
         raise
     finally:
-        if not cfg.ignore_guards:
+        if lock_acquired:
             release_lock(cfg)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except Exception as exc:
+        # main() has already written the detailed force-redacted crash report.
+        # Do not let Python's default uncaught-exception hook persist the raw
+        # exception/traceback in systemd or controller logs.
+        safe_exc = traum_state.redact_persisted_text(exc) or "redacted exception"
+        print(
+            f"[dream_runner] fatal: {type(exc).__name__}: {safe_exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)

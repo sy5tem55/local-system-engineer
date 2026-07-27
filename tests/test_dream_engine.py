@@ -155,8 +155,10 @@ class FakeTools:
 
     def index_to_kb(self, content, title, topic="general", source_url="",
                      quality_score=0.5, source_tier="inferred", evidence="",
-                     verified_against="", volatility="slow"):
-        self.calls.append(("index_to_kb", title, topic, source_tier, quality_score))
+                     verified_against="", volatility="slow", origin=""):
+        self.calls.append((
+            "index_to_kb", title, topic, source_tier, quality_score, origin
+        ))
         # same doc_id derivation as the real Tools.index_to_kb (tools/goethe.py):
         # sha256 of the first 500 content chars, first 16 hex chars.
         doc_hash = hashlib.sha256(content[:500].encode()).hexdigest()[:16]
@@ -166,7 +168,7 @@ class FakeTools:
                 "title": title, "content": content, "topic": topic,
                 "quality_score": quality_score, "source_tier": source_tier,
                 "evidence": evidence, "verified_against": verified_against,
-                "volatility": volatility,
+                "volatility": volatility, "origin": origin,
             },
         )
         return (
@@ -560,8 +562,9 @@ class TestKbFactProposal:
         doc_hash = hashlib.sha256(proposal["args"]["content"][:500].encode()).hexdigest()[:16]
         doc = es.store[("lse-kb", doc_hash)]
         assert doc["title"] == proposal["args"]["title"]
-        # index_to_kb has neither provenance nor origin (DESIGN.md §6.2) --
-        # both are added by the SAME full stamp mentor_correct/record_outcome get.
+        # origin is passed into the guarded semantic write; provenance is
+        # verified/stamped from the returned doc_id.
+        assert tools.calls[0][-1] == "dream"
         assert doc["origin"] == "dream"
         assert doc["provenance"] == f"dream-{TODAY}"
 

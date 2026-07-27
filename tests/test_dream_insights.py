@@ -505,10 +505,9 @@ class TestRunPassInsightsEndToEnd:
         assert proposals == []
         assert "Null result (PH3-2)" in narrative
         # Prompt 3.8: no patterns.json domain data and no session summaries
-        # -- the pass never got anything to feed the model, so this is a
-        # "didn't look" null, not a "looked and found nothing" one.
+        # -- both bounded inputs were inspected and found empty.
         assert null_record["pass"] == "insights"
-        assert null_record["looked"] is False
+        assert null_record["looked"] is True
         assert null_record["reason"] == "no_data_to_feed"
         assert null_record["corpus_size"]["session_summaries"] == 0
         assert null_record["thresholds"]["insights_max_sessions_in_prompt"] == cfg.insights_max_sessions_in_prompt

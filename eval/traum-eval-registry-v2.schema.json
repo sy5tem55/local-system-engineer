@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-system-engineer.invalid/schemas/traum-eval-registry-v2.schema.json",
+  "title": "TRAUM evaluation list status v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "registry_path", "evaluations"],
+  "properties": {
+    "schema_version": {"const": "traum.eval.registry.v2"},
+    "registry_path": {"type": "string"},
+    "evaluations": {
+      "type": "array",
+      "items": {"$ref": "traum-eval-status-v2.schema.json"}
+    }
+  }
+}

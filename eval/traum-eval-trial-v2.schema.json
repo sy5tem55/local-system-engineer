@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-system-engineer.invalid/schemas/traum-eval-trial-v2.schema.json",
+  "title": "TRAUM paired trial metrics v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "eval_id",
+    "condition",
+    "seed",
+    "input_fingerprint",
+    "condition_export_fingerprint",
+    "runtime_fingerprints",
+    "side_effects",
+    "metrics"
+  ],
+  "properties": {
+    "schema_version": {"const": "traum.eval.trial.v2"},
+    "eval_id": {"type": "string", "pattern": "^traum-v2-"},
+    "condition": {"enum": ["A", "B"]},
+    "seed": {"type": "integer", "minimum": 0},
+    "input_fingerprint": {"$ref": "#/$defs/sha256"},
+    "condition_export_fingerprint": {"$ref": "#/$defs/sha256"},
+    "runtime_fingerprints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "prompt", "tool_schema", "retriever", "embedding", "dataset"],
+      "properties": {
+        "model": {"$ref": "#/$defs/sha256"},
+        "prompt": {"$ref": "#/$defs/sha256"},
+        "tool_schema": {"$ref": "#/$defs/sha256"},
+        "retriever": {"$ref": "#/$defs/sha256"},
+        "embedding": {"$ref": "#/$defs/sha256"},
+        "dataset": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "side_effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["isolated", "production_writes", "input_mutations", "auto_apply_enabled"],
+      "properties": {
+        "isolated": {"const": true},
+        "production_writes": {"const": 0},
+        "input_mutations": {"const": 0},
+        "auto_apply_enabled": {"const": false}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suite_score",
+        "max_suite_score",
+        "tool_call_count",
+        "wrong_kb_hits",
+        "retrieval_recall_at_1",
+        "retrieval_recall_at_3",
+        "retrieval_mrr"
+      ],
+      "properties": {
+        "suite_score": {"type": "number", "minimum": 0},
+        "max_suite_score": {"type": "number", "exclusiveMinimum": 0},
+        "tool_call_count": {"type": "integer", "minimum": 1},
+        "wrong_kb_hits": {"type": "integer", "minimum": 0},
+        "retrieval_recall_at_1": {"type": "number", "minimum": 0, "maximum": 1},
+        "retrieval_recall_at_3": {"type": "number", "minimum": 0, "maximum": 1},
+        "retrieval_mrr": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -16,7 +16,6 @@ after any change here (run_tests scope=harness).
 """
 
 import json
-import os
 from datetime import datetime
 from typing import Optional
 
@@ -556,6 +555,16 @@ class KBMixin:
             dup_hits = dup_resp["hits"]["hits"]
             if dup_hits and dup_hits[0]["_score"] >= 0.92:
                 existing = dup_hits[0]
+                if (origin == "dream" and bool(getattr(
+                        self, "_dream_apply_authorized", False
+                )) and quality_score > float(
+                        existing["_source"].get("quality_score", 0.0) or 0.0
+                )):
+                    return (
+                        "KB index rejected: dream-origin dedup collision would raise "
+                        f"quality {float(existing['_source'].get('quality_score', 0.0) or 0.0):.2f} "
+                        f"-> {quality_score:.2f}"
+                    )
                 new_q = min(
                     1.0, max(existing["_source"]["quality_score"], quality_score)
                 )
@@ -1400,9 +1409,9 @@ class KBMixin:
                            ground_truth=1.0 ceiling (live test); primary=0.8;
                            secondary=0.6; inferred=0.4. Stored in document.
         """
-        if (provenance or "").lower().startswith("dream") and os.environ.get(
-            "GOETHE_DREAM_APPLY"
-        ) != "1":
+        if (provenance or "").lower().startswith("dream") and not bool(
+            getattr(self, "_dream_apply_authorized", False)
+        ):
             return (
                 f"SKILL rejected: provenance '{provenance}' is dream-cycle output. "
                 "Dream proposals must pass the human gate via dream_apply.py -- "

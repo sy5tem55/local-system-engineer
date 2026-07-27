@@ -80,6 +80,24 @@
   .empty{color:var(--faint);font-size:12.5px;padding:12px 0;font-style:italic}
   .err{color:var(--bad);font-size:12.5px;padding:8px 0;font-family:var(--mono)}
   .dream-days td{font-family:var(--mono);font-size:12px}
+  .traum-layout{display:grid;grid-template-columns:minmax(260px,1fr) minmax(300px,1.2fr);gap:18px}
+  @media(max-width:900px){.traum-layout{grid-template-columns:1fr}}
+  .traum-box{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+  .traum-box h3{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+  .traum-controls{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+  .traum-controls label{display:flex;flex-direction:column;gap:3px;color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+  .traum-controls select,.traum-controls input{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 8px;font:12px var(--mono)}
+  .traum-controls input[type=number]{width:80px}
+  .traum-meta{font:11px/1.5 var(--mono);color:var(--dim);white-space:pre-wrap}
+  .traum-log{display:none;margin-top:10px;max-height:260px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:10px;font:11px/1.5 var(--mono);white-space:pre-wrap;color:var(--text)}
+  .traum-msg{min-height:18px;margin-top:8px;font-size:11px;color:var(--dim)}
+  .traum-msg.good{color:var(--good)} .traum-msg.bad{color:var(--bad)}
+  .badge.state-SUCCEEDED,.badge.state-NULL,.badge.state-APPLIED{color:var(--good);border-color:rgba(158,206,106,.45)}
+  .badge.state-RUNNING,.badge.state-QUEUED,.badge.state-PENDING{color:var(--accent);border-color:rgba(122,162,247,.45)}
+  .badge.state-DEGRADED,.badge.state-BLOCKED,.badge.state-DEFERRED{color:var(--warn);border-color:rgba(224,175,104,.45)}
+  .badge.state-FAILED,.badge.state-CANCELLED,.badge.state-APPLY_FAILED{color:var(--bad);border-color:rgba(247,118,142,.45)}
+  .traum-separation{margin-top:10px;color:var(--faint);font-size:10.5px}
+  .traum-separation strong{color:var(--dim)}
   footer{margin-top:26px;color:var(--faint);font-size:11px;text-align:center}
 
   /* Permissions panel — the one part of this console that writes. */
@@ -166,12 +184,70 @@
     </div>
   </div>
 
-  <div class="panel span4" id="p-dream">
+  <div class="panel span12" id="p-dream">
     <h2>TRAUM — Dream Digest <span class="ms" id="dream-ms"></span></h2>
-    <div id="dream-digest" class="digest empty">loading…</div>
-    <div style="margin-top:14px">
-      <div style="font-size:11px;color:var(--dim);margin-bottom:4px">DREAM CYCLES (last 14 nights)</div>
-      <table class="dream-days" id="dream-days"></table>
+    <div class="bignums" id="traum-nums"></div>
+    <div class="traum-layout">
+      <div>
+        <div id="dream-digest" class="digest empty">loading…</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="traum-box">
+          <h3>Run a typed operation</h3>
+          <div class="traum-controls">
+            <label>profile
+              <select id="traum-profile" onchange="traumProfileChanged()">
+                <option value="standard">standard cycle</option>
+                <option value="single-pass">single pass</option>
+              </select>
+            </label>
+            <label>pass
+              <select id="traum-pass" disabled>
+                <option value="dedup">dedup</option>
+                <option value="stale-contradiction">stale-contradiction</option>
+                <option value="error-cluster">error-cluster</option>
+                <option value="patterns">patterns</option>
+                <option value="insights">insights</option>
+              </select>
+            </label>
+            <label>sessions <input id="traum-sessions" type="number" min="1" max="100" value="50"></label>
+            <label>cycle minutes <input id="traum-minutes" type="number" min="5" max="45" value="45"></label>
+            <button class="abtn once" id="traum-run" onclick="traumStartRun()">Run</button>
+          </div>
+          <div class="traum-msg" id="traum-msg"></div>
+        </div>
+        <div class="traum-box"><h3>Nightly timer — read only</h3><div id="traum-timer" class="traum-meta">loading…</div></div>
+        <div class="traum-box"><h3>A/B learning-lift evidence</h3><div id="traum-eval" class="traum-meta">loading…</div></div>
+      </div>
+    </div>
+    <div style="margin-top:14px;display:flex;align-items:center;gap:12px">
+      <div style="font-size:11px;color:var(--dim)">CANONICAL RUNS / PASS ATTEMPTS</div>
+      <label style="font-size:11px;color:var(--faint)"><input id="traum-archived" type="checkbox" onchange="loadTraumRuns()"> show archived</label>
+    </div>
+    <table class="dream-days" id="dream-days"></table>
+    <pre id="traum-logs" class="traum-log"></pre>
+    <div class="traum-separation"><strong>Separate control planes:</strong> these actions affect TRAUM lifecycle metadata and dream processes only. They do not create, consume, or modify Permissions — Pending Approvals, Active Grants, sudo grants, or systemd state.</div>
+  </div>
+
+  <div class="panel span12" id="p-traum-proposals">
+    <h2>TRAUM — Human Gate <span class="ms" id="traum-proposal-ms"></span></h2>
+    <div class="note" style="display:block;color:var(--dim);border-color:var(--line);background:var(--panel2)">
+      Only semantic decisions appear here. Invariant failures, exact duplicates
+      and expiry receive typed lifecycle states automatically; healthy nulls and
+      guard-blocked attempts remain in run history but never enter this semantic
+      inbox. Preview is side-effect-free; Approve revalidates the current KB revision.
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <label style="font-size:11px;color:var(--faint)"><input id="traum-show-deferred" type="checkbox" onchange="traumProposalOffset=0;loadTraumProposals()"> show future-deferred proposals early</label>
+      <button class="abtn" id="traum-proposal-prev" onclick="traumProposalPage(-1)" disabled>Previous</button>
+      <button class="abtn" id="traum-proposal-next" onclick="traumProposalPage(1)" disabled>Next</button>
+      <span id="traum-proposal-page" style="font-size:10.5px;color:var(--faint)"></span>
+    </div>
+    <table id="traum-proposals" style="margin-top:10px"></table>
+    <pre id="traum-preview" class="traum-log"></pre>
+    <div class="actions" id="traum-result-actions" style="display:none;margin-top:6px">
+      <button class="abtn" onclick="copyTraumResult()">Copy result</button>
+      <button class="abtn" onclick="dismissTraumResult()">Dismiss</button>
     </div>
   </div>
 
@@ -205,7 +281,7 @@
   </div>
 
 </div>
-<footer id="foot">Goethe Console — served by goethe_mcp · read-only except Permissions (approve/deny/revoke) · auto-refresh 60s</footer>
+<footer id="foot">Goethe Console — served by goethe_mcp · authenticated typed TRAUM operations and existing Permissions actions · auto-refresh 60s</footer>
 
 <script>
 "use strict";
@@ -237,7 +313,7 @@ async function apiPost(path, body){
   let d;
   try { d = await r.json(); } catch { d = {}; }
   if (r.status === 401) throw new Error("unauthorized — set the gateway token (GOETHE_MCP_TOKEN)");
-  if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
+  if (!r.ok || d.error){ const e=new Error(d.error || ("HTTP " + r.status)); e.data=d; throw e; }
   return d;
 }
 function showErr(el, e){ el.innerHTML = '<div class="err">'+esc(e.message||e)+'</div>'; }
@@ -415,21 +491,270 @@ async function loadDream(){
       dg.innerHTML = "no digest yet — has the dream timer run? (goethe-dream.timer, 03:30)";
     }
     if(d.digest_mtime) dg.innerHTML += '\n<span class="dim">— generated '+esc(d.digest_mtime)+'</span>';
-    const rows = d.days.map(day=>{
-      const sc = day.status_counts||{};
-      const scStr = Object.keys(sc).length
-        ? Object.entries(sc).map(([k,v])=>k+":"+v).join(" ") : "—";
-      return "<tr><td>"+esc(day.date)+"</td>"+
-        "<td>"+day.proposals+" proposal"+(day.proposals===1?"":"s")+"</td>"+
-        "<td style='color:var(--dim)'>"+esc(scStr)+"</td>"+
-        "<td>"+(day.failed_banner?'<span class="badge fail">FAILED</span>':"")+
-              (day.crashes?' <span class="badge fail">'+day.crashes+' crash</span>':"")+
-              (day.null_results?' <span class="badge">'+day.null_results+' null</span>':"")+"</td></tr>";
+  }catch(e){ showErr($("dream-digest"), e); }
+}
+
+function stateBadge(state){
+  const s = String(state||"UNKNOWN").toUpperCase();
+  return '<span class="badge state-'+esc(s)+'">'+esc(s)+'</span>';
+}
+function setTraumMsg(message, bad){
+  const el = $("traum-msg");
+  el.textContent = message || "";
+  el.className = "traum-msg " + (bad ? "bad" : message ? "good" : "");
+}
+function traumProfileChanged(){
+  $("traum-pass").disabled = $("traum-profile").value !== "single-pass";
+}
+async function loadTraumStatus(){
+  try{
+    const d = await api("/api/ui/traum/status");
+    const rc = d.run_counts || {}, pc = d.proposal_counts || {};
+    const gateLabel = d.human_gate_count_exact===false ? "needs decision (at least)" : "needs decision";
+    $("traum-nums").innerHTML =
+      bn(rc.RUNNING||0,"running",rc.RUNNING?"accent":"")+
+      bn(d.human_gate_count||0,gateLabel,(d.human_gate_count||d.human_gate_count_exact===false)?"warn":"good")+
+      bn(d.unowned_active_run_count||0,"unowned active",d.unowned_active_run_count?"bad":"good")+
+      bn(d.future_deferred_count||0,"deferred later","")+
+      bn(d.reconcile_count||0,"reconcile",d.reconcile_count?"bad":"good")+
+      bn(pc.APPLIED||0,"applied","good")+
+      bn((rc.FAILED||0)+(rc.DEGRADED||0),"failed / degraded",(rc.FAILED||rc.DEGRADED)?"bad":"good");
+    const t = d.timer || {};
+    $("traum-timer").textContent = t.available
+      ? "state: "+(t.active_state||"unknown")+" / "+(t.sub_state||"unknown")+
+        "\nenabled: "+(t.unit_file_state||"unknown")+
+        "\nnext: "+(t.next_run||"not reported")+
+        "\nlast: "+(t.last_trigger||"not reported")+
+        "\n(read-only; no timer mutation is exposed here)"
+      : "unavailable: "+(t.error||"systemd status not reported")+
+        "\n(read-only; no timer mutation is exposed here)";
+    const ev = d.evaluation || {};
+    let evidence = ev.latest_evidence || ev.latest || ev.verdict || "none recorded";
+    if(typeof evidence === "object") evidence = JSON.stringify(evidence);
+    const historical=ev.historical_v1||null;
+    const historicalText=historical
+      ? ("\nhistorical v1: "+(historical.evaluation_id||"eval-report-traum-1")+
+        " — protocol "+(historical.protocol_verdict||"LOSS")+
+        "; causal "+(historical.causal_interpretation||"INCONCLUSIVE")+
+        " (reference only; not v2 evidence)")
+      : "";
+    const ld=(ev.latest_evidence&&typeof ev.latest_evidence==="object")?ev.latest_evidence.learning_delta:null;
+    const learning = ld
+      ? (ld.comparable===false
+          ? "\nlearning delta: corpus exports are not id-keyed; delta not computable"
+          : "\nlearning delta: +"+(ld.added||0)+" added / "+(ld.removed||0)+" removed / "+
+            (ld.modified||0)+" modified ("+(ld.baseline_documents||0)+" → "+(ld.candidate_documents||0)+" docs)")
+      : "";
+    const ce=ev.continuous_evidence||{};
+    const continuous=ce.populated
+      ? (ce.event_count+" recorded outcome event(s); decision wiring: "+(ce.decision_wiring||"unknown"))
+      : ("no continuous outcome evidence recorded; decision wiring: "+(ce.decision_wiring||"not connected"));
+    $("traum-eval").textContent =
+      "analysis: "+(ev.analysis_available?"available":"pending")+
+      "\npromotion review: "+(ev.promotion_eligible?"eligible":"not eligible")+
+      "\nevaluation: "+(ev.evaluation_id||"none")+" / "+(ev.stage||"not initialized")+
+      "\nlatest evidence: "+evidence+
+      learning+
+      "\ncontinuous evidence: "+continuous+
+      (ev.blocked_reason?"\nblocked reason: "+ev.blocked_reason:"")+
+      historicalText+
+      (ev.analysis_available?"\nanalysis availability is not a WIN verdict; inspect outcome and gates":"")+
+      "\nexecution: not exposed in GUI; use the typed offline registry workflow";
+  }catch(e){
+    showErr($("traum-nums"),e);
+    $("traum-timer").textContent = "unavailable";
+    $("traum-eval").textContent = "unavailable";
+  }
+}
+
+async function loadTraumRuns(){
+  try{
+    const archived = $("traum-archived").checked ? "true" : "false";
+    const d = await api("/api/ui/traum/runs?archived="+archived+"&limit=50");
+    const rows = (d.runs||[]).map(run=>{
+      const attempts = run.attempts || [];
+      const retry = attempts.find(a=>a.state==="FAILED"||a.state==="BLOCKED");
+      const ack = attempts.find(a=>(a.state==="FAILED"||a.state==="BLOCKED")&&!a.acknowledged);
+      const terminal = ["SUCCEEDED","DEGRADED","FAILED","CANCELLED","BLOCKED"].includes(run.state);
+      const date = (run.config||{}).legacy_date || (run.config||{}).day || run.created_at || "";
+      const passText = attempts.length
+        ? attempts.map(a=>a.pass_name+":"+a.state).join(" · ")
+        : (run.requested_passes||[]).join(", ");
+      const rid=esc(run.run_id), aid=retry?esc(retry.attempt_id):"", ackid=ack?esc(ack.attempt_id):"";
+      let actions = '<div class="actions">';
+      if(attempts.length) actions += '<button class="abtn" data-traum-action="logs" data-run="'+rid+'">Logs</button>';
+      if(retry && !run.cancel_requested && run.state!=="CANCELLED") actions += '<button class="abtn once" data-traum-action="retry" data-run="'+rid+'" data-attempt="'+aid+'">Retry</button>';
+      if(ack) actions += '<button class="abtn" data-traum-action="ack" data-attempt="'+ackid+'">Acknowledge</button>';
+      if(run.controller_owned && run.state==="RUNNING") actions += '<button class="abtn deny" data-traum-action="cancel" data-run="'+rid+'">Cancel</button>';
+      if(terminal && !run.archived) actions += '<button class="abtn" data-traum-action="archive" data-run="'+rid+'">Archive</button>';
+      actions += '</div>';
+      const ownership = run.control_ownership==="unowned-active-state"
+        ? ' <span class="badge state-FAILED" title="'+esc(run.control_note||"process status unknown; no PID action")+'">UNOWNED / STATUS UNKNOWN</span>'
+        : "";
+      return "<tr><td title='"+esc(run.run_id)+"'>"+esc(String(date).slice(0,16))+"<br><span style='color:var(--faint)'>"+esc(run.run_id.slice(0,18))+"</span></td>"+
+        "<td>"+esc(run.profile)+"</td><td>"+stateBadge(run.state)+ownership+(run.archived?' <span class="badge">ARCHIVED</span>':"")+"</td>"+
+        "<td style='color:var(--dim);font-size:10.5px'>"+esc(passText)+"</td><td>"+actions+"</td></tr>";
     }).join("");
     $("dream-days").innerHTML = rows
-      ? "<tr><th>night</th><th>proposals</th><th>status</th><th>flags</th></tr>"+rows
-      : '<tr><td class="empty">no dream day-dirs found</td></tr>';
-  }catch(e){ showErr($("dream-digest"), e); }
+      ? "<tr><th>created / id</th><th>profile</th><th>state</th><th>attempts</th><th>actions</th></tr>"+rows
+      : '<tr><td class="empty">no canonical TRAUM runs found</td></tr>';
+    wireTraumRunButtons();
+  }catch(e){ showErr($("dream-days"),e); }
+}
+
+async function traumStartRun(){
+  const profile = $("traum-profile").value;
+  const payload = {
+    profile,
+    sessions:Number($("traum-sessions").value),
+    wall_clock_minutes:Number($("traum-minutes").value)
+  };
+  if(profile==="single-pass") payload.pass = $("traum-pass").value;
+  $("traum-run").disabled = true;
+  setTraumMsg("starting…",false);
+  try{
+    const d = await apiPost("/api/ui/traum/runs",payload);
+    setTraumMsg("started "+d.run_id,false);
+    loadTraumStatus(); loadTraumRuns();
+  }catch(e){ setTraumMsg(e.message,true); }
+  finally{$("traum-run").disabled=false;}
+}
+async function traumRetry(runId,attemptId){
+  try{await apiPost("/api/ui/traum/runs/"+encodeURIComponent(runId)+"/retry",{attempt_id:attemptId});setTraumMsg("retry started",false);loadTraumRuns();}
+  catch(e){setTraumMsg(e.message,true);}
+}
+async function traumCancel(runId){
+  if(!confirm("Cancel this controller-owned TRAUM run? The current attempt will terminate and audit evidence will be retained.")) return;
+  try{await apiPost("/api/ui/traum/runs/"+encodeURIComponent(runId)+"/cancel",{});setTraumMsg("cancel requested",false);loadTraumRuns();}
+  catch(e){setTraumMsg(e.message,true);}
+}
+async function traumAcknowledge(attemptId){
+  try{await apiPost("/api/ui/traum/attempts/"+encodeURIComponent(attemptId)+"/acknowledge",{});setTraumMsg("failure acknowledged; evidence retained",false);loadTraumRuns();}
+  catch(e){setTraumMsg(e.message,true);}
+}
+async function traumArchive(runId){
+  try{await apiPost("/api/ui/traum/runs/"+encodeURIComponent(runId)+"/archive",{});setTraumMsg("run archived; evidence retained",false);loadTraumRuns();}
+  catch(e){setTraumMsg(e.message,true);}
+}
+async function traumShowLogs(runId){
+  const el=$("traum-logs"); el.style.display="block"; el.textContent="loading redacted log…";
+  try{const d=await api("/api/ui/traum/runs/"+encodeURIComponent(runId)+"/logs?limit=300");el.textContent=(d.truncated?"[older output omitted]\n":"")+(d.text||"(no controller log)");}
+  catch(e){el.textContent=e.message;}
+}
+function wireTraumRunButtons(){
+  $("dream-days").querySelectorAll("[data-traum-action]").forEach(btn=>{
+    btn.addEventListener("click",()=>{
+      const a=btn.dataset.traumAction;
+      if(a==="logs") traumShowLogs(btn.dataset.run);
+      else if(a==="retry") traumRetry(btn.dataset.run,btn.dataset.attempt);
+      else if(a==="ack") traumAcknowledge(btn.dataset.attempt);
+      else if(a==="cancel") traumCancel(btn.dataset.run);
+      else if(a==="archive") traumArchive(btn.dataset.run);
+    });
+  });
+}
+
+let traumProposalOffset=0;
+const traumProposalPageSize=50;
+function traumProposalPage(direction){
+  traumProposalOffset=Math.max(0,traumProposalOffset+(direction*traumProposalPageSize));
+  loadTraumProposals();
+}
+async function loadTraumProposals(){
+  try{
+    const actionable=$("traum-show-deferred").checked?"false":"true";
+    const d=await api("/api/ui/traum/proposals?state=PENDING,DEFERRED,APPLY_FAILED&actionable="+actionable+
+      "&limit="+traumProposalPageSize+"&offset="+traumProposalOffset);
+    const shown=(d.proposals||[]).length;
+    const exact=d.counts_exact!==false;
+    const total=Number.isInteger(d.total_visible)?d.total_visible:null;
+    traumProposalOffset=Number.isInteger(d.offset)?d.offset:traumProposalOffset;
+    const hasNext=total!==null&&exact
+      ? traumProposalOffset+shown<total
+      : shown===traumProposalPageSize;
+    $("traum-proposal-prev").disabled=traumProposalOffset===0;
+    $("traum-proposal-next").disabled=!hasNext;
+    $("traum-proposal-page").textContent="offset "+traumProposalOffset+
+      (total!==null?" · total "+(exact?total:("at least "+total)):" · total unknown");
+    $("traum-proposal-ms").textContent=d._elapsed_ms+"ms · showing "+shown+"/"+
+      (total!==null?(exact?total:("at least "+total)):"unknown");
+    const rows=(d.proposals||[]).map(p=>{
+      const body=p.proposal||{};
+      const why=body.why||"";
+      const pid=esc(p.proposal_id), rev=Number(p.revision)||0;
+      let actions='<div class="actions">'+
+        '<button class="abtn" data-proposal-action="preview" data-proposal="'+pid+'" data-revision="'+rev+'">Preview</button>';
+      if(p.state!=="APPLY_FAILED"){
+        actions+='<button class="abtn always" data-proposal-action="approve" data-proposal="'+pid+'" data-revision="'+rev+'">Approve</button>'+
+          '<button class="abtn" data-proposal-action="defer" data-proposal="'+pid+'" data-revision="'+rev+'">Defer</button>';
+      }else{
+        actions+='<span class="badge state-APPLY_FAILED">RECONCILE BEFORE RETRY</span>';
+      }
+      actions+='<button class="abtn deny" data-proposal-action="reject" data-proposal="'+pid+'" data-revision="'+rev+'">Reject</button></div>';
+      return "<tr><td title='"+esc(p.proposal_id)+"'>"+esc(p.proposal_id.slice(0,18))+"</td>"+
+        "<td>"+esc(p.proposal_type||body.type||"unknown")+"<br><span style='color:var(--faint)'>"+esc(p.call_type||body.call||"")+"</span></td>"+
+        "<td>"+esc(why.slice(0,180))+"</td><td>"+stateBadge(p.state)+" r"+esc(p.revision)+"</td><td>"+actions+"</td></tr>";
+    }).join("");
+    const incomplete=!exact||d.inventory_truncated;
+    const emptyText=incomplete
+      ? "queue scan is incomplete — the human gate cannot be reported clear"
+      : d.hidden_future_deferred
+        ? "human gate is clear — "+d.hidden_future_deferred+" proposal(s) deferred until due"
+        : "human gate is clear — no semantic decisions pending";
+    const truncation=(d.truncated||incomplete)
+      ? '<tr><td colspan="5" class="empty">'+esc(
+          incomplete
+            ? "Inventory count is a lower bound; refine or continue only after the full queue is available."
+            : "Showing the first "+shown+" of "+total+" matching proposals; decisions remain in canonical history."
+        )+'</td></tr>'
+      : "";
+    $("traum-proposals").innerHTML=rows
+      ? "<tr><th>proposal</th><th>type / call</th><th>why</th><th>state</th><th>decision</th></tr>"+rows+truncation
+      : '<tr><td class="empty">'+esc(emptyText)+'</td></tr>';
+    wireTraumProposalButtons();
+  }catch(e){showErr($("traum-proposals"),e);}
+}
+function wireTraumProposalButtons(){
+  $("traum-proposals").querySelectorAll("[data-proposal-action]").forEach(btn=>{
+    btn.addEventListener("click",()=>{
+      const action=btn.dataset.proposalAction, proposal=btn.dataset.proposal;
+      const revision=Number(btn.dataset.revision);
+      if(action==="preview") traumPreview(proposal,revision);
+      else traumDecision(proposal,revision,action);
+    });
+  });
+}
+async function traumPreview(proposalId,revision){
+  showTraumResult("validating side-effect-free preview…");
+  try{const d=await apiPost("/api/ui/traum/proposals/"+encodeURIComponent(proposalId)+"/preview",{expected_revision:revision});showTraumResult(d);return d;}
+  catch(e){showTraumResult({error:e.message,details:e.data||null});throw e;}
+}
+async function traumDecision(proposalId,revision,decision){
+  const payload={decision,expected_revision:revision};
+  if(decision==="approve"){
+    try{await traumPreview(proposalId,revision);}catch{return;}
+    if(!confirm("Approve this semantic change after the side-effect-free preview? The current KB revision will be revalidated.")) return;
+  }else if(decision==="reject"){
+    const reason=prompt("Why reject this proposal?"); if(!reason) return; payload.reason=reason;
+  }else{
+    const date=prompt("Defer until (YYYY-MM-DD, within 365 days):"); if(!date) return; payload.defer_until=date;
+  }
+  try{const result=await apiPost("/api/ui/traum/proposals/"+encodeURIComponent(proposalId)+"/decision",payload);showTraumResult({decision_result:result,note:"Result retained for audit/copy until dismissed."});loadTraumProposals();loadTraumStatus();}
+  catch(e){showTraumResult({error:e.message,details:e.data||null,note:"If state is APPLY_FAILED, reconcile before any retry."});loadTraumProposals();loadTraumStatus();}
+}
+function showTraumResult(value){
+  const el=$("traum-preview");el.style.display="block";
+  el.textContent=typeof value==="string"?value:JSON.stringify(value,null,2);
+  $("traum-result-actions").style.display="flex";
+}
+function dismissTraumResult(){
+  $("traum-preview").textContent="";$("traum-preview").style.display="none";
+  $("traum-result-actions").style.display="none";
+}
+async function copyTraumResult(){
+  const text=$("traum-preview").textContent||"";
+  try{await navigator.clipboard.writeText(text);setTraumMsg("result copied",false);}
+  catch{setTraumMsg("copy unavailable; select the retained result manually",true);}
 }
 
 // ---- Ledger panel ----
@@ -493,7 +818,9 @@ async function loadEpisodes(){
 }
 
 function refreshAll(){
-  loadOverview(); loadPerms(); loadBackends(); loadKB(); loadDream(); loadLedger(); loadEpisodes();
+  loadOverview(); loadPerms(); loadBackends(); loadKB(); loadDream();
+  loadTraumStatus(); loadTraumRuns(); loadTraumProposals();
+  loadLedger(); loadEpisodes();
 }
 refreshAll();
 setInterval(refreshAll, 60000);

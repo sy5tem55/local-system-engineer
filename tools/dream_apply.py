@@ -1,26 +1,23 @@
 #!/usr/bin/env python3
 """
-dream_apply.py — TRAUM-ENGINE apply gate (v0.4.0)
+dream_apply.py — TRAUM-ENGINE apply gate (v0.5.0)
 =============================================================================
-Companion to docs/dreaming/DESIGN.md (dataflow §1, invariants §2 row 3, SCRIBE-1
-confirm-gate format §6) and tools/dream_runner.py (Prompts 2.1-2.4, the
-READ-ONLY proposer). TRAUM Thread 2, Prompt 2.5 — the last Thread 2 piece.
+Canonical, typed apply boundary for CLI and the TRAUM GUI. Preview/dry-run is
+side-effect-free: it may perform the reads needed for CAS/invariant checks,
+but never asks, claims, decides, writes a file, or calls a semantic write
+tool. ``--no-dry-run`` is the explicit reconciliation/apply mode.
 
-THIS IS THE ONLY CODE ALLOWED TO WRITE TO lse-kb/lse-errors-1024/lse-skills ON
-BEHALF OF A DREAM. dream_runner.py never calls an ES-mutating Tools method;
-it only ever writes dreams/YYYY-MM-DD/proposals.jsonl. This file reads that
-proposals.jsonl, re-validates every proposal against the code-enforced
-invariants below (never trusting dream_runner's own generation-time state —
-ES may have changed since), renders each one in the SCRIBE-1 confirm-gate
-block shape, asks a human yes/no PER PROPOSAL (DESIGN.md's dataflow diagram:
-"human confirm-gate (SCRIBE-1 format, per-proposal yes/no)" — a stricter grain
-than the debrief skill's own single combined yes, deliberately: unsupervised,
-machine-generated proposals get more granular human control), then applies
-approved ones through goethe.py's OWN Tools class — dynamically loaded and
-instantiated exactly the way goethe_mcp.py does it (make_instance() below is
-a deliberate mirror of goethe_mcp.py:183-208) — so there is exactly one
-write path into ES/kb regardless of whether the caller is a human MCP session
-or an applied dream proposal.
+Approval atomically claims the full canonical proposal group, revalidates it
+against current KB state, and invokes only fixed Tools methods. Authorization
+is a temporary capability on that one Tools instance; no environment variable
+or arbitrary shell command grants dream writes. A partial/ambiguous external
+write becomes ``APPLY_FAILED`` for human reconciliation and is never replayed
+automatically. Reject/defer and pair decisions are atomic in ``traum_state``.
+
+``index_to_kb`` now receives ``origin="dream"`` directly and enforces the
+dream quality/collision rule inside the Tools method. Existing-doc operations
+still receive the narrow post-write origin/provenance bookkeeping described
+below. Compatibility JSONL files are mirrors only; SQLite is authoritative.
 
 ONE EXCEPTION TO "ONLY WRITES ES/kb" (Thread 3, Prompt 3.6): a `prompt-rule`
 proposal (`call == "append_learned_rule"`) never touches ES at all — it
@@ -59,12 +56,9 @@ apply) by a dedicated check function below:
   (f) prompt-rule proposals may ONLY ever target prompts/learned-rules.md,
       never prompts/node4090* — check_prompt_rule_target(), Prompt 3.6.
 
-ONE EXCEPTION TO "ONE WRITE PATH" — origin/provenance stamping and dedup
-stats merge: mentor_correct/record_outcome have NO origin or provenance
-parameter at all (goethe.py's own docs: index_to_kb "has no
-provenance/origin parameter today"; corpus-audit.md confirms lse-kb's live
-mapping has no origin field yet — that is REFACTOR-4's job, not shipped).
-Invariant (d) still requires stamping it on every applied write, so
+NARROW BOOKKEEPING WRITE — origin/provenance stamping and dedup stats merge:
+mentor_correct/record_outcome have no origin or provenance parameter.
+Invariant (d) still requires stamping them on every applied write, so
 immediately after a successful mentor_correct/record_outcome call on an
 EXISTING doc, this file issues one narrowly-scoped es.update() adding
 {"origin": "dream", "provenance": "dream-YYYY-MM-DD"} (dynamic field
@@ -76,12 +70,9 @@ is bookkeeping/tagging, never a semantic decision (what changes, by how
 much) — that always flows through the same Tools method a human would call.
 skill_record already accepts a real `provenance` argument, so no
 supplementary provenance stamp is needed there; only `origin` gets the same
-one-line es.update() afterward. index_to_kb (the "kb-fact" proposal type,
-Thread 1 Prompt 1.5's SCRIBE-1 format, reused verbatim per DESIGN.md §6.2)
-has NEITHER provenance NOR origin — it gets the same full stamp as
-mentor_correct/record_outcome (both fields), located via the doc_id it
-returns in its own "KB created: doc_id=..." / "KB updated (refined):
-doc_id=..." result string, not skill_record's origin-only special case.
+one-line es.update() afterward. index_to_kb accepts `origin="dream"` on its
+guarded call; the returned doc_id is then used for a narrow provenance stamp
+and verification of the created/refined document.
 
 CONFIRM-GATE: DESIGN.md §6.4's exact block shape, with the file-write header
 replaced per §6.4's own dream_apply.py note — a TARGET: <doc_id> header for
@@ -112,24 +103,16 @@ files (dream_digest.py's own list_day_dirs/load_jsonl/proposal_key are
 reused verbatim so a proposal's identity/resolved-state matches the digest's
 own "Pending human-gate" preview section exactly). Any pending proposal
 whose day-dir is more than --stale-days (default 14) old is AUTO-EXPIRED as
-part of the same --queue call: one line appended to that day-dir's new
-expired.jsonl with a reason ("stale (>14d) — auto-expired; re-dream will
-re-propose if still true"), then excluded from the listing. This write is
-unconditional — NOT gated by --dry-run — the same precedent rejected.jsonl
-already sets in the single-run flow below: --dry-run only ever means "don't
-call a Tools method / don't write to ES"; expiry is local dream-dir
-bookkeeping, not an ES write, so it always happens when --queue runs and
-finds something stale. Rationale for auto-expiry rather than piling up
-forever: a 14-day-old proposal was generated against ES/kb state that has
-likely moved on; forcing it through the normal confirm-gate this late risks
-applying something already stale or duplicated by a more recent dream. If
-the underlying issue is still real, the next re-dream naturally re-proposes
-it against current state.
+part of explicit ``--no-dry-run`` queue reconciliation: one line is appended
+to that day-dir's expired.jsonl and the proposal is excluded. The default
+dry-run merely reports what would expire and writes nothing. A stale proposal
+is never applied from old evidence; a later successful dream may propose it
+again against current KB state.
 
 MORNING REVIEW LOOP (~5 minutes; full runbook write-up is Prompt 4.9, not
 yet done — this is the short version so the loop is usable today):
-  1. `python3 dream_apply.py --queue` — see everything pending, oldest
-     first, grouped by type; anything past --stale-days auto-expires here.
+  1. `python3 dream_apply.py --queue` — preview everything pending and what
+     would expire, oldest first, grouped by type (no writes).
   2. For each day-dir shown, apply that batch the normal way:
      `python3 dream_apply.py --proposals <dream-dir>/<date>/proposals.jsonl --no-dry-run`
      (still per-proposal yes/no — --queue only changes how you FIND what's
@@ -145,9 +128,11 @@ USAGE
   # Real run: interactive, per-proposal yes/no, actually writes to ES.
   python3 dream_apply.py --proposals dreams/2026-07-11/proposals.jsonl --no-dry-run
 
-  # Morning queue (Prompt 4.4): list everything pending across ALL day-dirs,
-  # oldest first, grouped by type; auto-expires anything >14 days old.
+  # Morning queue: side-effect-free list across all legacy day-dirs.
   python3 dream_apply.py --queue --dream-dir dreams
+
+  # Explicitly reconcile legacy stale entries to expired.jsonl.
+  python3 dream_apply.py --queue --dream-dir dreams --no-dry-run
 
 ENV (same GOETHE_ prefix convention as goethe.py/goethe_mcp.py/dream_runner.py)
   GOETHE_ES_URL, GOETHE_OLLAMA_URL, GOETHE_EMBED_MODEL  — same valves Tools()
@@ -179,8 +164,9 @@ from datetime import date, datetime
 
 import dream_runner as dr  # sibling module: reuse validate_proposal_shape, not a second validator
 import dream_digest        # Prompt 3.4: morning digest refresh at end of run
+import traum_state
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 QUARANTINE_DELETE_TYPE = "quarantine-delete-request"  # DESIGN.md §2 row 3(c) -- not
                                                         # produced by any pass yet (2.2-2.4)
@@ -303,15 +289,17 @@ def group_proposals(proposals: list) -> list:
 
 def fetch_kb_doc(es, doc_id: str):
     try:
-        resp = es.get(
-            index="lse-kb", id=doc_id,
-            _source=["title", "quality_score", "stale", "source_tier",
-                     "empirical_runs", "success_count", "failure_count",
-                     "consecutive_failures"],
-        )
+        # Full _source is needed for the generation/apply CAS token. The
+        # token helper ignores embeddings and other non-semantic metadata.
+        resp = es.get(index="lse-kb", id=doc_id)
         return resp["_source"]
-    except Exception:
-        return None
+    except Exception as exc:
+        status = getattr(getattr(exc, "meta", None), "status", None)
+        if status == 404 or type(exc).__name__ in {"NotFoundError", "KeyError"}:
+            return None
+        raise dr.DependencyBlocked(
+            "elasticsearch", f"read failed for lse-kb/{doc_id}: {exc}"
+        ) from exc
 
 
 def check_quarantine(current_doc: dict, proposal_type: str):
@@ -361,6 +349,38 @@ def check_quality_raise(args: dict, current_doc: dict):
     return None
 
 
+def check_target_cas(proposal: dict, current_doc: dict | None):
+    expected = proposal.get("expected_target_token")
+    if not expected:
+        return None  # legacy proposal: other live invariants still apply
+    actual = traum_state.document_token(current_doc)
+    if actual != expected:
+        return (
+            "target_changed_since_generation: expected token "
+            f"{expected[:12]}, current {str(actual)[:12]} — review fresh evidence"
+        )
+    return None
+
+
+def check_noop(proposal: dict, current_doc: dict | None):
+    """Deterministic no-op detection; these never need a human decision."""
+    if current_doc is None:
+        return None
+    call = proposal.get("call")
+    args = proposal.get("args", {})
+    if call == "mentor_correct":
+        same_content = str(args.get("correction", "")) == str(current_doc.get("content", ""))
+        try:
+            same_quality = float(args.get("new_quality")) == float(
+                current_doc.get("quality_score")
+            )
+        except (TypeError, ValueError):
+            same_quality = False
+        if same_content and same_quality:
+            return "noop: target already has the proposed content and quality"
+    return None
+
+
 def check_evidence_thin(args: dict, min_len: int = 20):
     """Defense-in-depth re-check of DESIGN.md §6.2's evidence floor —
     dream_runner.py's validator already enforces this at generation time;
@@ -400,10 +420,9 @@ def check_skill_collision_raise(tools, args: dict):
     to check ahead of time, so this runs the SAME kNN lookup skill_record
     will run internally, predicts the collision, and rejects if it would
     raise an existing skill's quality above its current value. Returns None
-    (safe to proceed) if no collision is predicted, or if the prediction
-    itself fails (fails OPEN here only — skill_record's own tier ceiling
-    still applies as a backstop; this is a best-effort second check on top
-    of it, not the only guard)."""
+    only when the read-only precheck succeeds and predicts no unsafe raise.
+    Dependency failure is typed BLOCKED/fail-closed; it never becomes a
+    permanent rejection or an unchecked apply."""
     try:
         occupation = str(args.get("occupation", ""))
         task = str(args.get("task", ""))
@@ -421,9 +440,7 @@ def check_skill_collision_raise(tools, args: dict):
             },
         )["hits"]["hits"]
     except Exception as exc:
-        print(f"[dream_apply] WARNING: skill-collision precheck failed ({exc}) — "
-              "proceeding on skill_record's own tier ceiling alone", file=sys.stderr)
-        return None
+        raise dr.DependencyBlocked("skill-collision-precheck", str(exc)) from exc
     if not dup or dup[0].get("_score", 0) < 0.92:
         return None  # fresh create, nothing to raise
     existing_q = float(dup[0]["_source"].get("quality", 0.0))
@@ -435,6 +452,34 @@ def check_skill_collision_raise(tools, args: dict):
         return (
             f"would collide with existing skill {dup[0]['_source'].get('skill_id')!r} "
             f"(quality {existing_q:.2f}) and raise it to {effective_q:.2f} — rejected"
+        )
+    return None
+
+
+def check_kb_fact_collision_raise(tools, args: dict):
+    """Mirror index_to_kb's KNN dedup before a dream-origin KB fact write."""
+    try:
+        content = str(args.get("content", ""))[:50000]
+        embedding = tools._embed(content)
+        dup = tools._es().search(
+            index="lse-kb",
+            body={
+                "knn": {"field": "embedding", "query_vector": embedding,
+                        "k": 1, "num_candidates": 10},
+                "_source": ["quality_score"], "size": 1,
+            },
+        )["hits"]["hits"]
+    except Exception as exc:
+        raise dr.DependencyBlocked("kb-fact-collision-precheck", str(exc)) from exc
+    if not dup or dup[0].get("_score", 0) < 0.92:
+        return None
+    existing_q = float(dup[0]["_source"].get("quality_score", 0.0) or 0.0)
+    tier = args.get("source_tier", "inferred")
+    effective_q = min(float(args.get("quality_score", 0.5)), _TIER_CEILING.get(tier, 0.4))
+    if effective_q > existing_q:
+        return (
+            f"would collide with existing KB doc {dup[0].get('_id')!r} and raise "
+            f"quality {existing_q:.2f} -> {effective_q:.2f} — rejected"
         )
     return None
 
@@ -473,7 +518,17 @@ def validate_proposal_for_apply(p: dict, es) -> str:
         current_doc = fetch_kb_doc(es, args["doc_id"])
         if current_doc is None:
             return f"doc_id {args['doc_id']!r} not found in lse-kb at apply time (deleted? renamed?)"
-        err = check_quarantine(current_doc, ptype) or check_quality_raise(args, current_doc)
+        err = (check_target_cas(p, current_doc) or check_noop(p, current_doc)
+               or check_quarantine(current_doc, ptype)
+               or check_quality_raise(args, current_doc))
+        if err:
+            return err
+
+    if call == "kb_verify" and "doc_id" in args:
+        current_doc = fetch_kb_doc(es, args["doc_id"])
+        if current_doc is None:
+            return f"doc_id {args['doc_id']!r} not found in lse-kb at apply time"
+        err = check_target_cas(p, current_doc) or check_quarantine(current_doc, ptype)
         if err:
             return err
 
@@ -581,7 +636,7 @@ def render_group(group: list, dream_dir: str) -> str:
     else:
         question = f"Commit this {first.get('type')} ({len(group)} call)? (yes/no)"
     blocks.append(question)
-    return "\n".join(blocks)
+    return traum_state.redact_persisted_text("\n".join(blocks)) or ""
 
 
 def ask_yes_no(prompt: str) -> bool:
@@ -665,7 +720,9 @@ def append_learned_rule(repo_root: str, args: dict, evidence: list, today: str) 
     else:
         text = LEARNED_RULES_HEADER
 
-    entry = _learned_rules_entry_text(args, evidence, today)
+    entry = traum_state.redact_persisted_text(
+        _learned_rules_entry_text(args, evidence, today)
+    ) or ""
     marker = "## Merged"
     idx = text.find(marker)
     if idx == -1:
@@ -680,6 +737,28 @@ def append_learned_rule(repo_root: str, args: dict, evidence: list, today: str) 
     with open(path, "wt", encoding="utf-8") as f:
         f.write(text)
     return f"learned-rules.md updated (pending entry appended): {path}"
+
+
+class ApplyError(RuntimeError):
+    """A confirmed operation did not produce a verifiable success result."""
+
+
+def _checked_result(call: str, result):
+    text = str(result or "")
+    success = {
+        "mentor_correct": lambda s: s.startswith("Mentor correction applied:"),
+        "record_outcome": lambda s: s.startswith("Outcome recorded:"),
+        "kb_verify": lambda s: s.startswith(("kb_verify phase 1", "VERIFY phase1:")),
+        "skill_record": lambda s: bool(re.match(r"^SKILL (?:created|updated): \S+", s)),
+        "index_to_kb": lambda s: bool(
+            re.match(r"^KB (?:created|updated \(refined\)): doc_id=\S+", s)
+        ),
+        "append_learned_rule": lambda s: s.startswith("learned-rules.md updated"),
+    }.get(call)
+    if success is None or not success(text):
+        safe_text = traum_state.redact_persisted_text(text)
+        raise ApplyError(f"{call} returned a non-success result: {safe_text!r}")
+    return result
 
 
 def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list:
@@ -707,7 +786,11 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
             continue
 
         if call == "mentor_correct":
-            result = tools.mentor_correct(args["doc_id"], args["correction"], args["new_quality"])
+            result = _checked_result(
+                call, tools.mentor_correct(
+                    args["doc_id"], args["correction"], args["new_quality"]
+                )
+            )
             extra = None
             if len(group) > 1:
                 # dedup merge: union the runs/ok/fail stats across keep+retire
@@ -726,22 +809,28 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
             results.append({"proposal": p, "result": result})
 
         elif call == "record_outcome":
-            result = tools.record_outcome(args["doc_id"], args["success"],
-                                           args.get("notes", ""), args.get("evidence", ""))
+            result = _checked_result(
+                call, tools.record_outcome(
+                    args["doc_id"], args["success"], args.get("notes", ""),
+                    args.get("evidence", "")
+                )
+            )
             _stamp_dream_fields(es, args["doc_id"], today)
             results.append({"proposal": p, "result": result})
 
         elif call == "kb_verify":
-            result = tools.kb_verify(args["doc_id"])  # phase 1 only -- read-only, no stamp needed
+            result = _checked_result(
+                call, tools.kb_verify(args["doc_id"])
+            )  # phase 1 only -- read-only, no stamp needed
             results.append({"proposal": p, "result": result})
 
         elif call == "skill_record":
-            result = tools.skill_record(
+            result = _checked_result(call, tools.skill_record(
                 task=args["task"], occupation=args["occupation"], procedure=args["procedure"],
                 verification=args["verification"], preconditions=args.get("preconditions", ""),
                 failure_modes=args.get("failure_modes", ""), provenance=args.get("provenance", ""),
                 quality=args.get("quality", 0.5), source_tier=args.get("source_tier", "inferred"),
-            )
+            ))
             # provenance is already a real skill_record arg; origin still isn't.
             skill_id_match = re.search(r"SKILL (?:created|updated): (\S+)", result or "")
             if skill_id_match:
@@ -751,8 +840,15 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
                     doc_hash = hashlib.sha256(slug_id.encode()).hexdigest()[:16]
                     es.update(index="lse-skills", id=doc_hash, body={"doc": {"origin": "dream"}})
                 except Exception as exc:
-                    print(f"[dream_apply] WARNING: origin stamp on lse-skills failed ({exc}) "
-                          "-- skill_record's own write still succeeded", file=sys.stderr)
+                    raise ApplyError(
+                        "skill_record wrote but mandatory origin=dream stamp failed; "
+                        f"reconcile before retry: {exc}"
+                    ) from exc
+            else:
+                raise ApplyError(
+                    "skill_record wrote but returned no parseable skill id; mandatory "
+                    "origin=dream stamp could not be verified"
+                )
             results.append({"proposal": p, "result": result})
 
         elif call == "index_to_kb":
@@ -761,29 +857,246 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
             # existing doc_id, so none of the doc_id-gated checks above
             # apply; check_ground_truth already ran on args.source_tier at
             # the top of validate_proposal_for_apply.
-            result = tools.index_to_kb(
+            result = _checked_result(call, tools.index_to_kb(
                 content=args["content"], title=args["title"], topic=args.get("topic", "general"),
                 source_url=args.get("source_url", ""), quality_score=args.get("quality_score", 0.5),
                 source_tier=args.get("source_tier", "inferred"), evidence=args.get("evidence", ""),
                 verified_against=args.get("verified_against", ""), volatility=args.get("volatility", "slow"),
-            )
+                origin="dream",
+            ))
             doc_id_match = re.search(r"doc_id=(\S+)", result or "")
             if doc_id_match:
                 _stamp_dream_fields(es, doc_id_match.group(1), today)
             else:
-                print(f"[dream_apply] WARNING: could not parse doc_id from index_to_kb result "
-                      f"({result!r}) -- origin/provenance NOT stamped", file=sys.stderr)
+                raise ApplyError(
+                    "index_to_kb wrote but returned no parseable doc_id; origin/provenance "
+                    "could not be verified — reconcile before retry"
+                )
             results.append({"proposal": p, "result": result})
 
         elif call == "append_learned_rule":
             # Prompt 3.6 — the one call in this loop that never touches ES.
-            result = append_learned_rule(repo_root, args, p.get("evidence", []), today)
+            result = _checked_result(
+                call, append_learned_rule(
+                    repo_root, args, p.get("evidence", []), today
+                )
+            )
             results.append({"proposal": p, "result": result})
 
         else:
-            results.append({"proposal": p, "result": f"ERROR: unknown call {call!r}, not applied"})
+            raise ApplyError(f"unknown call {call!r}, not applied")
 
     return results
+
+
+# --- canonical non-interactive decision API (GUI + CLI) ---------------------
+
+def _as_state(state_or_path) -> traum_state.TraumState:
+    if isinstance(state_or_path, traum_state.TraumState):
+        return state_or_path
+    return traum_state.TraumState(str(state_or_path))
+
+
+def _canonical_group(state: traum_state.TraumState, proposal_id: str) -> list[dict]:
+    selected = state.get_proposal(proposal_id)
+    if selected is None:
+        raise traum_state.NotFoundError(f"proposal not found: {proposal_id}")
+    pair_id = selected["proposal"].get("pair_id")
+    if not pair_id:
+        return [selected]
+    rows = state.list_proposals(limit=100000)
+    group = [
+        row for row in rows
+        if row["attempt_id"] == selected["attempt_id"]
+        and row["proposal"].get("pair_id") == pair_id
+    ]
+    return sorted(group, key=lambda row: row["created_at"])
+
+
+def _load_tools_for_decision(tools, es_url, ollama_url, embed_model, goethe_path):
+    if tools is not None:
+        return tools
+    Tools = load_tools_class(goethe_path)
+    return make_tools_instance(Tools, es_url, ollama_url, embed_model)
+
+
+def preview_proposal(state_or_path, proposal_id: str, *, tools=None,
+                     expected_revision: int | None = None,
+                     es_url: str | None = None, ollama_url: str | None = None,
+                     embed_model: str | None = None,
+                     goethe_path: str | None = None,
+                     repo_root: str | None = None) -> dict:
+    """Read, render, and live-validate a proposal without changing state.
+
+    This function performs only ES/model reads needed by invariant checks. It
+    never claims a proposal, invokes a write tool, writes a decision log, or
+    refreshes the digest.
+    """
+    state = _as_state(state_or_path)
+    rows = _canonical_group(state, proposal_id)
+    parent = state.get_attempt(rows[0]["attempt_id"])
+    if parent is None or parent["state"] not in traum_state.CONSUMABLE_OUTCOMES:
+        raise traum_state.ConflictError(
+            "proposal is not reviewable until its parent attempt completes successfully"
+        )
+    if expected_revision is not None and rows[0]["revision"] != expected_revision:
+        raise traum_state.ConflictError(
+            f"proposal revision changed: expected {expected_revision}, "
+            f"got {rows[0]['revision']}"
+        )
+    tool_obj = _load_tools_for_decision(
+        tools, es_url or _es_url_default(), ollama_url or _ollama_url_default(),
+        embed_model or _embed_model_default(), goethe_path or _goethe_path_default(),
+    )
+    es = tool_obj._es()
+    reasons = []
+    for row in rows:
+        proposal = row["proposal"]
+        reason = validate_proposal_for_apply(proposal, es)
+        if reason is None and proposal.get("call") == "skill_record":
+            reason = check_skill_collision_raise(tool_obj, proposal.get("args", {}))
+        if reason is None and proposal.get("call") == "index_to_kb":
+            reason = check_kb_fact_collision_raise(tool_obj, proposal.get("args", {}))
+        reasons.append(reason)
+    attempt = state.get_attempt(rows[0]["attempt_id"])
+    artifact = (attempt or {}).get("artifacts", {}).get("proposals", "")
+    day_dir = os.path.dirname(artifact) if artifact else os.path.dirname(state.db_path)
+    return {
+        "proposal_id": proposal_id,
+        "proposal_ids": [row["proposal_id"] for row in rows],
+        "revision": rows[0]["revision"],
+        "state": rows[0]["state"],
+        "valid": not any(reasons),
+        "reasons": reasons,
+        "rendered": render_group([row["proposal"] for row in rows], day_dir),
+    }
+
+
+def _append_compat_decision(state: traum_state.TraumState, rows: list[dict],
+                            filename: str, entry_builder) -> None:
+    """Best-effort mirror for legacy digest readers; SQLite stays canonical."""
+    attempt = state.get_attempt(rows[0]["attempt_id"])
+    artifact = (attempt or {}).get("artifacts", {}).get("proposals", "")
+    if not artifact:
+        return
+    path = os.path.join(os.path.dirname(artifact), filename)
+    try:
+        with open(path, "at", encoding="utf-8") as f:
+            for row in rows:
+                entry = traum_state.redact_persisted_value(entry_builder(row))
+                f.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        print(f"[dream_apply] WARNING: canonical decision succeeded but legacy "
+              f"{filename} mirror failed ({exc})", file=sys.stderr)
+
+
+def decide_proposal(state_or_path, proposal_id: str, decision: str, *,
+                    expected_revision: int | None = None,
+                    reason: str | None = None, defer_until: str | None = None,
+                    actor: str = "local-operator", tools=None,
+                    es_url: str | None = None, ollama_url: str | None = None,
+                    embed_model: str | None = None,
+                    goethe_path: str | None = None,
+                    repo_root: str | None = None) -> dict:
+    """Make one canonical approve/reject/defer decision.
+
+    Approval performs live invariant/CAS validation, atomically claims the
+    whole proposal pair, executes without a shell, and finalizes every member
+    together. A crash/partial external write becomes ``APPLY_FAILED`` and is
+    never auto-replayed. Repeated calls on an APPLIED proposal are idempotent.
+    """
+    state = _as_state(state_or_path)
+    decision = decision.lower()
+    rows = _canonical_group(state, proposal_id)
+    ids = [row["proposal_id"] for row in rows]
+    revisions = {row["proposal_id"]: row["revision"] for row in rows}
+    if expected_revision is not None:
+        revisions[proposal_id] = expected_revision
+
+    if decision in {"reject", "defer"}:
+        updated = state.transition_proposals(
+            ids, decision, actor=actor, reason=reason,
+            defer_until=defer_until, expected_revisions=revisions,
+        )
+        if decision == "reject":
+            now = datetime.now().astimezone().isoformat()
+            _append_compat_decision(
+                state, rows, "rejected.jsonl",
+                lambda row: {"proposal": row["proposal"],
+                             "reason": reason or "human declined",
+                             "rejected_at": now},
+            )
+        return {"decision": decision, "state": updated[0]["state"],
+                "proposals": updated}
+    if decision != "approve":
+        raise ValueError("decision must be approve, reject, or defer")
+
+    if all(row["state"] == "APPLIED" for row in rows):
+        return {"decision": "approve", "state": "APPLIED",
+                "proposals": rows, "idempotent": True}
+
+    tool_obj = _load_tools_for_decision(
+        tools, es_url or _es_url_default(), ollama_url or _ollama_url_default(),
+        embed_model or _embed_model_default(), goethe_path or _goethe_path_default(),
+    )
+    preview = preview_proposal(
+        state, proposal_id, tools=tool_obj, repo_root=repo_root or _repo_root_default()
+    )
+    if not preview["valid"]:
+        updated = state.transition_proposals(
+            ids, "system_reject", actor="system-invariant",
+            reason="; ".join(r for r in preview["reasons"] if r),
+            expected_revisions=revisions,
+        )
+        return {"decision": "system_reject", "state": "SYSTEM_REJECTED",
+                "reasons": preview["reasons"], "proposals": updated}
+
+    claimed = state.claim_proposals(
+        ids, actor=actor, expected_revisions=revisions
+    )
+    auth_missing = not hasattr(tool_obj, "_dream_apply_authorized")
+    prior_auth = getattr(tool_obj, "_dream_apply_authorized", False)
+    tool_obj._dream_apply_authorized = True
+    try:
+        results = apply_group(
+            tool_obj, [row["proposal"] for row in claimed], dry_run=False,
+            repo_root=repo_root or _repo_root_default(),
+        )
+    except Exception as exc:
+        safe_exc = traum_state.redact_persisted_text(exc) or "redacted apply failure"
+        failed = state.finalize_proposals(
+            ids, succeeded=False, actor=actor,
+            reason=f"{type(exc).__name__}: {safe_exc}",
+        )
+        raise ApplyError(
+            f"proposal apply failed closed; reconcile before retry: {safe_exc}"
+        ) from exc
+    finally:
+        if auth_missing:
+            try:
+                delattr(tool_obj, "_dream_apply_authorized")
+            except AttributeError:
+                pass
+        else:
+            tool_obj._dream_apply_authorized = prior_auth
+
+    applied = state.finalize_proposals(
+        ids, succeeded=True, actor=actor, result=results
+    )
+    now = datetime.now().astimezone().isoformat()
+    result_by_id = {
+        r["proposal"].get("proposal_id"): r["result"] for r in results
+    }
+    _append_compat_decision(
+        state, rows, "applied.jsonl",
+        lambda row: {
+            "proposal": row["proposal"],
+            "result": result_by_id.get(row["proposal_id"], "applied"),
+            "applied_at": now, "dry_run": False,
+        },
+    )
+    return {"decision": "approve", "state": "APPLIED",
+            "proposals": applied, "results": results, "idempotent": False}
 
 
 # --- queue mode (Prompt 4.4, TRAUM-AUTO) -----------------------------------
@@ -793,7 +1106,8 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
 # preview section exactly) and, when it finds something stale, appends to a
 # new expired.jsonl next to applied.jsonl/rejected.jsonl.
 
-def gather_queue(dream_dir: str, today, stale_days: int = DREAM_QUEUE_STALE_DAYS):
+def gather_queue(dream_dir: str, today, stale_days: int = DREAM_QUEUE_STALE_DAYS,
+                 reconcile: bool = False):
     """Walks every YYYY-MM-DD day-dir under dream_dir, OLDEST FIRST, and
     returns (pending, expired):
       pending -- proposals not yet applied/rejected/expired, each tagged with
@@ -805,13 +1119,9 @@ def gather_queue(dream_dir: str, today, stale_days: int = DREAM_QUEUE_STALE_DAYS
 
     A proposal already present (by dream_digest.proposal_key content hash) in
     its day-dir's applied.jsonl, rejected.jsonl, OR expired.jsonl is resolved
-    and excluded from `pending`. Newly-expired proposals are appended to that
-    day-dir's expired.jsonl UNCONDITIONALLY -- not gated by --dry-run. This
-    mirrors the precedent this file already sets for rejected.jsonl in the
-    single-run flow below (human-decline/invariant-fail rejections are logged
-    regardless of --dry-run too): --dry-run only ever means "don't call a
-    Tools method / don't write to ES". Auto-expiry is local bookkeeping, not
-    an ES write, so it always happens.
+    and excluded from `pending`. Newly-expired proposals are appended only
+    when ``reconcile=True`` (CLI ``--no-dry-run``). The default queue preview
+    is side-effect-free and reports what *would* expire without resolving it.
 
     A day-dir whose name fails to parse as a date is defensively treated as
     age_days=0 (never auto-expired on a parse failure -- fail closed toward
@@ -830,7 +1140,10 @@ def gather_queue(dream_dir: str, today, stale_days: int = DREAM_QUEUE_STALE_DAYS
         applied = dream_digest.load_jsonl(os.path.join(base, "applied.jsonl"))
         rejected = dream_digest.load_jsonl(os.path.join(base, "rejected.jsonl"))
         expired_prior = dream_digest.load_jsonl(os.path.join(base, "expired.jsonl"))
-        resolved = {dream_digest.proposal_key(e["proposal"]) for e in applied if "proposal" in e}
+        resolved = {
+            dream_digest.proposal_key(e["proposal"]) for e in applied
+            if "proposal" in e and e.get("dry_run") is False
+        }
         resolved |= {dream_digest.proposal_key(e["proposal"]) for e in rejected if "proposal" in e}
         resolved |= {dream_digest.proposal_key(e["proposal"]) for e in expired_prior if "proposal" in e}
 
@@ -856,10 +1169,12 @@ def gather_queue(dream_dir: str, today, stale_days: int = DREAM_QUEUE_STALE_DAYS
             else:
                 pending.append({"date": d, "age_days": age_days, "proposal": p})
 
-        if newly_expired_here:
+        if newly_expired_here and reconcile:
             with open(os.path.join(base, "expired.jsonl"), "at", encoding="utf-8") as f:
                 for entry in newly_expired_here:
-                    f.write(json.dumps(entry) + "\n")
+                    f.write(json.dumps(
+                        traum_state.redact_persisted_value(entry)
+                    ) + "\n")
 
     return pending, expired
 
@@ -891,12 +1206,16 @@ def render_queue(buckets: dict, today) -> str:
             pair = f" pair_id={p['pair_id']}" if p.get("pair_id") else ""
             why = dream_digest._truncate(p.get("why", ""), 100)
             lines.append(f"  [{e['date']}, {e['age_days']}d old]{pair} {p.get('call', '?')} — {why}")
-    return "\n".join(lines)
+    return traum_state.redact_persisted_text("\n".join(lines)) or ""
 
 
 def cmd_queue(args) -> None:
     today = date.today()
-    pending, expired = gather_queue(args.dream_dir, today, stale_days=args.stale_days)
+    dry_run = bool(getattr(args, "dry_run", True))
+    pending, expired = gather_queue(
+        args.dream_dir, today, stale_days=args.stale_days,
+        reconcile=not dry_run,
+    )
 
     if expired:
         by_date = {}
@@ -904,8 +1223,10 @@ def cmd_queue(args) -> None:
             by_date.setdefault(e["date"], 0)
             by_date[e["date"]] += 1
         detail = ", ".join(f"{d}:{n}" for d, n in sorted(by_date.items()))
-        print(f"[dream_apply] auto-expired {len(expired)} stale (>{args.stale_days}d) "
-              f"proposal(s) this run ({detail}) -> <day-dir>/expired.jsonl", file=sys.stderr)
+        verb = "auto-expired" if not dry_run else "[dry-run] would auto-expire"
+        destination = " -> <day-dir>/expired.jsonl" if not dry_run else ""
+        print(f"[dream_apply] {verb} {len(expired)} stale (>{args.stale_days}d) "
+              f"proposal(s) this run ({detail}){destination}", file=sys.stderr)
 
     if not pending:
         print(f"[dream_apply] queue is empty -- 0 pending proposal(s) under {args.dream_dir}",
@@ -944,8 +1265,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="--queue only: auto-expire proposals older than this many days "
                     f"(default: {DREAM_QUEUE_STALE_DAYS})")
     ap.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=True,
-                    help="render + validate + ask, but never actually call a Tools method "
-                    "(default: true). Pass --no-dry-run to actually write to ES.")
+                    help="side-effect-free preview: render + read-only validate, do not ask "
+                    "or resolve anything (default: true). Pass --no-dry-run to decide/apply.")
+    ap.add_argument("--state-db", default=None,
+                    help="canonical state DB (default: <dream-root>/traum-state.db)")
     ap.add_argument("--es-url", default=_es_url_default())
     ap.add_argument("--ollama-url", default=_ollama_url_default())
     ap.add_argument("--embed-model", default=_embed_model_default())
@@ -960,8 +1283,15 @@ def parse_args(argv=None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
+def _state_path_for_proposals(args, day_dir: str) -> str:
+    if args.state_db:
+        return args.state_db
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", os.path.basename(day_dir)):
+        return traum_state.default_db_path(os.path.dirname(day_dir))
+    return traum_state.default_db_path(args.dream_dir)
+
+
 def main(argv=None) -> None:
-    os.environ["GOETHE_DREAM_APPLY"] = "1"  # authorizes dream-provenance skill_record
     args = parse_args(argv)
 
     if args.queue:
@@ -987,61 +1317,132 @@ def main(argv=None) -> None:
     es = tools._es()
 
     groups = group_proposals(proposals)
-    applied_path = os.path.join(dream_dir, "applied.jsonl")
-    rejected_path = os.path.join(dream_dir, "rejected.jsonl")
-    applied_f = open(applied_path, "at", encoding="utf-8")
-    rejected_f = open(rejected_path, "at", encoding="utf-8")
 
-    n_applied = n_rejected_invariant = n_rejected_human = n_auto = 0
-    try:
+    # Preview is intentionally boring: validate/render and stop. No prompt,
+    # state DB, decision JSONL, digest refresh, environment authorization, or
+    # write-capable Tools method is reached.
+    if args.dry_run:
         for group in groups:
             reasons = [validate_proposal_for_apply(p, es) for p in group]
-            bad = next((r for r in reasons if r), None)
-            if bad:
-                n_rejected_invariant += 1
-                for p in group:
-                    rejected_f.write(json.dumps({
-                        "proposal": p, "reason": f"invariant: {bad}",
-                        "rejected_at": datetime.now().astimezone().isoformat(),
-                    }) + "\n")
-                print(f"[dream_apply] REJECTED (invariant): {bad}", file=sys.stderr)
-                continue
-
+            for p, reason in zip(group, reasons):
+                if reason is None and p.get("call") == "skill_record":
+                    reason = check_skill_collision_raise(tools, p.get("args", {}))
+                if reason is None and p.get("call") == "index_to_kb":
+                    reason = check_kb_fact_collision_raise(tools, p.get("args", {}))
+                if reason:
+                    print(f"[dream_apply] [dry-run] would system-reject: {reason}",
+                          file=sys.stderr)
             print("\n" + render_group(group, dream_dir) + "\n", file=sys.stderr)
+        print(f"[dream_apply] [dry-run] previewed {len(proposals)} proposal(s); "
+              "no decisions recorded", file=sys.stderr)
+        return
 
-            ptype = group[0].get("type")
-            if ptype in auto_apply_types:
-                confirmed = True
-                n_auto += 1
-                print(f"[dream_apply] auto-applied (type {ptype!r} in --auto-apply-types)",
-                      file=sys.stderr)
+    state_path = _state_path_for_proposals(args, dream_dir)
+    state = traum_state.TraumState(state_path) if os.path.exists(state_path) else None
+    applied_path = os.path.join(dream_dir, "applied.jsonl")
+    rejected_path = os.path.join(dream_dir, "rejected.jsonl")
+    resolved = set()
+    for path in (applied_path, rejected_path, os.path.join(dream_dir, "expired.jsonl")):
+        for entry in dream_digest.load_jsonl(path):
+            if "proposal" in entry and not (
+                path == applied_path and entry.get("dry_run") is not False
+            ):
+                resolved.add(dream_digest.proposal_key(entry["proposal"]))
+
+    n_applied = n_rejected_invariant = n_rejected_human = n_auto = 0
+    for group in groups:
+        if all(dream_digest.proposal_key(p) in resolved for p in group):
+            print("[dream_apply] already resolved — idempotent skip", file=sys.stderr)
+            continue
+        reasons = [validate_proposal_for_apply(p, es) for p in group]
+        for i, p in enumerate(group):
+            if reasons[i] is None and p.get("call") == "skill_record":
+                reasons[i] = check_skill_collision_raise(tools, p.get("args", {}))
+            if reasons[i] is None and p.get("call") == "index_to_kb":
+                reasons[i] = check_kb_fact_collision_raise(tools, p.get("args", {}))
+        bad = next((r for r in reasons if r), None)
+        canonical_id = group[0].get("proposal_id")
+        canonical = bool(state and canonical_id and state.get_proposal(canonical_id))
+        if bad:
+            n_rejected_invariant += len(group)
+            if canonical:
+                state.transition_proposals(
+                    [p["proposal_id"] for p in group], "system_reject",
+                    actor="system-invariant", reason=bad,
+                )
             else:
-                confirmed = ask_yes_no("Apply?")
+                with open(rejected_path, "at", encoding="utf-8") as f:
+                    for p in group:
+                        f.write(json.dumps(traum_state.redact_persisted_value({
+                            "proposal": p, "reason": f"invariant: {bad}",
+                            "rejected_at": datetime.now().astimezone().isoformat(),
+                        })) + "\n")
+            print(f"[dream_apply] SYSTEM_REJECTED (invariant/no-op): {bad}", file=sys.stderr)
+            continue
 
-            if not confirmed:
-                n_rejected_human += 1
-                for p in group:
-                    rejected_f.write(json.dumps({
-                        "proposal": p, "reason": "human declined",
-                        "rejected_at": datetime.now().astimezone().isoformat(),
-                    }) + "\n")
-                continue
+        print("\n" + render_group(group, dream_dir) + "\n", file=sys.stderr)
+        ptype = group[0].get("type")
+        # Reverify is a documented read-only probe, not a semantic write and
+        # not an expansion of GOETHE_DREAM_AUTO_APPLY. All semantic proposal
+        # types still require a human unless the evidence-earned allowlist
+        # already contains them.
+        safe_probe = ptype == "reverify"
+        if safe_probe or ptype in auto_apply_types:
+            confirmed = True
+            n_auto += 1
+            source = "built-in read-only probe" if safe_probe else "earned allowlist"
+            print(f"[dream_apply] automatic ({source}): type={ptype!r}", file=sys.stderr)
+        else:
+            confirmed = ask_yes_no("Apply?")
 
-            results = apply_group(tools, group, args.dry_run, args.repo_root)
-            n_applied += len(results)
-            for r in results:
-                applied_f.write(json.dumps({
-                    "proposal": r["proposal"], "result": r["result"],
-                    "applied_at": datetime.now().astimezone().isoformat(),
-                    "dry_run": args.dry_run,
-                }) + "\n")
-                print(f"[dream_apply] {mode}{r['result']}", file=sys.stderr)
-    finally:
-        applied_f.close()
-        rejected_f.close()
+        if not confirmed:
+            n_rejected_human += len(group)
+            if canonical:
+                decide_proposal(state, canonical_id, "reject", tools=tools,
+                                reason="human declined")
+            else:
+                with open(rejected_path, "at", encoding="utf-8") as f:
+                    for p in group:
+                        f.write(json.dumps(traum_state.redact_persisted_value({
+                            "proposal": p, "reason": "human declined",
+                            "rejected_at": datetime.now().astimezone().isoformat(),
+                        })) + "\n")
+            continue
+
+        if canonical:
+            decision_result = decide_proposal(
+                state, canonical_id, "approve", tools=tools,
+                repo_root=args.repo_root,
+            )
+            results = decision_result.get("results", [])
+        else:
+            auth_missing = not hasattr(tools, "_dream_apply_authorized")
+            prior_auth = getattr(tools, "_dream_apply_authorized", False)
+            tools._dream_apply_authorized = True
+            try:
+                results = apply_group(tools, group, False, args.repo_root)
+            finally:
+                if auth_missing:
+                    try:
+                        delattr(tools, "_dream_apply_authorized")
+                    except AttributeError:
+                        pass
+                else:
+                    tools._dream_apply_authorized = prior_auth
+            with open(applied_path, "at", encoding="utf-8") as f:
+                for result in results:
+                    f.write(json.dumps(traum_state.redact_persisted_value({
+                        "proposal": result["proposal"], "result": result["result"],
+                        "applied_at": datetime.now().astimezone().isoformat(),
+                        "dry_run": False,
+                    })) + "\n")
+        n_applied += len(results)
+        for result in results:
+            safe_result = traum_state.redact_persisted_text(result["result"])
+            print(f"[dream_apply] {safe_result}", file=sys.stderr)
 
     print(
-        f"[dream_apply] {mode}done. applied={n_applied} (auto={n_auto}) "
+        f"[dream_apply] done. applied={n_applied} (auto={n_auto}) "
         f"rejected_invariant={n_rejected_invariant} rejected_human={n_rejected_human} "
         f"-> {applied_path}, {rejected_path}",
         file=sys.stderr,
@@ -1054,7 +1455,7 @@ def main(argv=None) -> None:
     # run, nothing was actually applied, so the digest must not claim it was
     # (gather_applied() also filters on dry_run itself as defense-in-depth).
     dream_digest.refresh_digest(
-        dream_dir=dream_dir, es_url=args.es_url, dry_run=args.dry_run,
+        dream_dir=dream_dir, es_url=args.es_url, dry_run=False,
     )
 
 

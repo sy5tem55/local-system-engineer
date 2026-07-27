@@ -145,6 +145,19 @@ node3090: `bash ~/projects/local-system-engineer/tools/start-goethe-node3090.sh`
 
 ---
 
+## TRAUM learning loop
+
+Routine TRAUM monitoring and control is GUI-first in the Goethe Console at
+`http://localhost:9700/ui`. Start with the
+[TRAUM GUI Operator Manual](docs/TRAUM-OPERATOR-MANUAL.md); the concise
+[user entry point](docs/TRAUM-USER-MANUAL.md) and
+[operations runbook §10](docs/07-operations-runbook.md#10-dreaming-operations-traum)
+link the expert recovery, deployment, and isolated-evaluation procedures. The
+CLI is not a browser command backend, and semantic proposals still pass through
+the typed Human Gate.
+
+---
+
 ## Repository Layout
 
 ```

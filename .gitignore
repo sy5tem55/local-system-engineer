@@ -73,7 +73,15 @@ backups/
 # the pre-registered design, its verdict report, and the v3.5 suite text.
 eval/*
 !eval/traum-ab-design.md
+!eval/traum-ab-design-v2.md
 !eval/eval-report-traum-1.md
 !eval/v35_harness.py
 !eval/retrieval-gold-v1.jsonl
 !eval/test-suite-v3.5.md
+!eval/traum-eval-spec-v2.schema.json
+!eval/traum-isolation-attestation-v1.schema.json
+!eval/traum-eval-trial-v2.schema.json
+!eval/traum-eval-status-v2.schema.json
+!eval/traum-eval-registry-v2.schema.json
+!eval/traum-continuous-evidence-v1.schema.json
+!eval/traum-evidence-summary-v1.schema.json
