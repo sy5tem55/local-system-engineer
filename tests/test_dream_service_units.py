@@ -42,7 +42,9 @@ def test_cycle_runs_every_registered_production_pass_and_digest():
     assert "ledger-mining" not in text
     assert "dream_digest.py" in text
     assert "--no-dry-run" in text
-    assert "set -euo pipefail" in text
+    assert "set -uo pipefail" in text
+    assert "finalize-cycle" in text
+    assert "remaining_seconds" in text
 
 
 def test_timer_is_persistent_and_jittered():

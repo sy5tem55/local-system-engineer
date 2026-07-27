@@ -401,14 +401,23 @@ Prometheus reaches Grafana and other containers by name (`http://prometheus:9090
 
 ## 10. Dreaming operations (TRAUM)
 
+> **GUI-first routine:** use the Goethe Console at `http://localhost:9700/ui`
+> for the digest, canonical run history, owned retry/cancel, acknowledgement,
+> archive, and typed Human Gate decisions. The
+> [TRAUM GUI Operator Manual](TRAUM-OPERATOR-MANUAL.md) is the canonical routine
+> guide. Commands below remain expert recovery, deployment, provenance, and
+> isolated-evaluation procedures; they do not alter Permissions, Active Grants,
+> or the sudo delegation/grant workflow.
+
 The TRAUM loop runs nightly, unattended: `goethe-dream.timer` fires
 `goethe-dream.service` at 03:30 (±15 min jitter), which runs all five
 dream passes (`dedup`, `stale-contradiction`, `error-cluster`, `patterns`,
 `insights`) via the
 repository-owned `tools/run-dream-cycle.sh`. One outer 45-minute timeout
 bounds the cycle, and pass failures are not ignored. The runner only ever
-PROPOSES — nothing reaches Elasticsearch without a human yes through
-`tools/dream_apply.py`. Every command below was executed and verified on
+PROPOSES — nothing reaches Elasticsearch without a human decision through the
+canonical typed gate implemented by `tools/dream_apply.py` and surfaced in the
+Console. Every command below was executed and verified on
 LUCIFER during the Thread-4 close; the production reconciliation procedure
 below is the authoritative installation path.
 
@@ -418,19 +427,19 @@ below is the authoritative installation path.
 # 1. What happened overnight? (≤30 lines, always current)
 cat /opt/local-se/dreams/latest-digest.md
 
-# 2. What's waiting on you? (all day-dirs, oldest first, grouped by type;
-#    proposals >14 days old are auto-expired with reason on this call)
+# 2. Expert read-only queue fallback (the Console Human Gate is preferred;
+#    listing does not perform stale-proposal lifecycle maintenance)
 cd /home/sy5/projects/local-system-engineer
 /usr/bin/python3 tools/dream_apply.py --queue
 
-# 3. Apply/reject a day's batch interactively (per-proposal yes/no;
-#    invariant validation happens regardless of your answer):
+# 3. Expert interactive fallback for a day's batch (per-proposal yes/no;
+#    invariant validation happens regardless; use the Console routinely):
 /usr/bin/python3 tools/dream_apply.py --proposals /opt/local-se/dreams/<date>/proposals-<pass>.jsonl --no-dry-run
 ```
 
 The `[DREAM]` banner on your first `search_kb`/`time_check` of a session
-carries digest date + pending-gate count — if it says pending > 0, run
-step 2.
+carries digest date + pending-gate count — if it says pending > 0, open the
+Console Human Gate (or use step 2 as the expert fallback).
 
 ### 10.2 Install or reconcile the timer
 

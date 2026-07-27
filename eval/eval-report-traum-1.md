@@ -1,9 +1,10 @@
 # TRAUM A/B Learning-Lift Eval — Report (eval-report-traum-1)
 
 > Thread 4 (TRAUM-AUTO), Prompt 4.6. Executed 2026-07-12, per the design in
-> `eval/traum-ab-design.md` (Prompt 4.5). **Pre-registered verdict: LOSS.**
-> Read §7 before anything else — the loss does not mean what a first read
-> suggests it means.
+> `eval/traum-ab-design.md` (Prompt 4.5). **Pre-registered protocol verdict:
+> LOSS. Causal interpretation: INCONCLUSIVE.** Read §7 before anything else —
+> the protocol loss is preserved exactly, but this run cannot identify a
+> KB-driven learning effect because A and B did not span a real learning window.
 
 ---
 
@@ -192,8 +193,15 @@ tool-calls drop ≥10% with no score loss.
   **Fails the tool-call leg too** — there is no ambiguity here, both legs
   of the OR fail outright.
 
-**Verdict: LOSS.** Recorded as specified — not reframed, not re-run under
-different conditions.
+**Protocol verdict: LOSS.** Recorded as specified — not reframed, not re-run
+under different conditions.
+
+**Causal interpretation: INCONCLUSIVE.** This label does not replace or soften
+the pre-registered LOSS. It answers a different question: the execution did not
+isolate the effect of dreamed KB changes, so the LOSS cannot be causally
+attributed to TRAUM learning. The timing, single-trial variance, and production
+side effects documented below are protocol defects addressed by
+`traum-ab-design-v2.md`.
 
 ## 6. Per Prompt 4.6's instruction: filing the specific bad KB writes
 

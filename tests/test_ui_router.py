@@ -43,13 +43,17 @@ class _Inner:
         await send({"type": "http.response.body", "body": b"inner"})
 
 
-def _run(app, path, method="GET", auth=None):
+def _run(app, path, method="GET", auth=None, payload=None, query=""):
     scope = {"type": "http", "path": path, "method": method,
+             "query_string": query.encode(),
              "headers": ([(b"authorization", auth.encode())] if auth else [])}
     messages = []
+    raw_body = (json.dumps(payload).encode("utf-8")
+                if payload is not None else b"")
 
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.request", "body": raw_body,
+                "more_body": False}
 
     async def send(msg):
         messages.append(msg)
@@ -121,6 +125,82 @@ def test_api_open_when_no_token_configured(monkeypatch):
     app = ui.UIRouter(_Inner(), token="")
     status, _ = _run(app, "/api/ui/overview")
     assert status == 200
+
+
+def test_traum_get_and_post_require_configured_token(tmp_path):
+    class FakeTraum:
+        def status(self):
+            return {"available": True}
+
+        def start_run(self, _payload):
+            return {"run_id": "run_never"}
+
+    app = ui.UIRouter(_Inner(), token="sekrit", traum_controller=FakeTraum())
+    status, body = _run(app, "/api/ui/traum/status")
+    assert status == 401 and _json_of(body)["error"] == "unauthorized"
+    status, body = _run(
+        app, "/api/ui/traum/runs", method="POST",
+        payload={"profile": "standard"},
+    )
+    assert status == 401 and _json_of(body)["error"] == "unauthorized"
+
+    no_token_app = ui.UIRouter(
+        _Inner(), token="", traum_controller=FakeTraum())
+    status, body = _run(no_token_app, "/api/ui/traum/status")
+    assert status == 503
+    assert "token not configured" in _json_of(body)["error"]
+
+
+def test_traum_rejects_raw_command_shaped_payload(tmp_path):
+    ctl = ui._traum_control.TraumController(
+        dream_dir=str(tmp_path), repo_root=os.path.join(_HERE, ".."),
+        python_bin="/fixed/python",
+    )
+    app = ui.UIRouter(_Inner(), token="sekrit", traum_controller=ctl)
+    status, body = _run(
+        app, "/api/ui/traum/runs", method="POST", auth="Bearer sekrit",
+        payload={"profile": "standard", "command": "rm -rf /"},
+    )
+    assert status == 400
+    assert "unsupported field" in _json_of(body)["error"]
+    assert ctl.state.list_runs() == []
+
+
+def test_traum_has_no_timer_mutation_route():
+    class FakeTraum:
+        pass
+
+    app = ui.UIRouter(_Inner(), token="sekrit", traum_controller=FakeTraum())
+    status, body = _run(
+        app, "/api/ui/traum/timer/pause", method="POST",
+        auth="Bearer sekrit", payload={},
+    )
+    assert status == 404
+    assert _json_of(body)["error"] == "unknown TRAUM route"
+
+
+def test_traum_proposal_route_passes_bounded_pagination_fields():
+    calls = []
+
+    class FakeTraum:
+        def list_proposals(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "proposals": [], "total_visible": 0,
+                "limit": kwargs["limit"], "offset": kwargs["offset"],
+            }
+
+    app = ui.UIRouter(_Inner(), token="sekrit", traum_controller=FakeTraum())
+    status, body = _run(
+        app, "/api/ui/traum/proposals", auth="Bearer sekrit",
+        query="state=PENDING%2CDEFERRED&actionable=true&limit=50&offset=100",
+    )
+    assert status == 200
+    assert _json_of(body)["offset"] == 100
+    assert calls == [{
+        "state": "PENDING,DEFERRED", "limit": 50, "offset": 100,
+        "actionable_only": True,
+    }]
 
 
 # --------------------------------------------------------------------------

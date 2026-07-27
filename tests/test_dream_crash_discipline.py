@@ -232,6 +232,23 @@ class TestWriteFailureReport:
         passes = {json.loads(ln)["pass"] for ln in lines}
         assert passes == {"dedup", "error-cluster"}
 
+    def test_credential_shaped_exception_is_redacted_in_all_crash_artifacts(
+            self, tmp_path, monkeypatch):
+        dream_dir = tmp_path / "dreams"
+        cfg = _cfg(dream_dir=str(dream_dir), dry_run=False, pass_name="patterns")
+        secret = "supersecretcredentialvalue"
+        exc = RuntimeError(f"api_key={secret} Authorization: Bearer {secret}")
+
+        report_path, crashes_path = dr.write_failure_report(cfg, exc)
+        assert secret not in Path(report_path).read_text()
+        assert secret not in Path(crashes_path).read_text()
+
+        es = FakeES()
+        monkeypatch.setattr(dr, "es_client", lambda _cfg: es)
+        dr.record_crash_error(cfg, f"RuntimeError: password={secret}")
+        persisted = json.dumps(list(es.store.values()))
+        assert secret not in persisted
+
 
 # --- _handle_crash ---------------------------------------------------------
 
@@ -293,7 +310,9 @@ class TestMainFaultInjection:
         out_dir = dream_dir / today
         # Pass-scoped as of the Thread 4 prerequisite fix: a crashed pass
         # writes report-<pass>.md, never the (legacy) shared report.md.
-        report_text = (out_dir / "report-patterns.md").read_text()
+        reports = list(out_dir.glob("report-patterns-att_*.md"))
+        assert len(reports) == 1
+        report_text = reports[0].read_text()
         assert "## FAILED" in report_text
         assert "injected fault for Prompt 4.3 testing" in report_text
 
@@ -335,6 +354,7 @@ class TestMainFaultInjection:
         conn.close()
 
         monkeypatch.setattr(dr, "es_client", lambda cfg: FakeES())
+        monkeypatch.setattr(dr, "search_index", lambda *a, **k: [])
         monkeypatch.setattr(dr._epidx, "build_manifest", lambda *a, **k: {"scanned": 0})
         monkeypatch.setattr(dr.dream_digest, "refresh_digest", lambda **k: None)
 

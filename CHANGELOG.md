@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-07-27 (Codex): TRAUM GUI/control-plane redesign approved and documented
+
+- Approved a GUI-first TRAUM surface in the Goethe Console for canonical run
+  history, typed run/pass controls, redacted logs, acknowledgement/archive,
+  Human Gate decisions, read-only timer status, and learning-lift monitoring;
+  CLI use remains expert recovery, deployment, and isolated evaluation.
+- The design keeps `NULL`, `BLOCKED`, and `FAILED` distinct, retains the
+  2026-07-17 and 2026-07-20 legacy failures as evidence while making terminal
+  history acknowledgeable/archivable, and automates malformed, duplicate,
+  superseded, and stale proposal lifecycle decisions before human review.
+- A/B reporting separates `analysis_complete` from
+  `promotion_eligible`. Historical v1 remains protocol **LOSS** with causal
+  interpretation **INCONCLUSIVE**; continuous decision-to-outcome wiring is
+  still `not_connected`, and no auto-apply policy is enabled.
+- Durable UTC run deadlines and attempt leases now fence post-restart
+  admission/recovery: expired work becomes `BLOCKED`, its `STAGED`, `PENDING`,
+  and `DEFERRED` proposals become `SYSTEM_REJECTED`, and late publication is
+  rejected. The recovery path never guesses from a PID or replays a semantic
+  apply.
+- **Unchanged control boundary:** Permissions — Pending Approvals, Active
+  Grants, and the sudo delegation/grant-synchronization workflow are unchanged;
+  TRAUM neither creates nor consumes those authorities.
+
 ## 2026-07-18 (Cowork): PH5-1/PH5-2 — Goethe v0.4.1: TrustPolicy + goethe_kb.py extraction; P0 closed (except rotation); neural-search claim verified live
 
 - **Neural-search verification (operator request):** all 5 design phases confirmed live on node3090 — lazy sidecars (cold 4.1 s / warm 137 ms), lse-web-idx 44,751 chunks, :8092 API active, `!nl` SearxNG engine returns neural results, recrawl timer armed. Finding: `sear_primary` was down post-reboot (manual pre-reboot stop cleared `restart: always` trigger) — restarted, :8088 → 200.

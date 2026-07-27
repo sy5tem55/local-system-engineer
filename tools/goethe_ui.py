@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-goethe_ui.py — Goethe Console: gateway-served dashboard + read-only JSON APIs.
-==============================================================================
-version: 0.1.1
+goethe_ui.py — Goethe Console: gateway-served dashboard + typed control APIs.
+=============================================================================
+version: 0.4.0
 
 Surfaces Goethe's two differentiators — the empirical KB trust lifecycle and
 the TRAUM dreaming workstream — on a web UI served by the goethe_mcp gateway
@@ -17,7 +17,8 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
                             No token: static page, contains no data.
   GET  /api/ui/overview   → gateway/stack health summary          (token-gated)
   GET  /api/ui/kb         → KB trust: aggs + worst/newest docs    (token-gated)
-  GET  /api/ui/dream      → TRAUM digest + day-dir proposal map   (token-gated)
+  GET  /api/ui/dream      → TRAUM digest + legacy day-dir map     (token-gated)
+  GET  /api/ui/traum/*    → typed TRAUM lifecycle/control API     (token-gated)
   GET  /api/ui/ledger     → tasks.db task blocks + step progress  (token-gated)
   GET  /api/ui/episodes   → 7-day episode call stats by exit_class(token-gated)
   GET  /api/ui/perms      → goethe_perms pending requests + grants(token-gated)
@@ -29,10 +30,14 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
   POST /api/ui/perms/deny     {id}        → deny a pending request ("no")
   POST /api/ui/perms/revoke   {id}        → revoke an active grant
 
-Every /api/ui/* endpoint above the perms ones is READ-ONLY by construction: ES
-access is a POST to _search only, sqlite opens with mode=ro, dream/episode
-access is os.scandir + open-for-read. The three /api/ui/perms/* actions are
-this module's ONE deliberate exception to that invariant — added 2026-07-20
+TRAUM controls are a separate plane from Permissions.  They use the existing
+gateway bearer token but never read or write goethe_perms grants and never
+accept a raw command/path/environment/argv.  The timer API is read-only.
+
+The legacy overview/KB/dream/ledger/episodes/backends endpoints are read-only:
+ES access is a POST to _search only, sqlite opens with mode=ro, and dream/
+episode access is os.scandir + open-for-read. The three /api/ui/perms/* actions
+remain their own narrow exception, added 2026-07-20
 so the yes/no/always approval flow (previously CLI-only via `goethe-perm`,
 and before that not reachable at all — see session-learnings.md 2026-07-20)
 is visible and actionable from the Console instead of requiring a terminal.
@@ -72,8 +77,9 @@ import sqlite3
 import sys
 import time
 import urllib.request
+import urllib.parse
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 # 0.1.1 — kb_stats 400 fix: terms aggs on source_tier/volatility/origin must
 #          target the .keyword subfield — live lse-kb-1024 maps them as text
 #          (the trust-migration keyword mapping didn't survive the 1024-dim
@@ -95,6 +101,14 @@ try:
     import goethe_perms as _perms
 except Exception:
     _perms = None
+
+# Same fail-safe loading posture as goethe_perms.  The controller owns only
+# /api/ui/traum/*; a partial TRAUM deployment must not break the MCP gateway or
+# any pre-existing Console panel.
+try:
+    import traum_controller as _traum_control
+except Exception:
+    _traum_control = None
 
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_EPISODE_LINES_PER_DAY = 20000   # token-bomb lesson: cap reads at the source
@@ -557,12 +571,16 @@ class UIRouter:
     /ui page loads in a plain browser) and does its own token check on
     /api/ui/* using the same header normalisation as _TokenGuard."""
 
-    def __init__(self, app, token: str = "", html_path: str = ""):
+    def __init__(self, app, token: str = "", html_path: str = "",
+                 traum_controller=None):
         self.app = app
         self.token = token or ""
         self.html_path = html_path or os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             "goethe_dashboard.html")
+        self._traum = traum_controller
+        self._traum_init_attempted = traum_controller is not None
+        self._traum_init_error = None
 
     def _authorized(self, scope) -> bool:
         if not self.token:
@@ -602,6 +620,177 @@ class UIRouter:
             raise ValueError("request body must be a JSON object")
         return parsed
 
+    def _traum_controller(self):
+        """Lazily construct the controller so non-TRAUM routes never create
+        its SQLite database or depend on its deployment being complete."""
+        if not self._traum_init_attempted:
+            self._traum_init_attempted = True
+            try:
+                if _traum_control is None:
+                    raise RuntimeError("traum_controller module not importable")
+                self._traum = _traum_control.TraumController()
+            except Exception as exc:
+                self._traum_init_error = exc
+        if self._traum is None:
+            exc = self._traum_init_error or RuntimeError(
+                "TRAUM controller unavailable")
+            raise RuntimeError(f"{type(exc).__name__}: {exc}")
+        return self._traum
+
+    @staticmethod
+    def _query(scope) -> dict:
+        raw = scope.get("query_string", b"")
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+        return urllib.parse.parse_qs(raw, keep_blank_values=True)
+
+    @staticmethod
+    def _one_query(query: dict, name: str, default=None):
+        values = query.get(name)
+        if not values:
+            return default
+        if len(values) != 1:
+            raise ValueError(f"query parameter {name!r} may appear once")
+        return values[0]
+
+    async def _traum_response(self, send, fn, *args, **kwargs):
+        t0 = time.monotonic()
+        try:
+            data = await asyncio.to_thread(fn, *args, **kwargs)
+            status = 200
+        except Exception as exc:
+            if _traum_control is not None and isinstance(
+                    exc, _traum_control.TraumControlError):
+                status = exc.status
+                data = {"error": str(exc)}
+            elif (_traum_control is not None
+                  and getattr(_traum_control, "traum_state", None) is not None
+                  and isinstance(exc, _traum_control.traum_state.NotFoundError)):
+                status = 404
+                data = {"error": str(exc)}
+            elif (_traum_control is not None
+                  and getattr(_traum_control, "traum_state", None) is not None
+                  and isinstance(exc, _traum_control.traum_state.ConflictError)):
+                status = 409
+                data = {"error": str(exc)}
+            elif isinstance(exc, (TypeError, ValueError, json.JSONDecodeError)):
+                status = 400
+                data = {"error": f"bad request: {exc}"}
+            else:
+                status = 503
+                data = {"error": f"{type(exc).__name__}: {exc}"}
+        data["_elapsed_ms"] = int((time.monotonic() - t0) * 1000)
+        await self._respond(
+            send, status,
+            json.dumps(data, ensure_ascii=False, default=str).encode(),
+            "application/json")
+
+    async def _handle_traum(self, scope, receive, send, path: str,
+                            method: str) -> None:
+        """Dispatch the narrow typed TRAUM surface.
+
+        No route accepts executable names, argv, paths, environment variables,
+        PIDs, systemd units, or timer mutations.  Dynamic path components are
+        opaque state IDs and are validated again by TraumController.
+        """
+        try:
+            ctl = self._traum_controller()
+        except Exception as exc:
+            await self._traum_response(send, lambda: (_ for _ in ()).throw(exc))
+            return
+
+        query = self._query(scope)
+        if method == "GET" and path == "/api/ui/traum/status":
+            await self._traum_response(send, ctl.status)
+            return
+        if method == "GET" and path == "/api/ui/traum/timer":
+            await self._traum_response(send, ctl.timer_status)
+            return
+        if method == "GET" and path == "/api/ui/traum/runs":
+            try:
+                archived = self._one_query(query, "archived", "false")
+                if archived not in ("true", "false"):
+                    raise ValueError("archived must be true or false")
+                limit = int(self._one_query(query, "limit", "50"))
+            except (TypeError, ValueError) as exc:
+                await self._traum_response(
+                    send, lambda: (_ for _ in ()).throw(exc))
+                return
+            await self._traum_response(
+                send, ctl.list_runs,
+                include_archived=(archived == "true"), limit=limit)
+            return
+        if method == "GET" and path == "/api/ui/traum/proposals":
+            try:
+                proposal_state = self._one_query(query, "state", None)
+                limit = int(self._one_query(query, "limit", "200"))
+                offset = int(self._one_query(query, "offset", "0"))
+                actionable = self._one_query(query, "actionable", "false")
+                if actionable not in ("true", "false"):
+                    raise ValueError("actionable must be true or false")
+            except (TypeError, ValueError) as exc:
+                await self._traum_response(
+                    send, lambda: (_ for _ in ()).throw(exc))
+                return
+            await self._traum_response(
+                send, ctl.list_proposals, state=proposal_state, limit=limit,
+                offset=offset, actionable_only=(actionable == "true"))
+            return
+
+        match = re.fullmatch(r"/api/ui/traum/runs/([^/]+)", path)
+        if method == "GET" and match:
+            await self._traum_response(send, ctl.get_run, match.group(1))
+            return
+        match = re.fullmatch(r"/api/ui/traum/runs/([^/]+)/logs", path)
+        if method == "GET" and match:
+            try:
+                attempt_id = self._one_query(query, "attempt_id", None)
+                limit = int(self._one_query(query, "limit", "200"))
+            except (TypeError, ValueError) as exc:
+                await self._traum_response(
+                    send, lambda: (_ for _ in ()).throw(exc))
+                return
+            await self._traum_response(
+                send, ctl.logs, match.group(1),
+                attempt_id=attempt_id, limit=limit)
+            return
+
+        if method == "POST" and path == "/api/ui/traum/runs":
+            try:
+                payload = await self._read_json_body(receive)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                await self._traum_response(
+                    send, lambda: (_ for _ in ()).throw(exc))
+                return
+            await self._traum_response(send, ctl.start_run, payload)
+            return
+
+        post_routes = (
+            (r"/api/ui/traum/runs/([^/]+)/retry", "retry"),
+            (r"/api/ui/traum/runs/([^/]+)/cancel", "cancel"),
+            (r"/api/ui/traum/runs/([^/]+)/archive", "archive_run"),
+            (r"/api/ui/traum/attempts/([^/]+)/acknowledge", "acknowledge_attempt"),
+            (r"/api/ui/traum/proposals/([^/]+)/preview", "preview_proposal"),
+            (r"/api/ui/traum/proposals/([^/]+)/decision", "decide_proposal"),
+        )
+        if method == "POST":
+            for pattern, method_name in post_routes:
+                match = re.fullmatch(pattern, path)
+                if match:
+                    try:
+                        payload = await self._read_json_body(receive)
+                    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                        await self._traum_response(
+                            send, lambda: (_ for _ in ()).throw(exc))
+                        return
+                    await self._traum_response(
+                        send, getattr(ctl, method_name), match.group(1), payload)
+                    return
+
+        await self._respond(
+            send, 404, b'{"error":"unknown TRAUM route"}',
+            "application/json")
+
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
@@ -636,6 +825,26 @@ class UIRouter:
                 send, 200,
                 json.dumps(data, ensure_ascii=False, default=str).encode(),
                 "application/json")
+            return
+
+        # TRAUM is independently token-gated but deliberately does not use
+        # or alter the goethe_perms / Active Grants plane.
+        if path.startswith("/api/ui/traum"):
+            # Unlike the historical localhost-only read panels, this control
+            # surface fails closed when no token is configured.  Production
+            # binds the gateway beyond loopback; mutation without explicit
+            # authentication is never permitted.
+            if not self.token:
+                await self._respond(
+                    send, 503,
+                    b'{"error":"TRAUM controls disabled: gateway token not configured"}',
+                    "application/json")
+                return
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            await self._handle_traum(scope, receive, send, path, method)
             return
 
         # Permissions actions — see module docstring for why this is the

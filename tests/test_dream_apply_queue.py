@@ -120,7 +120,7 @@ class TestGatherQueueExpiry:
 
     def test_expiry_writes_expired_jsonl_with_full_fields(self, tmp_path):
         _write_jsonl(tmp_path / "2026-06-01" / "proposals.jsonl", [_proposal(why="x")])
-        da.gather_queue(str(tmp_path), TODAY, stale_days=14)
+        da.gather_queue(str(tmp_path), TODAY, stale_days=14, reconcile=True)
         rows = dd.load_jsonl(str(tmp_path / "2026-06-01" / "expired.jsonl"))
         assert len(rows) == 1
         row = rows[0]
@@ -128,18 +128,26 @@ class TestGatherQueueExpiry:
         assert "expired_at" in row and row["expired_at"]
         assert row["age_days"] == 41
 
-    def test_expiry_is_unconditional_not_gated_by_a_dry_run_flag(self, tmp_path):
-        """gather_queue has no dry_run parameter at all -- expiry always
-        writes, same precedent as rejected.jsonl in the single-run flow."""
+    def test_expiry_preview_is_side_effect_free_until_reconciled(self, tmp_path):
+        _write_jsonl(tmp_path / "2026-06-01" / "proposals.jsonl", [_proposal(why="x")])
         import inspect
         sig = inspect.signature(da.gather_queue)
         assert "dry_run" not in sig.parameters
+        assert "reconcile" in sig.parameters
+        da.gather_queue(str(tmp_path), TODAY, stale_days=14)
+        assert not (tmp_path / "2026-06-01" / "expired.jsonl").exists()
+        da.gather_queue(str(tmp_path), TODAY, stale_days=14, reconcile=True)
+        assert (tmp_path / "2026-06-01" / "expired.jsonl").exists()
 
     def test_second_call_does_not_re_expire_or_duplicate(self, tmp_path):
         _write_jsonl(tmp_path / "2026-06-01" / "proposals.jsonl", [_proposal(why="x")])
-        pending1, expired1 = da.gather_queue(str(tmp_path), TODAY, stale_days=14)
+        pending1, expired1 = da.gather_queue(
+            str(tmp_path), TODAY, stale_days=14, reconcile=True
+        )
         assert len(expired1) == 1
-        pending2, expired2 = da.gather_queue(str(tmp_path), TODAY, stale_days=14)
+        pending2, expired2 = da.gather_queue(
+            str(tmp_path), TODAY, stale_days=14, reconcile=True
+        )
         assert pending2 == []
         assert expired2 == [], "already-expired proposal must not be re-expired on a later call"
         rows = dd.load_jsonl(str(tmp_path / "2026-06-01" / "expired.jsonl"))
@@ -287,7 +295,8 @@ class TestCmdQueue:
         assert "queue is empty" in out.err
 
     def test_pending_listing_goes_to_stdout(self, tmp_path, capsys):
-        _write_jsonl(tmp_path / "2026-07-10" / "proposals.jsonl", [_proposal(why="visible")])
+        current = date.today().isoformat()
+        _write_jsonl(tmp_path / current / "proposals.jsonl", [_proposal(why="visible")])
         da.cmd_queue(_Args(str(tmp_path)))
         out = capsys.readouterr()
         assert "visible" in out.out
@@ -297,7 +306,7 @@ class TestCmdQueue:
         _write_jsonl(tmp_path / "2026-06-01" / "proposals.jsonl", [_proposal(why="old")])
         da.cmd_queue(_Args(str(tmp_path)))
         out = capsys.readouterr()
-        assert "auto-expired" in out.err
+        assert "would auto-expire" in out.err
         assert "2026-06-01" in out.err
 
 
@@ -328,7 +337,7 @@ class TestMainQueueWiring:
         da.main(["--queue", "--dream-dir", str(tmp_path)])  # must not raise
 
     def test_queue_mode_end_to_end_through_main(self, tmp_path, monkeypatch, capsys):
-        _write_jsonl(tmp_path / "2026-07-11" / "proposals.jsonl",
+        _write_jsonl(tmp_path / date.today().isoformat() / "proposals.jsonl",
                      [_proposal(why="through main()")])
         monkeypatch.setattr(da, "load_tools_class",
                              lambda *a, **k: (_ for _ in ()).throw(AssertionError("no Tools")))

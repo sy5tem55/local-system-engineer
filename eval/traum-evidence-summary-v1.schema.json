@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-system-engineer.invalid/schemas/traum-evidence-summary-v1.schema.json",
+  "title": "TRAUM continuous evidence summary v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "registry_path", "proposal_types", "auto_apply_enabled"],
+  "properties": {
+    "schema_version": {"const": "traum.continuous-evidence.summary.v1"},
+    "registry_path": {"type": "string"},
+    "proposal_types": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/proposalSummary"}
+    },
+    "auto_apply_enabled": {"const": false}
+  },
+  "$defs": {
+    "interval": {
+      "type": ["object", "null"],
+      "properties": {
+        "successes": {"type": "integer", "minimum": 0},
+        "total": {"type": "integer", "minimum": 1},
+        "rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "lower": {"type": "number", "minimum": 0, "maximum": 1},
+        "upper": {"type": "number", "minimum": 0, "maximum": 1},
+        "method": {"const": "wilson_95"}
+      }
+    },
+    "proposalSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_count", "acceptance", "reversal", "retrieval", "usefulness", "auto_apply_eligibility"],
+      "properties": {
+        "event_count": {"type": "integer", "minimum": 1},
+        "acceptance": {"$ref": "#/$defs/interval"},
+        "reversal": {"$ref": "#/$defs/interval"},
+        "retrieval": {
+          "type": "object",
+          "required": ["opportunities", "retrieved", "used"],
+          "properties": {
+            "opportunities": {"type": "integer", "minimum": 0},
+            "retrieved": {"type": "integer", "minimum": 0},
+            "used": {"type": "integer", "minimum": 0}
+          }
+        },
+        "usefulness": {"$ref": "#/$defs/interval"},
+        "auto_apply_eligibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["eligible_for_policy_review", "reasons", "auto_apply_enabled"],
+          "properties": {
+            "eligible_for_policy_review": {"type": "boolean"},
+            "reasons": {"type": "array", "items": {"type": "string"}},
+            "auto_apply_enabled": {"const": false}
+          }
+        }
+      }
+    }
+  }
+}

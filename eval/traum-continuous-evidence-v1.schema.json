@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-system-engineer.invalid/schemas/traum-continuous-evidence-v1.schema.json",
+  "title": "TRAUM proposal outcome evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "proposal_type",
+    "observed_at",
+    "decision",
+    "reversal",
+    "retrieval",
+    "usefulness",
+    "source_artifacts",
+    "auto_apply"
+  ],
+  "properties": {
+    "schema_version": {"const": "traum.continuous-evidence.v1"},
+    "event_id": {"type": "string", "pattern": "^evidence-[0-9a-f]{24}$"},
+    "proposal_id": {"type": "string", "minLength": 1},
+    "proposal_type": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "decided_by"],
+      "properties": {
+        "outcome": {"enum": ["accepted", "rejected", "expired", "superseded"]},
+        "decided_by": {"enum": ["human", "invariant", "staleness", "supersession"]}
+      }
+    },
+    "reversal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {"status": {"enum": ["not_observed", "reversed", "confirmed_not_reversed", "not_applicable"]}}
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opportunities", "retrieved", "used"],
+      "properties": {
+        "opportunities": {"type": "integer", "minimum": 0},
+        "retrieved": {"type": "integer", "minimum": 0},
+        "used": {"type": "integer", "minimum": 0}
+      }
+    },
+    "usefulness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observations", "positive", "negative"],
+      "properties": {
+        "observations": {"type": "integer", "minimum": 0},
+        "positive": {"type": "integer", "minimum": 0},
+        "negative": {"type": "integer", "minimum": 0}
+      }
+    },
+    "source_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sha256"],
+        "properties": {"sha256": {"type": "string", "pattern": "^(sha256:)?[0-9a-fA-F]{64}$"}}
+      }
+    },
+    "auto_apply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {"enabled": {"const": false}}
+    }
+  }
+}
