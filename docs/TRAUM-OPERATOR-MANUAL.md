@@ -389,7 +389,10 @@ Common response codes:
 
 | Symptom | Interpretation | Action |
 |---|---|---|
+| No TRAUM run/Human-Gate controls in the Console; `/api/ui/traum/*` returns 404 | The running gateway process still has the pre-control-plane code loaded | Restart the Goethe stack; the router is imported at gateway start, not per request |
 | TRAUM controls disabled: token not configured | Mutation surface failed closed | Configure the existing gateway token and restart the gateway |
+| `no_learning_delta` on `capture-b` | The learning window changed nothing in the corpus | Not a tooling fault; investigate why dreaming produced no accepted change, then run a longer window |
+| `unsafe_path` on a capture | An export source resolved outside the condition's attested sandbox root | Re-export inside that condition's `filesystem_root`; do not relax the attestation |
 | Operation already active | One-run admission guard | Wait, inspect Logs, or Cancel the owned run |
 | `UNOWNED / STATUS UNKNOWN` | Durable active-looking state is not owned by this gateway process | Investigate canonical events and the actual process through expert recovery; there is intentionally no PID control |
 | Human-gate count says “at least” | Full proposal inventory could not be counted | Do not treat an empty page as clear; restore the canonical-state query before deciding |
