@@ -92,6 +92,9 @@ def _controller(tmp_path, process_type=_ImmediateProcess, command_runner=None):
         python_bin="/fixed/python3",
         popen_factory=popen,
         command_runner=command_runner,
+        # The background invariant sweep needs live Elasticsearch; tests opt in
+        # explicitly instead of reaching for the network on every construction.
+        auto_revalidate=False,
     )
     return ctl, captured
 
@@ -205,6 +208,7 @@ def test_typed_runner_exit_codes_are_not_misreported_as_failed(
         dream_dir=str(tmp_path),
         repo_root=os.path.abspath(os.path.join(_HERE, "..")),
         python_bin="/fixed/python3", popen_factory=popen,
+        auto_revalidate=False,
     )
     run = ctl.start_run({
         "profile": "single-pass", "pass": "patterns",
@@ -224,6 +228,7 @@ def test_spawn_failure_terminalizes_attempt_and_run(tmp_path):
         dream_dir=str(tmp_path),
         repo_root=os.path.abspath(os.path.join(_HERE, "..")),
         python_bin="/fixed/python3", popen_factory=broken_popen,
+        auto_revalidate=False,
     )
     run = ctl.start_run({
         "profile": "single-pass", "pass": "insights",
@@ -297,11 +302,13 @@ def test_two_gateways_losing_retry_race_cannot_fail_winner_attempt(tmp_path):
         dream_dir=str(tmp_path),
         repo_root=os.path.abspath(os.path.join(_HERE, "..")),
         python_bin="/fixed/python3", popen_factory=popen,
+        auto_revalidate=False,
     )
     ctl2 = tc.TraumController(
         dream_dir=str(tmp_path),
         repo_root=os.path.abspath(os.path.join(_HERE, "..")),
         python_bin="/fixed/python3", popen_factory=popen,
+        auto_revalidate=False,
     )
     run = ctl1.state.create_run(
         "single-pass", ["dedup"], source="gui", lease_seconds=300
@@ -599,6 +606,124 @@ def test_real_dream_apply_preview_honors_revision_and_is_side_effect_free(tmp_pa
         ctl.preview_proposal(
             proposal["proposal_id"], {"expected_revision": before["revision"] - 1}
         )
+
+
+def _pending_proposal(ctl, *, call="index_to_kb", title="fact"):
+    run = ctl.state.create_run("single-pass", ["patterns"], source="test")
+    attempt = ctl.state.start_attempt(run["run_id"], "patterns")
+    row = ctl.state.record_proposals(run["run_id"], attempt["attempt_id"], [{
+        "type": "kb-fact",
+        "call": call,
+        "args": {"title": title, "content": "c"},
+        "why": "the same question recurred across sessions",
+    }])[0]
+    ctl.state.finish_attempt(attempt["attempt_id"], "SUCCEEDED")
+    return row
+
+
+def test_invariant_sweep_resolves_only_what_approval_would_reject(tmp_path):
+    """The sweep must remove exactly the decisions a human cannot influence."""
+    import dream_apply
+
+    ctl, _ = _controller(tmp_path)
+    doomed = _pending_proposal(ctl, title="never applicable")
+    keeper = _pending_proposal(ctl, title="real decision")
+
+    def fake_validate(proposal, _es):
+        if proposal["args"]["title"] == "never applicable":
+            return "target document is quarantined"
+        return None
+
+    ctl._apply_module = types.SimpleNamespace(
+        revalidate_pending=lambda state, **kw: dream_apply.revalidate_pending(
+            state, tools=_ReadOnlyTools(), **kw
+        )
+    )
+    original = dream_apply.validate_proposal_for_apply
+    original_collision = dream_apply.check_kb_fact_collision_raise
+    dream_apply.validate_proposal_for_apply = fake_validate
+    dream_apply.check_kb_fact_collision_raise = lambda *_a, **_k: None
+    try:
+        summary = ctl.revalidate_queue({})
+    finally:
+        dream_apply.validate_proposal_for_apply = original
+        dream_apply.check_kb_fact_collision_raise = original_collision
+
+    assert summary["auto_rejected"] == 1
+    assert summary["still_actionable"] == 1
+    assert summary["blocked"] is False
+    assert summary["applies_anything"] is False
+    assert ctl.state.get_proposal(doomed["proposal_id"])["state"] == "SYSTEM_REJECTED"
+    assert ctl.state.get_proposal(keeper["proposal_id"])["state"] == "PENDING"
+    # The recorded reason explains the removal without a human in the loop.
+    assert "quarantined" in str(ctl.state.get_proposal(doomed["proposal_id"])["reason"])
+    assert ctl.status()["invariant_sweep"]["auto_rejected"] == 1
+
+
+def test_invariant_sweep_fails_open_when_its_dependency_is_down(tmp_path):
+    """An outage must never empty the inbox or hide a real decision."""
+    import dream_apply
+
+    ctl, _ = _controller(tmp_path)
+    row = _pending_proposal(ctl)
+
+    def exploding_tools(*_args, **_kwargs):
+        raise RuntimeError("elasticsearch unreachable")
+
+    original = dream_apply._load_tools_for_decision
+    dream_apply._load_tools_for_decision = exploding_tools
+    try:
+        summary = ctl.revalidate_queue({})
+    finally:
+        dream_apply._load_tools_for_decision = original
+
+    assert summary["blocked"] is True
+    assert summary["auto_rejected"] == 0
+    assert "dependency unavailable" in str(summary["reason"])
+    assert ctl.state.get_proposal(row["proposal_id"])["state"] == "PENDING"
+
+
+def test_invariant_sweep_never_touches_deferred_or_resolved_proposals(tmp_path):
+    import dream_apply
+
+    ctl, _ = _controller(tmp_path)
+    deferred = _pending_proposal(ctl, title="operator deferred this")
+    ctl.state.transition_proposals(
+        [deferred["proposal_id"]], "defer", actor="operator",
+        defer_until=(date.today() + timedelta(days=3)).isoformat(),
+    )
+
+    ctl._apply_module = types.SimpleNamespace(
+        revalidate_pending=lambda state, **kw: dream_apply.revalidate_pending(
+            state, tools=_ReadOnlyTools(), **kw
+        )
+    )
+    original = dream_apply.validate_proposal_for_apply
+    original_collision = dream_apply.check_kb_fact_collision_raise
+    dream_apply.validate_proposal_for_apply = lambda *_a: "always invalid"
+    dream_apply.check_kb_fact_collision_raise = lambda *_a, **_k: None
+    try:
+        summary = ctl.revalidate_queue({})
+    finally:
+        dream_apply.validate_proposal_for_apply = original
+        dream_apply.check_kb_fact_collision_raise = original_collision
+
+    assert summary["auto_rejected"] == 0
+    assert ctl.state.get_proposal(deferred["proposal_id"])["state"] == "DEFERRED"
+
+
+def test_revalidate_route_rejects_unregistered_fields(tmp_path):
+    ctl, _ = _controller(tmp_path)
+    with pytest.raises(tc.TraumControlError):
+        ctl.revalidate_queue({"command": "python3 -c pwn"})
+    with pytest.raises(tc.TraumControlError):
+        ctl.revalidate_queue({"limit": 10**9})
+
+
+class _ReadOnlyTools:
+    @staticmethod
+    def _es():
+        return object()
 
 
 def test_preview_and_decision_mirror_survive_legacy_list_artifacts(tmp_path):

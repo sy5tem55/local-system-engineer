@@ -75,6 +75,7 @@ _HISTORICAL_V1_EVALUATION = {
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _MAX_LOG_BYTES = 512 * 1024
 _MAX_REASON_CHARS = 1000
+_SWEEP_LIMIT = 200
 _PROPOSAL_FALLBACK_SCAN_LIMIT = 100000
 
 
@@ -147,6 +148,7 @@ class TraumController:
         popen_factory: Callable[..., Any] = subprocess.Popen,
         command_runner: Callable[..., Any] = subprocess.run,
         apply_module: Any = None,
+        auto_revalidate: bool = True,
     ) -> None:
         if traum_state is None and state is None:
             raise TraumControlError(
@@ -198,6 +200,8 @@ class TraumController:
         self._worker_created_run: dict[str, bool] = {}
         self._legacy_warning: str | None = None
         self._recovery_warning: str | None = None
+        self._last_sweep: dict | None = None
+        self._sweep_thread: threading.Thread | None = None
         try:
             self.state.reconcile_legacy_days(self.dream_dir)
         except Exception as exc:
@@ -207,6 +211,16 @@ class TraumController:
                 f"legacy reconciliation incomplete: {type(exc).__name__}: {exc}"
             )
         self._recover_orphaned_work()
+        self._auto_revalidate = bool(auto_revalidate) and (
+            os.environ.get("GOETHE_TRAUM_AUTO_REVALIDATE", "on").strip().lower()
+            not in {"off", "0", "false", "no"}
+        )
+        if self._auto_revalidate:
+            # Legacy-imported and newly published proposals have never been
+            # validated against the live corpus.  Sweeping at start keeps
+            # unapplicable items out of the human inbox without adding an
+            # Elasticsearch round trip to any read request.
+            self._schedule_sweep()
 
     # ------------------------------------------------------------------
     # State/status reads
@@ -266,6 +280,16 @@ class TraumController:
             "reconcile_count": proposal_counts.get("APPLY_FAILED", 0),
             "timer": self.timer_status(),
             "evaluation": self.evaluation_status(),
+            "invariant_sweep": self._last_sweep or {
+                "swept_at": None,
+                "checked": 0,
+                "auto_rejected": 0,
+                "still_actionable": 0,
+                "skipped": 0,
+                "blocked": False,
+                "reason": "no sweep has run in this gateway process",
+                "applies_anything": False,
+            },
             "recovery": recovery,
             "warnings": [
                 warning for warning in
@@ -731,6 +755,10 @@ class TraumController:
                 self._cancel_events.pop(run_id, None)
                 self._owned_attempt_ids.pop(run_id, None)
                 self._worker_created_run.pop(run_id, None)
+            if self._auto_revalidate:
+                # Newly published proposals are validated once here, so the
+                # inbox the operator opens next holds only real decisions.
+                self._schedule_sweep()
 
     def _execute_pass(
         self,
@@ -1311,6 +1339,78 @@ class TraumController:
     # ------------------------------------------------------------------
     # Human-gated proposal and evidence-retention actions
     # ------------------------------------------------------------------
+
+    def revalidate_queue(self, payload: dict | None = None) -> dict:
+        """Run the read-only invariant sweep over PENDING proposals.
+
+        This is the automated half of the human gate: it resolves what the
+        approve path would resolve anyway, so a person only sees decisions
+        that need judgement.  It cannot apply, approve, or defer anything.
+        """
+        payload = _strict_object(payload or {}, {"limit"})
+        limit = _bounded_int(
+            payload.get("limit", _SWEEP_LIMIT), "limit", 1, 500
+        )
+        module = self._dream_apply()
+        revalidate = getattr(module, "revalidate_pending", None)
+        if not callable(revalidate):
+            raise TraumControlError(
+                "deployed dream_apply has no invariant sweep", status=503
+            )
+        # The decision lock keeps a sweep and a human decision from resolving
+        # the same proposal concurrently.
+        with self._decision_lock:
+            try:
+                result = revalidate(self.state, limit=limit, actor="system-invariant")
+            except Exception as exc:
+                raise TraumControlError(
+                    f"invariant sweep failed: {exc}", status=409
+                ) from exc
+        summary = self._sweep_summary(result)
+        self._last_sweep = summary
+        return summary
+
+    @staticmethod
+    def _sweep_summary(result: Any) -> dict:
+        result = result if isinstance(result, dict) else {}
+        return {
+            "swept_at": result.get("swept_at"),
+            "checked": int(result.get("checked", 0) or 0),
+            "auto_rejected": int(result.get("system_rejected", 0) or 0),
+            "still_actionable": int(result.get("valid", 0) or 0),
+            "skipped": int(result.get("skipped", 0) or 0),
+            "blocked": bool(result.get("blocked", False)),
+            "reason": result.get("reason"),
+            "applies_anything": False,
+        }
+
+    def _schedule_sweep(self) -> None:
+        """Sweep off the request path; a read must never trigger a write."""
+        with self._lock:
+            existing = self._sweep_thread
+            if existing is not None and existing.is_alive():
+                return
+            thread = threading.Thread(
+                target=self._sweep_body, name="traum-invariant-sweep", daemon=True
+            )
+            self._sweep_thread = thread
+        try:
+            thread.start()
+        except Exception as exc:
+            self._last_sweep = self._sweep_summary({
+                "blocked": True,
+                "reason": f"sweep could not start: {type(exc).__name__}",
+            })
+
+    def _sweep_body(self) -> None:
+        try:
+            self.revalidate_queue({})
+        except Exception as exc:
+            # A background hygiene pass must never destabilize the gateway.
+            self._last_sweep = self._sweep_summary({
+                "blocked": True,
+                "reason": f"{type(exc).__name__}: {exc}",
+            })
 
     def preview_proposal(self, proposal_id: str, payload: dict) -> dict:
         proposal_id = _safe_id(proposal_id, "proposal id")

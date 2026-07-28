@@ -165,6 +165,32 @@ and expiry receive typed lifecycle states without becoming routine human
 questions. Healthy null results and guard-blocked attempts remain in run
 history, not the semantic inbox.
 
+### Invariant sweep
+
+A proposal that violates a hard invariant produces `SYSTEM_REJECTED` whether a
+human approves it or not, so asking is wasted judgement. The sweep runs exactly
+the checks the approve path runs and records that outcome in advance, with its
+reasons.
+
+It runs automatically when the gateway starts — which is when legacy-imported
+and previously unvalidated proposals are first seen against the live corpus —
+and again after each run finishes publishing proposals. **Revalidate queue**
+triggers the same sweep on demand. It never runs on a read request, so opening
+the Console does not write state.
+
+The sweep is read-only toward Elasticsearch and the KB: its only writes are
+canonical `SYSTEM_REJECTED` transitions. It cannot apply, approve, or defer
+anything, and it never touches a `DEFERRED` or already-resolved proposal.
+
+It fails open. If Elasticsearch or the model is unavailable, the panel reports
+the sweep as incomplete and every proposal stays visible — an outage must never
+be able to empty the inbox. Read `invariant sweep … N auto-resolved` as "these
+were never applicable," not "these were reviewed."
+
+Set `GOETHE_TRAUM_AUTO_REVALIDATE=off` to disable the automatic sweep and keep
+the manual button; the sweep's verdict is then only ever produced at approval
+time, one proposal at a time.
+
 ### Preview
 
 Preview performs live invariant and target-revision checks but makes no state,
@@ -360,6 +386,7 @@ All routes require `Authorization: Bearer <GOETHE_MCP_TOKEN>`.
 | `POST /api/ui/traum/runs/{run_id}/cancel` | Cancel one controller-owned run |
 | `POST /api/ui/traum/runs/{run_id}/archive` | Reversible terminal-run archive |
 | `POST /api/ui/traum/attempts/{attempt_id}/acknowledge` | Record operator review |
+| `POST /api/ui/traum/proposals/revalidate` | Read-only invariant sweep; auto-resolves what approval would reject |
 | `POST /api/ui/traum/proposals/{proposal_id}/preview` | Side-effect-free validation |
 | `POST /api/ui/traum/proposals/{proposal_id}/decision` | Approve/reject/defer with revision CAS |
 
@@ -391,6 +418,8 @@ Common response codes:
 |---|---|---|
 | No TRAUM run/Human-Gate controls in the Console; `/api/ui/traum/*` returns 404 | The running gateway process still has the pre-control-plane code loaded | Restart the Goethe stack; the router is imported at gateway start, not per request |
 | TRAUM controls disabled: token not configured | Mutation surface failed closed | Configure the existing gateway token and restart the gateway |
+| Invariant sweep reports INCOMPLETE | Elasticsearch or the model was unavailable during the sweep | Nothing was hidden; resolve the dependency and press Revalidate queue |
+| A proposal disappeared as `SYSTEM_REJECTED` without a decision | The sweep found an invariant that approval would also have failed | Read the recorded reason in proposal history; no human decision was bypassed |
 | `no_learning_delta` on `capture-b` | The learning window changed nothing in the corpus | Not a tooling fault; investigate why dreaming produced no accepted change, then run a longer window |
 | `unsafe_path` on a capture | An export source resolved outside the condition's attested sandbox root | Re-export inside that condition's `filesystem_root`; do not relax the attestation |
 | Operation already active | One-run admission guard | Wait, inspect Logs, or Cancel the owned run |

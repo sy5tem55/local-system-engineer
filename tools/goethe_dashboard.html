@@ -272,8 +272,10 @@
       guard-blocked attempts remain in run history but never enter this semantic
       inbox. Preview is side-effect-free; Approve revalidates the current KB revision.
     </div>
+    <div id="traum-sweep" style="font-size:11px;color:var(--faint);font-family:var(--mono);margin-top:8px"></div>
     <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">
       <label style="font-size:11px;color:var(--faint)"><input id="traum-show-deferred" type="checkbox" onchange="traumProposalOffset=0;loadTraumProposals()"> show future-deferred proposals early</label>
+      <button class="abtn" id="traum-revalidate" onclick="traumRevalidate()">Revalidate queue</button>
       <button class="abtn" id="traum-proposal-prev" onclick="traumProposalPage(-1)" disabled>Previous</button>
       <button class="abtn" id="traum-proposal-next" onclick="traumProposalPage(1)" disabled>Next</button>
       <span id="traum-proposal-page" style="font-size:10.5px;color:var(--faint)"></span>
@@ -641,6 +643,7 @@ async function loadTraumStatus(){
           : "\nlearning delta: +"+(ld.added||0)+" added / "+(ld.removed||0)+" removed / "+
             (ld.modified||0)+" modified ("+(ld.baseline_documents||0)+" → "+(ld.candidate_documents||0)+" docs)")
       : "";
+    renderTraumSweep(d.invariant_sweep);
     const ce=ev.continuous_evidence||{};
     const continuous=ce.populated
       ? (ce.event_count+" recorded outcome event(s); decision wiring: "+(ce.decision_wiring||"unknown"))
@@ -819,6 +822,24 @@ function wireTraumProposalButtons(){
       else traumDecision(proposal,revision,action);
     });
   });
+}
+function renderTraumSweep(s){
+  const el=$("traum-sweep"); if(!el) return;
+  if(!s||!s.swept_at){ el.textContent="invariant sweep: "+((s&&s.reason)||"not yet run in this gateway process"); return; }
+  el.textContent="invariant sweep "+s.swept_at+" — "+(s.auto_rejected||0)+" auto-resolved, "+
+    (s.still_actionable||0)+" left for review, "+(s.skipped||0)+" skipped"+
+    (s.blocked?" — INCOMPLETE: "+(s.reason||"dependency unavailable")+"; nothing was hidden":"");
+}
+async function traumRevalidate(){
+  const btn=$("traum-revalidate"); if(btn) btn.disabled=true;
+  showTraumResult("running read-only invariant sweep…");
+  try{
+    const d=await apiPost("/api/ui/traum/proposals/revalidate",{});
+    renderTraumSweep(d);
+    showTraumResult({invariant_sweep:d,note:"Read-only validation; this action never applies a proposal."});
+    loadTraumProposals();loadTraumStatus();
+  }catch(e){showTraumResult({error:e.message,details:e.data||null});}
+  finally{ if(btn) btn.disabled=false; }
 }
 async function traumPreview(proposalId,revision){
   showTraumResult("validating side-effect-free preview…");

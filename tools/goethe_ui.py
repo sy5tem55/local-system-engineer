@@ -25,6 +25,9 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
   GET  /api/ui/perms      → goethe_perms pending requests + grants(token-gated)
   GET  /api/ui/backends   → planner backend config status (read-only,      (token-gated)
                             no live calls to paid backends — see backend_status())
+  POST /api/ui/traum/proposals/revalidate {limit?} → read-only invariant
+                            sweep; auto-resolves proposals the approve path
+                            could never apply. Never applies anything.
   POST /api/ui/perms/approve  {id, once?} → approve a pending request
                             (once=false, default: persistent "always" grant;
                              once=true: single-use, auto-revokes after one match)
@@ -892,6 +895,16 @@ class UIRouter:
                     send, lambda: (_ for _ in ()).throw(exc))
                 return
             await self._traum_response(send, ctl.start_run, payload)
+            return
+
+        if method == "POST" and path == "/api/ui/traum/proposals/revalidate":
+            try:
+                payload = await self._read_json_body(receive)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                await self._traum_response(
+                    send, lambda: (_ for _ in ()).throw(exc))
+                return
+            await self._traum_response(send, ctl.revalidate_queue, payload)
             return
 
         post_routes = (
