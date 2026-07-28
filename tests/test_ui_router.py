@@ -158,7 +158,7 @@ def test_traum_get_and_post_require_configured_token(tmp_path):
 def test_traum_rejects_raw_command_shaped_payload(tmp_path):
     ctl = ui._traum_control.TraumController(
         dream_dir=str(tmp_path), repo_root=os.path.join(_HERE, ".."),
-        python_bin="/fixed/python",
+        python_bin="/fixed/python", auto_revalidate=False,
     )
     app = ui.UIRouter(_Inner(), token="sekrit", traum_controller=ctl)
     status, body = _run(
@@ -168,6 +168,32 @@ def test_traum_rejects_raw_command_shaped_payload(tmp_path):
     assert status == 400
     assert "unsupported field" in _json_of(body)["error"]
     assert ctl.state.list_runs() == []
+
+
+def test_traum_revalidate_route_is_typed_and_bounded():
+    calls = []
+
+    class FakeTraum:
+        def revalidate_queue(self, payload):
+            calls.append(payload)
+            return {"auto_rejected": 2, "still_actionable": 1,
+                    "applies_anything": False}
+
+    app = ui.UIRouter(_Inner(), token="sekrit", traum_controller=FakeTraum())
+    status, body = _run(
+        app, "/api/ui/traum/proposals/revalidate", method="POST",
+        auth="Bearer sekrit", payload={"limit": 25},
+    )
+    assert status == 200
+    assert _json_of(body)["auto_rejected"] == 2
+    assert calls == [{"limit": 25}]
+
+    # The sweep is not a decision route: no proposal ID path form exists.
+    status, _ = _run(
+        app, "/api/ui/traum/proposals/revalidate/apply", method="POST",
+        auth="Bearer sekrit", payload={},
+    )
+    assert status == 404
 
 
 def test_traum_has_no_timer_mutation_route():

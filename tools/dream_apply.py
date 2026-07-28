@@ -971,6 +971,115 @@ def preview_proposal(state_or_path, proposal_id: str, *, tools=None,
     }
 
 
+def revalidate_pending(state_or_path, *, limit: int = 50, tools=None,
+                       es_url: str | None = None, ollama_url: str | None = None,
+                       embed_model: str | None = None,
+                       goethe_path: str | None = None,
+                       actor: str = "system-invariant") -> dict:
+    """Resolve proposals the approve path could never apply, before review.
+
+    This runs exactly the checks ``decide_proposal`` runs at approval time.  If
+    approving a proposal would produce ``SYSTEM_REJECTED``, showing it to a
+    human is wasted judgement, so the sweep records that outcome now with its
+    reasons.  ES and model access is read-only; the only writes are canonical
+    state transitions.
+
+    Fails open by design: a dependency outage, an unreadable proposal, or a
+    concurrent revision change leaves the proposal PENDING and visible. The
+    sweep never applies anything, never touches DEFERRED or resolved
+    proposals, and is idempotent.
+    """
+    state = _as_state(state_or_path)
+    limit = max(1, min(int(limit), 500))
+    summary = {
+        "checked": 0, "system_rejected": 0, "valid": 0, "skipped": 0,
+        "blocked": False, "reason": None, "rejected_ids": [],
+        "swept_at": datetime.now().astimezone().isoformat(),
+    }
+    try:
+        rows = state.list_proposals(state="PENDING", limit=limit)
+    except Exception as exc:
+        summary["blocked"] = True
+        summary["reason"] = f"queue unreadable: {type(exc).__name__}"
+        return summary
+    if not rows:
+        return summary
+
+    try:
+        tool_obj = _load_tools_for_decision(
+            tools, es_url or _es_url_default(), ollama_url or _ollama_url_default(),
+            embed_model or _embed_model_default(),
+            goethe_path or _goethe_path_default(),
+        )
+        es = tool_obj._es()
+    except Exception as exc:
+        # No dependency, no verdict.  The queue is left exactly as it was.
+        summary["blocked"] = True
+        summary["reason"] = (
+            f"validation dependency unavailable: {type(exc).__name__}"
+        )
+        return summary
+
+    seen: set[str] = set()
+    for row in rows:
+        proposal_id = str(row.get("proposal_id") or "")
+        if not proposal_id or proposal_id in seen:
+            continue
+        try:
+            group = _canonical_group(state, proposal_id)
+        except Exception:
+            summary["skipped"] += 1
+            seen.add(proposal_id)
+            continue
+        ids = [str(item["proposal_id"]) for item in group]
+        seen.update(ids)
+        parent = state.get_attempt(group[0]["attempt_id"])
+        if (parent is None
+                or parent.get("state") not in traum_state.CONSUMABLE_OUTCOMES
+                or any(item["state"] != "PENDING" for item in group)):
+            summary["skipped"] += len(ids)
+            continue
+        try:
+            reasons = []
+            for item in group:
+                proposal = item["proposal"]
+                reason = validate_proposal_for_apply(proposal, es)
+                if reason is None and proposal.get("call") == "skill_record":
+                    reason = check_skill_collision_raise(
+                        tool_obj, proposal.get("args", {}))
+                if reason is None and proposal.get("call") == "index_to_kb":
+                    reason = check_kb_fact_collision_raise(
+                        tool_obj, proposal.get("args", {}))
+                reasons.append(reason)
+        except Exception as exc:
+            # Mid-sweep dependency failure: stop rather than convert an
+            # outage into a queue full of rejections.
+            summary["blocked"] = True
+            summary["reason"] = f"validation interrupted: {type(exc).__name__}"
+            break
+        summary["checked"] += len(ids)
+        if not any(reasons):
+            summary["valid"] += len(ids)
+            continue
+        try:
+            state.transition_proposals(
+                ids, "system_reject", actor=actor,
+                reason="; ".join(r for r in reasons if r),
+                expected_revisions={
+                    str(item["proposal_id"]): item["revision"] for item in group
+                },
+            )
+        except Exception:
+            # A human decided between the read and the write.  Their decision
+            # wins; this proposal is simply left alone.
+            summary["checked"] -= len(ids)
+            summary["skipped"] += len(ids)
+            continue
+        summary["system_rejected"] += len(ids)
+        summary["rejected_ids"].extend(ids)
+    return summary
+
+
 def _attempt_day_dir(state: traum_state.TraumState, attempt) -> str | None:
     """Resolve the day directory that holds an attempt's artifacts.
 
