@@ -172,11 +172,13 @@ human approves it or not, so asking is wasted judgement. The sweep runs exactly
 the checks the approve path runs and records that outcome in advance, with its
 reasons.
 
-It runs automatically when the gateway starts — which is when legacy-imported
-and previously unvalidated proposals are first seen against the live corpus —
-and again after each run finishes publishing proposals. **Revalidate queue**
-triggers the same sweep on demand. It never runs on a read request, so opening
-the Console does not write state.
+It runs automatically when the TRAUM controller initializes — the first TRAUM
+request after a gateway restart, which is also when legacy-imported and
+previously unvalidated proposals are first seen against the live corpus — and
+again after each run finishes publishing proposals. Both run in the background,
+so no read request ever triggers a write; a sweep started by your first page
+load may land a second or two after the inbox renders. **Revalidate queue**
+triggers the same sweep on demand.
 
 The sweep is read-only toward Elasticsearch and the KB: its only writes are
 canonical `SYSTEM_REJECTED` transitions. It cannot apply, approve, or defer
