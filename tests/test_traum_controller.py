@@ -601,6 +601,71 @@ def test_real_dream_apply_preview_honors_revision_and_is_side_effect_free(tmp_pa
         )
 
 
+def test_preview_and_decision_mirror_survive_legacy_list_artifacts(tmp_path):
+    """A legacy-imported attempt stores a *list* of proposal filenames.
+
+    Regression: os.path.dirname on that list raised TypeError, which failed
+    Preview and — because the GUI aborts Approve when Preview fails — silently
+    made every legacy proposal undecidable.
+    """
+    import dream_apply
+
+    day = tmp_path / "2026-07-15"
+    day.mkdir()
+    (day / "proposals-insights.jsonl").write_text(
+        '{"type":"skill-candidate","call":"skill_record",'
+        '"args":{"title":"t","content":"c"},"why":"repeated manual sequence"}\n',
+        encoding="utf-8",
+    )
+    (day / "report-insights.md").write_text("# TRAUM report\n", encoding="utf-8")
+
+    ctl, _ = _controller(tmp_path)
+    pending = ctl.state.proposal_queue(states=["PENDING"], limit=5)["proposals"]
+    row = next(r for r in pending if r["proposal_type"] == "skill-candidate")
+    attempt = ctl.state.get_attempt(row["attempt_id"])
+    assert isinstance(attempt["artifacts"]["proposals"], list)
+
+    assert dream_apply._attempt_day_dir(ctl.state, attempt) == str(day)
+
+    class ReadOnlyTools:
+        @staticmethod
+        def _es():
+            return object()
+
+    preview = dream_apply.preview_proposal(
+        ctl.state, row["proposal_id"], tools=ReadOnlyTools()
+    )
+    assert preview["proposal_id"] == row["proposal_id"]
+    assert "rendered" in preview
+
+    dream_apply._append_compat_decision(
+        ctl.state, [row], "rejected.jsonl", lambda r: {"proposal": r["proposal"]}
+    )
+    # The mirror lands in the legacy day directory, never in the dreams root.
+    assert (day / "rejected.jsonl").is_file()
+    assert not (tmp_path / "rejected.jsonl").exists()
+
+
+def test_decision_mirror_is_skipped_when_no_day_directory_resolves(tmp_path):
+    import dream_apply
+
+    ctl, _ = _controller(tmp_path)
+    run = ctl.state.create_run("single-pass", ["patterns"], source="test")
+    attempt = ctl.state.start_attempt(run["run_id"], "patterns")
+    row = ctl.state.record_proposals(run["run_id"], attempt["attempt_id"], [{
+        "type": "kb-fact",
+        "call": "index_to_kb",
+        "args": {"title": "t", "content": "c"},
+        "why": "evidence",
+    }])[0]
+    assert dream_apply._attempt_day_dir(ctl.state, ctl.state.get_attempt(
+        attempt["attempt_id"])) is None
+    dream_apply._append_compat_decision(
+        ctl.state, [row], "rejected.jsonl", lambda r: {"proposal": r["proposal"]}
+    )
+    assert not (tmp_path / "rejected.jsonl").exists()
+
+
 def test_legacy_failure_reconciliation_is_stable_acknowledgeable_and_archivable(tmp_path):
     day = tmp_path / "2026-07-17"
     day.mkdir()

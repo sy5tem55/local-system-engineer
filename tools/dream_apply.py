@@ -959,8 +959,7 @@ def preview_proposal(state_or_path, proposal_id: str, *, tools=None,
             reason = check_kb_fact_collision_raise(tool_obj, proposal.get("args", {}))
         reasons.append(reason)
     attempt = state.get_attempt(rows[0]["attempt_id"])
-    artifact = (attempt or {}).get("artifacts", {}).get("proposals", "")
-    day_dir = os.path.dirname(artifact) if artifact else os.path.dirname(state.db_path)
+    day_dir = _attempt_day_dir(state, attempt) or os.path.dirname(state.db_path)
     return {
         "proposal_id": proposal_id,
         "proposal_ids": [row["proposal_id"] for row in rows],
@@ -972,14 +971,40 @@ def preview_proposal(state_or_path, proposal_id: str, *, tools=None,
     }
 
 
+def _attempt_day_dir(state: traum_state.TraumState, attempt) -> str | None:
+    """Resolve the day directory that holds an attempt's artifacts.
+
+    A controller attempt records one absolute ``proposals`` path.  A
+    legacy-imported attempt records a *list* of bare filenames plus the day, so
+    ``os.path.dirname`` on the raw value raises TypeError and blocks preview and
+    the decision mirror.  Returns None when no real directory can be resolved,
+    so callers never write stray files into the dreams root.
+    """
+    artifacts = (attempt or {}).get("artifacts") or {}
+    artifact = artifacts.get("proposals") or ""
+    if isinstance(artifact, (list, tuple)):
+        artifact = next((item for item in artifact
+                         if isinstance(item, str) and item), "")
+    if isinstance(artifact, str):
+        parent = os.path.dirname(artifact)
+        if parent:
+            return parent
+    day = artifacts.get("day")
+    if isinstance(day, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+        candidate = os.path.join(os.path.dirname(state.db_path), day)
+        if os.path.isdir(candidate):
+            return candidate
+    return None
+
+
 def _append_compat_decision(state: traum_state.TraumState, rows: list[dict],
                             filename: str, entry_builder) -> None:
     """Best-effort mirror for legacy digest readers; SQLite stays canonical."""
     attempt = state.get_attempt(rows[0]["attempt_id"])
-    artifact = (attempt or {}).get("artifacts", {}).get("proposals", "")
-    if not artifact:
+    day_dir = _attempt_day_dir(state, attempt)
+    if not day_dir:
         return
-    path = os.path.join(os.path.dirname(artifact), filename)
+    path = os.path.join(day_dir, filename)
     try:
         with open(path, "at", encoding="utf-8") as f:
             for row in rows:
