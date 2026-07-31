@@ -24,6 +24,7 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
   GET  /api/ui/episodes   → 7-day episode call stats by exit_class(token-gated)
   GET  /api/ui/perms      → goethe_perms pending requests + grants(token-gated)
   GET  /api/ui/backends   → planner backend config status (read-only,      (token-gated)
+  POST /api/ui/backends/select {backend} → set the active planner backend
                             no live calls to paid backends — see backend_status())
   POST /api/ui/traum/proposals/revalidate {limit?} → read-only invariant
                             sweep; auto-resolves proposals the approve path
@@ -90,6 +91,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import time
@@ -131,6 +133,16 @@ try:
     import traum_controller as _traum_control
 except Exception:
     _traum_control = None
+
+# Persisted planner-backend selection, shared with goethe.py (v1.14.0). Same
+# fail-safe loading posture as the two above: if this module is missing, the
+# backends panel degrades to reporting the env-var value and the select route
+# returns a clean error instead of a 500. A selector that cannot load must not
+# take the Console down with it.
+try:
+    import goethe_planner_state as _planner_state
+except Exception:
+    _planner_state = None
 
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_EPISODE_LINES_PER_DAY = 20000   # token-bomb lesson: cap reads at the source
@@ -455,7 +467,13 @@ def backend_status() -> dict:
     than importing goethe.py's Tools class, to keep this module's existing
     zero-coupling-to-goethe.py design (goethe_ui.py has never imported
     goethe.py, only goethe_perms.py, and that's a much smaller surface)."""
-    active = _env("GOETHE_PLANNER_BACKEND", "local").strip().lower()
+    env_default = _env("GOETHE_PLANNER_BACKEND", "local").strip().lower()
+    if _planner_state is not None:
+        active = _planner_state.selected_backend(env_default)
+        active_source = _planner_state.resolution_source()
+    else:
+        active = env_default or "local"
+        active_source = "env"
 
     local_url = _env("GOETHE_NODE3090_LLM_URL", "http://node3090.home.arpa:8080").rstrip("/")
     local_ok = False
@@ -480,10 +498,22 @@ def backend_status() -> dict:
     )
     openai_key = bool(_env("GOETHE_PLANNER_OPENAI_API_KEY", "").strip())
     anthropic_key = bool(_env("GOETHE_PLANNER_ANTHROPIC_API_KEY", "").strip())
+    # The claude backend invokes the `claude` CLI (goethe.py's
+    # _call_claude_planner), so the CLI is the hard requirement — a
+    # credentials file alone no longer means anything is callable.
+    # claude_path above is now used ONLY as an existence hint that
+    # `claude login` has been run. The file is never opened or parsed,
+    # here or anywhere else in the tree.
+    claude_cli = shutil.which(
+        _env("GOETHE_PLANNER_CLAUDE_CLI", "").strip() or "claude")
     rest_url = _env("GOETHE_PLANNER_REST_URL", "").strip()
 
     return {
         "active": active,
+        # 'store' means an operator chose this in the Console and it will
+        # survive a restart; 'env' means it is still the deployment default.
+        "active_source": active_source,
+        "selectable": _planner_state is not None,
         "backends": [
             {"id": "local", "label": "Local (llama-server / Ollama / Gemma)",
              "configured": True, "health": "ok" if local_ok else "down",
@@ -493,11 +523,25 @@ def backend_status() -> dict:
              "auth_source": ("codex-cli-oauth" if codex_path
                               else "api-key" if openai_key else "none"),
              "detail": codex_path or ("PLANNER_OPENAI_API_KEY set" if openai_key else None)},
+            # Mirrors _call_claude_planner's precedence exactly: no CLI means
+            # nothing works; with a CLI, an explicit API key wins over the
+            # login session because that function treats a set key as the
+            # operator's deliberate choice, not a fallback.
             {"id": "claude", "label": "Claude",
-             "configured": bool(claude_path or anthropic_key),
-             "auth_source": ("claude-code-oauth" if claude_path
-                              else "api-key" if anthropic_key else "none"),
-             "detail": claude_path or ("PLANNER_ANTHROPIC_API_KEY set" if anthropic_key else None)},
+             "configured": bool(claude_cli and (claude_path or anthropic_key)),
+             "auth_source": ("none" if not claude_cli
+                             else "api-key" if anthropic_key
+                             else "claude-login-session" if claude_path
+                             else "none"),
+             "detail": (
+                 "claude CLI not found — "
+                 "npm install -g @anthropic-ai/claude-code"
+                 if not claude_cli
+                 else f"{claude_cli} · PLANNER_ANTHROPIC_API_KEY set (billed)"
+                 if anthropic_key
+                 else f"{claude_cli} · logged-in session"
+                 if claude_path
+                 else f"{claude_cli} · installed, run `claude login`")},
             {"id": "rest", "label": "Custom REST",
              "configured": bool(rest_url), "detail": rest_url or None},
         ],
@@ -683,6 +727,56 @@ def _perm_delete_invalid() -> dict:
         return {"status": "deleted", "deleted": count}
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
+
+
+def select_backend(backend: str) -> dict:
+    """Set the active planner backend (POST /api/ui/backends/select).
+
+    The third deliberate write surface on this Console, and by some margin
+    the narrowest: it writes one enum value to one JSON file. It cannot name
+    a path, a command, a model, a URL or a credential — `backend` is
+    validated against goethe_planner_state.VALID_BACKENDS before anything
+    touches the filesystem, so an arbitrary string cannot get through.
+
+    Selecting a backend with no credentials configured is ALLOWED, and
+    reported back in 'warning' rather than refused. That is deliberate: an
+    operator may well switch to 'claude' precisely so they can then go run
+    `claude login`, and a selector that refuses to record the intent until
+    the credential already exists makes that a chicken-and-egg. planner()
+    still returns a clear ERROR string if it is called in the meantime.
+    """
+    if _planner_state is None:
+        return {"error": "goethe_planner_state module not importable — "
+                         "backend selection unavailable"}
+    try:
+        record = _planner_state.write_selection(backend, actor="console")
+    except ValueError as e:
+        return {"error": str(e)}
+    except OSError as e:
+        return {"error": f"could not persist selection: {e}"}
+
+    result = {"status": "selected", "active": record["backend"],
+              "selected_at": record["selected_at"]}
+    # Advisory post-check. Never fail the write because the probe failed —
+    # the selection is already durable at this point and reporting it as an
+    # error would be a lie the operator then acts on.
+    try:
+        entry = next((b for b in backend_status().get("backends", [])
+                      if b.get("id") == record["backend"]), None)
+        if entry is not None:
+            if not entry.get("configured", False):
+                result["warning"] = (
+                    f"{record['backend']} is now active but has no credentials "
+                    "configured — planner() will error until it does"
+                )
+            elif entry.get("health") == "down":
+                result["warning"] = (
+                    f"{record['backend']} is now active but its health probe "
+                    "is failing"
+                )
+    except Exception:
+        pass
+    return result
 
 
 _PERM_ACTION_PATHS = {
@@ -987,6 +1081,27 @@ class UIRouter:
                                     "application/json")
                 return
             await self._handle_traum(scope, receive, send, path, method)
+            return
+
+        if path == "/api/ui/backends/select" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            try:
+                payload = await self._read_json_body(receive)
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 400,
+                    json.dumps({"error": f"bad body: {e}"}).encode(),
+                    "application/json")
+                return
+            data = await asyncio.to_thread(
+                select_backend, payload.get("backend", ""))
+            await self._respond(
+                send, 400 if "error" in data else 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
             return
 
         if path == "/api/ui/ledger/delete" and method == "POST":

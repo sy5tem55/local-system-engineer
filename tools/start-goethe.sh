@@ -3,6 +3,9 @@
 # Usage: bash ~/projects/local-system-engineer/tools/start-goethe.sh
 # Python: owui venv (/home/sy5/owui/bin/python3) is retained as the LSE MCP runtime.
 #
+# v2.1.4 — 2026-07-26: changed --host to 0.0.0.0 for Docker container access
+#   (LibreChat container needs to reach Goethe via WSL2 IP 192.168.1.57:9700)
+#
 # v2.1.3 — corrections to the v2.1 proposal:
 #   * ss checks use -H: without it ss prints a header even for a free port,
 #     making "port free" impossible (Step 2 aborted every run) and
@@ -71,8 +74,8 @@ env GOETHE_MCP_TOKEN="$GOETHE_MCP_TOKEN" \
   --also  "$LSE_DIR/net_discovery_tools_v1.0.0.py" \
   --transport http \
   --port 9700 \
-  --host 127.0.0.1 \
-  --cors-origin 'http://127.0.0.1:8080' \
+  --host 0.0.0.0 \
+  --cors-origin '*' \
   </dev/null >"$LOG" 2>&1 &
 
 # ── Step 5: verify the gateway is listening (up to 10s) ─────────────────────
@@ -98,5 +101,5 @@ fi
 REAL_PID=$(pgrep -f "$PAT")
 echo "$REAL_PID" > "$PIDFILE"
 
-echo "[start-goethe] PID $REAL_PID — listening on http://127.0.0.1:9700/mcp"
+echo "[start-goethe] PID $REAL_PID — listening on http://0.0.0.0:9700/mcp"
 echo "[start-goethe] log: $LOG   pidfile: $PIDFILE"
