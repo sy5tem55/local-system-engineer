@@ -39,6 +39,46 @@ passes=(
 pass_csv="$(IFS=,; echo "${passes[*]}")"
 failures=0
 
+# --- R1 preflight: make sure a dreamer is reachable before any pass runs ---
+# Both real legs of call_dream_llm's cascade (dream_runner.py) live on
+# node3090; a sleeping node has zero fallback inside the cascade itself.
+# wake-node-for-dream.sh closes that gap: it is a no-op (fast exit 0) if
+# node3090 is already up, otherwise it wakes it via the canonical
+# RUTX50-etherwake path and polls /health (never ping — model load alone
+# takes >2min after boot). If it still cannot reach node3090, we fall back
+# to LUCIFER's own local llama-server by exporting GOETHE_DREAM_LLM_URL,
+# which cascade leg 0 tries first and unconditionally when set — so it is
+# exported ONLY on this fallback branch, never unconditionally, or it would
+# silently demote node3090's larger model on every healthy night.
+WAKE_SCRIPT="$REPO_DIR/tools/wake-node-for-dream.sh"
+if [[ -x "$WAKE_SCRIPT" ]]; then
+  echo "[dream-cycle] preflight: checking node3090 dreamer availability"
+  remaining_seconds=$(( cycle_deadline - $(date +%s) ))
+  if (( remaining_seconds <= 5 )); then
+    echo "[dream-cycle] shared cycle deadline exhausted before wake preflight -- skipping"
+  else
+    wake_timeout="${GOETHE_DREAM_WAKE_TIMEOUT_S:-300}"
+    if (( wake_timeout > remaining_seconds )); then
+      wake_timeout=$remaining_seconds
+    fi
+    GOETHE_DREAM_WAKE_TIMEOUT_S="$wake_timeout" "$WAKE_SCRIPT"
+    wake_rc=$?
+    if (( wake_rc == 0 )); then
+      echo "[dream-cycle] preflight: node3090 reachable -- cascade will use it as usual"
+    else
+      echo "[dream-cycle] preflight: node3090 could not be woken (rc=$wake_rc) -- checking LUCIFER local fallback"
+      if curl -sf -o /dev/null -m 3 "http://127.0.0.1:8080/health"; then
+        export GOETHE_DREAM_LLM_URL="http://127.0.0.1:8080"
+        echo "[dream-cycle] preflight: LUCIFER local llama-server healthy -- forcing cascade leg 0 to $GOETHE_DREAM_LLM_URL for this cycle"
+      else
+        echo "[dream-cycle] preflight: no dreamer available (node3090 down, no local fallback) -- proceeding; passes will record the real blocked/failed state"
+      fi
+    fi
+  fi
+else
+  echo "[dream-cycle] WARNING: $WAKE_SCRIPT missing or not executable -- skipping wake preflight, cascade runs unassisted"
+fi
+
 for pass_name in "${passes[@]}"; do
   remaining_seconds=$(( cycle_deadline - $(date +%s) ))
   if (( remaining_seconds <= 5 )); then
