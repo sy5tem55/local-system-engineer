@@ -239,6 +239,103 @@ class TraumController:
             },
         }
 
+    @staticmethod
+    def _parse_run_timestamp(value: str | None) -> "_dt.datetime | None":
+        """Runs table timestamps are UTC ISO-8601 with a trailing 'Z'
+        (traum_state._utc_iso), which datetime.fromisoformat only accepts
+        without translation on Python 3.11+. Normalize defensively rather
+        than assume the interpreter version, matching the same Z-handling
+        traum_state.py's own _as_utc already does for the identical
+        format."""
+        if not value:
+            return None
+        raw = str(value).strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed = _dt.datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+        return parsed
+
+    def _health_verdict(self) -> dict:
+        """R3 (docs/TRAUM-R1-R3-PLAN.md, Step 3.1). status() used to
+        return counts only -- no notion of "last successful cycle" -- so
+        an operator glancing at the panel could not tell quiet success
+        from the loop having been dead for days. This is read-only,
+        derived entirely from `runs`; no schema change.
+
+        Excludes source == 'legacy-import' throughout, which is the
+        single most important and easiest-to-miss detail here: all 9
+        legacy-backfill runs are recorded SUCCEEDED (confirmed live,
+        2026-07-31 -- see docs/TRAUM-ANALYSIS-2026-07-31.md) and would
+        otherwise report the loop healthy forever regardless of whether a
+        single real cycle has ever completed since.
+        """
+        rows = self.state.list_runs(include_archived=True, limit=5000)
+        non_legacy = [r for r in rows if str(r.get("source", "")) != "legacy-import"]
+        non_legacy.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+
+        last_success_at: str | None = None
+        for row in non_legacy:
+            if str(row.get("state", "")).upper() == "SUCCEEDED":
+                last_success_at = row.get("finished_at") or row.get("created_at")
+                break
+
+        hours_since_success: float | None = None
+        parsed_success = self._parse_run_timestamp(last_success_at)
+        if parsed_success is not None:
+            now = _dt.datetime.now(_dt.timezone.utc)
+            hours_since_success = max(0.0, (now - parsed_success).total_seconds() / 3600.0)
+
+        # How many of the most recent non-legacy runs, walking back from
+        # newest, failed to succeed before the first success is hit.
+        # QUEUED/RUNNING rows are still unresolved -- they count as
+        # neither a success nor a failure, so they're skipped rather than
+        # breaking or extending the streak.
+        consecutive_unsuccessful = 0
+        for row in non_legacy:
+            state = str(row.get("state", "")).upper()
+            if state in ("QUEUED", "RUNNING"):
+                continue
+            if state == "SUCCEEDED":
+                break
+            consecutive_unsuccessful += 1
+
+        if last_success_at is None:
+            verdict = "critical"
+            reason = "the learning loop has never completed a real (non-legacy) cycle"
+        elif hours_since_success is not None and hours_since_success > 48:
+            verdict = "critical"
+            reason = f"last success was {hours_since_success:.0f}h ago (>48h)"
+        elif consecutive_unsuccessful >= 3:
+            verdict = "critical"
+            reason = (
+                f"{consecutive_unsuccessful} run(s) since the last success have not "
+                "succeeded"
+            )
+        elif hours_since_success is not None and hours_since_success > 24:
+            verdict = "warn"
+            reason = f"last success was {hours_since_success:.0f}h ago (>24h)"
+        else:
+            verdict = "ok"
+            reason = (
+                f"last success {hours_since_success:.1f}h ago"
+                if hours_since_success is not None else "healthy"
+            )
+
+        return {
+            "last_success_at": last_success_at,
+            "hours_since_success": (
+                round(hours_since_success, 1) if hours_since_success is not None else None
+            ),
+            "consecutive_unsuccessful_runs": consecutive_unsuccessful,
+            "verdict": verdict,
+            "reason": reason,
+        }
+
     def status(self) -> dict:
         recovery = self._recover_orphaned_work()
         run_rows = self.state.list_runs(include_archived=False, limit=201)
@@ -279,6 +376,7 @@ class TraumController:
             "future_deferred_count": future_deferred,
             "reconcile_count": proposal_counts.get("APPLY_FAILED", 0),
             "timer": self.timer_status(),
+            "health": self._health_verdict(),
             "evaluation": self.evaluation_status(),
             "invariant_sweep": self._last_sweep or {
                 "swept_at": None,
