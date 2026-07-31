@@ -29,6 +29,28 @@ LOG=/tmp/goethe-gateway.log
 source ~/.lse/secrets
 : "${GOETHE_MCP_TOKEN:?GOETHE_MCP_TOKEN not set — add 'export GOETHE_MCP_TOKEN=<openssl rand -hex 16>' to ~/.lse/secrets}"
 
+# ── Planner valves (added 2026-07-31) ───────────────────────────────────────
+# The planner model pin and CLI timeout live in /opt/local-se/goethe-mcp.env.
+# systemd reads that file via EnvironmentFile=, but this script (the GUI /
+# manual launch path) did not — so PLANNER_ANTHROPIC_MODEL silently fell back
+# to the code default claude-sonnet-5 instead of the pinned claude-opus-5, and
+# nothing reported it. Verified inert on 2026-07-31: no GOETHE_PLANNER_* var
+# was present in the environment of any running goethe_mcp.py process.
+#
+# ONLY GOETHE_PLANNER_* is imported. That same file also holds GOETHE_MCP_TOKEN
+# and BW_PASSWORD, and its token DIFFERS from the one in ~/.lse/secrets
+# (confirmed 2026-07-31). Sourcing it wholesale would swap the gateway token
+# and break Console auth. Do not "simplify" this to a plain `. env-file`.
+if [ -r /opt/local-se/goethe-mcp.env ]; then
+  while IFS='=' read -r _k _v; do
+    [ -n "${_k:-}" ] && export "$_k=$_v"
+  done <<EOF
+$(grep -E '^GOETHE_PLANNER_[A-Za-z_0-9]+=' /opt/local-se/goethe-mcp.env || true)
+EOF
+  unset _k _v
+  echo "[start-goethe] planner valves: model=${GOETHE_PLANNER_ANTHROPIC_MODEL:-<code default>} timeout=${GOETHE_PLANNER_CLI_TIMEOUT_S:-<code default>}s"
+fi
+
 # ── Step 1: kill any existing HTTP gateway instances ────────────────────────
 if pkill -9 -f "$PAT" 2>/dev/null; then
   echo "[start-goethe] killed existing HTTP gateway instance(s)"
