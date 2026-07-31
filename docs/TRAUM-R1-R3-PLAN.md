@@ -25,17 +25,30 @@ Measured live on 2026-07-31, ~17:00. Re-check anything you depend on.
 | Cascade leg 0 | `DREAM_LLM_URL`, health-probed, **silently skipped when down/unset** | `call_dream_llm`, first branch |
 | LUCIFER subnet | `192.168.1.57/24` | `ip -4 addr` |
 | node3090 address | `192.168.5.41` | `getent hosts` |
-| **Local `wakeonlan` cannot reach node3090** | different L2 segment | the two rows above |
-| Only viable wake path | pfSense `POST /api/v2/services/wake_on_lan/send`, interface `opt1`, mac `0c:9d:92:84:6e:6a` | `goethe_node.wake_node` |
+| Route to the 5.x segment | `192.168.5.41 via 192.168.1.50` (pfsense.home.arpa) | `ip route get` |
+| **`wakeonlan 0c:9d:92:84:6e:6a` from LUCIFER — WORKS** | operator-verified 5+ times; RUTX50 (`192.168.5.3`, same segment as node3090) carries it | `kb/network-topology.md` §WAKE ON LAN |
+| Alternative wake path | pfSense `POST /api/v2/services/wake_on_lan/send`, interface `opt1` | `goethe_node.wake_node` |
 | LUCIFER llama-server :8080 | healthy, Qwen3.6-27B, **manually started, no systemd unit** | `curl /health`, `systemctl is-enabled` → not-found |
 | LUCIFER Ollama | systemd `enabled`+`active`, but only `llama3.2:3b` chat model | `systemctl`, `/api/tags` |
 | Run-level backoff / auto-retry | **does not exist**; `defer_until` is proposals-only | grep over controller + runner |
 | `TraumController.status()` | returns counts only — **no notion of "last successful cycle"** | read at line 242 |
 | Timer | `OnCalendar=*-*-* 03:30:00`, `Persistent=true` | unit file |
 
-**Do not** reach for `/usr/bin/wakeonlan`. It exists on LUCIFER and it will
-appear to work. It cannot reach node3090's segment; the packet dies on
-192.168.1.0/24. This is the single most likely wrong turn in R1.
+**CORRECTION (2026-07-31, after operator review).** An earlier draft of this
+plan asserted the opposite — that `/usr/bin/wakeonlan` could not reach
+node3090 because the two hosts are on different subnets, and that the pfSense
+API was the only viable path. **That was wrong.** It was an inference from
+`ip addr` output, stated as fact, contradicting `kb/network-topology.md`,
+which documents `wakeonlan 0c:9d:92:84:6e:6a` as the pre-configured method
+from LUCIFER — a path the operator has ground-truth verified more than five
+times. The RUTX50 at `192.168.5.3` sits on node3090's own segment and carries
+the packet.
+
+Two lessons, both already written into this project's process rules and both
+violated by that draft: **the KB is ground truth and is consulted before
+theorising**, and **an inference is not a measurement.** Prefer
+`wakeonlan` — it is simpler, needs no credentials, and is the verified path.
+Keep the pfSense POST only as a documented fallback.
 
 ---
 
@@ -64,17 +77,19 @@ real legs live on. Fix it *outside* the cascade.
 Create `tools/wake-node-for-dream.sh` (executable). Contract:
 
 - exit **0** if node3090 is reachable **and** its llama-server answers `/health`
-- if unreachable: send WoL via the pfSense REST API (mac/interface above),
-  then poll `/health` every 5s up to `GOETHE_DREAM_WAKE_TIMEOUT_S` (default
-  **180**)
+- if unreachable: `wakeonlan 0c:9d:92:84:6e:6a` (the KB-documented, verified
+  path), then poll `/health` every 5s up to `GOETHE_DREAM_WAKE_TIMEOUT_S`
+  (default **180** — the KB records boot ≈55s, so this is ~3x headroom)
+- if `wakeonlan` is absent or errors, fall back to the pfSense POST that
+  `goethe_node.wake_node` uses
 - exit **1** if it never comes up — never hang, never exit non-zero for a
   reason other than "node did not wake"
 - log one line per state transition to stdout
 
-Credentials: read the pfSense API key exactly as `goethe_node.wake_node` does
-(`x-api-key` header, **not** Bearer — see `kb/STACK-MAP.md`). Do **not**
-invent a new secret path or hardcode a key. If no key is available, exit 1
-with a clear message; the caller handles it.
+`wakeonlan` needs no credentials, which is the main reason to prefer it. Only
+if you implement the pfSense fallback: read the API key exactly as
+`goethe_node.wake_node` does (`x-api-key` header, **not** Bearer — see
+`kb/STACK-MAP.md`). Never invent a secret path or hardcode a key.
 
 **Verify:** run it with node3090 up → exit 0 in under 2s. Then have the
 operator power node3090 down and run it again → it either wakes the node and
