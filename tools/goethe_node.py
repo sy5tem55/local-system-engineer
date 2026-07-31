@@ -61,15 +61,16 @@ class NodeLifecycleMixin:
             "ssh_user": "lse-admin",
             "agent_profile": {
                 "model": "/opt/models/lmstudio-community/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf",
-                "ctx_size": 96000,
-                "gpu_layers": 129,
+                "ctx_size": 131072,
+                "gpu_layers": 99,
                 "flash_attn": True,
-                "cache_type_k": "q8_0",
-                "cache_type_v": "q8_0",
+                "cache_type_k": "q4_0",
+                "cache_type_v": "q4_0",
                 "parallel": 1,
-                "threads": 7,
-                "threads_batch": 7,
-                "reasoning_budget": 3072,
+                "threads": 16,
+                "threads_batch": 16,
+                "reasoning_format": "none",
+                "reasoning_budget": 16000,
                 "n_predict": 8192,
                 "jinja": True,
                 "metrics": True,
@@ -104,6 +105,7 @@ class NodeLifecycleMixin:
         "parallel": "--parallel",
         "threads": "--threads",
         "threads_batch": "--threads-batch",
+        "reasoning_format": "--reasoning-format",
         "reasoning_budget": "--reasoning-budget",
         "n_predict": "--n-predict",
     }
@@ -501,6 +503,8 @@ class NodeLifecycleMixin:
             parts += ["--threads", str(profile["threads"])]
         if profile.get("threads_batch"):
             parts += ["--threads-batch", str(profile["threads_batch"])]
+        if profile.get("reasoning_format"):
+            parts += ["--reasoning-format", profile["reasoning_format"]]
         if profile.get("reasoning_budget"):
             parts += ["--reasoning-budget", str(profile["reasoning_budget"])]
         if profile.get("n_predict"):
