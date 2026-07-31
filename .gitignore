@@ -91,3 +91,8 @@ eval/*
 !eval/traum-eval-registry-v2.schema.json
 !eval/traum-continuous-evidence-v1.schema.json
 !eval/traum-evidence-summary-v1.schema.json
+
+# D2/session backup dirs (never commit)
+.d2_backups/
+.stale-salvage-*/
+tda_d1_backups/
