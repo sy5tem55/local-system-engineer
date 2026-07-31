@@ -35,38 +35,47 @@ Note: node3090 resolves via DHCP static mapping DNS registration (no explicit ho
 
 ### How to Wake node3090
 
-**From LUCIFER (WSL2) the `-i` flag is REQUIRED.** Measured 2026-07-31:
-
-| Command | Result |
-|---|---|
-| `wakeonlan 0c:9d:92:84:6e:6a` | **DOES NOT WAKE** — no boot after 5 min |
-| `wakeonlan -i 192.168.5.255 0c:9d:92:84:6e:6a` | **WAKES** — booted ~20s later |
-
-Why: bare `wakeonlan` sends to `255.255.255.255`, a *global* broadcast, which
-routers do not forward. LUCIFER is on `192.168.1.0/24`; node3090 is on
-`192.168.5.0/24`. The packet dies at the boundary. `-i 192.168.5.255` sends a
-*directed* broadcast that routes to node3090's own segment (via
-`192.168.1.50` = pfsense.home.arpa) where the RUTX50 (`192.168.5.3`) sits.
+**CANONICAL — SSH to the RUTX50 and emit the packet on node3090's own segment:**
 
 ```bash
-wakeonlan -i 192.168.5.255 0c:9d:92:84:6e:6a
+ssh -i ~/.ssh/id_ed25519_rutx50 -o StrictHostKeyChecking=no root@192.168.5.3 \
+    "etherwake -i eth0 0c:9d:92:84:6e:6a"
 ```
 
-**Preferred: use the LSE tool**, which has always worked and needs no flags —
-it POSTs to pfSense `/api/v2/services/wake_on_lan/send` with `interface: opt1`,
-i.e. pfSense emits the packet *on the 5.x segment directly*:
+This is the proven procedure (KB doc `842595879f70576d`, quality 1.0). It is
+the most robust because the RUTX50 (`192.168.5.3`, OpenWrt 21.02.0) sits on
+node3090's own L2 segment, so `etherwake` puts a raw frame directly on the
+wire. It depends on no routing, no directed-broadcast forwarding, and no
+pfSense configuration.
+
+**Via the LSE tool** (POSTs to pfSense `/api/v2/services/wake_on_lan/send`
+with `interface: opt1`, so pfSense emits on the 5.x segment):
 
 ```
 wake_node("node3090")
 ```
 
-**Boot timing (measured 2026-07-31):** packet → boot ≈ 20s; boot → pingable is
-quick; **boot → llama-server `/health` = 200 takes >2 min** (model load). Poll
-`/health`, never ping, before treating the node as usable.
+#### All known methods, with measured status (2026-07-31)
 
-> The bare-`wakeonlan` form above was documented here until 2026-07-31 and is
-> what an agent following this KB would have run. It fails silently — the
-> command prints "Sending magic packet" and exits 0 regardless.
+| Method | Status |
+|---|---|
+| `ssh root@192.168.5.3 "etherwake -i eth0 <mac>"` | **CANONICAL** — L2-direct, no network preconditions |
+| `wake_node("node3090")` — pfSense POST, `interface: opt1` | Works; the everyday agent path |
+| `wakeonlan -i 192.168.5.255 <mac>` from LUCIFER | Wakes (measured: boot ~20s later), but relies on directed-broadcast forwarding staying enabled |
+| `wakeonlan <mac>` from LUCIFER (bare) | **DOES NOT WAKE** — measured: no boot after 5+ min |
+
+> **Why the bare form is a trap.** It sends to `255.255.255.255`, a *global*
+> broadcast, which routers do not forward. LUCIFER is on `192.168.1.0/24`;
+> node3090 is on `192.168.5.0/24`, so the packet dies at the boundary. It
+> still prints "Sending magic packet" and **exits 0**, so it fails silently.
+> This entry documented the bare form as the LUCIFER procedure until
+> 2026-07-31; anything that followed this KB would have called it and
+> believed it worked.
+
+**Boot timing (measured 2026-07-31):** packet → boot ≈20s; boot → pingable is
+quick; **boot → llama-server `/health`=200 takes >2 min** (model load). Always
+poll `/health`, never ping, before treating the node as usable — and never
+trust the wake command's exit code.
 
 ### Verification Commands (on node3090)
 ```bash
