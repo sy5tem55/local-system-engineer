@@ -446,66 +446,54 @@ class KBMixin:
         origin: str = "",
     ) -> str:
         """
-        Index a document into the LSE knowledge base (lse-kb index).
+        SPEC: Index a document into the LSE knowledge base (lse-kb index).
 
         ORIGIN TAG (REFACTOR-4, mandatory for new docs):
-          origin= declares WHERE the content came from:
-            "web"         — fetched page / search result
-            "human"       — operator told you
-            "local-probe" — output of a command run against the live system
-          Anything else is stored as "unspecified". ASYMMETRIC TRUST RULE:
-          origin="web" can NEVER carry source_tier=ground_truth — it is
-          auto-downgraded to primary (ceiling 0.8). origin="dream" is stamped
-          by the dream apply path only; do not claim it here.
-
-        WHEN TO CALL:
-          After finding high-quality information from search_web() or Playwright
-          that is not already in the KB, or that is better than what's there.
-          Call AT MOST ONCE per user request, for the single best finding.
-          Do NOT call search_kb() afterwards to verify — trust the return value.
-          Do NOT call this if search_kb() already returned a hit with quality >= 0.6.
-
-        DEDUPLICATION:
-          If a nearly identical document already exists (cosine > 0.92), this
-          UPDATES the existing entry rather than duplicating it. quality_score
-          is raised to max(existing, new). The KB improves over time.
+        origin= declares WHERE the content came from:
+          "web"         — fetched page / search result
+          "human"       — operator told you
+          "local-probe" — output of a command run against the live system
+        Anything else is stored as "unspecified".
+        ASYMMETRIC TRUST RULE: origin="web" can NEVER carry
+        source_tier=ground_truth — it is auto-downgraded to primary (ceiling 0.8).
+        origin="dream" is stamped by the dream apply path only; do not claim it here.
 
         WATERFALL PROVENANCE RULE (v1.7.18):
-          Claims about external-software version/behavior ("X removed in v9577",
-          "deprecated since 2.8.0") MUST carry waterfall provenance — set source_url=
-          (fetched URL), evidence= (ground-truth tool output), or include an inline
-          RFC / doc_id. Before such a claim, run the waterfall: search_kb -> vendor
-          docs/README -> github -> search_web. An unprovenanced version/behavior claim
-          is stored tagged [UNVERIFIED] at quality <=0.3 so it cannot pose as fact.
+        Claims about external-software version/behavior MUST carry waterfall
+        provenance — set source_url= (fetched URL), evidence= (tool output),
+        or include an inline RFC/doc_id. Before such a claim, run the waterfall:
+        search_kb -> vendor docs -> github -> search_web. An unprovenanced
+        version/behavior claim is stored tagged [UNVERIFIED] at quality <=0.3.
+
+        WHEN TO CALL:
+        After finding high-quality information from search_web() that is not
+        already in the KB, or that is better than what's there. Call AT MOST
+        ONCE per user request, for the single best finding. Do NOT call
+        search_kb() afterwards to verify — trust the return value. Do NOT call
+        this if search_kb() already returned a hit with quality >= 0.6.
+
+        DEDUPLICATION: If a nearly identical document exists (cosine > 0.92),
+        this UPDATES the existing entry rather than duplicating it.
 
         Args:
-            content:       Full text to index.
-            title:         Human-readable title.
-            topic:         Use existing tags: 'wan2.1', 'comfyui', 'stable-diffusion',
-                           'llama-cpp', 'searxng', 'pfsense', 'openwebui',
-                           'lse-operations', 'infrastructure', 'general'.
-            source_url:    URL where found (empty string for local content).
-            quality_score: 0.0–1.0. Hard-capped to source_tier ceiling
-                           (see source_tier). Default 0.5.
-            source_tier:   Tier of evidence. Sets quality ceiling:
-                           ground_truth=1.0 (live system test, tool-result evidence
-                           required); primary=0.8 (vendor docs, official README, RFC);
-                           secondary=0.6 (community forums, SO, Reddit, blog posts);
-                           inferred=0.4 (untested hypothesis, model inference).
-                           Default=inferred. Omitting source_tier caps quality at 0.4.
-            evidence:      Required for source_tier=ground_truth — paste the actual
-                           tool-result output (HTTP response, command output, >=40
-                           chars). Empty or thin evidence downgrades ceiling to 0.7.
-            verified_against: Optional version/config snapshot this entry was
-                           verified against, e.g. "pfSense Plus 26.03" or
-                           "RUTX50 fw 07.23.4". Stored for staleness tracking.
-            volatility:    CHRONOS-3 (v0.3.1) freshness class — how fast this fact
-                           decays. 'static' (never expires: topology, hardware,
-                           protocols), 'slow' (90d TTL: procedures, configs —
-                           DEFAULT), 'fast' (7d TTL: versions, CVEs, firmware,
-                           prices). Past its TTL a doc is tagged [EXPIRED] in
-                           search_kb and demoted below fresh hits. Re-verifying
-                           via record_outcome(success=True) resets the clock.
+            content:          Full text to index.
+            title:            Human-readable title.
+            topic:            Use existing tags: 'wan2.1', 'comfyui', 'stable-diffusion',
+                              'llama-cpp', 'searxng', 'pfsense', 'openwebui',
+                              'lse-operations', 'infrastructure', 'general'.
+            source_url:       URL where found (empty string for local content).
+            quality_score:    0.0–1.0. Hard-capped to source_tier ceiling. Default 0.5.
+            source_tier:      Tier of evidence. Sets quality ceiling:
+                              ground_truth=1.0 (live system test, evidence required);
+                              primary=0.8 (vendor docs, official README, RFC);
+                              secondary=0.6 (community forums, SO, Reddit);
+                              inferred=0.4 (untested hypothesis). Default=inferred.
+            evidence:         Required for source_tier=ground_truth — paste actual
+                              tool-result output (>=40 chars). Empty/thin evidence
+                              downgrades ceiling to 0.7.
+            verified_against: Optional version/config snapshot for staleness tracking.
+            volatility:       CHRONOS-3 freshness class — 'static' (never expires),
+                              'slow' (90d TTL, DEFAULT), 'fast' (7d TTL: versions/CVEs).
         """
         import hashlib  # noqa: PLC0415
         from datetime import timezone  # noqa: PLC0415
