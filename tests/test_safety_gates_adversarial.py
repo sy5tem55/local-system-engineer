@@ -7,9 +7,12 @@ read-only or PR-only, and the pitch is "safe, auditable write access". Before
 covers the grant *lifecycle* (ingestion, rendering, approval), never the gate
 that decides whether a command runs.
 
-The first adversarial pass found four holes. One is fixed and pinned here; three
-are open and pinned as xfail so they are impossible to forget and will announce
-themselves (XPASS) the moment someone fixes them.
+The first adversarial pass (2026-07-31) found four holes. ALL FOUR ARE NOW
+CLOSED, each fixed on 2026-07-31 and pinned by the tests below. The xfail
+markers that held them open are gone; every test here now asserts real,
+enforced behaviour. The history is kept in each test's docstring so the
+reasoning survives, and the false-positive direction is covered explicitly —
+over-blocking is the live risk of every one of these fixes.
 
 FIXED AND PINNED
   _BLOCKED_WRITE_FILENAMES was entirely dead code. `_norm()` returns a
@@ -19,7 +22,7 @@ FIXED AND PINNED
   feature being sold as the safety model. The guard had never fired since it
   was written.
 
-OPEN — pinned xfail, each a real bypass of the privilege gate
+CLOSED 2026-07-31 — each was a real bypass of the privilege gate
   1. Heredoc-as-executor. `_strip_heredoc_bodies` blanks heredoc bodies before
      scanning, on the correct premise that a heredoc is data. But when the
      heredoc feeds an interpreter (`bash <<EOF`, `python3 <<EOF`) the body is
@@ -32,11 +35,18 @@ OPEN — pinned xfail, each a real bypass of the privilege gate
      Variable indirection, command substitution and xargs all reconstruct it
      at runtime after the scan has passed.
 
-Fixing 1-3 means changing scan semantics, which risks false positives on
+Fixing 1-3 meant changing scan semantics, which risks false positives on
 legitimate work — the failure mode where an over-eager guard blocks a KB note
 that merely mentions a privileged command (already hit once, see
-_strip_heredoc_bodies' own docstring). That is a design decision for the
-operator, not something to sneak in behind a test. Hence xfail, not a patch.
+_strip_heredoc_bodies' own docstring). That is a design decision, and it was
+taken deliberately by the operator on 2026-07-31 rather than slipped in behind
+a test. The fixes are correspondingly narrow: heredoc bodies are still treated
+as data unless the consumer is an interpreter; whitespace normalisation only
+collapses runs; privilege matching moved to word boundaries; and blocked
+command NAMES match in command position only, which is what let hole 4's
+false positive (`cat /etc/passwd`) be fixed at the same time as its
+under-block (`/etc/shadow`). Every fix has a paired test asserting the benign
+case still passes.
 
 These tests never execute a command. They call the pure predicate functions.
 """
@@ -53,10 +63,23 @@ _GOETHE = Path(__file__).resolve().parent.parent / "tools" / "goethe.py"
 
 @pytest.fixture(scope="module")
 def tools():
+    """Tools instance with the grants backend DISCONNECTED.
+
+    HERMETICITY (2026-07-31). These tests exercise the *gate*, not the
+    operator's current grant list. Left connected, they read the live
+    goethe_perms DB, so `sudo id` flips from blocked to allowed the moment
+    anyone approves a grant for `id` — which is exactly what happened
+    (grant #31), turning a green suite red with no code change. A safety
+    test whose verdict depends on mutable production state is not a test.
+    The two tests that specifically cover grant-lookup behaviour override
+    this themselves via monkeypatch.
+    """
     spec = importlib.util.spec_from_file_location("goethe_d5", _GOETHE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.Tools()
+    inst = module.Tools()
+    inst._perms_mod = lambda: None
+    return inst
 
 
 def _blocked(tools, command: str, cwd: str = "/tmp") -> bool:
@@ -93,12 +116,12 @@ def test_privilege_escalation_is_blocked(tools, command):
         "echo id | xargs sudo",
     ],
 )
-@pytest.mark.xfail(
-    reason="OPEN HOLE 3: privilege scan is literal-substring; shell indirection "
-    "reconstructs 'sudo' after the scan passes",
-    strict=True,
-)
 def test_privilege_escalation_via_shell_indirection(tools, command):
+    """CLOSED 2026-07-31. Was OPEN HOLE 3. The scan required the literal
+    "sudo " with a trailing space, so every form where sudo is reconstructed
+    or sits at end-of-string escaped it. Now matched on word boundaries
+    (_PRIVILEGED_TOKEN_RE), which fires on "S=sudo", "$(echo sudo)" and
+    "xargs sudo" alike because '=', '(' and ' ' are all word boundaries."""
     assert _blocked(tools, command)
 
 
@@ -123,12 +146,10 @@ def test_destructive_commands_are_blocked(tools, command):
 
 
 @pytest.mark.parametrize("command", ["rm  -rf /tmp/x", "rm\t-rf /tmp/x"])
-@pytest.mark.xfail(
-    reason="OPEN HOLE 2: _BLOCKED_COMMANDS matches literal substrings, so any "
-    "whitespace variant evades it while the shell behaves identically",
-    strict=True,
-)
 def test_destructive_commands_whitespace_variants(tools, command):
+    """CLOSED 2026-07-31. Was OPEN HOLE 2. _normalize_for_scan() collapses
+    whitespace runs before the literal-substring scan, so padded variants
+    can no longer diverge from the blocklist entry they are identical to."""
     assert _blocked(tools, command)
 
 
@@ -160,13 +181,13 @@ def test_heredoc_redirect_to_privileged_path_is_still_blocked(tools):
         "python3 << 'EOF'\nimport os; os.system('sudo id')\nEOF",
     ],
 )
-@pytest.mark.xfail(
-    reason="OPEN HOLE 1: heredoc bodies are blanked before scanning because a "
-    "heredoc is assumed to be data, but when it feeds an interpreter the body "
-    "is executed code and is never examined",
-    strict=True,
-)
 def test_heredoc_feeding_an_interpreter_is_blocked(tools, command):
+    """CLOSED 2026-07-31. Was OPEN HOLE 1. _strip_heredoc_bodies() now checks
+    whether the heredoc's consumer executes its body — everything left of
+    `<<` is tokenised to basenames and matched against
+    _INTERPRETER_HEREDOC_CMDS. Interpreter consumers keep their body for
+    scanning; `cat`/`tee` and friends still get it blanked, which is what
+    keeps the documentation case below passing."""
     assert _blocked(tools, command)
 
 
@@ -246,23 +267,47 @@ def test_reads_from_privileged_paths_remain_allowed(tools):
 
 
 @pytest.mark.parametrize("command", ["cat /etc/passwd", "grep root /etc/passwd"])
-@pytest.mark.xfail(
-    reason="OPEN HOLE 4 (inverted priority): _BLOCKED_COMMANDS contains 'passwd' "
-    "to block the password-changing command, but literal substring matching also "
-    "blocks reading /etc/passwd - a routine SRE operation. Meanwhile the far more "
-    "sensitive /etc/shadow is readable, since no blocklist entry happens to appear "
-    "in its name. The guard over-blocks the benign and under-blocks the dangerous.",
-    strict=True,
-)
-def test_reading_etc_passwd_is_a_false_positive(tools, command):
+def test_reading_etc_passwd_is_allowed(tools, command):
+    """CLOSED 2026-07-31. Was OPEN HOLE 4, first half. 'passwd' sat in
+    _BLOCKED_COMMANDS as a literal substring, so it matched the PATH in
+    `cat /etc/passwd` and blocked a routine read. Command names now match in
+    command position only (_BLOCKED_COMMAND_NAMES + _CMD_POSITION_RE), whose
+    executable-path prefixes cover real bin directories but never /etc/."""
     assert not _blocked(tools, command)
 
 
-def test_etc_shadow_read_is_currently_unguarded(tools):
-    """Documents the other half of hole 4: no gate covers /etc/shadow reads.
-    Pinned as an assertion of CURRENT behaviour so that tightening the read
-    path deliberately breaks this test and forces a conscious update."""
-    assert not _blocked(tools, "less /etc/shadow")
+@pytest.mark.parametrize(
+    "command",
+    ["passwd", "passwd root", "/usr/bin/passwd root", "visudo",
+     "ls; passwd root", "userdel sy5", "shred /dev/sda"],
+)
+def test_blocked_command_names_still_blocked_in_command_position(tools, command):
+    """The other side of the same fix: narrowing to command position must not
+    let the actual invocations through, including via absolute path and after
+    a shell separator."""
+    assert _blocked(tools, command), f"blocked command name allowed: {command!r}"
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cat /etc/shadow", "grep sy5 /etc/shadow", "cat /etc/gshadow"],
+)
+def test_shadow_file_reads_are_blocked(tools, command):
+    """CLOSED 2026-07-31. Was OPEN HOLE 4, second half. /etc/shadow was
+    entirely unguarded — the guard over-blocked the benign (/etc/passwd) while
+    under-blocking the dangerous. Now explicitly blocked via
+    _BLOCKED_READ_PATHS."""
+    assert _blocked(tools, command), f"shadow read allowed: {command!r}"
+
+
+def test_etc_shadow_read_is_now_guarded(tools):
+    """This test previously asserted the OPPOSITE — that `less /etc/shadow`
+    was allowed — pinned as current behaviour precisely so that tightening the
+    read path would break it and force a conscious update. That tightening
+    happened on 2026-07-31 (hole 4, second half), so this is that conscious
+    update: the assertion is inverted, deliberately, and the mechanism is
+    _BLOCKED_READ_PATHS."""
+    assert _blocked(tools, "less /etc/shadow")
 
 
 # ───────────────────────── working directory gate ────────────────────────

@@ -375,14 +375,6 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
 
     _BLOCKED_COMMANDS = (
         # Filesystem destruction — disk/partition tools
-        "mkfs",
-        "fdisk",
-        "parted",
-        "sgdisk",
-        "wipefs",
-        "blkdiscard",
-        "partprobe",
-        "shred",
         # Block device writes — dd and shell redirection
         "dd if=",
         "of=/dev/",
@@ -395,16 +387,34 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         "rm -f -r",
         # Fork bomb
         ":(){ :|",
-        # Account deletion
-        "userdel",
-        "groupdel",
-        # Privilege / credential management
-        "passwd",
-        "visudo",
         # Firewall flush
         "iptables -f",
         "iptables -F",
     )
+
+    # D5-FIX (2026-07-31) — command NAMES, matched only in command position.
+    # These used to live in _BLOCKED_COMMANDS as plain substrings, which made
+    # the guard simultaneously over- and under-block: "passwd" matched the
+    # path in `cat /etc/passwd`, blocking a routine read, while the far more
+    # sensitive /etc/shadow stayed readable because no blocklist entry happened
+    # to appear in its name. Matching in command position instead means
+    # `passwd root` and `/usr/bin/passwd` are blocked while `cat /etc/passwd`
+    # is not — the executable-path prefixes below are deliberately limited to
+    # real bin directories, so /etc/<name> never reads as an invocation.
+    _BLOCKED_COMMAND_NAMES = (
+        "userdel", "groupdel", "passwd", "visudo",
+        "mkfs", "fdisk", "parted", "sgdisk", "wipefs", "blkdiscard",
+        "partprobe", "shred",
+    )
+
+    # Start-of-string, shell separator, or an executable path prefix — then the
+    # name on a word boundary. `%s` is filled per name at scan time.
+    _CMD_POSITION_RE = r"(?:^|[;&|`(]|\s)(?:/(?:usr/)?(?:local/)?s?bin/)?%s\b"
+
+    # D5-FIX (2026-07-31) — the other half of the same defect. Reads of the
+    # shadow files were entirely unguarded. Low false-positive cost: these are
+    # root-only anyway, so a legitimate agent read would already have failed.
+    _BLOCKED_READ_PATHS = ("/etc/shadow", "/etc/gshadow")
 
     # v1.4.2: uses 'in' check (not startswith) to catch sudo in pipelines
     _PRIVILEGED_PREFIXES = ("sudo ", "su ", "doas ")
@@ -587,7 +597,51 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
     # with a string pattern is fine here — cpython's re module memoises
     # compiled patterns internally, and this runs once per command, not in
     # a hot loop.
+    # D5-FIX (2026-07-31) — heredoc consumers that EXECUTE their body.
+    # A heredoc is normally data (see _strip_heredoc_bodies), but when it feeds
+    # an interpreter the body is code and must be scanned. Matched on the
+    # basename of every token left of `<<` in the heredoc header line.
+    _INTERPRETER_HEREDOC_CMDS = frozenset({
+        "sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "ash", "busybox",
+        "python", "python2", "python3", "perl", "ruby", "node", "nodejs",
+        "php", "lua", "tclsh", "expect", "awk", "gawk", "env", "eval",
+        "xargs", "source",
+    })
+
+    # D5-FIX (2026-07-31) — privilege tokens matched on WORD BOUNDARIES rather
+    # than the old literal "sudo " / "su " / "doas " substrings, which required
+    # a trailing space and so missed every form where sudo is reconstructed or
+    # terminal: "S=sudo; $S id", "$(echo sudo) id", "echo id | xargs sudo".
+    # \b before "sudo" still matches after '=', '(', '|' etc, so all three
+    # indirection shapes are caught. \bsu\b does not match inside "sudo"
+    # (no boundary between "su" and "d") nor inside words like "resume".
+    _PRIVILEGED_TOKEN_RE = r"\b(?:sudo|doas|su)\b"
+
     _HEREDOC_PATTERN = r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\2[ \t]*$"
+
+    def _normalize_for_scan(self, text: str) -> str:
+        """Collapse whitespace runs so literal-substring blocklists cannot be
+        evaded by padding.
+
+        D5-FIX (2026-07-31). `_BLOCKED_COMMANDS` is a literal-substring list, so
+        "rm  -rf" (two spaces) and "rm\t-rf" sailed past a blocklist containing
+        "rm -rf" while behaving identically in a shell. Collapsing every run of
+        spaces/tabs to one space before the substring scan closes that class of
+        evasion for every entry in the list at once, rather than enumerating
+        padded variants forever.
+
+        Newlines are preserved: the heredoc placeholder inserted by
+        _strip_heredoc_bodies is line-structured, and the privileged-write
+        regexes below use [^|;&\n] classes that depend on real newlines.
+        """
+        import re as _re  # noqa: PLC0415
+
+        try:
+            return _re.sub(r"[ \t]+", " ", text)
+        except Exception:  # noqa: BLE001 (scan normalisation must never crash the guard)
+            # Fail closed: scanning the un-normalised text is the old, weaker
+            # behaviour but still blocks the unpadded forms.
+            return text
 
     def _strip_heredoc_bodies(self, command: str) -> str:
         """Blank out heredoc payload bodies before running safety substring
@@ -607,8 +661,32 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         """
         import re as _re  # noqa: PLC0415
 
+        def _feeds_an_interpreter(header: str) -> bool:
+            """True when the heredoc's consumer executes the body as code.
+
+            D5-FIX (2026-07-31). `bash << EOF`, `python3 << EOF` and friends
+            make the body executable code, not data — blanking it meant any
+            blocked command or privilege escalation placed inside ran entirely
+            unexamined. Everything left of `<<` is tokenised and reduced to
+            basenames, so `/bin/bash`, `env bash` and `bash` all match while
+            `cat >> /tmp/notes.md` (the documentation case this whole
+            blanking behaviour exists to protect) does not.
+            """
+            before = header.split("<<", 1)[0]
+            tokens = _re.findall(r"[A-Za-z0-9_./+-]+", before)
+            basenames = {t.rsplit("/", 1)[-1].lower() for t in tokens}
+            return bool(basenames & self._INTERPRETER_HEREDOC_CMDS)
+
         def _replace(m: "_re.Match") -> str:
             first_line = m.group(0).split("\n", 1)[0]
+            # _HEREDOC_PATTERN starts matching at `<<`, so the consuming command
+            # sits BEFORE m.start() — take the rest of that physical line.
+            _prefix = m.string[: m.start()]
+            _consumer = _prefix[_prefix.rfind("\n") + 1 :]
+            if _feeds_an_interpreter(_consumer + first_line):
+                # Body is code. Return the match untouched so the scans below
+                # see it. This is the ONLY case where a heredoc body is scanned.
+                return m.group(0)
             return f"{first_line}\n[HEREDOC BODY OMITTED FROM SAFETY SCAN]\n{m.group(2)}"
 
         try:
@@ -629,13 +707,35 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         scan_command = self._strip_heredoc_bodies(command)
 
         # ── Block permanently forbidden commands ──────────────────────────────
-        cmd_lower = scan_command.lower().strip()
+        # D5-FIX (2026-07-31): normalise whitespace runs before the literal
+        # substring scan so "rm  -rf" / "rm\t-rf" cannot slip past "rm -rf".
+        cmd_lower = self._normalize_for_scan(scan_command.lower()).strip()
         for blocked in self._BLOCKED_COMMANDS:
             if blocked in cmd_lower:
                 self._log(f"HARD-BLOCKED: {command}")
                 return (
                     f"BLOCKED: '{blocked}' is permanently forbidden. "
                     "This operation cannot be performed by the agent under any circumstances."
+                )
+
+        # ── Blocked command NAMES, command position only (D5-FIX 2026-07-31) ──
+        import re as _re_cmd  # noqa: PLC0415
+
+        for _name in self._BLOCKED_COMMAND_NAMES:
+            if _re_cmd.search(self._CMD_POSITION_RE % _re_cmd.escape(_name), cmd_lower):
+                self._log(f"HARD-BLOCKED: {command}")
+                return (
+                    f"BLOCKED: '{_name}' is permanently forbidden. "
+                    "This operation cannot be performed by the agent under any circumstances."
+                )
+
+        # ── Blocked reads of credential files (D5-FIX 2026-07-31) ─────────────
+        for _rp in self._BLOCKED_READ_PATHS:
+            if _rp in cmd_lower:
+                self._log(f"READ-BLOCKED: {command}")
+                return (
+                    f"BLOCKED: '{_rp}' is a protected credential file. "
+                    "Reading it is not permitted."
                 )
 
         # ── DB-granted privileged commands (goethe_perms, user-approved) ─────
@@ -659,26 +759,34 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
                 return None
 
         # ── Block privilege escalation anywhere in the command (v1.4.2 fix) ──
-        for priv in self._PRIVILEGED_PREFIXES:
-            if priv in cmd_lower:
-                self._log(f"PRIV-BLOCKED: {command}")
-                if _priv_rest and not any(
-                    t in _priv_rest for t in (";", "|", "&", "`", "$(", "\n", ">", "<")
-                ):
-                    _note = self._perm_note(
-                        "sudo", _priv_rest, "agent requested privileged command"
-                    )
-                    return (
-                        f"BLOCKED: '{priv.strip()}' detected in command. "
-                        "Use sudo_delegation_block instead." + _note
-                    )
-                return (
-                    f"BLOCKED: '{priv.strip()}' detected in a chained or complex "
-                    "command. Complex shell text cannot become a sudo grant. "
-                    "Use sudo_delegation_block and split the privileged operation "
-                    "into one exact command without pipes, redirects, chaining, "
-                    "or shell expansion."
+        # D5-FIX (2026-07-31): matched on word boundaries, not the old
+        # "sudo "/"su "/"doas " substrings. The trailing space those required
+        # meant sudo escaped detection whenever it was reconstructed or
+        # terminal — "S=sudo; $S id", "$(echo sudo) id", "echo id | xargs sudo"
+        # all reached the shell with the gate none the wiser.
+        import re as _re_priv  # noqa: PLC0415
+
+        _priv_hit = _re_priv.search(self._PRIVILEGED_TOKEN_RE, cmd_lower)
+        if _priv_hit:
+            priv = _priv_hit.group(0)
+            self._log(f"PRIV-BLOCKED: {command}")
+            if _priv_rest and not any(
+                t in _priv_rest for t in (";", "|", "&", "`", "$(", "\n", ">", "<")
+            ):
+                _note = self._perm_note(
+                    "sudo", _priv_rest, "agent requested privileged command"
                 )
+                return (
+                    f"BLOCKED: '{priv}' detected in command. "
+                    "Use sudo_delegation_block instead." + _note
+                )
+            return (
+                f"BLOCKED: '{priv}' detected in a chained or complex "
+                "command. Complex shell text cannot become a sudo grant. "
+                "Use sudo_delegation_block and split the privileged operation "
+                "into one exact command without pipes, redirects, chaining, "
+                "or shell expansion."
+            )
 
         # ── Block writes to privileged system paths ───────────────────────────
         # Only block when a write op TARGETS a privileged path; reads (cat/tr/grep
@@ -2090,20 +2198,9 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         parts = line.split(None, 1)
         return (self._parse_llama_cmdline(parts[1]) if len(parts) > 1 else {}), ""
 
+    # _call_hermes, _kanban_create_card — REMOVED 2026-07-31. Hermes was
+    # retired in v0.2.7 and both were left as stubs returning error strings.
+    # Episode-corpus audit: 0 invocations in 18,061 tool calls (same .tool
+    # field methodology that justified the search_rfc removal). Multi-agent
+    # coordination lives in Faust rooms; planning uses _call_node_planner.
 
-
-
-
-    # ── Hermes Agent delegation ───────────────────────────────────────────────
-
-    def _call_hermes(self, task: str, context: str = "", no_think: bool = True) -> str:
-        """[RETIRED v0.2.7] — Hermes gateway (port 8642) no longer runs.
-        Use _call_node_planner() instead.
-        """
-        return "ERROR: _call_hermes is RETIRED (v0.2.7) — use _call_node_planner"
-
-    def _kanban_create_card(self, task_id: str, title: str, body: str) -> str:
-        """[RETIRED v0.2.7] — kanban.db was Hermes-specific (/home/hermes-admin/.hermes/).
-        Hermes has been retired. This method is dead code and will be removed.
-        """
-        return "kanban retired (v0.2.7)"
