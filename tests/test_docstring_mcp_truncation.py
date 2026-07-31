@@ -24,7 +24,7 @@ MCP_DESC_MAX = 1024  # description=wrapper.__doc__[:1024]
 CONTRACT_KEYWORDS = ("MUST", "MANDATORY", "NEVER", "GATE", "RULE", "REQUIRED")
 
 # Methods that are internal or skipped from tool exposure.
-SKIP_TOOLS = {"compact_context", "search_rfc"}
+SKIP_TOOLS = {"compact_context"}
 
 # Frontend-injected parameters — methods with only these are helpers, not tools.
 INJECTED = {
