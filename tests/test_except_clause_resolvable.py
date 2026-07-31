@@ -35,7 +35,7 @@ _TOOLS = Path(__file__).resolve().parent.parent / "tools"
 # D7 (2026-07-31): goethe_netsec.py added when it was extracted as the
 # first mixin. Add every new mixin file here in the same step that
 # creates it - a mixin absent from this list is unguarded code.
-_TARGETS = ["goethe.py", "goethe_kb.py", "goethe_ui.py", "goethe_netsec.py"]
+_TARGETS = ["goethe.py", "goethe_kb.py", "goethe_ui.py", "goethe_netsec.py", "goethe_node.py"]
 
 
 def _module_scope_names(tree: ast.Module) -> set[str]:
