@@ -26,7 +26,10 @@ Measured live on 2026-07-31, ~17:00. Re-check anything you depend on.
 | LUCIFER subnet | `192.168.1.57/24` | `ip -4 addr` |
 | node3090 address | `192.168.5.41` | `getent hosts` |
 | Route to the 5.x segment | `192.168.5.41 via 192.168.1.50` (pfsense.home.arpa) | `ip route get` |
-| **`wakeonlan 0c:9d:92:84:6e:6a` from LUCIFER — WORKS** | operator-verified 5+ times; RUTX50 (`192.168.5.3`, same segment as node3090) carries it | `kb/network-topology.md` §WAKE ON LAN |
+| **Bare `wakeonlan <mac>` from LUCIFER — DOES NOT WAKE** | measured 2026-07-31: no boot after 5 min | live test, node powered down |
+| **`wakeonlan -i 192.168.5.255 <mac>` — WAKES** | measured: booted ~20s after packet | live test |
+| `wake_node("node3090")` (pfSense POST, `interface: opt1`) | the operator's proven everyday path | LSE tool, used for weeks |
+| boot → llama-server `/health`=200 | **>2 min** (model load); pingable much earlier | live test |
 | Alternative wake path | pfSense `POST /api/v2/services/wake_on_lan/send`, interface `opt1` | `goethe_node.wake_node` |
 | LUCIFER llama-server :8080 | healthy, Qwen3.6-27B, **manually started, no systemd unit** | `curl /health`, `systemctl is-enabled` → not-found |
 | LUCIFER Ollama | systemd `enabled`+`active`, but only `llama3.2:3b` chat model | `systemctl`, `/api/tags` |
@@ -77,11 +80,16 @@ real legs live on. Fix it *outside* the cascade.
 Create `tools/wake-node-for-dream.sh` (executable). Contract:
 
 - exit **0** if node3090 is reachable **and** its llama-server answers `/health`
-- if unreachable: `wakeonlan 0c:9d:92:84:6e:6a` (the KB-documented, verified
-  path), then poll `/health` every 5s up to `GOETHE_DREAM_WAKE_TIMEOUT_S`
-  (default **180** — the KB records boot ≈55s, so this is ~3x headroom)
-- if `wakeonlan` is absent or errors, fall back to the pfSense POST that
-  `goethe_node.wake_node` uses
+- if unreachable, wake it — **two proven options, pick one and say why**:
+  - `wakeonlan -i 192.168.5.255 0c:9d:92:84:6e:6a` — the `-i` is **mandatory**;
+    the bare form does not wake the node (measured, see the table above)
+  - the pfSense POST that `goethe_node.wake_node` performs — the operator's
+    everyday path, needs the API key
+- then poll **`/health`, not ping**, every 5s up to
+  `GOETHE_DREAM_WAKE_TIMEOUT_S` (default **300**). Measured: boot ≈20s after
+  the packet, but llama-server needs **>2 min more** to load the model. A
+  ping-based or 180s timeout would report failure on a node that was waking
+  correctly.
 - exit **1** if it never comes up — never hang, never exit non-zero for a
   reason other than "node did not wake"
 - log one line per state transition to stdout

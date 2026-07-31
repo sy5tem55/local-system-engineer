@@ -34,15 +34,39 @@ Note: node3090 resolves via DHCP static mapping DNS registration (no explicit ho
 | **PCIe PM** | `on` (not aggressive) |
 
 ### How to Wake node3090
-From any machine on the LAN:
+
+**From LUCIFER (WSL2) the `-i` flag is REQUIRED.** Measured 2026-07-31:
+
+| Command | Result |
+|---|---|
+| `wakeonlan 0c:9d:92:84:6e:6a` | **DOES NOT WAKE** — no boot after 5 min |
+| `wakeonlan -i 192.168.5.255 0c:9d:92:84:6e:6a` | **WAKES** — booted ~20s later |
+
+Why: bare `wakeonlan` sends to `255.255.255.255`, a *global* broadcast, which
+routers do not forward. LUCIFER is on `192.168.1.0/24`; node3090 is on
+`192.168.5.0/24`. The packet dies at the boundary. `-i 192.168.5.255` sends a
+*directed* broadcast that routes to node3090's own segment (via
+`192.168.1.50` = pfsense.home.arpa) where the RUTX50 (`192.168.5.3`) sits.
+
 ```bash
-wakeonlan 0c:9d:92:84:6e:6a
+wakeonlan -i 192.168.5.255 0c:9d:92:84:6e:6a
 ```
 
-From LUCIFER (pre-configured):
-```bash
-wakeonlan 0c:9d:92:84:6e:6a
+**Preferred: use the LSE tool**, which has always worked and needs no flags —
+it POSTs to pfSense `/api/v2/services/wake_on_lan/send` with `interface: opt1`,
+i.e. pfSense emits the packet *on the 5.x segment directly*:
+
 ```
+wake_node("node3090")
+```
+
+**Boot timing (measured 2026-07-31):** packet → boot ≈ 20s; boot → pingable is
+quick; **boot → llama-server `/health` = 200 takes >2 min** (model load). Poll
+`/health`, never ping, before treating the node as usable.
+
+> The bare-`wakeonlan` form above was documented here until 2026-07-31 and is
+> what an agent following this KB would have run. It fails silently — the
+> command prints "Sending magic packet" and exits 0 regardless.
 
 ### Verification Commands (on node3090)
 ```bash
