@@ -270,6 +270,9 @@
             <label>cycle minutes <input id="traum-minutes" type="number" min="5" max="45" value="45"></label>
             <button class="abtn once" id="traum-run" onclick="traumStartRun()">Run</button>
           </div>
+          <label style="font-size:11px;color:var(--faint);display:block;margin-top:8px" title="The runner normally waits out a 30-minute quiet period after any LSE session activity, so it never analyses a corpus that is still being written. Tick this only when you are finished working and leaving the machine. The lock guard is unaffected: two dream runners still cannot run at once.">
+            <input id="traum-skip-session-guard" type="checkbox"> I&#39;m done for the day — skip the 30-minute quiet-period wait
+          </label>
           <div class="traum-msg" id="traum-msg"></div>
         </div>
         <div class="traum-box"><h3>Nightly timer — read only</h3><div id="traum-timer" class="traum-meta">loading…</div></div>
@@ -835,14 +838,17 @@ async function traumStartRun(){
   const payload = {
     profile,
     sessions:Number($("traum-sessions").value),
-    wall_clock_minutes:Number($("traum-minutes").value)
+    wall_clock_minutes:Number($("traum-minutes").value),
+    skip_session_guard: $("traum-skip-session-guard").checked
   };
   if(profile==="single-pass") payload.pass = $("traum-pass").value;
   $("traum-run").disabled = true;
   setTraumMsg("starting…",false);
   try{
     const d = await apiPost("/api/ui/traum/runs",payload);
-    setTraumMsg("started "+d.run_id,false);
+    setTraumMsg("started "+d.run_id+(payload.skip_session_guard
+      ? " (quiet-period wait waived)"
+      : " — will wait out the quiet period if a session was recently active"),false);
     loadTraumStatus(); loadTraumRuns();
   }catch(e){ setTraumMsg(e.message,true); }
   finally{$("traum-run").disabled=false;}

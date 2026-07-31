@@ -620,6 +620,7 @@ class DreamConfig:
     budget_max_llm_calls: int = 100
     budget_max_wall_clock_min: float = 45.0
     ignore_guards: bool = False
+    skip_session_guard: bool = False
     budget: "DreamBudget | None" = None
     # Canonical TRAUM lifecycle. Empty IDs mean a direct/pure function test;
     # main() fills them for every real (non-preview) invocation.
@@ -695,6 +696,7 @@ def build_config(args: argparse.Namespace) -> DreamConfig:
             else args.budget_max_wall_clock_min
         ),
         ignore_guards=args.ignore_guards,
+        skip_session_guard=args.skip_session_guard,
         state_db=args.state_db or traum_state.default_db_path(dream_dir),
         run_id=args.run_id or "",
         attempt_id=args.attempt_id or "",
@@ -3865,6 +3867,14 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="bypass the lock + recent-session-activity checks entirely "
                     "(manual/debug runs only -- NEVER set this on the scheduled "
                     "nightly cycle; per-run budgets still apply even with this set)")
+    guard_group.add_argument("--skip-session-guard", action="store_true",
+                    help="skip ONLY the recent-session-activity wait, keeping the "
+                    "lockfile guard intact. This is the operator-initiated case: "
+                    "'I have finished working and am leaving the machine', which "
+                    "--ignore-guards over-serves by also disabling the lock and "
+                    "thereby permitting two concurrent dream runners. Prefer this "
+                    "flag for any human-triggered run; keep --ignore-guards for "
+                    "debugging only.")
 
     ap.add_argument("-v", "--verbose", action="store_true")
     return ap.parse_args(argv)
@@ -4386,7 +4396,20 @@ def main(argv=None) -> int:
 
     lock_acquired = False
     if not cfg.ignore_guards:
-        block_reason = _recent_session_active(cfg, refresh_manifest=not cfg.dry_run)
+        # --skip-session-guard is deliberately narrower than --ignore-guards:
+        # it suppresses the recent-session-activity wait ONLY, and leaves the
+        # lockfile acquisition below untouched. An operator clicking "run now,
+        # I'm done for the day" is asserting the corpus is quiescent -- they
+        # are NOT asserting that no other dream runner is already going, which
+        # is what the lock exists to prevent.
+        block_reason = (
+            "" if cfg.skip_session_guard
+            else _recent_session_active(cfg, refresh_manifest=not cfg.dry_run)
+        )
+        if cfg.skip_session_guard:
+            print("[dream_runner] --skip-session-guard set: recent-session-activity "
+                  "check skipped by explicit operator request (lock guard still "
+                  "enforced)", file=sys.stderr)
         # R2.1 (docs/TRAUM-R1-R3-PLAN.md): a session ending inside the
         # window used to abort the run outright. That window is transient
         # by definition -- it clears itself in session_active_window_min

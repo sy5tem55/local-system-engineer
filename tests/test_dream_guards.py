@@ -476,3 +476,44 @@ class TestStaleContradictionLoopTruncation:
         assert cfg.budget.truncated
         assert "session" in cfg.budget.truncation_reason.lower()
         assert cfg.budget.sessions_consumed == 4
+
+
+# --- --skip-session-guard keeps the lock (operator-initiated runs) -----------
+
+class TestSkipSessionGuardKeepsTheLock:
+    """The GUI checkbox maps to --skip-session-guard, NOT --ignore-guards.
+
+    The distinction is the whole point: --ignore-guards suppresses the
+    lockfile as well, which would allow two concurrent dream runners over
+    the same corpus. These tests pin that the narrow flag waives only the
+    quiet-period wait.
+    """
+
+    def test_parse_args_exposes_both_flags_independently(self):
+        plain = dr.parse_args(["--pass", "dedup"])
+        assert plain.skip_session_guard is False
+        assert plain.ignore_guards is False
+
+        narrow = dr.parse_args(["--pass", "dedup", "--skip-session-guard"])
+        assert narrow.skip_session_guard is True
+        assert narrow.ignore_guards is False, (
+            "--skip-session-guard must NOT imply --ignore-guards; the latter "
+            "also disables the lock"
+        )
+
+        broad = dr.parse_args(["--pass", "dedup", "--ignore-guards"])
+        assert broad.ignore_guards is True
+        assert broad.skip_session_guard is False
+
+    def test_lock_is_still_acquired_when_session_guard_is_skipped(self, tmp_path):
+        """A held lock must still block a --skip-session-guard run."""
+        lockfile = tmp_path / "dream.lock"
+        # A lock held by THIS live pid: acquire_lock must refuse it rather
+        # than reclaim it as stale.
+        lockfile.write_text(json.dumps(
+            {"pid": os.getpid(), "pass": "dedup", "acquired_at": "x"}
+        ))
+        cfg = _cfg(lockfile=str(lockfile), skip_session_guard=True, dry_run=False)
+        assert dr.acquire_lock(cfg) is False, (
+            "skipping the session guard must not weaken the lock guard"
+        )

@@ -818,6 +818,54 @@ def test_legacy_failure_reconciliation_is_stable_acknowledgeable_and_archivable(
     assert (day / "crashes.jsonl").exists()  # archive never deletes evidence
 
 
+# --- operator-initiated runs: skip_session_guard ----------------------------
+
+def test_skip_session_guard_defaults_off_and_is_not_in_argv(tmp_path):
+    ctl, captured = _controller(tmp_path)
+    ctl.start_run({"profile": "single-pass", "pass": "dedup",
+                   "sessions": 1, "wall_clock_minutes": 5})
+    _wait_idle(ctl)
+    assert "--skip-session-guard" not in captured[0].argv
+    assert "--ignore-guards" not in captured[0].argv
+
+
+def test_skip_session_guard_passes_the_narrow_flag_never_ignore_guards(tmp_path):
+    """The checkbox must not reach for --ignore-guards.
+
+    --ignore-guards disables the lockfile too, which would let two dream
+    runners execute concurrently. The operator is asserting "the corpus is
+    quiet", not "no other runner exists", so the flag sent must be the
+    narrow one.
+    """
+    ctl, captured = _controller(tmp_path)
+    ctl.start_run({"profile": "single-pass", "pass": "dedup",
+                   "sessions": 1, "wall_clock_minutes": 5,
+                   "skip_session_guard": True})
+    _wait_idle(ctl)
+    assert "--skip-session-guard" in captured[0].argv
+    assert "--ignore-guards" not in captured[0].argv
+
+
+def test_skip_session_guard_is_recorded_in_run_config(tmp_path):
+    ctl, _ = _controller(tmp_path)
+    run = ctl.start_run({"profile": "single-pass", "pass": "dedup",
+                         "sessions": 1, "wall_clock_minutes": 5,
+                         "skip_session_guard": True})
+    _wait_idle(ctl)
+    config = ctl.state.get_run(run["run_id"])["config"]
+    assert config["skip_session_guard"] is True
+    assert config["guards"] == "session-guard-waived"
+
+
+def test_skip_session_guard_rejects_non_boolean(tmp_path):
+    ctl, captured = _controller(tmp_path)
+    with pytest.raises(tc.TraumControlError, match="must be a boolean"):
+        ctl.start_run({"profile": "single-pass", "pass": "dedup",
+                       "sessions": 1, "wall_clock_minutes": 5,
+                       "skip_session_guard": "yes"})
+    assert captured == []
+
+
 # --- health verdict (R3.1/R3.3, docs/TRAUM-R1-R3-PLAN.md) --------------------
 
 def _seed_run(ctl, *, source, state, hours_ago, run_id=None):

@@ -596,7 +596,9 @@ class TraumController:
 
     def start_run(self, payload: dict) -> dict:
         payload = _strict_object(
-            payload, {"profile", "pass", "sessions", "wall_clock_minutes"}
+            payload,
+            {"profile", "pass", "sessions", "wall_clock_minutes",
+             "skip_session_guard"},
         )
         profile = payload.get("profile", "standard")
         if profile not in RUN_PROFILES:
@@ -621,10 +623,18 @@ class TraumController:
             payload.get("wall_clock_minutes", 45),
             "wall_clock_minutes", 5, 45,
         )
+        skip_session_guard = payload.get("skip_session_guard", False)
+        if not isinstance(skip_session_guard, bool):
+            raise TraumControlError("skip_session_guard must be a boolean")
         config = {
             "sessions": sessions,
             "operation_wall_clock_minutes": wall_clock,
-            "guards": "required",
+            # "guards" records what this run actually enforced, so run history
+            # shows after the fact whether the quiet-period wait was in play.
+            # The lock guard is enforced either way -- only the
+            # recent-session-activity wait is ever waived here.
+            "guards": "session-guard-waived" if skip_session_guard else "required",
+            "skip_session_guard": skip_session_guard,
             "dry_run": False,
         }
         requested_passes = passes + (["digest"] if profile == "standard" else [])
@@ -909,6 +919,11 @@ class TraumController:
             "--run-source", "gui",
             "--no-dry-run",
         ]
+        if config.get("skip_session_guard"):
+            # Narrower than --ignore-guards by design: the lockfile guard in
+            # dream_runner stays active, so this can never permit two
+            # concurrent runners.
+            argv.append("--skip-session-guard")
         if retry_of:
             argv[2:2] = ["--retry-of", retry_of]
         result, timed_out = self._run_child(
