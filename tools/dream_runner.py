@@ -308,6 +308,21 @@ def _node3090_ssh_host_default() -> str:
     return os.environ.get("GOETHE_NODE3090_SSH_HOST", "node3090.home.arpa")
 
 
+def _session_wait_retries() -> int:
+    """R2.1: how many times main() re-checks the recent-session-activity
+    guard, sleeping between checks, before giving up and raising
+    DependencyBlocked. Default 3, per docs/TRAUM-R1-R3-PLAN.md Step 2.1.
+    Malformed/negative values fall back to the default rather than raising,
+    matching this module's general policy of degrading a bad env var
+    instead of crashing a nightly run over it."""
+    raw = os.environ.get("GOETHE_DREAM_SESSION_WAIT_RETRIES", "3")
+    try:
+        value = int(raw)
+    except ValueError:
+        return 3
+    return value if value >= 0 else 3
+
+
 def _node3090_ssh_user_default() -> str:
     return os.environ.get("GOETHE_NODE3090_SSH_USER", "lse-admin")
 
@@ -4326,9 +4341,44 @@ def main(argv=None) -> int:
     lock_acquired = False
     if not cfg.ignore_guards:
         block_reason = _recent_session_active(cfg, refresh_manifest=not cfg.dry_run)
+        # R2.1 (docs/TRAUM-R1-R3-PLAN.md): a session ending inside the
+        # window used to abort the run outright. That window is transient
+        # by definition -- it clears itself in session_active_window_min
+        # minutes -- so treat it as something to wait out, not a reason to
+        # die. Never during a dry-run preview, which promises to be fast
+        # and side-effect-free (see main()'s docstring-adjacent comment
+        # above); only for real scheduled/manual runs.
+        retries_done = 0
+        total_waited_s = 0.0
+        if block_reason and not cfg.dry_run:
+            max_retries = _session_wait_retries()
+            # Bounded by THIS pass's own wall-clock budget, which is itself
+            # derived from run-dream-cycle.sh's shared cycle deadline
+            # (--budget-max-wall-clock-s = remaining_seconds at pass start).
+            # Waiting must never silently eat that budget.
+            cycle_budget_left_s = max(0.0, cfg.budget_max_wall_clock_min * 60 - 5)
+            while block_reason and retries_done < max_retries:
+                slice_s = max(30.0, (cfg.session_active_window_min * 60) / (max_retries + 1))
+                wait_s = min(slice_s, cycle_budget_left_s - total_waited_s)
+                if wait_s <= 0:
+                    print("[dream_runner] recent-session-activity guard: no cycle budget "
+                          "left to wait -- giving up early", file=sys.stderr)
+                    break
+                print(f"[dream_runner] recent-session-activity guard: waiting {wait_s:.0f}s "
+                      f"(retry {retries_done + 1}/{max_retries}) before re-checking: "
+                      f"{block_reason}", file=sys.stderr)
+                time.sleep(wait_s)
+                total_waited_s += wait_s
+                retries_done += 1
+                block_reason = _recent_session_active(cfg, refresh_manifest=not cfg.dry_run)
         if block_reason:
-            exc = DependencyBlocked("recent-session-activity", block_reason)
-            print(f"[dream_runner] BLOCKED run (pass={cfg.pass_name}): {block_reason}",
+            detail = block_reason
+            if retries_done:
+                retry_word = "retry" if retries_done == 1 else "retries"
+                detail = (f"{block_reason} (waited {total_waited_s:.0f}s across "
+                          f"{retries_done} {retry_word} before giving up)")
+            exc = DependencyBlocked("recent-session-activity", detail)
+            print(f"[dream_runner] BLOCKED run (pass={cfg.pass_name}): {detail}",
                   file=sys.stderr)
             artifacts = {}
             if not cfg.dry_run:
