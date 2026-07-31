@@ -96,3 +96,9 @@ eval/*
 .d2_backups/
 .stale-salvage-*/
 tda_d1_backups/
+
+# D8: extracted sibling repos — live in ~/projects/ now, never re-commit here
+Faust/
+coding-gauntlet/
+node_modules/
+archive/
