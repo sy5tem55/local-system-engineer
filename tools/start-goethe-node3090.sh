@@ -41,12 +41,19 @@ NODE3090_PLANNER_PORT="8085"
 echo "[start-goethe-node3090] ensuring remote tools dir exists..."
 ssh "${USER}@${NODE}" "mkdir -p ${REMOTE_DIR}"
 
-echo "[start-goethe-node3090] syncing goethe.py and goethe_mcp.py to node3090..."
+echo "[start-goethe-node3090] syncing goethe modules to node3090..."
 rsync -az --info=name \
   "${LOCAL_DIR}/goethe.py" \
   "${LOCAL_DIR}/goethe_mcp.py" \
   "${LOCAL_DIR}/goethe_kb.py" \
+  "${LOCAL_DIR}/goethe_netsec.py" \
+  "${LOCAL_DIR}/goethe_node.py" \
+  "${LOCAL_DIR}/goethe_constants.py" \
   "${LOCAL_DIR}/goethe_perms.py" \
+  "${LOCAL_DIR}/goethe_planner.py" \
+  "${LOCAL_DIR}/goethe_planner_state.py" \
+  "${LOCAL_DIR}/goethe_ui.py" \
+  "${LOCAL_DIR}/goethe_web.py" \
   "${LOCAL_DIR}/redact.py" \
   "${USER}@${NODE}:${REMOTE_DIR}/"
 
