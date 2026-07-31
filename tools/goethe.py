@@ -534,7 +534,7 @@ class Tools(KBMixin):
         try:
             with _ureq.urlopen(f"{force_url}/health", timeout=3) as r:
                 force_ok = r.status == 200
-        except Exception:
+        except urllib.error.URLError:
             force_ok = False
         if force_ok:
             self._log(f"NODE-PLAN: PLANNER_FORCE_URL healthy → {force_url}")
@@ -602,7 +602,7 @@ class Tools(KBMixin):
         except _uerr.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:200]
             return f"ERROR: HTTP {exc.code} — {body}"
-        except Exception as exc:
+        except (_uerr.URLError, json.JSONDecodeError, KeyError) as exc:
             return f"ERROR: {exc}"
 
 
@@ -667,7 +667,7 @@ class Tools(KBMixin):
         try:
             with _ureq.urlopen(f"{llm_url}/health", timeout=3) as r:
                 probe_ok = r.status == 200
-        except Exception:
+        except _uerr.URLError:
             probe_ok = False
 
         if probe_ok:
@@ -686,7 +686,7 @@ class Tools(KBMixin):
                         f"NODE-PLAN: {llm_url} live but all {len(_slots)} slot(s) "
                         "busy — this call will queue before it generates"
                     )
-            except Exception as _exc:
+            except (_uerr.URLError, json.JSONDecodeError) as _exc:
                 self._log(f"NODE-PLAN: /slots unreadable ({_exc}) — trusting /health")
             self._log(f"NODE-PLAN: llama-server probe OK → {llm_url}")
             # v0.4.5: was 120s. v0.3.3 raised max_tokens 2048→8192 to stop
@@ -760,7 +760,8 @@ class Tools(KBMixin):
             import goethe_planner_state as _pstate  # noqa: PLC0415
 
             return _pstate.selected_backend(self.valves.PLANNER_BACKEND or "local")
-        except Exception:
+        except ImportError:
+            self._log("PLANNER-BACKEND: goethe_planner_state unavailable")
             return (self.valves.PLANNER_BACKEND or "local").strip().lower()
 
     def _call_planner_backend(
@@ -840,7 +841,7 @@ class Tools(KBMixin):
         except _uerr.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:200]
             return f"ERROR: HTTP {exc.code} — {body}"
-        except Exception as exc:
+        except (_uerr.URLError, json.JSONDecodeError, KeyError) as exc:
             return f"ERROR: {exc}"
 
     def _read_codex_oauth_token(self) -> Optional[str]:
@@ -867,7 +868,7 @@ class Tools(KBMixin):
                 )
                 if tok:
                     return tok
-            except Exception as e:
+            except (OSError, json.JSONDecodeError) as e:
                 self._log(f"PLANNER-BACKEND: codex auth file {p} unreadable: {e}")
         return None
 
@@ -893,7 +894,7 @@ class Tools(KBMixin):
                 )
                 if tok:
                     return tok
-            except Exception as e:
+            except (OSError, json.JSONDecodeError) as e:
                 self._log(f"PLANNER-BACKEND: claude auth file {p} unreadable: {e}")
         return None
 
@@ -1060,7 +1061,7 @@ class Tools(KBMixin):
         except _sp.TimeoutExpired:
             return (f"ERROR: backend='claude' timed out after "
                     f"{int(self.valves.PLANNER_CLI_TIMEOUT_S)}s")
-        except Exception as exc:
+        except OSError as exc:
             return f"ERROR: backend='claude' could not run {cli!r}: {exc}"
 
         if proc.returncode != 0:
@@ -1120,7 +1121,7 @@ class Tools(KBMixin):
             lines = [ln.strip() for ln in r.stdout.strip().splitlines() if ln.strip()]
             if lines:
                 return max(int(ln) for ln in lines)
-        except Exception:
+        except (subprocess.SubprocessError, OSError, ValueError):
             pass
         return 0
 
@@ -1199,7 +1200,7 @@ class Tools(KBMixin):
         )
         try:
             proc = _sp3.Popen(cmd, stdout=_sp3.DEVNULL, stderr=_sp3.DEVNULL)
-        except Exception as exc:
+        except OSError as exc:
             self._log(f"PLANNER-GEMMA: Popen failed: {exc}")
             return None
 
@@ -1213,7 +1214,7 @@ class Tools(KBMixin):
                     if r.status == 200:
                         self._log("PLANNER-GEMMA: server healthy")
                         return proc
-            except Exception:
+            except urllib.error.URLError:
                 pass
 
         self._log("PLANNER-GEMMA: health timeout (60 s) — killing proc")
@@ -1226,7 +1227,7 @@ class Tools(KBMixin):
             proc.kill()
             proc.wait(timeout=5)
             self._log("PLANNER-GEMMA: server stopped")
-        except Exception:
+        except Exception:  # noqa: BLE001 (cleanup must not crash)
             pass
 
     # ── Internal helpers ─────────────────────────────────────────────────────
@@ -1259,7 +1260,7 @@ class Tools(KBMixin):
             import goethe_perms  # noqa: PLC0415
 
             return goethe_perms
-        except Exception:
+        except Exception:  # noqa: BLE001 (import degrade)
             return None
 
     def _perm_note(self, kind: str, target: str, reason: str = "") -> str:
@@ -1335,11 +1336,11 @@ class Tools(KBMixin):
                     _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
                     from redact import redact_sensitive_text
                 entry = redact_sensitive_text(entry)
-            except Exception:
+            except Exception:  # noqa: BLE001 (redaction must not break audit log)
                 pass  # redaction must never break the audit log; raw fallback = pre-P0 behavior
             with open(log_path, "a") as f:
                 f.write(f"[{ts}] {entry}\n")
-        except Exception:
+        except Exception:  # noqa: BLE001 (audit log must never crash)
             pass
 
     # ── Tool functions ────────────────────────────────────────────────────────
@@ -1366,7 +1367,7 @@ class Tools(KBMixin):
         try:
             with open(path, encoding="utf-8") as f:
                 stamps = [t for t in _json.load(f) if now - t < window_s]
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             stamps = []
         if len(stamps) >= budget:
             retry_min = int((window_s - (now - stamps[0])) / 60) + 1
@@ -1389,7 +1390,7 @@ class Tools(KBMixin):
         try:
             with open(path, "w", encoding="utf-8") as f:
                 _json.dump(stamps, f)
-        except Exception:
+        except OSError:
             pass
         remaining = budget - len(stamps)
         if remaining <= 2:
@@ -1521,7 +1522,7 @@ class Tools(KBMixin):
                 f"checkpoint #{n}. Resume in a later session with "
                 f"task_resume('{tid}')."
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
             self._log(f"TASK-CHECKPOINT ERROR: {e}")
             return f"CHECKPOINT error: {e}"
 
@@ -1594,7 +1595,7 @@ class Tools(KBMixin):
                 f"NEXT PROMPT: {next_prompt}\n"
                 f"(open blocks total: {open_count})"
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
             self._log(f"TASK-RESUME ERROR: {e}")
             return f"TASK resume error: {e}"
 
@@ -1741,7 +1742,7 @@ class Tools(KBMixin):
                 "evidence=<verify output>).\n"
                 f"---\n{next_prompt}"
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
             self._log(f"PLAN-STEP-DONE ERROR: {e}")
             return f"plan_step_done error: {e}"
 
@@ -1773,7 +1774,7 @@ class Tools(KBMixin):
                  "curl|wget|aria2c|hf download|huggingface-cli|git-lfs"],
                 capture_output=True, text=True, timeout=5,
             )
-        except Exception:
+        except subprocess.SubprocessError:
             return ""  # cannot probe — fail open, do not block
         qualify = _re.compile(
             r"(?:wget |aria2c |hf download|huggingface-cli download|git-lfs|"
@@ -1882,7 +1883,7 @@ class Tools(KBMixin):
             r = _sp.run(cmd, capture_output=True, text=True, timeout=timeout)
         except _sp.TimeoutExpired:
             return f"[TIMEOUT] ssh_run to {host} exceeded {timeout}s"
-        except Exception as e:
+        except OSError as e:
             return f"[ERROR] ssh_run: {e}"
 
         note = ""
@@ -1897,7 +1898,7 @@ class Tools(KBMixin):
                          f"{user}@{host}"],
                         capture_output=True, text=True, timeout=10,
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 (mux cleanup)
                     pass
                 try:
                     os.unlink(ctl)
@@ -2065,7 +2066,7 @@ tail -5 /tmp/goethe-node3090.log
 
         except _sp.TimeoutExpired:
             return f"[TIMEOUT] ssh_script on {host} exceeded {timeout}s"
-        except Exception as e:
+        except OSError as e:
             return f"[ERROR] ssh_script: {e}"
         finally:
             _os.unlink(local_path)
@@ -2116,7 +2117,7 @@ tail -5 /tmp/goethe-node3090.log
                 self._HEREDOC_PATTERN, _replace, command,
                 flags=_re.MULTILINE | _re.DOTALL,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 (guard must never crash)
             # Scanning must never crash the guard — fail closed by scanning
             # the original text if the regex substitution itself errors.
             return command
@@ -2364,7 +2365,7 @@ tail -5 /tmp/goethe-node3090.log
                                 f"rc={_fp_proc.returncode} platform={_platform}"
                             )
                             _platform = "unknown"  # ensure consistent state
-                    except Exception as _fp_e:
+                    except subprocess.SubprocessError as _fp_e:
                         # Do not cache — allow retry on next SSH call
                         self._log(f"DEVICE-FP ERROR (not cached): {_fp_host}: {_fp_e}")
                         _platform = "unknown"
@@ -2443,7 +2444,7 @@ tail -5 /tmp/goethe-node3090.log
             return (
                 f"ERROR: Command timed out after {self.valves.COMMAND_TIMEOUT} seconds."
             )
-        except Exception as e:
+        except OSError as e:
             self._log(f"ERROR: {e}")
             return f"ERROR: {str(e)}"
 
@@ -2510,7 +2511,7 @@ tail -5 /tmp/goethe-node3090.log
                 f"of {total} total ---"
             )
             return content + footer
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             return f"ERROR: {str(e)}"
 
     def _snapshot_before_write(self, resolved: str):
@@ -2658,7 +2659,7 @@ tail -5 /tmp/goethe-node3090.log
                         f"Once the user confirms the truncation is intentional, call write_file "
                         f"again with force=True."
                     )
-            except Exception:
+            except OSError:
                 pass  # If comparison fails, proceed — don't block on a check error
 
         # ── In-place edit safety net (v0.2.0): snapshot-or-refuse ─────────────
@@ -2688,7 +2689,7 @@ tail -5 /tmp/goethe-node3090.log
                 f"OK: {len(content)} characters written to {path} "
                 f"(mode={mode}).{snap_note}"
             )
-        except Exception as e:
+        except OSError as e:
             return f"ERROR: {str(e)}"
 
     async def sudo_delegation_block(
@@ -2864,7 +2865,7 @@ tail -5 /tmp/goethe-node3090.log
                 snippet = r.get("content", "")[:300]
                 lines.append(f"**{title}**\n{url}\n{snippet}")
             return _tb + "\n---\n".join(lines) + _gate
-        except Exception as e:
+        except (requests.RequestException, json.JSONDecodeError) as e:
             return f"ERROR searching SearxNG: {str(e)}"
 
     # ── CAMOUFOX REDDIT SCRAPING (v0.3.10) ──────────────────────────────────
@@ -2906,11 +2907,11 @@ tail -5 /tmp/goethe-node3090.log
                     params={"userId": "lse", "sessionKey": "lse"},
                     timeout=5,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 (tab cleanup)
                 pass  # Non-critical cleanup
 
             return snapshot
-        except Exception as e:
+        except requests.RequestException as e:
             self._log(f"CAMOUFOX-ERROR: {e}")
             return ""
 
@@ -3027,7 +3028,7 @@ tail -5 /tmp/goethe-node3090.log
                         snippet = snippet.lstrip(" • ")
                         lines.append(f"**{title}**\n{url}\n{snippet}")
                     return "\n---\n".join(lines) if lines else "No posts found."
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (camoufox complex chain)
             self._log(f"CAMOUFOX-FAIL: {e}")
 
         # ── FALLBACK: SearxNG ─────────────────────────────────────────────
@@ -3072,7 +3073,7 @@ tail -5 /tmp/goethe-node3090.log
             secs, frac = struct.unpack("!II", data[40:48])
             server_time = secs - NTP_DELTA + frac / 2**32
             return server_time - (t0 + t3) / 2
-        except Exception:
+        except (OSError, ValueError):
             return None
         finally:
             sock.close()
@@ -3102,7 +3103,7 @@ tail -5 /tmp/goethe-node3090.log
                 if date_hdr:
                     server = email.utils.parsedate_to_datetime(date_hdr).timestamp()
                     return server - (t0 + t3) / 2
-            except Exception:
+            except (ValueError, IndexError):
                 continue
         return None
 
@@ -3116,7 +3117,7 @@ tail -5 /tmp/goethe-node3090.log
                 cy, cm = int(cutoff[:4]), int(cutoff[5:7])
                 gap = (now.year - cy) * 12 + (now.month - cm)
                 cut_txt = f"model cutoff={cutoff} | gap≈{gap} months"
-            except Exception:
+            except Exception:  # noqa: BLE001 (time_check main fallback)
                 cut_txt = f"model cutoff={cutoff!r} (unparseable — use YYYY-MM)"
         else:
             cut_txt = "model cutoff UNSET (set MODEL_PRETRAIN_CUTOFF valve)"
@@ -3303,7 +3304,7 @@ tail -5 /tmp/goethe-node3090.log
             if dream_line:
                 lines.append(dream_line)
             return "\n".join(lines)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (time_check main fallback)
             self._log(f"TIME-CHECK ERROR: {e}")
             return f"time_check failed: {e}\n{self._time_banner(verified=False)}"
 
@@ -3367,11 +3368,11 @@ tail -5 /tmp/goethe-node3090.log
                             lines.append(f"  {idx}: MISSING")
                             if idx in ("lse-kb", "lse-errors-1024"):
                                 ok = False
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 (ES inner)
                         lines.append(f"  {idx}: ERROR {exc}")
                         ok = False
                 return ("PASS" if ok else "FAIL"), "\n".join(lines)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 (ES client black-box; not a requests exception)
                 return "FAIL", f"  ES unreachable: {exc}"
 
         def _cmd_scope(label, rel_target, argv, timeout_s) -> tuple:
@@ -3388,7 +3389,7 @@ tail -5 /tmp/goethe-node3090.log
                 return status, out or "(no output)"
             except _sp.TimeoutExpired:
                 return "FAIL", f"  TIMEOUT after {timeout_s}s"
-            except Exception as exc:
+            except subprocess.SubprocessError as exc:
                 return "FAIL", f"  {exc}"
 
         want = (scope,) if scope != "all" else ("kb", "retrieval", "harness", "data")
@@ -3540,7 +3541,7 @@ tail -5 /tmp/goethe-node3090.log
             return f"ASSERT FAIL ❌ — '{check_command}' timed out after 20s."
         except FileNotFoundError:
             return f"ASSERT FAIL ❌ — '{prog}' not found on this host."
-        except Exception as exc:
+        except OSError as exc:
             return f"assert_state error: {exc}"
         out_cap = out[:1500]
         try:
@@ -3593,7 +3594,7 @@ tail -5 /tmp/goethe-node3090.log
                 self._log(
                     f"FETCH-BROWSER: HTTP {resp.status_code} from {firecrawl_base}"
                 )
-        except Exception as exc:
+        except _req.RequestException as exc:
             self._log(f"FETCH-BROWSER: error ({firecrawl_base}): {exc}")
         return ""
 
@@ -3794,7 +3795,7 @@ tail -5 /tmp/goethe-node3090.log
                     }
                     return ("[browser-rendered] " + _br + _br_mandate) + _gate
             return "No text content extracted." + _gate
-        except Exception as e:
+        except requests.RequestException as e:
             # HTTP error (e.g. 403/429) — also try browser fallback for reddit (v1.5.29)
             if "reddit.com" in url.lower():
                 self._log(f"FETCH: exception for reddit URL ({e}) — trying browser fallback")
@@ -3818,14 +3819,14 @@ tail -5 /tmp/goethe-node3090.log
             import io  # noqa: PLC0415
             from pdfminer.high_level import extract_text as _pe  # noqa: PLC0415
             return _pe(io.BytesIO(pdf_bytes)) or ""
-        except Exception:
+        except Exception:  # noqa: BLE001 (pdfminer fallback chain)
             try:
                 import io  # noqa: PLC0415
                 from pypdf import PdfReader as _PR  # noqa: PLC0415
                 rdr = _PR(io.BytesIO(pdf_bytes))
                 return "\n".join(
                     (p.extract_text() or "") for p in rdr.pages)
-            except Exception:
+            except Exception:  # noqa: BLE001 (pypdf fallback end)
                 return ""
 
     def verify_source_claims(self, url: str, claims: str) -> str:
@@ -3888,7 +3889,7 @@ tail -5 /tmp/goethe-node3090.log
                     "ts": datetime.now().timestamp(),
                 }
                 source_note = "(re-fetched)"
-            except Exception as e:
+            except _req.RequestException as e:
                 return (
                     f"VERIFY ERROR: could not fetch {url}: {e}\n"
                     "All claims remain UNVERIFIED — label them as such in your response."
@@ -4008,7 +4009,7 @@ tail -5 /tmp/goethe-node3090.log
                 f"Published:      {published}\n"
                 f"URL:            {html_url}"
             )
-        except Exception as e:
+        except requests.RequestException as e:
             return f"ERROR querying GitHub API: {str(e)}"
 
     def get_context_status(self) -> str:
@@ -4067,7 +4068,7 @@ tail -5 /tmp/goethe-node3090.log
                 f"{truncation}"
                 f"Status: {status}"
             )
-        except Exception as e:
+        except requests.RequestException as e:
             return f"ERROR querying llama.cpp: {str(e)}"
 
     def monitor_download(
@@ -4125,7 +4126,7 @@ tail -5 /tmp/goethe-node3090.log
             return output if output else "ERROR | no output from monitor script"
         except subprocess.TimeoutExpired:
             return "ERROR | monitor script timed out (Prometheus unreachable)"
-        except Exception as exc:
+        except (subprocess.SubprocessError, OSError) as exc:
             return f"ERROR | {exc}"
 
     def compact_context(
@@ -4254,13 +4255,13 @@ tail -5 /tmp/goethe-node3090.log
                 with urllib.request.urlopen(kv_req, timeout=5) as resp:
                     try:
                         n_erased = json.loads(resp.read()).get("n_erased", "?")
-                    except Exception:
+                    except Exception:  # noqa: BLE001 (KV cache metadata parse)
                         n_erased = "?"
                     kv_status = (
                         f"KV cache erased (slot 0, HTTP {resp.status}, "
                         f"n_erased={n_erased})"
                     )
-            except Exception as kv_err:
+            except (urllib.error.URLError, OSError) as kv_err:
                 kv_status = f"KV cache erase failed: {kv_err}"
 
             return (
@@ -4269,7 +4270,7 @@ tail -5 /tmp/goethe-node3090.log
                 f"Summary node prepended. {kv_status}."
             )
 
-        except Exception as e:
+        except (json.JSONDecodeError, urllib.error.URLError, OSError) as e:
             return f"ERROR during compact_context: {str(e)}"
 
     # ── RAG / KB surface — EXTRACTED to goethe_kb.py (PH5-2, 2026-07-18) ────
@@ -4354,7 +4355,7 @@ tail -5 /tmp/goethe-node3090.log
             )
         except subprocess.TimeoutExpired:
             return "ERROR: nmap timed out after 300s. Reduce target scope or top_ports."
-        except Exception as e:
+        except subprocess.SubprocessError as e:
             return f"ERROR running nmap: {e}"
         elapsed = round(time.monotonic() - t0, 1)
 
@@ -4493,7 +4494,7 @@ tail -5 /tmp/goethe-node3090.log
             )
             if resp.status_code == 200:
                 embedding = resp.json().get("embedding", [])
-        except Exception as e:
+        except _req.RequestException as e:
             return f"ERROR: search_rfc — embedding failed: {e}"
 
         if not embedding:
@@ -4530,7 +4531,7 @@ tail -5 /tmp/goethe-node3090.log
                 )
             resp.raise_for_status()
             hits = resp.json().get("hits", {}).get("hits", [])
-        except Exception as e:
+        except _req.RequestException as e:
             return f"ERROR: search_rfc — ES query failed: {e}"
 
         if not hits:
@@ -4695,7 +4696,7 @@ tail -5 /tmp/goethe-node3090.log
                 self._log(f"WAKE-NODE: KB returned notes ({len(kb_result)} chars)")
             else:
                 self._log("WAKE-NODE: no KB notes found — proceeding with registry defaults")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 (KB is black-box)
             self._log(f"WAKE-NODE: KB lookup failed ({exc}) — continuing anyway")
 
         # ── Step 3: send WoL magic packet via pfSense ────────────────────────────
@@ -4729,11 +4730,11 @@ tail -5 /tmp/goethe-node3090.log
             )
             try:
                 wol_result = f"[HTTP {wol_resp.status_code}] {_json.dumps(wol_resp.json())}"
-            except Exception:
+            except Exception:  # noqa: BLE001 (WoL JSON parse fallback)
                 wol_result = f"[HTTP {wol_resp.status_code}] {wol_resp.text[:500]}"
             if wol_resp.status_code >= 400:
                 wol_result = "ERROR: " + wol_result
-        except Exception as exc:
+        except _wol_req.RequestException as exc:
             wol_result = f"ERROR: WoL request to pfSense failed: {exc}"
         self._log(f"WAKE-NODE: pfSense response: {wol_result[:120]}")
 
@@ -4871,7 +4872,7 @@ tail -5 /tmp/goethe-node3090.log
                 f"Cannot reach {node} at {url}. "
                 "Is the node awake? Call wake_node() first."
             )
-        except Exception as exc:
+        except _req.RequestException as exc:
             return f"query_node_agent error: {exc}"
 
     # ── Canonical-vs-live agent profile drift (v1.14.0) ──────────────────────
@@ -4952,7 +4953,7 @@ tail -5 /tmp/goethe-node3090.log
                  "pgrep -af 'llama[-]server' | head -1"],
                 capture_output=True, text=True, timeout=25,
             )
-        except Exception as exc:
+        except subprocess.SubprocessError as exc:
             return None, f"SSH error: {exc}"
         if r.returncode != 0 and not r.stdout.strip():
             return None, ""
@@ -5144,7 +5145,7 @@ tail -5 /tmp/goethe-node3090.log
             if r.returncode != 0:
                 return f"SSH failed (exit {r.returncode}): {r.stderr.strip()}"
             pid_line = r.stdout.strip()
-        except Exception as exc:
+        except subprocess.SubprocessError as exc:
             return f"start_node_agent SSH error: {exc}"
 
         # Poll /health — model load takes 30-90s
@@ -5163,7 +5164,7 @@ tail -5 /tmp/goethe-node3090.log
                         f"Log: ssh {user}@{hostname} tail -f {log_path}\n"
                         f"Stop: call stop_node_agent('{node}')"
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001 (health poll cleanup)
                 pass
 
         return (
@@ -5212,7 +5213,7 @@ tail -5 /tmp/goethe-node3090.log
             r = _sp.run(ssh_cmd, capture_output=True, text=True, timeout=15)
             output = r.stdout.strip() or r.stderr.strip()
             return f"{node} agent: {output}"
-        except Exception as exc:
+        except subprocess.SubprocessError as exc:
             return f"stop_node_agent error: {exc}"
 
     def shutdown_node(self, node: str, confirmed: bool = False) -> str:
@@ -5301,7 +5302,7 @@ tail -5 /tmp/goethe-node3090.log
             )
         except _sp.TimeoutExpired:
             return f"SSH timeout — node may already be shutting down or unreachable."
-        except Exception as exc:
+        except subprocess.SubprocessError as exc:
             return f"shutdown_node error: {exc}"
 
     # ── Hermes Agent delegation ───────────────────────────────────────────────
@@ -5342,7 +5343,7 @@ tail -5 /tmp/goethe-node3090.log
             if env_c.get("steps"):
                 return env_c, ""
             return None, "envelope has no 'steps' array"
-        except Exception as _exc:
+        except json.JSONDecodeError as _exc:
             return None, (
                 f"JSON parse failed ({_exc}). "
                 f"RAW: {clean[idx : idx + 200]!r}"
@@ -5371,7 +5372,7 @@ tail -5 /tmp/goethe-node3090.log
                 (task_id.strip(),),
             ).fetchone()
             conn.close()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
             return f"planner revise: ledger read failed: {e}"
         if not row:
             return f"planner revise: no task block '{task_id}' in the ledger."
@@ -5529,7 +5530,7 @@ tail -5 /tmp/goethe-node3090.log
         try:
             fut = pool.submit(self._augment_context_with_kb_inner, task, context)
             return fut.result(timeout=self._PLANNER_KB_TIMEOUT_S)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 (ThreadPool + KB black-box)
             self._log(
                 f"PLANNER-KB: enrichment abandoned after "
                 f"{self._PLANNER_KB_TIMEOUT_S}s or error ({type(exc).__name__}); "
@@ -5563,7 +5564,7 @@ tail -5 /tmp/goethe-node3090.log
         """
         try:
             hits = self.search_kb(task, max_results=self._PLANNER_KB_MAX_DOCS)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 (KB search black-box)
             self._log(f"PLANNER-KB: search failed, continuing without: {exc}")
             return context
         if not isinstance(hits, str) or not hits.strip():
@@ -5779,7 +5780,7 @@ tail -5 /tmp/goethe-node3090.log
                     (_json.dumps(all_steps), resolved_backend, tid),
                 )
             conn.close()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
             return f"planner: ledger steps write failed: {e}"
         return (
             f"PLAN ENVELOPE accepted ({mode}): task_id={tid} | correlation_id={corr} "

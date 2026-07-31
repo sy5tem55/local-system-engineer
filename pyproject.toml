@@ -1,0 +1,18 @@
+[tool.ruff]
+# D4: Linter config added to make except-triage regressions visible.
+# BLE001 enforced — any new `except Exception` must be intentional and marked.
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "BLE",   # flake8-blind-except — BLE001: bare except Exception
+    "E9",    # syntax errors (catch obvious breakage)
+    "F",     # pyflakes (undefined names, unused imports)
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# Test files and scripts may have broader exception handling for resilience
+"tests/*" = ["BLE"]
+"scripts/*" = ["BLE"]
