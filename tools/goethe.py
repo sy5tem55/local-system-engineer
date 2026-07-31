@@ -1318,8 +1318,15 @@ class Tools(KBMixin):
         # Block shell/session config files regardless of prefix
         import os as _os
 
-        basename = _os.path.basename(normed)
-        rel_home = normed.replace(self.valves.DEFAULT_WORKING_DIR + "/", "", 1)
+        # _norm() returns a trailing-slash form ("/home/u/.bashrc/"), so
+        # os.path.basename() on it yields "" and rel_home keeps a trailing
+        # slash. Both comparisons below therefore never matched ANY entry in
+        # _BLOCKED_WRITE_FILENAMES: shell rc files, SSH private keys and
+        # authorized_keys were all writable. Strip the slash before comparing.
+        # (D5 adversarial audit, 2026-07-31 — the guard had never fired.)
+        _bare = normed.rstrip("/")
+        basename = _os.path.basename(_bare)
+        rel_home = _bare.replace(self.valves.DEFAULT_WORKING_DIR + "/", "", 1)
         if (
             basename in self._BLOCKED_WRITE_FILENAMES
             or rel_home in self._BLOCKED_WRITE_FILENAMES
