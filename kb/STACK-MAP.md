@@ -1,7 +1,7 @@
 # STACK MAP — pinned planner ground truth
 > Auto-attached to every planner() call (goethe.py `_augment_context_with_kb_inner`).
 > Keep ≤60 lines. Update on every stack change.
-> Last verified: 2026-07-30 (live probes, session debrief same date)
+> Last verified: 2026-07-31 (live probes, session debrief same date)
 
 ## DECOMMISSIONED — never reference in plans
 - OpenWebUI (:3000) — decommissioned 2026-07-17. No `openwebui-tool-v*.py` exists anywhere.
@@ -14,10 +14,11 @@
 - Console/gateway: :9700 (goethe_ui, python). Task ledger: /opt/local-se/tasks.db
 - llama-server LUCIFER :8080 (Qwen3.6-27B, 131k ctx)
 - node3090 llama-server :8080 = planner local primary (240s budget); SSH lse-admin@node3090.home.arpa
+- node5090 llama-server :8081 (STALE — LM Studio not yet migrated; verify via check_node_agent_drift when awake)
 - Planner backends: `local | chatgpt | claude | rest` only. claude → claude-opus-5
   via Claude Code CLI, timeout valve PLANNER_CLI_TIMEOUT_S=900. Selection persists
   in /opt/local-se/state/planner-backend.json (Console beats env).
-- Prometheus :9090 · Grafana :3002 (v13 — NOT :3001; :3001 is a different service) · Elasticsearch :9200 · SearxNG :8088
+- Prometheus :9090 · Grafana LUCIFER:3002 (v13) · Firecrawl node3090:3002 (browser rendering, reddit fallback) — same port, different hosts; use FIRECRAWL_URL / FIRECRAWL_REMOTE_URL valves · Elasticsearch :9200 · SearxNG :8088
 - pfSense Plus REST API v2 @ pfsense.home.arpa (x-api-key header, not Bearer)
 - KB: /opt/local-se/kb/ · learnings: /opt/local-se/kb/session-learnings.md · state: /opt/local-se/state/ · backups: /opt/local-se/bkp/
 
