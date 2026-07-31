@@ -34,7 +34,7 @@ _TOOLS = Path(__file__).resolve().parent.parent / "tools"
 # added here in the same step that creates them, per
 # docs/D7-MIXIN-EXTRACTION-PLAN.md hazard #5 - a mixin absent from this list
 # is unguarded code, even though it lives under tools/.
-_TARGETS = [_TOOLS / "goethe.py", _TOOLS / "goethe_netsec.py", _TOOLS / "goethe_node.py", _TOOLS / "goethe_planner.py"]
+_TARGETS = [_TOOLS / "goethe.py", _TOOLS / "goethe_netsec.py", _TOOLS / "goethe_node.py", _TOOLS / "goethe_planner.py", _TOOLS / "goethe_web.py"]
 
 # Topology patterns: strings matching these are candidates for routing.
 _TOPO_RE = re.compile(
