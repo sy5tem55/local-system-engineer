@@ -149,11 +149,14 @@ INJECTED = {
     "__files__", "__id__", "__task__", "__tools__",
 }
 
-# Methods that require a chat-frontend DB — not functional via MCP, excluded from tool exposure.
-# search_rfc: RETIRED PH4-3 (2026-07-18) — 0 calls across 6,967 journaled tool
-# calls (full episode corpus). lse-rfc-kb ES index (1490 chunks) kept dormant;
-# to revive, remove from this set. Candidate future home: lse-web-idx ingest.
-SKIP_TOOLS = {"compact_context", "search_rfc"}
+# Methods that require a chat-frontend DB — not functional via MCP, excluded
+# from tool exposure. To revive one, remove it from this set.
+#
+# search_rfc used to be listed here. It was retired PH4-3 (2026-07-18) after 0
+# calls across 6,967 journaled tool calls, which left its body unreachable, and
+# the body was removed from goethe.py on 2026-07-31. The lse-rfc-kb ES index
+# (1490 chunks) is deliberately left in place, dormant.
+SKIP_TOOLS = {"compact_context"}
 
 
 def _goethe_version(path: str) -> str:
