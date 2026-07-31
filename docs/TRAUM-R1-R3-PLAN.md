@@ -93,11 +93,18 @@ real legs live on. Fix it *outside* the cascade.
 Create `tools/wake-node-for-dream.sh` (executable). Contract:
 
 - exit **0** if node3090 is reachable **and** its llama-server answers `/health`
-- if unreachable, wake it — **two proven options, pick one and say why**:
-  - `wakeonlan -i 192.168.5.255 0c:9d:92:84:6e:6a` — the `-i` is **mandatory**;
-    the bare form does not wake the node (measured, see the table above)
-  - the pfSense POST that `goethe_node.wake_node` performs — the operator's
-    everyday path, needs the API key
+- if unreachable, wake it. **Use the canonical path** — SSH to the RUTX50 and
+  emit on node3090's own L2 segment (KB doc `842595879f70576d`, quality 1.0):
+
+  ```bash
+  ssh -i ~/.ssh/id_ed25519_rutx50 -o StrictHostKeyChecking=no root@192.168.5.3 \
+      "etherwake -i eth0 0c:9d:92:84:6e:6a"
+  ```
+
+  It needs no routing, no broadcast forwarding and no pfSense state. Fall back
+  to `wake_node("node3090")` (pfSense POST) if the RUTX50 is unreachable.
+  **Do not** use bare `wakeonlan` — measured, it does not wake the node and
+  exits 0 anyway. See `kb/network-topology.md` for all four methods.
 - then poll **`/health`, not ping**, every 5s up to
   `GOETHE_DREAM_WAKE_TIMEOUT_S` (default **300**). Measured: boot ≈20s after
   the packet, but llama-server needs **>2 min more** to load the model. A
