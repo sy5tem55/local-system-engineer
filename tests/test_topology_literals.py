@@ -29,7 +29,12 @@ from pathlib import Path
 import pytest
 
 _TOOLS = Path(__file__).resolve().parent.parent / "tools"
-_TARGET = _TOOLS / "goethe.py"
+# D7 (2026-07-31): extended from a single _TARGET to a list when
+# goethe_netsec.py was extracted as the first mixin. New mixin files must be
+# added here in the same step that creates them, per
+# docs/D7-MIXIN-EXTRACTION-PLAN.md hazard #5 - a mixin absent from this list
+# is unguarded code, even though it lives under tools/.
+_TARGETS = [_TOOLS / "goethe.py", _TOOLS / "goethe_netsec.py"]
 
 # Topology patterns: strings matching these are candidates for routing.
 _TOPO_RE = re.compile(
@@ -151,14 +156,15 @@ def _allowed(literal: str, is_docstring: bool) -> bool:
     return False
 
 
-def test_no_new_topology_literals():
+@pytest.mark.parametrize("target", _TARGETS, ids=lambda p: p.name)
+def test_no_new_topology_literals(target):
     """Assert no new hardcoded topology literals outside Valves/_NODE_REGISTRY.
 
     If this fails, route the offending literal to a Valves field, _NODE_REGISTRY,
     or a module-level constant. Only widen ALLOWLIST_SNIPPETS for genuinely
     non-topology strings (docstrings, third-party URLs, user-facing messages).
     """
-    source = _TARGET.read_text(encoding="utf-8")
+    source = target.read_text(encoding="utf-8")
     flagged = _topology_literals(source)
 
     violations = [
@@ -169,7 +175,7 @@ def test_no_new_topology_literals():
 
     if violations:
         msg_lines = [
-            "New hardcoded topology literal(s) found outside Valves/_NODE_REGISTRY:",
+            f"New hardcoded topology literal(s) found in {target.name} outside Valves/_NODE_REGISTRY:",
         ]
         for line, lit, func, is_doc in violations:
             snippet = lit[:100] + "..." if len(lit) > 100 else lit
@@ -183,12 +189,13 @@ def test_no_new_topology_literals():
         pytest.fail("\n".join(msg_lines))
 
 
-def test_gate_detects_new_literal():
-    """Negative test: prove the gate actually bites.
+@pytest.mark.parametrize("target", _TARGETS, ids=lambda p: p.name)
+def test_gate_detects_new_literal(target):
+    """Negative test: prove the gate actually bites, per scanned file.
 
     Temporarily inject a fake literal, assert the scan catches it, then restore.
     """
-    source = _TARGET.read_text(encoding="utf-8")
+    source = target.read_text(encoding="utf-8")
     # Use a unique hostname:port that cannot be in the allowlist
     fake = "\n# D6-GATE-TEST\n_fake_test_literal = 'http://fake-node.home.arpa:54321'\n"
     modified = source + fake
