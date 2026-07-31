@@ -100,9 +100,34 @@ ENV_REVISED = {
 
 @pytest.fixture()
 def tools(monkeypatch, tmp_path):
+    # ── Hermetic isolation (added 2026-07-29) ────────────────────────────────
+    # These two lines exist because the suite silently stopped being offline.
+    #
+    # planner() resolves its backend from the PERSISTED Console selection
+    # (goethe_planner_state) before falling back to the PLANNER_BACKEND valve.
+    # An operator clicking "use" on Claude in the Goethe Console therefore
+    # changed what EVERY un-parameterised planner() call does — including this
+    # suite. The _call_node_planner monkeypatch below patches the LOCAL
+    # backend, so the dispatcher routed straight past it to
+    # _call_claude_planner, which shells out to `claude -p`: 16 tests × live
+    # API calls × a 180s ceiling, burning real subscription quota, with results
+    # depending on the state of a web UI.
+    #
+    # Point the state store at a temp path (the module honours this env var
+    # precisely for isolation) and pin the valve. Do not remove either line —
+    # without them this file is neither offline nor deterministic.
+    monkeypatch.setenv("GOETHE_PLANNER_STATE_PATH", str(tmp_path / "planner-backend.json"))
+
     t = goethe.Tools()
     t.valves.LOG_FILE = str(tmp_path / "audit.log")
     t.valves.TASKS_DB = str(tmp_path / "tasks.db")
+    t.valves.PLANNER_BACKEND = "local"
+    # planner() auto-attaches KB material; that reaches Elasticsearch, which
+    # this suite must not require. Stub it to a no-op passthrough.
+    monkeypatch.setattr(
+        t, "_augment_context_with_kb",
+        lambda task, context="": context,
+    )
     monkeypatch.setattr(
         t, "_call_node_planner",
         lambda task, context="", no_think=False: json.dumps(ENV_NEW),

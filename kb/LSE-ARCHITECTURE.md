@@ -1,3 +1,8 @@
+> **STALENESS NOTICE (2026-07-30):** parts of this document predate the OpenWebUI
+> decommission (2026-07-17). Wherever this doc conflicts with `kb/STACK-MAP.md`,
+> **STACK-MAP.md wins.** Known-stale here: OpenWebUI :3000 (gone), Grafana :3001
+> (now :3002), `tools/openwebui-tool-vX.X.X.py` (now `goethe.py` via goethe_mcp.py/MCP).
+
 # LSE Architecture — Technical Design Document
 > Version: 2026-06-07 (aligned with tool v1.5.27)
 > Audience: coder LLM (node3090 agent) proposing changes + Claude Sonnet 4.6 as senior reviewer
@@ -221,7 +226,8 @@ _NODE_REGISTRY = {
 | `wake_node` | `(node)` | WoL via pfSense REST API. Polls SSH until node responds (boot ~55s). |
 | `start_node_agent` | `(node)` | SSHes to node, builds CLI from agent_profile, starts llama-server via nohup. Polls /health for 120s. |
 | `stop_node_agent` | `(node)` | SSHes to node, pkill llama-server. |
-| `query_node_agent` | `(node, prompt, model="", max_tokens=2000, system_prompt="")` | POSTs to node's OpenAI-compatible /v1/chat/completions. |
+| `query_node_agent` | `(node, prompt, model="", max_tokens=2000, system_prompt="")` | POSTs to the node's **llama-server** `/v1/chat/completions` at `_NODE_REGISTRY[node]["agent_port"]`. Model call only — **the node has no tools**; a no-tools system prompt is injected and tool-call output is flagged. Not the node's Goethe gateway (see ADR-11). |
+| `check_node_agent_drift` | `(node)` | Compares the canonical `agent_profile` against the live llama-server cmdline. Reports CHANGED / MISSING / UNMODELLED drift. Read-only. |
 | `shutdown_node` | `(node)` | SSH graceful shutdown. Uses subprocess directly (not execute_command — sudo is remote). |
 
 **Lifecycle sequence**: `wake_node` → `start_node_agent` → `query_node_agent` → `stop_node_agent` → `shutdown_node`
