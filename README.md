@@ -218,3 +218,13 @@ local-system-engineer/
 │
 └── docs/dreaming/               ← TRAUM design + run artifacts (DESIGN.md, corpus-audit, calibration)
 ```
+
+## D1 Audit: Single Source of Truth (2026-07-31)
+
+- **tools/goethe.py** is the single, authoritative copy of the Goethe Tools class.
+- **No manual .bak files**: use `git stash`, `git commit`, or `git log` to preserve history.
+  The `.gitignore` explicitly blocks `.bak_*`, `*.bak_*`, and `*.bak`.
+- **lse/goethe/** was a stale fork (83.8% similar, no unique code) — removed.
+- **.backups/** is an intentional version archive (goethe-v0.*.py snapshots) — retained.
+- **Windows mirror** at `/mnt/c/Users/SY5/Claude/Projects/local-system-engineer/` is known to lag.
+  Use `scripts/check_goethe_mirror_sync.sh` to detect staleness.
