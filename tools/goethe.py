@@ -42,6 +42,10 @@ _HERE = _os.path.dirname(_os.path.abspath(__file__))
 if _HERE not in _sys.path:
     _sys.path.insert(0, _HERE)
 from goethe_kb import KBMixin, TrustPolicy  # noqa: E402
+# D6 topology sweep (2026-07-31): single-source topology constants
+_LSE_BASE_PATH = "/opt/local-se"
+_LOOPBACK = "127.0.0.1"
+
 
 
 class Tools(KBMixin):
@@ -81,6 +85,17 @@ class Tools(KBMixin):
         CAMOUFOX_URL: str = Field(
             default="http://192.168.5.41:9377",
             description="Camoufox browser server URL on node3090 (for Reddit scraping).",
+        )
+
+        FIRECRAWL_URL: str = Field(
+            default="http://localhost:3002",
+            description="Firecrawl browser-rendering endpoint when goethe runs ON node3090. " 
+            "Distinct from Grafana which also uses port 3002 on LUCIFER.",
+        )
+        FIRECRAWL_REMOTE_URL: str = Field(
+            default="http://node3090.home.arpa:3002",
+            description="Firecrawl browser-rendering endpoint when goethe runs on LUCIFER or another node, " 
+            "reaching node3090 over LAN. Distinct from Grafana on LUCIFER:3002.",
         )
 
         EXTRA_WRITE_PATHS: str = Field(
@@ -345,13 +360,13 @@ class Tools(KBMixin):
         "/etc/",
         "/var/log/",
         "/tmp/",
-        "/opt/local-se/",
+        _LSE_BASE_PATH + "/",
     ]
 
     _ALLOWED_WRITE_PREFIXES = [
         "/home/",
         "/tmp/",
-        "/opt/local-se/",
+        _LSE_BASE_PATH + "/",
     ]
 
     _BLOCKED_COMMANDS = (
@@ -733,7 +748,7 @@ class Tools(KBMixin):
             return f"ERROR: Gemma server (model_key={model_key}) failed to start within 60s"
         try:
             self._log(f"NODE-PLAN: Gemma path — model_key={model_key} vision={vision}")
-            return _llm_call(f"http://127.0.0.1:{planner_port}", model="", timeout=180)
+            return _llm_call(f"http://{_LOOPBACK}:{planner_port}", model="", timeout=180)
         finally:
             self._stop_gemma_server(proc)
 
@@ -1188,7 +1203,7 @@ class Tools(KBMixin):
             llama_bin,
             "--model", gguf_path,
             "--port", str(port),
-            "--host", "127.0.0.1",
+            "--host", _LOOPBACK,
             "--n-gpu-layers", "99",
             "--ctx-size", "4096",
             "--threads", "4",
@@ -1209,7 +1224,7 @@ class Tools(KBMixin):
             _tm3.sleep(2)
             try:
                 with _ur3.urlopen(
-                    f"http://127.0.0.1:{port}/health", timeout=2
+                    f"http://{_LOOPBACK}:{port}/health", timeout=2
                 ) as r:
                     if r.status == 200:
                         self._log("PLANNER-GEMMA: server healthy")
@@ -1304,7 +1319,7 @@ class Tools(KBMixin):
         import os as _os
 
         basename = _os.path.basename(normed)
-        rel_home = normed.replace("/home/sy5/", "", 1)
+        rel_home = normed.replace(self.valves.DEFAULT_WORKING_DIR + "/", "", 1)
         if (
             basename in self._BLOCKED_WRITE_FILENAMES
             or rel_home in self._BLOCKED_WRITE_FILENAMES
@@ -2850,7 +2865,7 @@ tail -5 /tmp/goethe-node3090.log
             resp = requests.get(
                 self.valves.SEARXNG_URL,
                 params={"q": query, "format": "json", "categories": "general"},
-                headers={"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"},
+                headers={"X-Forwarded-For": _LOOPBACK, "X-Real-IP": _LOOPBACK},
                 timeout=(5, 10),
             )
             resp.raise_for_status()
@@ -3617,12 +3632,12 @@ tail -5 /tmp/goethe-node3090.log
 
         if "node3090" in hostname:
             self._log("REDDIT-FALLBACK: node3090 — local Firecrawl")
-            return self._fetch_via_browser(url, "http://localhost:3002", max_chars)
+            return self._fetch_via_browser(url, self.valves.FIRECRAWL_URL, max_chars)
 
         # LUCIFER or other node — check node3090 reachability first.
-        self._log("REDDIT-FALLBACK: pinging node3090.home.arpa")
+        self._log(f"REDDIT-FALLBACK: pinging {self._NODE_REGISTRY['node3090']['hostname']}")
         ping = _sp.run(
-            ["ping", "-c", "1", "-W", "2", "node3090.home.arpa"],
+            ["ping", "-c", "1", "-W", "2", self._NODE_REGISTRY["node3090"]["hostname"]],
             capture_output=True,
         )
         if ping.returncode != 0:
@@ -3631,7 +3646,7 @@ tail -5 /tmp/goethe-node3090.log
 
         self._log("REDDIT-FALLBACK: node3090 up — using remote Firecrawl")
         return self._fetch_via_browser(
-            url, "http://node3090.home.arpa:3002", max_chars
+            url, self.valves.FIRECRAWL_REMOTE_URL, max_chars
         )
 
     def _extract_text_from_html(self, html: str, max_chars: int) -> str:
@@ -4098,18 +4113,18 @@ tail -5 /tmp/goethe-node3090.log
         import shutil  # noqa: PLC0415
         import os as _os  # noqa: PLC0415
 
-        monitor_script = "/opt/local-se/download-monitor.py"
+        monitor_script = _os.path.join(_LSE_BASE_PATH, "download-monitor.py")
         # Prefer the miniforge interpreter when it actually exists; otherwise fall
         # back to whatever python3 is on PATH. The previous logic used the hardcoded
         # miniforge path unconditionally unless python3 was missing from PATH, which
         # broke on hosts without miniforge installed.
-        python_bin = "/home/sy5/miniforge3/bin/python3"
+        python_bin = "/home/sy5/miniforge3/bin/python3"  # miniforge python for Prometheus client; falls back to PATH python3 if missing
         if not _os.path.exists(python_bin):
             python_bin = shutil.which("python3") or "python3"
 
         if not _os.path.exists(monitor_script):
             return (
-                "SETUP_REQUIRED | download-monitor.py not found at /opt/local-se/. "
+                "SETUP_REQUIRED | download-monitor.py not found at /opt/local-se/. "  # user-facing message text; intentionally literal
                 "Deploy: write_file /opt/local-se/download-monitor.py from "
                 "tools/download-monitor.py in the LSE repo, then chmod +x."
             )
@@ -5579,7 +5594,7 @@ tail -5 /tmp/goethe-node3090.log
         # so plans cannot cite decommissioned components (the OpenWebUI
         # reference that stalled plan e264ed19). Missing/unreadable file
         # degrades silently to the previous behaviour.
-        _PINNED = "/opt/local-se/kb/STACK-MAP.md"
+        _PINNED = _os.path.join(_LSE_BASE_PATH, "kb", "STACK-MAP.md")
         try:
             if _os.path.isfile(_PINNED):
                 with open(_PINNED, encoding="utf-8", errors="replace") as fh:
@@ -5595,8 +5610,8 @@ tail -5 /tmp/goethe-node3090.log
         for path in _re2.findall(r"source:\s*(\S+\.md)", hits):
             if used >= self._PLANNER_KB_CHAR_BUDGET:
                 break
-            for cand in (path, _os.path.join("/opt/local-se", path),
-                         _os.path.join("/opt/local-se/kb",
+            for cand in (path, _os.path.join(_LSE_BASE_PATH, path),
+                         _os.path.join(_LSE_BASE_PATH, "kb",
                                        _os.path.basename(path))):
                 try:
                     if not _os.path.isfile(cand):
