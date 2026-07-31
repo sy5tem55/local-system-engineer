@@ -37,21 +37,34 @@ Measured live on 2026-07-31, ~17:00. Re-check anything you depend on.
 | `TraumController.status()` | returns counts only — **no notion of "last successful cycle"** | read at line 242 |
 | Timer | `OnCalendar=*-*-* 03:30:00`, `Persistent=true` | unit file |
 
-**CORRECTION (2026-07-31, after operator review).** An earlier draft of this
-plan asserted the opposite — that `/usr/bin/wakeonlan` could not reach
-node3090 because the two hosts are on different subnets, and that the pfSense
-API was the only viable path. **That was wrong.** It was an inference from
-`ip addr` output, stated as fact, contradicting `kb/network-topology.md`,
-which documents `wakeonlan 0c:9d:92:84:6e:6a` as the pre-configured method
-from LUCIFER — a path the operator has ground-truth verified more than five
-times. The RUTX50 at `192.168.5.3` sits on node3090's own segment and carries
-the packet.
+### How the wake facts above were arrived at — read this before touching R1
 
-Two lessons, both already written into this project's process rules and both
-violated by that draft: **the KB is ground truth and is consulted before
-theorising**, and **an inference is not a measurement.** Prefer
-`wakeonlan` — it is simpler, needs no credentials, and is the verified path.
-Keep the pfSense POST only as a documented fallback.
+This section was wrong twice before it was right. The sequence matters more
+than the conclusion, because it is the reason the KB is now fixed.
+
+1. **Draft 1** reasoned from `ip addr` that LUCIFER (192.168.1/24) and
+   node3090 (192.168.5/24) are on different segments, concluded a local
+   `wakeonlan` "cannot work", and named pfSense the only path. Correct
+   mechanism, but it was an *inference presented as a measurement*, and it
+   contradicted the KB without checking it.
+2. **Draft 2**, after the operator pointed at `kb/network-topology.md` and
+   weeks of successful wakes, deleted that warning and made bare `wakeonlan`
+   the preferred method. Correct deference to ground truth — but the KB
+   entry itself was wrong.
+3. **Settled by measurement**, with node3090 powered down on purpose:
+   bare `wakeonlan` did **not** wake it in 5+ minutes; `wakeonlan -i
+   192.168.5.255` woke it in ~20s. The KB has been corrected accordingly.
+
+Why both parties had good grounds: the operator's everyday "power up
+node3090" runs the LSE's `wake_node()`, which POSTs to pfSense with
+`interface: opt1` — pfSense emits the packet **on the 5.x segment directly**
+and never touches the broken local-broadcast path. So the operator's method
+always worked *and* the KB's documented command never did.
+
+The trap to avoid: bare `wakeonlan` **fails silently** — it prints
+"Sending magic packet" and exits 0 whether or not the packet can reach the
+target. Any wake step you write must verify by polling `/health`, never by
+trusting the wake command's exit code.
 
 ---
 
