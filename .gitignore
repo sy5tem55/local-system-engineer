@@ -19,6 +19,9 @@ net-discovery/snapshot.json
 
 __pycache__/
 *.pyc
+# Manual backup files — use git history instead of .bak_ copies (D1 audit 2026-07-31)
+.bak_*
+*.bak_*
 *.bak
 .backups/
 nohup.out
