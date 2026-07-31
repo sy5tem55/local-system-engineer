@@ -606,3 +606,93 @@ def test_dashboard_renders_complete_scrollable_deletable_ledger():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# --------------------------------------------------------------------------
+# Validation-error propagation (F821 regression, 2026-07-31)
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("path", "query", "method", "payload"),
+    [
+        ("/api/ui/traum/runs", "archived=maybe", "GET", None),
+        ("/api/ui/traum/runs", "limit=notanumber", "GET", None),
+        ("/api/ui/traum/proposals", "actionable=perhaps", "GET", None),
+        ("/api/ui/traum/proposals", "limit=xyz", "GET", None),
+        ("/api/ui/traum/runs/r1/logs", "limit=xyz", "GET", None),
+    ],
+)
+def test_bad_query_params_return_400_with_the_real_message(
+        path, query, method, payload):
+    """CONTRACT PIN: a malformed query parameter answers 400 with the real
+    validation message, never 503.
+
+    These handlers re-raise a caught validation error inside _traum_response
+    via a lambda, so that _traum_response's status mapping (ValueError -> 400)
+    applies rather than the generic 503 branch.
+
+    HONEST SCOPE NOTE (2026-07-31). ruff flags the seven lambdas as F821
+    because `exc` is unbound once the `except` block exits. That warning is
+    legitimate but the code was NOT broken: each `await _traum_response(...)`
+    happens INSIDE its except block, so `exc` is still bound when the worker
+    thread invokes the lambda. Verified by reverting the fix and re-running
+    this file — all tests still passed. The lambdas were nevertheless changed
+    to bind the exception as a default argument (`lambda e=exc:`), which is
+    equivalent today and stays correct if anyone later defers the call past
+    the block; in that shape the old form really does yield
+    `503 NameError` and lose the original error.
+
+    So: this test pins the 400-vs-503 contract, which is real and worth
+    holding. It does NOT discriminate between the two lambda forms, and is
+    not claimed to.
+    """
+    class FakeTraum:
+        def list_runs(self, **_kw):
+            return {"runs": []}
+
+        def list_proposals(self, **_kw):
+            return {"proposals": []}
+
+        def logs(self, _run_id, **_kw):
+            return {"logs": []}
+
+    app = ui.UIRouter(_Inner(), token="sekrit", traum_controller=FakeTraum())
+    status, body = _run(app, path, method=method, query=query,
+                        payload=payload, auth="Bearer sekrit")
+    parsed = _json_of(body)
+
+    assert status == 400, (
+        f"expected 400 for {path}?{query}, got {status}: {parsed}")
+    assert "NameError" not in parsed.get("error", ""), (
+        "the exc-closure bug is back: the handler's own error masked the "
+        f"validation error -> {parsed}")
+    assert parsed.get("error", "").startswith("bad request:"), parsed
+
+
+def test_malformed_json_body_returns_400_not_503():
+    """Same contract on the POST paths, which catch json.JSONDecodeError."""
+    class FakeTraum:
+        def start_run(self, _payload):
+            return {"run_id": "r1"}
+
+    app = ui.UIRouter(_Inner(), token="sekrit", traum_controller=FakeTraum())
+    scope = {"type": "http", "path": "/api/ui/traum/runs", "method": "POST",
+             "query_string": b"",
+             "headers": [(b"authorization", b"Bearer sekrit")]}
+    messages = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"{not valid json",
+                "more_body": False}
+
+    async def send(msg):
+        messages.append(msg)
+
+    asyncio.run(app(scope, receive, send))
+    status = next(m["status"] for m in messages
+                  if m["type"] == "http.response.start")
+    body = b"".join(m.get("body", b"") for m in messages
+                    if m["type"] == "http.response.body")
+    parsed = _json_of(body)
+    assert status == 400, f"expected 400, got {status}: {parsed}"
+    assert "NameError" not in parsed.get("error", ""), parsed

@@ -922,7 +922,8 @@ class UIRouter:
         try:
             ctl = self._traum_controller()
         except Exception as exc:
-            await self._traum_response(send, lambda: (_ for _ in ()).throw(exc))
+            await self._traum_response(
+                send, lambda e=exc: (_ for _ in ()).throw(e))
             return
 
         query = self._query(scope)
@@ -940,7 +941,7 @@ class UIRouter:
                 limit = int(self._one_query(query, "limit", "50"))
             except (TypeError, ValueError) as exc:
                 await self._traum_response(
-                    send, lambda: (_ for _ in ()).throw(exc))
+                    send, lambda e=exc: (_ for _ in ()).throw(e))
                 return
             await self._traum_response(
                 send, ctl.list_runs,
@@ -956,7 +957,7 @@ class UIRouter:
                     raise ValueError("actionable must be true or false")
             except (TypeError, ValueError) as exc:
                 await self._traum_response(
-                    send, lambda: (_ for _ in ()).throw(exc))
+                    send, lambda e=exc: (_ for _ in ()).throw(e))
                 return
             await self._traum_response(
                 send, ctl.list_proposals, state=proposal_state, limit=limit,
@@ -974,7 +975,7 @@ class UIRouter:
                 limit = int(self._one_query(query, "limit", "200"))
             except (TypeError, ValueError) as exc:
                 await self._traum_response(
-                    send, lambda: (_ for _ in ()).throw(exc))
+                    send, lambda e=exc: (_ for _ in ()).throw(e))
                 return
             await self._traum_response(
                 send, ctl.logs, match.group(1),
@@ -986,7 +987,7 @@ class UIRouter:
                 payload = await self._read_json_body(receive)
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 await self._traum_response(
-                    send, lambda: (_ for _ in ()).throw(exc))
+                    send, lambda e=exc: (_ for _ in ()).throw(e))
                 return
             await self._traum_response(send, ctl.start_run, payload)
             return
@@ -996,7 +997,7 @@ class UIRouter:
                 payload = await self._read_json_body(receive)
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 await self._traum_response(
-                    send, lambda: (_ for _ in ()).throw(exc))
+                    send, lambda e=exc: (_ for _ in ()).throw(e))
                 return
             await self._traum_response(send, ctl.revalidate_queue, payload)
             return
@@ -1017,7 +1018,7 @@ class UIRouter:
                         payload = await self._read_json_body(receive)
                     except (TypeError, ValueError, json.JSONDecodeError) as exc:
                         await self._traum_response(
-                            send, lambda: (_ for _ in ()).throw(exc))
+                            send, lambda e=exc: (_ for _ in ()).throw(e))
                         return
                     await self._traum_response(
                         send, getattr(ctl, method_name), match.group(1), payload)
