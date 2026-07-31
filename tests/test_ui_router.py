@@ -696,3 +696,77 @@ def test_malformed_json_body_returns_400_not_503():
     parsed = _json_of(body)
     assert status == 400, f"expected 400, got {status}: {parsed}"
     assert "NameError" not in parsed.get("error", ""), parsed
+
+
+# --------------------------------------------------------------------------
+# sync-sudoers terminal launcher (2026-07-31)
+# --------------------------------------------------------------------------
+
+def test_sync_terminal_requires_token():
+    app = ui.UIRouter(_Inner(), token="sekrit")
+    status, body = _run(app, "/api/ui/perms/sync-terminal", method="POST")
+    assert status == 401 and _json_of(body)["error"] == "unauthorized"
+
+
+def test_sync_terminal_never_runs_the_sync_itself(monkeypatch):
+    """CONTRACT. The Console must never perform the sudoers install.
+
+    The endpoint may only spawn an interactive terminal. It must not invoke
+    goethe-perm, sudo, or install directly — the human confirms in the
+    terminal and sudo still prompts. This test inspects the argv actually
+    handed to Popen.
+    """
+    spawned = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            spawned.append(argv)
+
+    monkeypatch.setattr(ui.os.environ, "get",
+                        lambda k, d=None: "Ubuntu-24.04"
+                        if k == "WSL_DISTRO_NAME" else (d or ""))
+    monkeypatch.setattr(ui.os.path, "exists", lambda p: "wsl.exe" in p)
+    import subprocess
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+
+    app = ui.UIRouter(_Inner(), token="sekrit")
+    status, body = _run(app, "/api/ui/perms/sync-terminal", method="POST",
+                        auth="Bearer sekrit")
+    assert status == 200, _json_of(body)
+    assert len(spawned) == 1, spawned
+    argv = spawned[0]
+
+    # It launches a terminal, not the sync.
+    assert argv[0].endswith("wsl.exe"), argv
+    joined = " ".join(argv)
+    # The command appears as PRE-FILLED TEXT for `read -e -i`, never as an
+    # executed argv element.
+    assert "read -e -i" in joined, joined
+    assert not any(a in ("sudo", "install", "goethe-perm") for a in argv), argv
+
+
+def test_sync_terminal_reports_failure_instead_of_raising(monkeypatch):
+    """Without WSL interop the endpoint must answer with the command, so the
+    UI can fall back to copy-to-clipboard rather than leaving the operator
+    stuck."""
+    monkeypatch.setattr(ui.os.environ, "get", lambda k, d=None: d or "")
+    app = ui.UIRouter(_Inner(), token="sekrit")
+    status, body = _run(app, "/api/ui/perms/sync-terminal", method="POST",
+                        auth="Bearer sekrit")
+    parsed = _json_of(body)
+    assert status == 503
+    assert parsed["ok"] is False
+    assert parsed["command"] == "goethe-perm sync-sudoers"
+    assert "error" in parsed
+
+
+def test_sync_command_is_a_fixed_constant_with_no_interpolation():
+    """No part of the command may come from request data — the argv is built
+    from _SYNC_CMD only, so there is no injection surface."""
+    app = ui.UIRouter(_Inner(), token="sekrit")
+    assert app._SYNC_CMD == "goethe-perm sync-sudoers"
+    import inspect
+    src = inspect.getsource(type(app)._open_sync_terminal)
+    # the payload string must be built from the constant, not from a parameter
+    assert "self._SYNC_CMD" in src
+    assert "payload" not in src and "receive" not in src

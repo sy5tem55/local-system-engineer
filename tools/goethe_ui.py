@@ -879,6 +879,87 @@ class UIRouter:
             raise ValueError(f"query parameter {name!r} may appear once")
         return values[0]
 
+    # Fixed, argument-free command. Deliberately a module-level constant and
+    # not built from request data — see _open_sync_terminal.
+    _SYNC_CMD = "goethe-perm sync-sudoers"
+
+    def _open_sync_terminal(self) -> dict:
+        """Open a terminal window with the sync command ready to run.
+
+        WHY THIS DOES NOT WIDEN THE TRUST BOUNDARY. The module docstring above
+        states that the Console never writes /etc/sudoers.d/goethe-grants, and
+        that making a sudo grant effective at the OS level requires a human at
+        a terminal. That is still true after this method exists:
+
+          - It does NOT run `goethe-perm sync-sudoers`. It launches an
+            interactive terminal with that text pre-typed and NOT executed
+            (no trailing newline is sent). The operator reads it, presses
+            Enter if they agree, and then still authenticates to sudo, because
+            _sync() shells out to `sudo install` and there is no NOPASSWD rule
+            for it.
+          - It therefore cannot install a sudoers rule, escalate privilege, or
+            act while nobody is watching. It removes the friction of
+            remembering the command, nothing more.
+          - The command is the fixed constant _SYNC_CMD. No part of it comes
+            from the request body, the query string, or the database, so there
+            is no injection surface: the argv below contains no interpolated
+            caller-controlled data.
+
+        Mechanism: WSL2 -> Windows interop. Windows Terminal is preferred; a
+        plain conhost window is the fallback. If interop is unavailable (a
+        headless host, or the Console reached from another machine) this
+        returns ok=false with the command, and the UI falls back to
+        copy-to-clipboard so the operator is never stuck.
+        """
+        import shlex  # noqa: PLC0415
+        import subprocess  # noqa: PLC0415
+
+        distro = os.environ.get("WSL_DISTRO_NAME", "")
+        if not distro or not os.path.exists("/mnt/c/Windows/System32/wsl.exe"):
+            return {
+                "ok": False,
+                "command": self._SYNC_CMD,
+                "error": "no WSL interop on this host — copy the command "
+                         "and run it in a terminal",
+            }
+
+        # `read -e -i <text>` pre-fills the prompt WITHOUT executing it, so the
+        # operator sees exactly what will run and confirms with Enter.
+        inner = (
+            "printf '%s\\n' "
+            + shlex.quote("Review, then press Enter to run (sudo will prompt):")
+            + "; read -e -i " + shlex.quote(self._SYNC_CMD) + " -r _c"
+            + '; eval "$_c"'
+            + "; printf '%s\\n' 'done — press Enter to close'; read -r _"
+        )
+        wsl_argv = ["/mnt/c/Windows/System32/wsl.exe", "-d", distro,
+                    "--", "bash", "-lic", inner]
+
+        wt = ("/mnt/c/Users/" + os.environ.get("WIN_USER", "SY5")
+              + "/AppData/Local/Microsoft/WindowsApps/wt.exe")
+        candidates = []
+        if os.path.exists(wt):
+            candidates.append(
+                [wt, "new-tab", "--title", "goethe-perm sync-sudoers"]
+                + wsl_argv)
+        candidates.append(wsl_argv)
+
+        for argv in candidates:
+            try:
+                subprocess.Popen(
+                    argv, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True)
+                return {"ok": True, "command": self._SYNC_CMD,
+                        "note": "terminal opened — the command is pre-typed "
+                                "but NOT executed; press Enter to run it, "
+                                "then authenticate to sudo"}
+            except OSError:
+                continue
+        return {"ok": False, "command": self._SYNC_CMD,
+                "error": "could not launch a terminal — copy the command "
+                         "and run it yourself"}
+
     async def _traum_response(self, send, fn, *args, **kwargs):
         t0 = time.monotonic()
         try:
@@ -1124,6 +1205,21 @@ class UIRouter:
             await self._respond(
                 send, 409 if "error" in data else 200,
                 json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # Open a terminal with `goethe-perm sync-sudoers` ready to run.
+        # DOES NOT SYNC. See _open_sync_terminal for why this does not widen
+        # the trust boundary described in the module docstring.
+        if path == "/api/ui/perms/sync-terminal" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            result = self._open_sync_terminal()
+            await self._respond(
+                send, 200 if result.get("ok") else 503,
+                json.dumps(result, ensure_ascii=False).encode(),
                 "application/json")
             return
 
