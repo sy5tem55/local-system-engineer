@@ -173,48 +173,72 @@ rebuild if the decision reverses.
 
 ---
 
-## 5. Open items
+## 5. Open items — RESOLVED 2026-07-31 (post-restart pass)
 
-Reported rather than fixed — each needs an operator decision.
+All seven were worked after Goethe was restarted. Status:
 
-**1. The refactor is not live.** *(highest priority)*
-The `:9700` gateway (PID 1126049) started 05:30:49; the first D7 commit landed
-06:10:32. It is serving the pre-D7 monolith from memory. Disk is refactored,
-committed, and green; runtime is not. **A restart is required.** Additionally
-three `goethe_mcp` processes are running from three vintages (04:35, 05:30,
-06:33) where there should be one.
+**1. The refactor is not live — CLOSED.** Gateway restarted (PID 4454,
+12:58:37). Verified serving mixin code by calling `task_resume`, a
+PlannerMixin-hosted tool, through the live MCP gateway. The three processes
+are one HTTP gateway plus per-client stdio bridges, each with its own
+`Relay(...)` parent — the GUI's architecture, not a leak, and all now the
+same vintage.
 
-**2. D8 copied rather than moved.**
-`Faust/` (183 MB) and `coding-gauntlet/` (70 MB) still sit in the production
-repo — gitignored, so history is clean, but duplicating the extracted siblings
-(153 MB / 21 MB). `node_modules` and `Faust/archive` were never pruned. ~253 MB
-of duplicate on disk. This is D1's "divergent copies" hazard in a new location.
+**2. D8 copied rather than moved — CLOSED.** Repo **280 MB → 27 MB**.
+Verified before removing anything: all *tracked* content in both duplicates
+matched the siblings byte-for-byte (0 differing files). Only untracked
+artifacts were unique, all preserved to
+`~/projects/Faust/.preserved-from-lse-repo/` with a README — notably two
+runtime SQLite DBs (`gate2.sqlite` 94 KB, `app.sqlite` 80 KB with 8 accounts /
+3 rooms / 78 messages) that existed nowhere else. coding-gauntlet's copy was
+100% redundant (0 unique, 0 differing, sibling clean and fully pushed).
+The 2,132-file TypeScript grep surface the audit complained about is now **0**.
+Because `rm -rf` is permanently blocked by the safety gate, the duplicates were
+*moved* to `~/.trash-lse-d8-20260731/` — deleting that directory is the one
+remaining manual step.
 
-**3. `Faust`'s sibling repo has a broken remote.**
-`/home/sy5/projects/Faust` has `origin` pointing at
-`/mnt/c/.../local-system-engineer/Faust` — a path inside the *old* location
-that is not a git repository. `git ls-remote origin` fails fatally, so it can
-neither push nor pull. `coding-gauntlet` correctly points at GitHub.
+**3. Faust's broken remote — CLOSED.** `origin` pointed at a `/mnt/c` path with
+no `.git`; `github.com/sy5tem55/Faust` does not exist. Removed the dangling
+remote and its stale `origin/*` refs, so the repo is honestly local-only rather
+than advertising a backup it does not have. **It has 21 commits and no remote —
+create one if this work matters** (`gh` is authenticated as sy5tem55). Note its
+working tree is mid-restructure: `gate2-group-server/*` deleted, a flattened
+layout untracked at root, plus a `flatten.sh`, all uncommitted.
 
-**4. Four safety bypasses remain open by design (D5).**
-Pinned `xfail(strict=True)`, so they announce themselves (XPASS) the moment
-anyone fixes them: heredoc-feeding-an-interpreter, whitespace evasion of
-`_BLOCKED_COMMANDS`, and shell indirection reconstructing `sudo`. Fixing them
-changes scan semantics and risks false-positives on legitimate work — an
-operator decision, deliberately not slipped in behind a test.
+**4. Four safety bypasses — ALL CLOSED.** Suite **560 passed/10 xfailed → 580
+passed/0 xfailed**. Heredocs feeding an interpreter now have their bodies
+scanned; whitespace runs normalised before substring matching; privilege
+tokens matched on word boundaries; blocked command *names* matched in command
+position only, which fixed hole 4's false positive (`cat /etc/passwd`) and its
+under-block (`/etc/shadow`) together. Cost measured by replaying all **10,830**
+unique historical commands through both gates: **41 newly blocked (0.379%)**,
+10 newly allowed. 30 of the 41 are interpreter heredocs whose bodies contain
+the literals as source text — the population hole 1 exists to catch. The other
+11 are `grep` patterns searching for the word sudo; accepted as fail-safe, with
+`su[d]o` or `read_file` as the workaround. **Editing the safety code via an
+interpreter heredoc is now blocked — use `write_file`.**
 
-**5. 161 pre-existing ruff findings** in `tools/` files D1–D8 never touched
-(`traum_state.py`, `goethe_mcp.py`, `goethe_perms.py`, `goethe_ui.py`,
-`dream_*.py`, and others). Out of scope throughout; the six D7-scoped modules
-are clean.
+Also found and fixed here: the D5 suite was **not hermetic**. It read the live
+grants DB, so `sudo id` flipped from blocked to allowed the moment grant #31
+for `id` was approved — turning a green suite red with no code change. The
+fixture now disconnects the grants backend.
 
-**6. `_call_hermes` / `_kanban_create_card`** remain as RETIRED stubs returning
-error strings. Harmless, removable whenever convenient.
+**5. 161 ruff findings — TRIAGED**, per operator decision (report, don't fix):
+`docs/RUFF-TRIAGE-2026-07-31.md`. The headline is that **7 are not lint noise
+but one live bug seven times**: `goethe_ui.py` lambdas closing over an
+`except ... as exc` binding that Python deletes on block exit. Reproduced —
+raises `NameError` *and destroys the original exception*, so the handler masks
+the real failure. Reachable from malformed TRAUM request bodies. One-line fix
+each (`lambda e=exc:`), which also clears 7 F841. **Recommended as P0.**
+Remaining: 119 BLE001 (judgement-heavy, `goethe_mcp.py` the loader first), 30
+auto-fixable cosmetics with three documented do-not-blanket-fix exceptions.
 
-**7. Nothing is pushed.** All 20 commits are local on
-`codex/fix-sudo-grants-live`.
+**6. `_call_hermes` / `_kanban_create_card` — REMOVED.** Same evidence standard
+as `search_rfc`: **0 invocations in 18,061 tool calls** by `.tool` field.
 
----
+**7. Nothing is pushed — STILL OPEN.** 23 commits local on
+`codex/fix-sudo-grants-live`. Remote-mutating git operations are the operator's
+to run.
 
 ## 6. Verification method — and its limits
 
