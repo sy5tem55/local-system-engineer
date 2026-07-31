@@ -145,6 +145,9 @@
   .backend-row .bl .detail{font-size:10.5px;color:var(--faint);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
   .backend-row .tag{font-size:9.5px;padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
   .backend-row .tag.now{color:var(--accent);border-color:rgba(122,162,247,.5)}
+  .backend-row .use-btn{font-size:10px;padding:3px 10px;border-radius:7px;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer;font-family:inherit;flex:none}
+  .backend-row .use-btn:hover:not(:disabled){color:var(--accent);border-color:rgba(122,162,247,.5)}
+  .backend-row .use-btn:disabled{opacity:.45;cursor:default}
   .badge.backend-local{color:var(--dim)}
   .badge.backend-chatgpt{color:var(--good);border-color:rgba(158,206,106,.4)}
   .badge.backend-claude{color:var(--purple);border-color:rgba(187,154,247,.4)}
@@ -291,9 +294,11 @@
   <div class="panel span4" id="p-backends">
     <h2>Planner Backend <span class="ms" id="backend-ms"></span></h2>
     <div id="backend-rows"></div>
-    <div style="font-size:10.5px;color:var(--faint);margin-top:10px">
+    <div id="backend-note" style="font-size:10.5px;margin-top:8px;min-height:13px;color:var(--accent)"></div>
+    <div style="font-size:10.5px;color:var(--faint);margin-top:4px">
       'configured' means credentials were found — hosted backends aren't
-      live-pinged on refresh to avoid surprise API calls.
+      live-pinged on refresh to avoid surprise API calls. A selection
+      persists across restarts and applies to the next planner() call.
     </div>
   </div>
 
@@ -527,14 +532,46 @@ async function loadBackends(){
         ? (b.health === "ok" ? "healthy" : "unreachable") + (b.detail ? " · " + esc(b.detail) : "")
         : (b.configured ? "configured (" + esc(b.auth_source || "") + ")" : "not configured")
           + (b.detail ? " · " + esc(b.detail) : "");
+      // 'from env' distinguishes "nobody has chosen, this is the deployment
+      // default" from "an operator picked this and it is pinned".
+      const srcTag = (isActive && d.active_source === "env")
+        ? '<span class="tag">from env</span>' : '';
+      const btn = (isActive || d.selectable === false)
+        ? ''
+        : '<button class="use-btn" data-backend="'+esc(b.id)+'">use</button>';
       return '<div class="backend-row'+(isActive?" active":"")+'">'+
         '<span class="dot '+dotCls+'"></span>'+
         '<div class="bl"><div class="name">'+esc(b.label)+
-          (isActive ? '<span class="tag now">active</span>' : '')+
+          (isActive ? '<span class="tag now">active</span>' : '')+srcTag+
         '</div><div class="detail">'+sub+'</div></div>'+
+        btn+
       '</div>';
     }).join("");
+    $("backend-rows").querySelectorAll(".use-btn").forEach(el => {
+      el.addEventListener("click", () => selectBackend(el.dataset.backend, el));
+    });
+    if (d.selectable === false) {
+      $("backend-note").textContent =
+        "selection unavailable — goethe_planner_state module not loaded";
+    }
   }catch(e){ showErr($("backend-rows"), e); }
+}
+
+// Switching writes through goethe_planner_state, so it survives a gateway
+// restart and takes effect on the next planner() call — nothing to reload.
+// An unconfigured backend is a warning, not a refusal: you may well be
+// selecting 'claude' so you can then go run `claude login`.
+async function selectBackend(id, btn){
+  if(btn){ btn.disabled = true; btn.textContent = "…"; }
+  try{
+    const d = await apiPost("/api/ui/backends/select", { backend: id });
+    $("backend-note").textContent = d.warning ? "⚠ " + d.warning
+                                              : "switched to " + d.active;
+    await loadBackends();
+  }catch(e){
+    $("backend-note").textContent = "✗ " + (e.message || e);
+    if(btn){ btn.disabled = false; btn.textContent = "use"; }
+  }
 }
 function backendBadge(b){
   const k = b || "local";
