@@ -4023,6 +4023,40 @@ def release_lock(cfg: DreamConfig) -> None:
             pass
 
 
+def _gateway_session_id_prefix() -> str | None:
+    """R2.2 (docs/TRAUM-R1-R3-PLAN.md): best-effort id of the LSE session
+    that is itself launching this dream_runner.py process, when derivable.
+
+    When goethe_ui.py's TRAUM control panel (traum_controller.py) starts a
+    run, it does so from a background thread inside the live gateway
+    process and spawns this file as a direct child via subprocess.Popen --
+    so os.getppid() is exactly that gateway process's pid for the whole
+    life of this run. When the gateway's own journaling code has no real
+    MCP-provided session id to use, it falls back to the format
+    f"gw-{os.getpid()}-{int(time.time())}" (goethe_mcp.py
+    _fallback_session_id) -- which embeds that same pid. So a session_id
+    matching "gw-<our ppid>-*" is, with high confidence, the very request
+    that triggered this run, not independent operator activity.
+
+    This is deliberately narrow, not general "exclude our own session"
+    logic: it only catches the fallback-id shape, and only when this
+    process's parent actually is the gateway (scheduled systemd runs and
+    manual CLI runs have an unrelated ppid, so this is a safe no-op for
+    them -- there is nothing in `sessions` shaped like "gw-<systemd-or-
+    bash-pid>-*" to accidentally match). Real MCP-provided session ids
+    (the "sess-......" shape) don't embed a pid at all and are not covered
+    by this exclusion; see the plan's honest scope note -- this step is
+    hygiene, not the fix for the observed 03:39 block, which was genuine
+    unrelated operator activity.
+
+    Returns None (nothing to exclude) if pid lookup fails for any reason.
+    """
+    try:
+        return f"gw-{os.getppid()}-%"
+    except OSError:
+        return None
+
+
 def _recent_session_active(cfg: DreamConfig, refresh_manifest: bool = True) -> str:
     """Empty string if no LSE session was recently active; otherwise a
     human-readable reason for the skip.
@@ -4033,6 +4067,9 @@ def _recent_session_active(cfg: DreamConfig, refresh_manifest: bool = True) -> s
     happened to be; nothing else on this box currently rebuilds
     manifest.db on a schedule of its own, so without this refresh the
     check could easily miss a session that started minutes ago.
+
+    Excludes the launching gateway's own fallback-shaped session id from
+    consideration when one is derivable -- see _gateway_session_id_prefix.
     """
     if refresh_manifest:
         try:
@@ -4048,9 +4085,18 @@ def _recent_session_active(cfg: DreamConfig, refresh_manifest: bool = True) -> s
     conn = sqlite3.connect(cfg.manifest_db, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
-            "SELECT session_id, end_ts FROM sessions ORDER BY end_ts DESC LIMIT 1"
-        ).fetchone()
+        exclude_prefix = _gateway_session_id_prefix()
+        if exclude_prefix:
+            row = conn.execute(
+                "SELECT session_id, end_ts FROM sessions "
+                "WHERE session_id NOT LIKE ? "
+                "ORDER BY end_ts DESC LIMIT 1",
+                (exclude_prefix,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT session_id, end_ts FROM sessions ORDER BY end_ts DESC LIMIT 1"
+            ).fetchone()
     finally:
         conn.close()
     if not row or not row["end_ts"]:
