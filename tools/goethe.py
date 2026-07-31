@@ -41,7 +41,7 @@ import sys as _sys
 _HERE = _os.path.dirname(_os.path.abspath(__file__))
 if _HERE not in _sys.path:
     _sys.path.insert(0, _HERE)
-from goethe_kb import KBMixin, TrustPolicy  # noqa: E402
+from goethe_kb import KBMixin  # noqa: E402
 # D6 topology sweep (2026-07-31): single-source topology constants
 _LSE_BASE_PATH = "/opt/local-se"
 _LOOPBACK = "127.0.0.1"
@@ -2042,8 +2042,6 @@ tail -5 /tmp/goethe-node3090.log
         try:
             # scp shares ControlMaster socket — free after first ssh call to host
             # scp uses -P (uppercase) for port, unlike ssh which uses -p
-            scp_opts = [o for pair in zip(opts, opts[1:] + [""]) for o in pair
-                        if not (pair[0] == "-p" and pair[1] == str(port))]
             # Simpler: rebuild opts without -p/port, add -P for scp
             scp_base_opts = []
             skip_next = False
@@ -3658,7 +3656,6 @@ tail -5 /tmp/goethe-node3090.log
             # Strip control chars so stray binary bytes are removed
             return _re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", s)
 
-        import re as _re
 
         class _TextExtractor(HTMLParser):
             def __init__(self):
@@ -3681,7 +3678,6 @@ tail -5 /tmp/goethe-node3090.log
             def get_text(self):
                 return " ".join(self._text)
 
-        import re as _re  # noqa: PLC0415
 
         def _sanitize(s):
             # Strip control chars (except \n\t) so a stray binary byte can never
@@ -3730,8 +3726,6 @@ tail -5 /tmp/goethe-node3090.log
             self._log(f"FETCH BLOCKED (budget): {url}")
             return _gate
         import requests  # noqa: PLC0415
-        from html.parser import HTMLParser
-
         self._log(f"FETCH: {url}")
         try:
             resp = requests.get(
@@ -3796,7 +3790,7 @@ tail -5 /tmp/goethe-node3090.log
                 return (text + mandate) + _gate
             # Empty extract — try browser rendering for reddit URLs (v1.5.29)
             if "reddit.com" in url.lower():
-                self._log(f"FETCH: empty for reddit URL — trying browser fallback")
+                self._log("FETCH: empty for reddit URL — trying browser fallback")
                 _br = self._reddit_browser_fallback(url, max_chars)
                 if _br:
                     _br_mandate = (
@@ -5316,7 +5310,7 @@ tail -5 /tmp/goethe-node3090.log
                 f"stdout={r.stdout.strip()!r} stderr={r.stderr.strip()!r}"
             )
         except _sp.TimeoutExpired:
-            return f"SSH timeout — node may already be shutting down or unreachable."
+            return "SSH timeout — node may already be shutting down or unreachable."
         except subprocess.SubprocessError as exc:
             return f"shutdown_node error: {exc}"
 
@@ -5719,7 +5713,6 @@ tail -5 /tmp/goethe-node3090.log
         """
         import hashlib  # noqa: PLC0415
         import json as _json  # noqa: PLC0415
-        import re as _re  # noqa: PLC0415
 
         self._log(f"NODE-PLAN: mode={mode} {task[:80]}")
         corr = hashlib.sha256((task + datetime.now().isoformat()).encode()).hexdigest()[
