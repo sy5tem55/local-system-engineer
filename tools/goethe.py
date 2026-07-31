@@ -2219,189 +2219,59 @@ tail -5 /tmp/goethe-node3090.log
 
     def execute_command(self, command: str, working_dir: str = "") -> str:
         """
-        Execute a read-only or write-safe shell command in the WSL Ubuntu environment.
+        SPEC: Execute a read-only or write-safe shell command in the WSL Ubuntu environment.
         Use for: ls, cat, grep, find, ps, df, uname, systemctl status, apt list,
                  journalctl, tail, head, wc, etc.
         Do NOT use for commands requiring sudo — use sudo_delegation_block instead.
-        Output is capped at MAX_OUTPUT_CHARS. Always pipe through grep/head/awk to limit output.
+        Output is capped at MAX_OUTPUT_CHARS. Always pipe through grep/head/awk.
 
         COMBINE RULE — batch independent commands into a single call:
-          GOOD: execute_command("uname -r && nproc")          ← one call, two results
-          GOOD: execute_command("hostname; whoami; uptime")   ← one call, three results
-          BAD:  execute_command("uname -r")                   ← then separate call for nproc
-          BAD:  execute_command("nproc")                      ← should have been combined above
-          Use && when the second command depends on the first succeeding.
-          Use ; when commands are fully independent.
-          Never make two execute_command calls when one combined call will do.
+          Use && when the second depends on the first; ; when independent.
+          Never make two calls when one combined call will do.
 
-        DOWNLOAD PROGRESS RULE — mandatory:
-          To CHECK on a download already in progress, call the monitor_download
-          tool (file_path, expected_bytes). NEVER re-run the download command
-          (curl / wget / hf download / huggingface-cli) to "test" or "check" it —
-          a second fetch writes into the same partial file and corrupts it. This
-          is code-enforced: execute_command REFUSES a download-initiating command
-          while a downloader process is already running (see _active_download_guard).
-          Start a new download only after the current one finishes or is killed.
+        DOWNLOAD PROGRESS RULE — mandatory: call monitor_download to check progress.
+        NEVER re-run a download command (curl/wget/hf) to "test" or "check" it —
+        a second fetch corrupts the partial file. Code-enforced refusal applies.
 
-        CONFIG GROUND-TRUTH RULE — mandatory:
-          Tokens, passwords, paths, ports, and config values you state or use
-          must come from a tool result obtained THIS session (read_file,
-          execute_command cat/grep, docker inspect/exec) — never from recall
-          and never from a KB doc older than the system it describes.
-          GOOD: docker exec searxng grep open_metrics /etc/searxng/settings.yml
-                ← then quote THAT value
-          BAD:  "the token is searxng-metrics-token-2026" from memory
-                ← invented value sent the operator on a 401 hunt
-          Citing a config value without a same-session read is a protocol violation.
+        CONFIG GROUND-TRUTH RULE — mandatory: tokens/paths/ports/config values
+        must come from a tool result THIS session (read_file, cat/grep, docker inspect).
+        Never from recall or from a KB doc older than the system it describes.
+        Citing a config value without a same-session read is a protocol violation.
 
         RESOURCE-AVAILABILITY RULE — mandatory before any external connection:
-          Before any operation requiring a remote resource (SSH, API call,
-          docker exec, curl to a service), verify the resource is in its
-          expected state first. A connection timeout is not a credential or
-          config error — it may mean the resource is simply unavailable.
-          Diagnosing the wrong layer wastes time and can trigger corrective
-          actions based on a false premise.
-
-          For network hosts:
-            1. ping -c 1 -W 2 <host_ip> to check reachability.
-            2. If unreachable AND host is a known managed node:
-               do NOT attempt the connection. Instead:
-               a. Check _NODE_REGISTRY → call wake_node if the host is there.
-               b. Otherwise search_kb("<hostname> access") for recovery steps.
-               c. If no path found in either: stop. State "Host <host> is
-                  unreachable. No recovery path found. Operator action required."
-                  Do not attempt SSH — the 30s timeout is not diagnostic.
-            3. If unreachable AND host is external or unknown: ICMP may be
-               blocked. Proceed with the connection but note the ping result.
-          For services: curl -sf <healthcheck_url> or systemctl is-active <name>.
-          For containers: docker inspect --format '{{.State.Status}}' <name>.
-
-          GOOD: ping -c 1 -W 2 <managed_host_ip> → 100% packet loss
-                → found in node registry → "Host unreachable. Wake it? (~Xs)"
-                → (on confirm) wake_node → re-ping → SSH
-          GOOD: ping fails, host external/unknown → "Ping failed (ICMP may be
-                blocked). Attempting SSH." → proceed
-          BAD:  ping fails (managed node) → ssh → 30s timeout → "SSH auth failed"
-                ← wrong layer diagnosed; recovery path not offered
-          BAD:  no recovery path found → guess WoL MAC from ARP → act on guess
-                ← unverified artifact (see RELEASE ASSET RULE)
-          Attempting a connection to a managed node before verifying
-          availability is a protocol violation.
+        Before SSH/API/docker/curl to a remote resource, verify it is reachable first.
+        For managed nodes: ping → if unreachable, check node registry → wake_node if listed.
+        Attempting a connection without verifying availability is a protocol violation.
 
         VENDOR-BEHAVIOR GROUND-TRUTH RULE — mandatory before modifying external software:
-          Before modifying any file from an external project based on an
-          assumption about HOW that software behaves internally — call order,
-          field injection, protocol semantics, version-specific behavior —
-          verify the assumption via the waterfall BEFORE any file is modified:
-            search_kb → fetch vendor changelog/README → search GitHub issues → search_web
-          Patching on recall is a protocol violation regardless of confidence
-          in the assumption. The write_file snapshot gate makes patches
-          reversible; it does NOT prevent acting on a false premise.
-          The waterfall is the control, not the snapshot.
-
-          Trigger: you are about to sed -i, patch, or write_file a file from
-          an external project, and the edit is grounded in how you believe
-          that software behaves rather than in a same-session fetched source,
-          issue, or changelog entry.
-
-          GOOD: hypothesis formed → search_kb + fetch GitHub issues for that
-                behavior → root cause confirmed or refuted → fix designed from
-                verified cause
-          BAD:  hypothesis formed → sed -i → rebuild → fails
-                → new hypothesis → sed -i again  (protocol violation × attempts)
-          Modifying external software files based on an unverified behavioral
-          assumption is a protocol violation.
+        Verify assumptions via the waterfall (search_kb → vendor docs → GitHub → search_web)
+        before any sed/patch/write_file on external project files. Patching on recall is
+        a protocol violation regardless of confidence.
 
         RELEASE ASSET RULE — mandatory before referencing any external artifact:
-          Release tags, asset filenames, image tags, package version strings,
-          and download URLs follow per-project conventions set by the maintainer.
-          They cannot be inferred by extending a prior release's pattern
-          (vX.Y.Z → vX.Y.Z+1, beta.N → beta.N+1).
-          Before writing any download URL, VERSION/RELEASE variable, image tag,
-          or package pin to a file or command:
-            GitHub: call get_github_release("<owner>/<repo>") to confirm tag
-                    and asset filenames
-            Docker / PyPI / npm: fetch the registry page or query its API
-          Never construct an artifact reference from a version number alone
-          and treat it as verified.
+        Call get_github_release("<owner>/<repo>") to confirm exact tag and asset filenames.
+        Never construct download URLs or version strings from memory or pattern extension.
 
-          GOOD: get_github_release("owner/repo") → confirms exact tag and
-                asset filename → use those exact strings
-          BAD:  increment prior release tag → write to Makefile → 404 on fetch
-                → retry with another guess  (each guess is a wasted build cycle)
-          Constructing an artifact reference without fetching its source is a
-          protocol violation.
-
-        DESTRUCTIVE OPERATION PROTOCOL — mandatory before rm, truncate, or overwrite:
-          Before executing any command that irreversibly deletes or overwrites data:
-          1. Name the exact target in your response (file path or pattern).
-          2. Warn the user: "This will permanently delete/overwrite <target>."
-          3. Ask: "Shall I proceed? (yes/no)"
-          4. Wait for an explicit "yes" before calling this function.
-          This applies to: rm <file>, truncate, > (shell overwrite redirect),
-          and any command whose primary effect is data destruction.
-          It does NOT apply to: read-only commands, append (>>), or temp-file cleanup
-          where the file was created in the same session by this agent.
-          Proceeding without confirmation is a protocol violation.
+        DESTRUCTIVE OPERATION PROTOCOL — mandatory before rm/truncate/overwrite:
+        Name the exact target, warn the user, ask "Shall I proceed? (yes/no)", wait for yes.
+        Proceeding without confirmation is a protocol violation.
 
         POST-DELETE VERIFY RULE — mandatory after any deletion:
-          After any rm command that succeeds, immediately make a follow-up call to
-          confirm the target no longer exists before reporting completion:
-            GOOD: execute_command("rm /tmp/lse/file.txt && stat /tmp/lse/file.txt")
-            GOOD: execute_command("ls /tmp/lse/")   ← follow-up call after rm succeeds
-            BAD:  execute_command("rm /tmp/lse/file.txt")  ← then report "Done" with no verify
-          Reporting the file as deleted without a verification call is a protocol violation.
+        Immediately make a follow-up call to confirm the target is gone (stat/ls).
 
-        SSH KB-FIRST RULE — mandatory before any ssh command (v1.7.13):
-          Before issuing any ssh command to a managed device, call
-          search_kb(query='{hostname} SSH access') with NO topic_filter.
-          The KB stores the correct key file path, username, IP, and options
-          for every managed device. Without the key, SSH will time out silently.
-          Rules:
-          1. search_kb FIRST — retrieve key path, username, host IP from KB.
-          2. No topic_filter — SSH access queries are device-agnostic; never
-             apply topic_filter='pfsense' (or any device name) to an SSH query
-             for a different device. topic_filter narrows results to that device
-             only — using pfsense filter for rutx50 returns pfSense API docs.
-          3. Use exact key: always pass -i <key_path> from the KB result.
-             Never attempt bare ssh (no -i) to a key-only device.
-          GOOD: search_kb("rutx50 SSH access") → finds id_ed25519_rutx50 →
-                ssh -i ~/.ssh/id_ed25519_rutx50 root@192.168.5.3 'uptime'
-          BAD:  ssh root@rutx50 'uptime'  ← no key → 30s timeout (protocol violation)
-          BAD:  search_kb("rutx50 SSH access", topic_filter="pfsense")
-                ← wrong filter → pfSense API docs returned (protocol violation)
+        SSH KB-FIRST RULE — mandatory before any ssh command:
+        Call search_kb(query='{hostname} SSH access') with NO topic_filter.
+        Use the exact key path from the KB result. Never bare ssh to a key-only device.
 
-        DEVICE-IDENTITY RULE — SSH commands only (v1.7.12):
-          Device OS/vendor/platform is auto-fingerprinted on the FIRST SSH call
-          to any new host and prepended as [DEVICE FINGERPRINT: ...] to every
-          result. NEVER infer device type from IP address, hostname, or training
-          knowledge. The fingerprint is ground truth. All CLI syntax, path
-          conventions, and package managers must be chosen from the fingerprint,
-          not from memory.
-          GOOD: fingerprint shows "OpenWrt" → use opkg, /etc/init.d/, uci
-          BAD:  "192.168.5.3 looks like a MikroTik" → RouterOS CLI (WRONG)
+        DEVICE-IDENTITY RULE — SSH only: device type comes from auto-fingerprint,
+        never from IP/hostname guessing. Choose CLI syntax from the fingerprint.
 
-        SLOW REMOTE COMMAND RULE — mandatory for SSH commands involving disk inspection:
-          du -sh <path> walks the entire directory tree to count bytes.
-          On a large or remote mount (NAS, HDD, network share) this can take
-          minutes per path and blocks the session until it completes.
-          NEVER chain multiple du -sh calls in a single SSH command.
-          Use fast alternatives that read filesystem metadata instead:
+        SLOW REMOTE COMMAND RULE — mandatory for SSH disk inspection:
+        NEVER chain multiple du -sh on remote mounts. Use df -h or ls -lh instead.
 
-          GOOD: ssh ... 'df -h /mnt/'                  ← instant: reads fs stats
-          GOOD: ssh ... 'df -h /mnt/NODE3090/models'   ← instant for one mount
-          GOOD: ssh ... 'ls -lh /mnt/NODE3090/models/' ← file sizes, no tree walk
-          GOOD: ssh ... 'du -sh --max-depth=1 /mnt/NODE3090/' ← limited tree depth
-          BAD:  ssh ... 'du -sh /mnt/*/ && du -sh /mnt/NODE3090/*/' ← O(files) × mounts
-          BAD:  ssh ... 'du -sh /mnt/NODE3090/models/'              ← walks every file
-
-          Also: wrap SSH commands that may be slow with a timeout prefix to
-          prevent blocking indefinitely when a remote host is degraded:
-            GOOD: ssh ... 'timeout 30 du -sh --max-depth=1 /mnt/'
-
+        NOTES:
         Output filter examples:
           GOOD: execute_command("journalctl -u nginx -n 20 --no-pager")
-          GOOD: execute_command("tail -20 /home/sy5/.bashrc")
           BAD:  execute_command("journalctl -u nginx")   ← no output limit
           BAD:  execute_command("sudo systemctl restart nginx")  ← use sudo_delegation_block
         """
@@ -2832,59 +2702,46 @@ tail -5 /tmp/goethe-node3090.log
         __event_emitter__=None,
     ) -> str:
         """
-        Use whenever an operation requires sudo or touches a privileged path
+        SPEC: Use whenever an operation requires sudo or touches a privileged path
         (/etc/, systemctl enable/start/stop/restart, apt install/remove, etc.).
         Produces a formatted block for the user to run manually in their terminal.
         NEVER attempt to run sudo yourself. Always call this function instead.
 
-        ARGS:
-          command           — The exact command the user must run.
-          reason            — One sentence explaining why this delegation is needed.
-          expected_output_hint — (secondary) Free-text hint about success. Prefer verify_command.
-          step_number       — Position in a multi-step sequence (1-based). When > 0, block
-                              header reads "Step N of Total". Pass 0 for standalone blocks.
-          total_steps       — Total delegation blocks in sequence. Required when step_number > 0.
-          verify_command    — Explicit follow-up command to confirm success. Surfaced as a
-                              labelled "Verify with:" step — not buried in expected_output_hint.
-
         THINKING PHASE RULE — never call inside a reasoning block:
-          This function must only be called in the response phase, after thinking has closed.
-          A delegation block inside a <think> block is collapsed in OpenWebUI — the user must
-          expand it to find the command. Complete all reasoning first, then call this function.
-          Calling sudo_delegation_block during thinking is a protocol violation.
-          (v1.7.20 code backstop: the block is ALSO force-surfaced to the UI via an
-          event emitter, so it stays visible even if this rule is violated — but the
-          rule still stands as best practice for clean turn structure.)
+        Call only in the response phase, after thinking has closed.
+        Calling sudo_delegation_block during thinking is a protocol violation.
 
         READ-FIRST RULE — mandatory for any privileged file modification:
-          Before calling this function to delegate a write or append to a config
-          file (e.g. /etc/sysctl.conf, /etc/hosts, /etc/fstab), first read the
-          target file using read_file or execute_command('cat <path>'). This:
-            - confirms the setting does not already exist
-            - lets you compose the exact command correctly (append vs replace)
-            - gives the user context for what will change
-          If the file is unreadable (e.g. permission denied), note this in the
-          reason field and proceed without the read.
-          Skipping the read when the file IS readable is a protocol violation.
-
-        RETURN VALUE SEMANTICS — read this before calling:
-          This function returns a DIRECTIVE (v1.7.21), not text to summarize. The
-          directive contains the exact markdown — including a ```bash fenced code block —
-          that your visible reply must reproduce verbatim, and nothing else.
-          The command has NOT run yet; it is now in the user's hands.
-          Do NOT call this function again for the same command.
-          Do NOT make any further tool calls in this turn after calling this function.
-          Calling this function more than once for the same command before the user
-          responds is a protocol violation.
+        Before delegating a write/append to a config file, first read it
+        using read_file or execute_command('cat <path>'). Confirms the setting
+        does not already exist, lets you compose the correct command.
+        Skipping the read when the file IS readable is a protocol violation.
 
         STOP PROTOCOL — mandatory, no exceptions:
-          After calling this function, your visible reply MUST be exactly the markdown the
-          directive returns — the ```bash fenced command (plus the verify block, if any)
-          and the "Paste the full terminal output here to continue." line.
-          Output nothing before or after it: no summary, no post-execution hints, no
-          follow-up snippets, no further tool calls.
-          Your next turn begins only after the user pastes terminal output.
-          Anything beyond the required reply before user input is a protocol violation.
+        After calling this function, your visible reply MUST be exactly the markdown
+        the directive returns — the ```bash fenced command and verify block if any,
+        and the "Paste the full terminal output here to continue." line.
+        Output nothing before or after it. Your next turn begins only after user input.
+
+        ARGS:
+          command — The exact command the user must run.
+          reason — One sentence explaining why this delegation is needed.
+          expected_output_hint — (secondary) hint about success. Prefer verify_command.
+          step_number — Position in a multi-step sequence (1-based). Pass 0 for standalone.
+          total_steps — Total delegation blocks in sequence. Required when step_number > 0.
+          verify_command — Explicit follow-up command to confirm success.
+
+        RETURN VALUE SEMANTICS:
+        This function returns a DIRECTIVE (v1.7.21), not text to summarize. The
+        directive contains the exact markdown — including a ```bash fenced code block —
+        that your visible reply must reproduce verbatim, and nothing else.
+        The command has NOT run yet; it is now in the user's hands.
+        Do NOT call this function again for the same command.
+        Do NOT make any further tool calls in this turn after calling this function.
+
+        NOTES:
+        (v1.7.20 code backstop: if called mid-reasoning, the block is force-surfaced
+        via event emitter, but the rule still stands for clean turn structure.)
         """
         self._log(f"SUDO-DELEGATE: {command}  reason={reason}")
 
@@ -3454,43 +3311,32 @@ tail -5 /tmp/goethe-node3090.log
 
     def run_tests(self, scope: str = "all") -> str:
         """
-        Run the LSE's own test surface and return the RAW output as evidence
+        SPEC: Run the LSE's own test surface and return the RAW output as evidence
         (PROVE-1, v0.3.6). When the user says "prove it" / "run the tests" /
         "is the harness green", THIS is the answer — never prose.
 
-        SCOPES (hardcoded allowlist — this is an exec surface, so the model
-        supplies ONLY the scope name; commands, paths and args are fixed in
-        code, same pattern as the sudo allowlist):
+        EVIDENCE RULE — mandatory:
+        The verbatim output below each section IS the evidence. Paste the
+        relevant lines into evidence= fields — do NOT summarise test output.
+        A FAIL result must be reported verbatim, never softened.
+
+        GATE: at most once per scope per session unless code changed between.
+        Do NOT run to "double-check" a scope that just passed.
+
+        SCOPES (hardcoded allowlist — model supplies ONLY the scope name):
           kb        — ES index existence + doc-count sanity (read-only probes)
           retrieval — rag/eval_retrieval.py --self-test (no ES/Ollama needed)
-          rules     — eval_goethe_rules.py — an LLM-BEHAVIOR eval: drives 9
-                      scenarios through the live llama-server. Minutes of GPU
-                      time. EXPLICIT scope only, never part of 'all'; do not
-                      run while the user is mid-conversation with the model.
+          rules     — eval_goethe_rules.py — LLM-BEHAVIOR eval via llama-server.
+                      Minutes of GPU time. EXPLICIT scope only, never part of 'all';
+                      do not run while the user is mid-conversation with the model.
           harness   — pytest tests/ (contract suites) AND pytest scripts/
                       (legacy harness; failures there are FINDINGS, report them)
-          data      — scripts/dataset_lint.py: gold-set schema/provenance/
-                      dup/expected-file lint (DATA-2, read-only, <5s)
-          all       — kb + retrieval + pytest tests/ + data (rules and
-                      scripts/ run only when explicitly named; ~1-2 minutes)
+          data      — scripts/dataset_lint.py: gold-set schema/provenance lint
+          all       — kb + retrieval + pytest tests/ + data (rules/scripts only
+                      when explicitly named; ~1-2 minutes)
 
-        EVIDENCE RULE — mandatory:
-          The verbatim output below each section IS the evidence. Paste the
-          relevant lines into evidence= fields (skill_outcome, record_outcome,
-          plan_step_done) — do NOT summarise test output into a claim.
-          A FAIL result must be reported to the user verbatim, never softened.
-
-        GATE: at most once per scope per session unless code changed in
-        between. Do NOT run to "double-check" a scope that just passed.
-          GOOD: run_tests("harness") after editing goethe_kb.py
-                <- code changed, scope targeted, output is the evidence
-          BAD:  run_tests("rules") because 'all' felt incomplete
-                <- GPU-minutes LLM eval; only when the user names it
-          BAD:  run_tests("kb") twice in one session with no code change
-                <- the first green result was already the evidence
-
-        Args:
-            scope: one of kb | retrieval | rules | harness | all.
+        NOTES:
+        Args: scope: one of kb | retrieval | rules | harness | data | all.
         """
         import subprocess as _sp  # noqa: PLC0415
         import sys as _sys  # noqa: PLC0415
@@ -3605,33 +3451,27 @@ tail -5 /tmp/goethe-node3090.log
 
     def assert_state(self, check_command: str, expected_regex: str) -> str:
         """
-        Run ONE read-only check command and assert a regex against its output —
+        SPEC: Run ONE read-only check command and assert a regex against its output —
         turning "I claim it worked" into "I ran the check and the output
         matched" (PROVE-3, v0.3.6). This is the PREFERRED producer for
         evidence= fields (plan_step_done, skill_outcome, record_outcome).
+
+        GATE: call whenever you are about to CLAIM a state ("service is up",
+        "file exists", "port is free") in a finding, evidence= field, or
+        response — one assert per claim. Do NOT call for states you are not
+        about to assert, and never as a substitute for reading file content.
 
         ALLOWLIST — read-only commands ONLY (argv-exec, no shell):
           df, ss, sha256sum, dig, pgrep, stat, ls, wc, free, uptime, ip (show
           subcommands), nvidia-smi, curl (GET only — no -X/-d/-o/upload),
           systemctl (is-active/is-enabled/is-failed/show only), ping (count
           capped). Anything else — including pipes, redirects, ';', '&&' — is
-          REJECTED. This tool NEVER mutates state; state changes go through
-          execute_command/ssh_run with their own gates. Trying to sneak a
-          mutating command through here is a protocol violation.
+          REJECTED. This tool NEVER mutates state. Trying to sneak a mutating
+          command through here is a protocol violation.
 
         GOOD: assert_state("systemctl is-active ollama", "^active")
-              ← one check, concrete expectation, output is the evidence
-        GOOD: assert_state("curl -s http://127.0.0.1:9700/", "401")
-              ← tokenless gateway probe expecting the auth wall
-        BAD:  assert_state("systemctl restart ollama", "active")
-              ← mutating verb. REJECTED — this tool proves, it never fixes.
-        BAD:  assert_state("df -h | grep sda", "9[0-9]%")
-              ← pipe. REJECTED — put the filter in the regex instead.
-
-        GATE: call whenever you are about to CLAIM a state ("service is up",
-        "file exists", "port is free") in a finding, evidence= field, or
-        response — one assert per claim. Do NOT call for states you are not
-        about to assert, and never as a substitute for reading file content.
+        BAD:  assert_state("systemctl restart ollama", "active")  ← mutating
+        BAD:  assert_state("df -h | grep sda", "9[0-9]%")         ← pipe
 
         AFTER THE RESULT:
           PASS ✅ → paste the returned block as evidence where needed.
@@ -3639,10 +3479,8 @@ tail -5 /tmp/goethe-node3090.log
           do NOT retry with a looser regex just to make it pass — weakening an
           assertion to green is a protocol violation.
 
-        Args:
-            check_command:  One allowlisted command as a plain string
-                            (shlex-parsed, executed without a shell).
-            expected_regex: Python regex searched (MULTILINE) in stdout+stderr.
+        NOTES:
+        Args: check_command (one allowlisted command), expected_regex (Python regex).
         """
         import re as _re  # noqa: PLC0415
         import shlex  # noqa: PLC0415
@@ -3992,35 +3830,28 @@ tail -5 /tmp/goethe-node3090.log
 
     def verify_source_claims(self, url: str, claims: str) -> str:
         """
-        Re-fetch a source URL and check whether specific factual claims appear in
-        it verbatim. Call BEFORE asserting any version number, date, release name,
+        SPEC: Re-fetch a source URL and check whether specific factual claims appear
+        in it verbatim. Call BEFORE asserting any version number, date, release name,
         or config value derived from fetch_url. Returns FOUND / PARTIAL / NOT_FOUND
         per claim with verbatim ±300-char excerpts.
 
         MANDATORY after every fetch_url — do NOT skip:
-          The fabrication#5 root cause was synthesis-overwrite: the model had the
-          correct source in context yet emitted phantom version strings in the final
-          answer. Prompt fences do not hold at synthesis (P25 proven). This function
-          re-fetches the source in code and returns what is ACTUALLY there — the
-          model cannot fabricate the return value.
+        The fabrication#5 root cause was synthesis-overwrite: the model had the
+        correct source in context yet emitted phantom version strings. Prompt fences
+        do not hold at synthesis (P25 proven). This function re-fetches the source
+        in code and returns what is ACTUALLY there — the model cannot fabricate it.
 
-          NOT_FOUND: the claim text is absent from the source. Label it UNVERIFIED.
-            Do NOT retry or guess — report it as unverified.
-          PARTIAL:   a specific token from your claim is present but the full claim
-            string is absent. The excerpt shows what the source ACTUALLY says.
-            Read it — it likely shows the correct value (e.g. "07.23.4" when you
-            claimed "07.23.5").
-          FOUND:     the claim appears verbatim. The excerpt is the confirmation.
+        NOT_FOUND: claim absent from source. Label it UNVERIFIED. Do NOT retry.
+        PARTIAL:   a token from your claim is present but the full claim is absent.
+        FOUND:     the claim appears verbatim.
 
-          This call does NOT count against the search budget.
+        This call does NOT count against the search budget.
 
-        Args:
-            url:    The source URL — must be a URL previously returned by a tool
-                    result (UNVERIFIED-URL RULE: never construct from memory).
-            claims: Comma-separated factual claims to check, e.g.:
-                    "firmware 07.23.5, released 2026-05-30, version 07.22.4 Stable"
-                    Each comma-delimited segment is checked independently.
+        RULE — UNVERIFIED-URL: only fetch URLs received from a tool result.
+        Never construct a URL or hostname from memory.
 
+        NOTES:
+        Args: url (source URL from a tool result), claims (comma-separated facts).
         Returns one FOUND/PARTIAL/NOT_FOUND line per claim with verbatim excerpt.
         """
         import re as _re  # noqa: PLC0415
@@ -5807,17 +5638,20 @@ tail -5 /tmp/goethe-node3090.log
         backend: str = "",
     ) -> str:
         """
-        Get an ATOMIZED execution plan for a multi-step task. Writes to the
+        SPEC: Get an ATOMIZED execution plan for a multi-step task. Writes to the
         tasks.db ledger; you execute ONE step, then call plan_step_done().
 
         MANDATORY TRIGGER — the user asked for a plan:
-          If the request contains "plan", "get a plan", "how should we
-          approach", or assigns a multi-phase audit/migration/overhaul,
-          calling planner() is REQUIRED.
-          GOOD: "get a plan to enable IPv6" -> planner("enable IPv6 on ...")
-          BAD:  "get a plan ..." -> you write the phases out in prose
-                <- protocol violation: no ledger, no step loop.
-          NEVER hand-write a plan in prose. NEVER create plan.md.
+        If the request contains "plan", "get a plan", "how should we approach",
+        or assigns a multi-phase audit/migration/overhaul, calling planner() is
+        REQUIRED. NEVER hand-write a plan in prose. NEVER create plan.md.
+
+        GATE — planner comes before EXECUTION, not before reading:
+        Information gathering does NOT close the planning window. search_kb,
+        skill_search, and read-only probes BEFORE planner are correct — KB-FIRST
+        still applies — and their findings belong in context= VERBATIM, not
+        summarised. The window closes when you start CHANGING state or producing
+        deliverables.
 
         THIS CALL BLOCKS for 90-170s while the plan is generated. That is
         expected — wait for it. Do NOT abandon the call, do NOT retry it, and
@@ -5827,111 +5661,45 @@ tail -5 /tmp/goethe-node3090.log
         DO NOT call for single-fact lookups, procedures under 3 steps (execute
         directly), or resuming carried-over work (that is task_resume).
 
-        GATE — planner comes before EXECUTION, not before reading:
-          Information gathering does NOT close the planning window. search_kb,
-          skill_search, and read-only probes (dig, GET/status endpoints, health
-          checks, config reads) BEFORE planner are correct — KB-FIRST still
-          applies — and their findings belong in context= VERBATIM, not
-          summarised (see Args: context). The window closes
-          when you start CHANGING state or producing deliverables.
-
-        GOOD: search_kb ×2 → pfsense_graphql reads → planner("audit DNS infra",
-              context="<the raw topology table and the full read output>")
-              ← reads first, RAW material handed over. Correct order.
-        BAD:  read a 7KB KB doc → planner(task, context="KB doc abc123 says
-              use SMB with the mandatory options")
-              ← summarised. The planner cannot see the options you did not
-                paste, and will omit them while sounding confident.
-
-        AUTO-KB: planner() runs its own search_kb on the task and appends the
-        top matches to whatever context you pass. You do not need to paste KB
-        content you already found — but pasting it again is harmless, and
-        pasting live probe output is still essential since the KB has none.
-        GOOD: planner("Find the verbatim Goethe quote on architecture as
-              frozen music and verify it against a primary source")
-              ← research-shaped, spiral risk: plan first
-        BAD:  planner("What is the hostname of node3090?")
-              ← single fact; use execute_command.
-        BAD:  10 web searches, then planner
-              ← web searches burn budget and ARE execution. Reads of local/KB
-              state are fine; web-search spirals before planning are not.
-
         AFTER A PLAN IS RETURNED — mandatory step loop:
-          1. Execute ONLY the step in the packaged prompt at the END of the
-             planner() result.
-          2. Run that step's verify check and call
-             plan_step_done(task_id, step_n, evidence=<verify output>).
-          3. plan_step_done returns the NEXT step's packaged prompt — repeat.
-          Do NOT look ahead, do NOT execute multiple steps from one prompt.
-          On a FAILED step: plan_step_done(..., failed=True), then
-          planner(task, mode="revise", task_id=<id>) to re-plan the remainder.
-          Planner estimates are ESTIMATES, not established facts: never copy
-          them into findings, never raise skill/KB quality from a plan (P2).
-          Ignoring the abort criteria is a protocol violation.
+        1. Execute ONLY the step in the packaged prompt at the END of planner().
+        2. Run that step's verify check and call
+           plan_step_done(task_id, step_n, evidence=<verify output>).
+        3. plan_step_done returns the NEXT step's packaged prompt — repeat.
+        Do NOT look ahead, do NOT execute multiple steps from one prompt.
+        On a FAILED step: plan_step_done(..., failed=True), then
+        planner(task, mode="revise", task_id=<id>) to re-plan the remainder.
+        Planner estimates are ESTIMATES, not established facts: never copy
+        them into findings, never raise skill/KB quality from a plan (P2).
+        Ignoring the abort criteria is a protocol violation.
 
-        ON "PLANNER UNAVAILABLE":
-          Proceed WITHOUT a plan: default budgets apply, checkpoint early.
-          Do NOT retry planner more than once per task. The absence of a
-          plan is NOT permission to skip checkpointing.
+        ON "PLANNER UNAVAILABLE": proceed WITHOUT a plan: default budgets apply,
+        checkpoint early. Do NOT retry planner more than once per task.
 
         Planner backend — pick with backend= or the PLANNER_BACKEND valve
         (default 'local'):
           'local'   (default) node3090 llama-server :8080 (Qwen 27B, GPU) —
-                    primary. Falls back to a VRAM-aware local Gemma GGUF spawn
-                    (port 8085; E4B / 26B-A4B / 31B by task size, mmproj for
-                    vision tasks). The Ollama CPU stage was removed in v0.4.5:
-                    0 successes in 5 logged attempts, +300s per failure.
-          'chatgpt' OpenAI, via a Codex CLI OAuth session (`codex login`) if
-                    present, else PLANNER_OPENAI_API_KEY.
-          'claude'  Anthropic Messages API, via a Claude Code OAuth session
-                    (`claude login`) if present, else PLANNER_ANTHROPIC_API_KEY.
-          'rest'    Any OpenAI-compatible /v1/chat/completions server —
-                    PLANNER_REST_URL (+ _MODEL / _API_KEY): OpenRouter, Groq,
-                    Together, a LAN vLLM/LM Studio instance, etc.
-        mode='revise' on an existing task_id reuses whichever backend that task
-        was last planned with unless you pass backend= explicitly.
+                    primary. Falls back to VRAM-aware local Gemma GGUF spawn.
+          'chatgpt' OpenAI, via Codex CLI OAuth or PLANNER_OPENAI_API_KEY.
+          'claude'  Anthropic, via Claude Code OAuth or PLANNER_ANTHROPIC_API_KEY.
+          'rest'    Any OpenAI-compatible /v1/chat/completions server.
 
         Args:
-            task:    The user's task, verbatim or lightly cleaned — do not
-                     pre-digest it; the planner needs the original shape.
-            context: Source material for the planner — VERBATIM, never a
-                     summary. Paste the actual text you read: KB document
-                     bodies, command output, config file contents. Do NOT
-                     compress it into a précis of what you found.
-
-                     THIS IS THE #1 CAUSE OF BAD PLANS (measured 2026-07-29):
-                     the LSE read a 7,300-char KB doc in full, then passed a
-                     450-char summary. The planner produced a plan that was
-                     internally consistent and operationally wrong, because
-                     every omitted detail — mkdir -p of a parent directory, a
-                     pre-unmount open-handle check, a MANDATORY post-reload
-                     systemctl restart — lived in the 6,850 characters that
-                     were dropped. The planner cannot ask for what it was
-                     never shown.
-
-                     Length is not a concern. The hosted backends take tens of
-                     thousands of tokens. Passing a whole document costs
-                     nothing and removes an entire failure class. When in
-                     doubt, paste more.
-
-                     planner() ALSO auto-attaches the top KB matches for the
-                     task (see AUTO-KB below), so anything already in the KB
-                     arrives even if you forget. Your context= should carry
-                     what the KB does NOT have: live probe output, current
-                     state, user constraints.
+            task:    The user's task, verbatim or lightly cleaned.
+            context: Source material — VERBATIM, never a summary. Paste actual
+                     text: KB bodies, command output, config contents. Do NOT
+                     compress into a précis. THIS IS THE #1 CAUSE OF BAD PLANS.
+                     Length is not a concern. When in doubt, paste more.
+                     planner() also auto-attaches top KB matches for the task.
             mode:    "new" (default) or "revise". Revise loads the ledger for
-                     task_id, hands the planner the completed/failed step
-                     summary, and replaces only the remaining steps.
-            task_id: Required for mode="revise" — the id returned by the
-                     original planner call.
-            backend: '' (default) uses the PLANNER_BACKEND valve, or the
-                     task's own stored backend in revise mode. Otherwise one
-                     of 'local' | 'chatgpt' | 'claude' | 'rest' to override
-                     for this call only — the override does NOT change the
-                     valve default or overwrite what other tasks use.
+                     task_id and replaces only the remaining steps.
+            task_id: Required for mode="revise".
+            backend: '' (default) uses the valve; or 'local'|'chatgpt'|'claude'|'rest'.
 
-        Returns the plan summary + packaged prompt, or a string starting with
-        "PLANNER UNAVAILABLE" on any failure (all backends down, bad envelope).
+        NOTES:
+        AUTO-KB: planner() runs its own search_kb on the task and appends top
+        matches to whatever context you pass. You do not need to paste KB content
+        you already found — but pasting live probe output is still essential.
         """
         import hashlib  # noqa: PLC0415
         import json as _json  # noqa: PLC0415
