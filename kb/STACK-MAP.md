@@ -1,7 +1,7 @@
 # STACK MAP — pinned planner ground truth
 > Auto-attached to every planner() call (goethe.py `_augment_context_with_kb_inner`).
-> Keep ≤60 lines. Update on every stack change.
-> Last verified: 2026-07-31 (live probes, session debrief same date)
+> Keep ≤80 lines. Update on every stack change.
+> Last verified: 2026-07-31 (live probes; D7 mixin split recorded same date)
 
 ## DECOMMISSIONED — never reference in plans
 - OpenWebUI (:3000) — decommissioned 2026-07-17. No `openwebui-tool-v*.py` exists anywhere.
@@ -9,8 +9,26 @@
 - Gemma local planner fallback — /opt/models/lmstudio-community does not exist; path is dead by decision 2026-07-30 (leave documented-dead)
 
 ## LIVE
-- Goethe tool surface: /home/sy5/projects/local-system-engineer/tools/goethe.py
+- Goethe tool surface: /home/sy5/projects/local-system-engineer/tools/
   served via goethe_mcp.py (MCP). Env file: /opt/local-se/goethe-mcp.env
+  SINCE D7 (2026-07-31) THE 39 TOOLS ARE SPLIT ACROSS 6 FILES, NOT ONE.
+  goethe.py (2109 lines) = class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin,
+  PlannerMixin, WebMixin) + the safety wedge, which never moves:
+    execute_command, write_file, read_file, sudo_delegation_block,
+    _validate_command_safety, _is_allowed_*, _norm, _log, run_tests, assert_state
+  Mixins (edit the mixin, NOT goethe.py, for these tools):
+    goethe_planner.py — planner, plan_step_done, task_checkpoint, task_resume
+    goethe_web.py     — search_web, search_reddit, fetch_url, get_github_release,
+                        verify_source_claims, monitor_download
+    goethe_kb.py      — search_kb, index_to_kb, kb_verify, record_error,
+                        check_error_kb, record_outcome, mentor_*, skill_*
+    goethe_node.py    — wake_node, shutdown_node, start/stop_node_agent,
+                        query_node_agent, check_node_agent_drift, _NODE_REGISTRY
+    goethe_netsec.py  — ssh_run, ssh_script, nmap_summary
+    goethe_constants.py — _LSE_BASE_PATH, _LOOPBACK (shared, zero-dependency)
+  Import direction is ONE-WAY: goethe.py imports mixins. A mixin importing
+  goethe.py is an import cycle and will fail at load. Mixins read self.valves /
+  self._log via MRO; they never declare Valves.
 - Console/gateway: :9700 (goethe_ui, python). Task ledger: /opt/local-se/tasks.db
 - llama-server LUCIFER :8080 (Qwen3.6-27B, 131k ctx)
 - node3090 llama-server :8080 = planner local primary (240s budget); SSH lse-admin@node3090.home.arpa
