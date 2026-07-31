@@ -71,6 +71,42 @@
   out; the two empty test indices left by that fixture were removed and cluster
   health returned green.
 
+## 2026-07-21 — Goethe v0.4.8 — planner sync revert (v0.4.6 async split reverted)
+
+- Reverted d314e60: async planner (plan_status(), wait= param, plan_status/plan_result ledger columns, async tests) removed. planner() returns a plan directly again.
+- KEPT: v0.4.5 timeout work (120→240s, Ollama stage removed) and v0.4.7 docstring reorder.
+- Rationale: async split was a usability regression — turned a one-call tool into a two-call protocol requiring the model to execute a poll loop it learned about from a truncated docstring.
+- Net effect vs v0.4.4: same one-call interface, roughly double the generation budget, MANDATORY TRIGGER block visible to the model.
+- Transport ceiling above ~240s remains UNSOLVED and deliberately left that way.
+
+## 2026-07-21 — Goethe v0.4.7 — planner docstring reordered above the MCP description cut
+
+- Field report: "get a plan to enable IPv6 on Home Assistant" produced a hand-written prose plan and no planner() call at all.
+- Root cause: goethe_mcp.py registers tools with description=__doc__[:1024]; planner's docstring was 7,408 chars, so 86% was discarded — including the MANDATORY TRIGGER block at char 1,974.
+- Fix: reordered so MANDATORY TRIGGER (char 136) and ASYNC poll contract (char 589) both complete inside the 1024-char window.
+- Also: goethe_mcp.py now uses inspect.getdoc() instead of __doc__ — reclaimed ~240 chars of leading whitespace per tool (8,768 chars across 39 tools).
+- NOTE: 29 of 39 tools are still over the 1024 cut — planner is fixed, the rest not audited yet.
+
+## 2026-07-21 — Goethe v0.4.6 — planner async by default (SHIPPED AND REVERTED IN v0.4.8)
+
+- planner() now seeded the ledger, handed generation to a daemon thread, returned a task_id receipt in under a second; new plan_status(task_id) collected the finished plan.
+- planner(wait=True) kept the old synchronous path for tests and callers with a long timeout.
+- Two ledger columns added (plan_status, plan_result) via the existing migration.
+- Chosen over shrinking the envelope: measured field breakdown is 28% packaged_prompt prose and 72% atomization, so trimming to fit buys little.
+- Status: REVERTED in v0.4.8 due to usability regression.
+
+## 2026-07-21 — Goethe v0.4.5 — planner timeout/cascade fix (LSE-debugged)
+
+- Intermittent "planner failed, never clear why" traced to v0.3.3: max_tokens raised 2048→8192 but call timeout stayed at 120s. At ~42 tok/s on node3090 that is a hard ~5,000-token delivery ceiling.
+- Reproduced: a complete 8-step envelope = 5,231 tokens in 125.3s, killed at 120s.
+- Fixes: (1) timeout 120→240, sized to the 8,192 the request already allows; (2) finish_reason=="length" now logged as truncation instead of "JSON parse failed"; (3) Ollama CPU fallback removed (0 successes across 5 logged invocations, +300s per failure); (4) all-slots-busy now logged.
+- max_tokens deliberately NOT lowered to 4096: that truncates real envelopes (measured 5,231).
+
+## 2026-07-21 — Goethe v0.4.4 — PH4-1 DATA — run_tests "data" scope
+
+- Added run_tests "data" scope (dataset_lint in scope=all).
+
+## 2026-07-18 — Goethe v0.4.3 — PH3-4 docstring optimizer pass (SCRIBE-5)
 ## 2026-07-18 (Cowork): PH5-1/PH5-2 — Goethe v0.4.1: TrustPolicy + goethe_kb.py extraction; P0 closed (except rotation); neural-search claim verified live
 
 - **Neural-search verification (operator request):** all 5 design phases confirmed live on node3090 — lazy sidecars (cold 4.1 s / warm 137 ms), lse-web-idx 44,751 chunks, :8092 API active, `!nl` SearxNG engine returns neural results, recrawl timer armed. Finding: `sear_primary` was down post-reboot (manual pre-reboot stop cleared `restart: always` trigger) — restarted, :8088 → 200.
@@ -79,6 +115,17 @@
 - **PH5-2 (REFACTOR-2):** KB surface (goethe.py 4663–6067: `_embed`, `_es`, `search_kb`, `index_to_kb`, `record_error`, `check_error_kb`, `_resolve_kb_id`, `record_outcome`, `mentor_correct`, `kb_verify`, `mentor_demote`, `skill_search`, `skill_record`, `skill_outcome`) moved verbatim to `KBMixin`; `class Tools(KBMixin)`. goethe.py 7238 → 5851L. **Release gates: MCP tool-list diff EMPTY (38 pre/post via `--list` on HEAD copy vs working tree); contract tests 420/420.** One extraction bug caught by the suite (55 failures: block relied on goethe.py module-level `datetime`/`json`/`os`/`Optional` imports) — fixed, re-run green. Gateway restarted on v0.4.1 via `start-goethe.sh`.
 - Legacy `scripts/` harness findings (pre-existing, unchanged): `gymnasium` missing (challenge-env tests), `test_hermes_inbox.py` references purged `cogitator-v1.7.15.py`.
 
+## 2026-07-18 — Goethe v0.4.3 — PH3-4 docstring optimizer pass (SCRIBE-5)
+
+- time_check delegation-edge GOOD/BAD, run_tests scope-misuse GOOD/BAD, assert_state explicit GATE.
+- Audit: 0 FAIL, 3 WARN fixed, planner/kb_verify/mentor_demote already exemplary.
+
+## 2026-07-18 — Goethe v0.4.2 — PH5-3 origin tags
+
+- index_to_kb origin= param added.
+- TrustPolicy.apply_origin asymmetric trust rule (web never mints ground_truth).
+
+## 2026-07-04 — Goethe v0.2.8 — planner PATH 3 — VRAM-aware Gemma GGUF spawn
 ## 2026-07-15 (Codex): TRAUM production reconciliation — hardened Thread 4, Qwen/1024 index alignment, tracked timer, 420-test release gate
 
 Corrective close after auditing LSE commits `7348aef`, `fc85468`, and `87026fb` against `docs/traum-dreaming-plan.md`, the live stack, and the newer hardened work that had existed only in the timer checkout.
@@ -1788,6 +1835,29 @@ causes moved from prose into code:
 - Tests 105 → **110/110 green** (guard + failure-message contracts). Both gateways on v0.3.7.
 
 ---
+## 2026-07-04 — Goethe v0.2.8 — planner PATH 3 — VRAM-aware Gemma GGUF spawn
+
+- _call_node_planner gained a three-path cascade: (1) node3090 llama-server :8080 (Qwen 27B, GPU) — primary; (2) node3090 Ollama :11434 qwen3:4b (CPU) — GPU fallback; (3) Local Gemma GGUF spawn — fires only when paths 1+2 both error.
+- Model selection by task class (small/medium/large) and confirmed free VRAM via nvidia-smi; supports vision via mmproj.
+- Models: E4B (~5 GB, 5200 MB gate), 26B-A4B (~16.7 GB, 17200 MB gate), 31B (~18.5 GB, 19100 MB gate).
+- New valves: PLANNER_MODEL_DIR, PLANNER_PORT, PLANNER_LLAMA_BIN.
+- New helpers: _planner_task_class, _planner_free_vram_mb, _planner_gemma_select, _spawn_gemma_server, _stop_gemma_server.
+
+## 2026-07-04 — Goethe v0.2.7 — HERMES RETIRED — node planner cascade replaces Hermes
+
+- _call_hermes and _kanban_create_card retired (stubs only).
+- New: _call_node_planner — two-path cascade (llama-server → Ollama CPU).
+- New valves: NODE3090_LLM_URL, NODE3090_OLLAMA_URL, NODE3090_PLANNER_FALLBACK_MODEL.
+- hermes_plan rewritten to call _call_node_planner, parse JSON envelope, checkpoint task.
+
+## 2026-07-04 — Goethe v0.2.6 — SSH OVERHAUL — ssh_run + ssh_script + ControlMaster + complexity guard
+
+- Three root causes of exit-255 SSH failures addressed:
+  (1) Double-shell escaping: new ssh_run() passes commands as argv[], not via bash -c.
+  (2) nohup/disown in SSH sessions: new ssh_script() transfers script content as a file via scp, executes as bash /tmp/lse_script_<hash>.sh. Auto-injects </dev/null on nohup lines.
+  (3) Per-call TCP+auth overhead: SSH ControlMaster (-o ControlMaster=auto, ControlPersist=60s) maintains a persistent mux socket.
+- execute_command SSH complexity guard: commands containing nohup/disown/export/eval/subshell markers are blocked and return an actionable ssh_script() hint.
+
 ## 2026-07-03 (Cowork): Goethe v0.3.6 — PROVE-IT surface shipped (PH3-1: PROVE-1 + PROVE-3, PROVE-4 partial)
 
 The user can now say "prove it" and get test output instead of prose.

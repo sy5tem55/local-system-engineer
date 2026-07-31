@@ -1205,3 +1205,32 @@ rag/01-ollama-setup.sh, and LSE-ARCHITECTURE.md were left hardcoded to
 nomic-embed-text/768-dim the whole time, so the eval harness itself threw a
 flat dimension-mismatch error rather than a bad score - meaning there was no
 valid "before" quality baseline, only "it errored."
+
+## Session 2026-07-30 — Planner transport ceiling, Sonnet default, ledger repair
+
+### What worked
+- Out-of-band planner run beats the MCP transport ceiling: load goethe.py via importlib in a detached `nohup` process (owui venv python), call `inst.planner(task, context, backend="claude")`, write result to a file, poll the file + tasks.db. Plan e264ed19 (61 steps) landed this way after two in-transport failures.
+- Surgical ledger repair: sqlite3 UPDATE of steps_json/plan/next_prompt with exact-string replacements, JSON re-validated after — cheaper than a 10-min `planner(mode="revise")` re-run for path/wording fixes.
+- Verifying plan soundness programmatically: topo-sort the depends_on graph (61/61 sortable, no forward refs) + curl-probe every port/path the plan asserts.
+
+### What failed and why
+- **Attempted:** planner(backend="claude") through the MCP client
+  **Failed because:** double timeout ceiling — MCP client gives up ~60s, and the claude CLI subprocess had a HARDCODED timeout=180 in goethe.py (~line 2023) while Opus 5 on a 61-step atomization prompt needs ~10 min. First failure returned "PLANNER UNAVAILABLE ... timed out after 180s" with nothing persisted.
+  **Fix:** timeout promoted to valve `PLANNER_CLI_TIMEOUT_S` (default 900) in goethe.py; set `GOETHE_PLANNER_CLI_TIMEOUT_S=900` in /opt/local-se/goethe-mcp.env. MCP callers still see a client timeout, but the plan now completes server-side and lands in the ledger → recover with task_resume().
+- **Attempted:** backend="opus-5-high" as planner backend name
+  **Failed because:** dispatcher accepts only `local | chatgpt | claude | rest`. And backend="claude" silently meant `claude-sonnet-5` — the PLANNER_ANTHROPIC_MODEL valve default — NOT Opus; "Opus 5 High" was never actually configured anywhere.
+  **Fix:** `GOETHE_PLANNER_ANTHROPIC_MODEL=claude-opus-5` in /opt/local-se/goethe-mcp.env (make_instance() maps GOETHE_<FIELD> → valve on service start).
+- **Attempted:** Opus plan generation grounded on KB
+  **Failed because:** plan e264ed19 referenced `/opt/local-se/tools/openwebui-tool-v*.py` (nonexistent) and "load in OpenWebUI" — despite the KB recording OWUI decommissioned since 2026-07-17. The planner prompt does not ground against session-learnings; step 1's verify would have hard-stalled the LSE.
+  **Fix:** ledger UPDATE rewrote steps 1/13/15/58 to `/home/sy5/projects/local-system-engineer/tools/goethe.py` + goethe-mcp restart semantics. Systemic fix still open: inject KB stack-map facts into the planner prompt.
+
+### Key facts
+- Planner backend names: `local | chatgpt | claude | rest` — nothing else parses
+- backend="claude" model comes from PLANNER_ANTHROPIC_MODEL (was default claude-sonnet-5; env now pins claude-opus-5); runs `/usr/bin/claude -p --output-format text --model <m>` via Claude Code OAuth
+- Backend selection persists in /opt/local-se/state/planner-backend.json (Console-written, precedence over env)
+- Opus 5 generation time on a full-roadmap atomization: ~10 min wall (CLI child alone ~5-7 min) — any timeout below 600s guarantees failure
+- MCP client transport ceiling ≈60s, unfixable from Goethe's side; ledger persistence + task_resume() is the recovery path
+- Live Goethe tool file: /home/sy5/projects/local-system-engineer/tools/goethe.py (MCP via goethe_mcp.py). NOT /opt/local-se/tools/
+- Grafana is :3002 (v13.0.1, /api/health) — KB architecture doc's :3001 is wrong; :3001 answers "Running" (different service)
+- Local planner primary = node3090 llama-server :8080 (timeout 240s, untouched today); Gemma fallback is BROKEN pre-existing: /opt/models/lmstudio-community does not exist
+- goethe-mcp env changes need a service restart; restarting kills live MCP sessions — schedule between sessions

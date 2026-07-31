@@ -1,3 +1,4 @@
+
 """
 title: LSE Goethe v0.4.9
 author: local-system-engineer
@@ -14,992 +15,16 @@ description: Safe shell execution for the Local System Engineer (LSE) WSL2/Ubunt
   anti-spiral budget. All commands are logged to a persistent audit file. Privileged
   operations are blocked at the code level and routed through a delegation block.
 
-  Changelog:
-    Goethe v0.4.9 (2026-07-23): SUDO GRANT FAIL-CLOSED FIX. Only a leading,
-    exact, shell-free `sudo <command> [args...]` may file an approvable DB
-    request. Chained commands, pipelines, redirects, shell expansions, doas/su,
-    and other complex privilege matches are delegation-only and never become
-    sudoers rows. This closes the path that stored raw shell text and later
-    rendered `/usr/bin/sudo ... | ...` as a broken, over-broad Cmnd_Spec.
-    Goethe v0.4.8 (2026-07-21): REVERT v0.4.6 — planner is synchronous again.
-    Field report: the async split was a severe usability regression. v0.4.6 was
-    correct about the transport ceiling (generation is 90-170s, the MCP
-    transport gives up near 60s) but wrong about the remedy: it turned a
-    one-call tool into a two-call protocol, so getting a plan now depended on
-    the model reliably executing a poll loop it learned about from a truncated
-    tool description. That is a worse failure mode than the one it fixed — the
-    old bug was intermittent and loud, the new one was structural and silent.
-    Reverted d314e60: plan_status(), the wait= parameter, the plan_status /
-    plan_result ledger columns and the async tests are all gone; planner()
-    returns a plan directly again. KEPT: the v0.4.5 timeout work (120->240s,
-    Ollama stage removed) and the v0.4.7 docstring reorder, neither of which
-    changed the call interface. Net effect versus v0.4.4: same one-call
-    interface, roughly double the generation budget, and the MANDATORY TRIGGER
-    block now visible to the model. The transport ceiling above ~240s is
-    UNSOLVED and deliberately left that way — see v0.4.6 in this log for the
-    measurements if it is revisited. Lesson recorded: every commit in the
-    v0.4.5-v0.4.7 run was individually evidence-backed and the end-to-end
-    workflow was still never tested. Code paths were verified; the user's
-    actual experience was not.
-    Goethe v0.4.7 (2026-07-21): planner docstring reordered above the MCP
-    description cut. Field report: "get a plan to enable IPv6 on Home Assistant"
-    produced a hand-written prose plan and no planner() call at all. Cause is
-    not the async change — the first 1024 chars were byte-identical between
-    v0.4.4 and v0.4.6, and registration/schema were verified clean (39 tools,
-    planner present, wait= in schema). goethe_mcp.py registers tools with
-    description=__doc__[:1024], and planner's docstring was 7,408 chars, so 86%
-    was discarded — including the MANDATORY TRIGGER block at char 1,974 that
-    names "get a plan" verbatim and forbids writing a plan in prose. The model
-    never saw the rule it broke. The visible window was instead spent on backend
-    cascade internals, still advertising the Ollama stage deleted in v0.4.5, and
-    cut off mid-word. Reordered so MANDATORY TRIGGER (char 136) and the ASYNC
-    poll contract (char 589) both complete inside the window; backend detail,
-    step loop and Args moved below it; stale Ollama text corrected. Also
-    goethe_mcp.py now uses inspect.getdoc() instead of __doc__ — __doc__ keeps
-    the 8-space source indent and .strip() only trims the ends, so ~240 chars of
-    every tool's budget was leading whitespace (8,768 chars reclaimed across 39
-    tools). NOTE: 29 of 39 tools are still over the 1024 cut — planner is fixed,
-    the rest are not audited yet.
-    Previous — v0.4.6 (2026-07-21): planner is async by default. v0.4.5 sized the
-    call timeout to the work (120->240s), but that only moved the ceiling — it
-    did not remove it. Plan generation is 90-130s on the local backend
-    (measured against the real contract: a 6-step plan for a live task is 3,908
-    tokens / 94.1s at ~42 tok/s), and the MCP transport gives up around 60s. So
-    a plan could be built correctly and still reach the caller as a bare
-    "Request timed out". planner() now seeds the ledger, hands generation to a
-    daemon thread, and returns a task_id receipt in under a second; the new
-    plan_status(task_id) collects the finished plan — the exact string planner()
-    used to return. planner(wait=True) keeps the old synchronous path for tests
-    and callers with a long timeout. Two ledger columns added (plan_status,
-    plan_result) via the existing migration. The rendering half of planner() was
-    lifted verbatim into _finalize_plan() so both paths emit identical output.
-    Chosen over shrinking the envelope: measured field breakdown is 28%
-    packaged_prompt prose and 72% atomization (depends_on/inputs/output/verify),
-    so trimming to fit buys little and spends it on plan quality — and async
-    costs nothing, since the model gets as long as it needs.
-    Previous — v0.4.5 (2026-07-21): planner timeout/cascade fix (LSE-debugged).
-    Intermittent "planner failed, never clear why" traced to a contradiction
-    introduced in v0.3.3: max_tokens was raised 2048→8192 to stop envelope
-    truncation, but the call timeout stayed at 120s. At the measured ~42 tok/s
-    on node3090 that is a hard ~5,000-token delivery ceiling, so any plan the
-    request itself permitted between ~5k and 8,192 tokens could never arrive —
-    the model completed (finish_reason=stop) and the client hung up regardless.
-    Reproduced: a complete 8-step envelope = 5,231 tokens in 125.3s, killed at
-    120s. Short plans fit under the ceiling; complex ones cannot, which is the
-    whole of the "works most of the time" pattern. Fixes: (1) timeout 120→240,
-    sized to the 8,192 the request already allows; (2) finish_reason=="length"
-    now logged as truncation instead of surfacing as "JSON parse failed", which
-    had been misdirecting diagnosis at model formatting; (3) the Ollama CPU
-    fallback is removed — 0 successes across 5 logged invocations, +300s per
-    failure, and it was the main reason the 663s cascade outlived the MCP
-    transport that was waiting on it; (4) all-slots-busy is now logged, since
-    /health reports liveness and a probe-OK call can still queue.
-    max_tokens deliberately NOT lowered to 4096: that truncates real envelopes
-    (measured 5,231), and because the parser cannot distinguish truncation from
-    corruption it would burn both retries and report the wrong cause — trading
-    a loud, honest timeout for a silent, mislabelled one.
-    Previous — v0.4.4 (2026-07-18): PH4-1 DATA — run_tests "data" scope
-    (dataset_lint in scope=all).
-    Previous — v0.4.3 (2026-07-18): PH3-4 docstring optimizer pass (SCRIBE-5) —
-    time_check delegation-edge GOOD/BAD, run_tests scope-misuse GOOD/BAD,
-    assert_state explicit GATE. Audit: 0 FAIL, 3 WARN fixed, planner/kb_verify/
-    mentor_demote already exemplary.
-    Previous — v0.4.2 (2026-07-18): PH5-3 origin tags — index_to_kb origin= param,
-    TrustPolicy.apply_origin asymmetric trust rule (web never mints ground_truth).
-    Previous — v0.4.1 (2026-07-18): PH5-1/PH5-2 refactor — TrustPolicy + KB surface
-    extracted to goethe_kb.py (KBMixin); tool list unchanged; contract tests 420 green.
-    Previous — v0.4.0-a: TRAUM Thread 3 (TRAUM-INSIGHT), Prompt 3.5 — [DREAM]
-              banner. Wired tools/dream_digest.py's latest-digest.md into
-              session start the CHRONOS way (server-injected, not
-              docstring-dependent): _consume_time_banner() — already the
-              single once-per-session gate for the [TIME] banner on the
-              first search_kb return — now also appends a [DREAM] line
-              (digest date + pending human-gate count + pointer to the
-              full file), hard-capped at 200 chars. New valve
-              DREAM_DIGEST_PATH (default /opt/local-se/dreams/latest-
-              digest.md; empty disables the banner). Missing/unreadable/
-              unparseable digest degrades to no [DREAM] line, never an
-              error — same non-fatal discipline as dream_digest.py's own
-              gather steps. Deliberately minimal per the PH5-2 warning
-              (plan §2): one valve, one new private method
-              (_dream_banner()), a 3-line change to an existing method —
-              no restructuring of this god-class. DEPLOY NOTE: existing
-              llama-ui threads do NOT pick up this change; each must be
-              restarted (fresh thread) after goethe_mcp.py restart for the
-              [DREAM] banner to appear, same as any other Tools-class
-              behavior change.
-    Goethe v0.4.0: TRAUM Thread 2 (TRAUM-ENGINE) begins consuming this file's
-              existing Tools methods from a SECOND caller for the first time —
-              no code in this file changed for this bump; recorded here because
-              the write-path trust model now has to hold for two callers, not
-              one. `tools/dream_runner.py` (new, offline, read-only over
-              episodes/lse-kb/lse-errors) proposes `mentor_correct` +
-              `record_outcome(success=False)` calls (dedup pass, Prompt 2.2,
-              verified against the live ~365-doc lse-kb corpus) and is about to
-              add `kb_verify`-probe suggestions + `record_outcome` demotions
-              (stale/contradiction pass, Prompt 2.3). dream_runner.py itself
-              NEVER calls these methods directly — it only ever writes
-              proposals to `dreams/YYYY-MM-DD/proposals.jsonl`; only the
-              not-yet-built `dream_apply.py` (Prompt 2.5), gated by a human
-              confirm per proposal, will actually invoke them. Minor bump
-              (0.3.9→0.4.0) rather than a patch: this is the first time this
-              file's write surface has a second, non-interactive consumer in
-              its design, not a bugfix to existing behavior. See
-              docs/dreaming/DESIGN.md and CHANGELOG.md 2026-07-11 (TRAUM
-              Thread 2 entry) for the full writeup.
-    Goethe v0.3.9: pfSense hardening (2026-07-06 confirmed incident: an
-              unbounded queryDiagnosticsTables/bogons response reached
-              2,966,261 tokens against a 131,072 context window, and a
-              separate unconfirmed pfsense_query write broke Unbound DNS
-              forwarding). NEW _pfsense_cap_response(): every pfsense_graphql,
-              pfsense_query, and pfsense_log_summary response is capped at
-              32000 bytes with a truncation warning, applied uniformly since
-              no content-based query check can enumerate every large
-              built-in collection type in advance. NEW confirmed=False
-              parameter on pfsense_query: real writes are blocked at the
-              code level until confirmed=True is passed explicitly; exempt
-              when the endpoint contains dry_run=true (validates without
-              persisting, per Common Control Parameters). Reads
-              (pfsense_graphql, pfsense_log_summary) are unaffected --
-              no confirmed parameter added to either. See
-              lse/skills/pfsense/DESIGN.md and the 2026-07-06 entry in
-              kb/session-learnings.md for the full incident writeup.
-    Goethe v0.3.8: PH3-2 retrieval decision (data-driven, gold set n=50).
-              --compare verdict: LINEAR wins (recall@3 0.84, MRR 0.800) over
-              RRF (0.84, 0.735; recall@1 −0.12) — search_kb ranking unchanged,
-              null result recorded. Threshold finding: the 0.72 default was
-              calibrated for cosine [0,1] but hybrid _score = 0.7·knn +
-              0.3·BM25 runs ~3.5–16 — the filter was a NO-OP. New default
-              min_score=4.2 from --threshold-report: keeps 38/38 correct
-              top-1, rejects 3/11 wrong, loses zero correct. Re-sweep after
-              major KB growth (BM25 stats drift with the corpus).
-    Goethe v0.3.7: SSH post-mortem hardening (2026-07-04 LSE post-mortem on
-              node3090 exit-255 storm; both root causes now code-enforced).
-              ssh_run MUX AUTO-RECOVERY: exit 255 with a ControlMaster socket
-              present → 'ssh -O exit' the stale master, remove the socket,
-              retry ONCE, annotate '[stale ControlMaster mux ... retried OK]'.
-              Manual 'rm /tmp/ssh_mux_*' no longer needed; failure message now
-              gives the diagnostic order (ping → sshd → self-match).
-              ssh_run PKILL SELF-MATCH GUARD: unbracketed 'pkill -f <pattern>'
-              is BLOCKED (the remote shell's cmdline contains the pattern and
-              pkill kills the SSH session — exit 255, target state unknown);
-              hint shows the bracketed form and the ssh_script alternative.
-              ssh_script docstring: script files do not self-match (correct
-              home for kill-by-pattern) + '|| true' rule for pkill exit-1
-              (already-dead target reads as false failure).
-    Goethe v0.3.6: PROVE-IT surface (PH3-1: PROVE-1 + PROVE-3; PROVE-4 partial).
-              NEW run_tests(scope): kb (ES index/count probes) | retrieval
-              (rag/eval_retrieval.py --self-test) | rules (eval_goethe_rules.py)
-              | harness (pytest tests/ + legacy scripts/) | all. Commands,
-              paths and args HARDCODED per scope (exec-surface allowlist, sudo
-              pattern) — the model supplies only the scope name. Verbatim
-              output returned as evidence; missing assets → SKIP (node3090
-              lacks rag/, tests/). New valve REPO_DIR (GOETHE_REPO_DIR).
-              NEW assert_state(check_command, expected_regex): read-only argv
-              allowlist (df/ss/sha256sum/dig/pgrep/stat/ls/wc/free/uptime/
-              ip-reads/nvidia-smi/curl-GET-only/systemctl-read-verbs/ping-capped),
-              shlex + shell=False, metacharacter rejection, 20s timeout;
-              regex searched in stdout+stderr → ASSERT PASS/FAIL with verbatim
-              output. Docstrings written to the 8-dimension audit standard
-              PRE-deploy (SCRIBE-5 discipline): GOOD/BAD pairs, mutating-verb
-              prohibition, no-regex-loosening rule, "prove it" mapping.
-    Goethe v0.3.5: SCRIBE-5 docstring audit pass (lse-docstring-optimizer,
-              docstring-only) on the four v0.3.x tools. kb_verify: GOOD/BAD
-              pair for observed= (verbatim output vs paraphrase) + same-session
-              probe rule. time_check: FIX EXECUTION PROHIBITION — never run or
-              auto-delegate the suggested clock fix unasked. mentor_demote:
-              GOOD/BAD pair pinning the human-words-vs-evidence boundary (P26
-              class) + trust-the-return rule. plan_step_done: GOOD/BAD evidence
-              pair, no mid-loop task_resume, and a CONTEXT HANDOFF rule —
-              past 70% context, hand the next step to a fresh session instead
-              of grinding to the ceiling (encodes the DNS Phase-2 lesson).
-    Goethe v0.3.4: planner GATE conflict fix (docstring-only). Field report:
-              given "get a plan to audit DNS infra", the LSE never called
-              planner() — the old gate ("must be your first or second tool
-              call") conflicted with KB-FIRST/SKILLS-FIRST, so after two
-              search_kb calls the model treated planning as forbidden,
-              hand-wrote a prose plan and an ad-hoc active-task.md, bypassing
-              the ledger. New gate: information gathering (KB, read-only
-              probes) does NOT close the planning window — findings go into
-              context=; the window closes at first state change. New MANDATORY
-              TRIGGER: user asking for "a plan" REQUIRES planner(); hand-written
-              plan files are named a protocol violation. GOOD/BAD examples
-              updated to show the reads→planner(context=…) order.
-    Goethe v0.3.3: PLANNER UNAVAILABLE root-cause fix (LSE-debugged, 2026-07-03).
-              Three compounding causes: (1) _llm_call max_tokens=2048 truncated
-              v2 envelopes (per-step packaged prompts need far more) → 8192;
-              (2) Qwen3.6 thinking consumed the same completion budget — the
-              /no_think prose hint does not hold reliably → per-request
-              "thinking_budget_tokens": 0, the server-enforced reasoning-budget
-              kill-switch (a request value of 0 overrides any CLI
-              --reasoning-budget; harmlessly ignored by think-tag-less models);
-              (3) no resilience → two-attempt envelope loop: parse failure
-              feeds a corrective REJECTED note back and retries once before
-              surfacing PLANNER UNAVAILABLE.
-    Goethe v0.3.2: PLANNER v2 — atomized plans with a living ledger.
-              _PLANNER_CONTRACT v2: every step is ONE tightly scoped unit
-              (<=5 tool calls, one verifiable outcome, mandatory verify) with
-              its OWN self-contained packaged_prompt plus explicit depends_on/
-              inputs/output edges, topologically ordered. Built for Qwen3.6
-              (performs best tightly scoped) and 131k-context management: each
-              step executes in a fresh window with only a compact ledger summary.
-              planner(mode="revise", task_id=...): re-plans ONLY remaining work,
-              feeding completed/failed steps (with evidence) back as LEDGER
-              context; completed history is preserved in the merged plan.
-              NEW plan_step_done(task_id, step_n, evidence, failed=False):
-              strikes a step in the tasks.db ledger (steps_json column, added
-              via idempotent PRAGMA migration), stores verify evidence
-              (>=20-char gate), returns the NEXT step's fresh-context prompt;
-              failed=True routes to revise; last strike closes the block.
-              Decision: NO websocket — the SQLite ledger is the bidirectional
-              planner↔agent channel (durable across context resets/crashes);
-              real-time multi-agent belongs to Faust when its state machine lands.
-              NEW valves PLANNER_FORCE_URL / PLANNER_FORCE_MODEL: Step-0
-              health-probed endpoint override — set permanently to the Gemma
-              swap port; used when up, silently cascades when down.
-              NEW tools/planner-gemma-swap-node3090.sh + restore script:
-              swap-on-demand Gemma-4-31B planner on node3090:8085 (captures the
-              pre-swap llama-server cmdline for exact restore; Gemma sampling
-              temp 1.0 / top-k 64; bracketed pkill patterns per self-kill lesson).
-    Goethe v0.3.1: CHRONOS — enforced sense of time (CHRONOS-1..4).
-              NEW time_check(): stdlib SNTP against pool.ntp.org +
-              time.cloudflare.com (2s timeout, graceful degrade) with TLS
-              Date-header cross-check (NTP is unauthenticated — a clock-fix
-              command is only SUGGESTED when both NTP sources agree AND TLS
-              corroborates; never auto-adjusts). Offset >2s → discrepancy
-              report + lse-errors record.
-              NEW valve MODEL_PRETRAIN_CUTOFF (YYYY-MM, per-model): time_check
-              and the first search_kb/search_web return of each session carry a
-              server-injected [TIME] banner (now | cutoff | gap → model-memory
-              claims presumed stale). Compliance no longer depends on the model
-              reading docstrings.
-              Volatility TTLs (CHRONOS-3): index_to_kb gains volatility=
-              static|slow|fast (default slow; 90d / 7d TTLs, static=∞).
-              search_kb tags [EXPIRED — pointer only, re-verify live] past TTL
-              and demotes expired hits in the trust rerank (×0.5, same as
-              stale). record_outcome(success=True) now bumps updated_at —
-              re-verification resets the TTL clock. Field mapped since the
-              v0.3.0 migration (08-kb-trust-migration.py).
-              CHRONOS-4: YEAR-INJECTION + 30d/7d staleness rules RETIRED from
-              the search_web docstring — years are now stripped from queries
-              server-side (standalone 19xx/20xx tokens; CVE-2025-1234-style
-              compounds survive), freshness lives in the TTL metadata.
-    Goethe v0.3.0: KB TRUST LIFECYCLE (KB-DECAY-1..5) — lse-kb quality is no
-              longer monotonic upward; verified failure evidence now demotes.
-              record_outcome: new evidence= param; success=False + evidence
-              (>=20 chars) → quality = max(0.2, q − 0.15), consecutive_failures
-              streak; 0.2 floor → stale=true QUARANTINE (never deleted).
-              success=True resets the streak, never re-elevates quality.
-              search_kb: surfaces runs/ok/fail per hit, [STALE — quarantined]
-              banner, client-side trust rerank (failure-ratio multiplier,
-              stale halved so quarantined docs rank below fresh ones).
-              NEW kb_verify(doc_id[, observed]): two-phase regression probe of
-              verified_against vs live system; mismatch auto-demotes via
-              record_outcome with the probe output as evidence.
-              NEW mentor_demote(doc_id, new_quality, reason): human-authorized
-              kill-switch for wrong high-quality docs (mentor_correct stays
-              raise-only); reason stored as demote_reason for forensics.
-              Recovery: tier-gated raises (index_to_kb dedup, mentor_correct)
-              above 0.2 clear stale + reset the streak.
-              skill_outcome demotion floor aligned to documented 0.2 (was 0.0 —
-              code/docstring drift caught by PROVE-2 contract tests); archive
-              now fires only on failure at the floor.
-              Mapping migration: rag/08-kb-trust-migration.py adds stale,
-              consecutive_failures, volatility (CHRONOS-ready) to lse-kb.
-              Contract tests extended: tests/test_kb_contracts.py.
-    Goethe v0.2.9: hermes_plan → planner (renamed). Semantics + JSON fix.
-              Tool renamed planner to reflect backend change (no longer Hermes).
-              Docstring rewritten: 3-path cascade (node3090 LSE → Ollama →
-              Gemma GGUF), updated GATE examples, removed all Hermes/v0.2.7 refs.
-              JSON extraction fix: strip <think>...</think> blocks from the
-              planner reply BEFORE applying the envelope regex. Qwen3 models
-              emit thinking inside <think> tags even on structured-output
-              requests; the greedy \\{.*\\} (DOTALL) regex was matching from
-              the first { inside the think block to the last } of the JSON,
-              producing unparseable mixed content. Stripping tags first
-              isolates the clean JSON envelope reliably.
-    Goethe v0.2.8: planner PATH 3 — VRAM-aware Gemma GGUF spawn.
-              _call_node_planner now has a three-path cascade:
-              (1) node3090 llama-server :8080 (Qwen 27B, GPU) — primary.
-              (2) node3090 Ollama :11434 qwen3:4b (CPU) — GPU fallback.
-              (3) Local Gemma GGUF spawn — fires only when paths 1+2 both
-              error. Selects model by task class (small/medium/large) and
-              confirmed free VRAM via nvidia-smi; supports vision via mmproj.
-              Models: E4B (~5 GB, 5200 MB gate), 26B-A4B (~16.7 GB, 17200 MB
-              gate), 31B (~18.5 GB, 19100 MB gate). Vision detection via
-              keywords (image/screenshot/photo/visual/png/jpg/jpeg/picture).
-              New valves: PLANNER_MODEL_DIR, PLANNER_PORT, PLANNER_LLAMA_BIN.
-              New helpers: _planner_task_class, _planner_free_vram_mb,
-              _planner_gemma_select, _spawn_gemma_server, _stop_gemma_server.
-              New class variable: _GEMMA_MODELS (model catalog).
-    Goethe v0.2.7: HERMES RETIRED — node planner cascade replaces Hermes.
-              _call_hermes and _kanban_create_card retired (stubs only).
-              New: _call_node_planner — two-path cascade (llama-server →
-              Ollama CPU). New valves: NODE3090_LLM_URL, NODE3090_OLLAMA_URL,
-              NODE3090_PLANNER_FALLBACK_MODEL. hermes_plan rewritten to call
-              _call_node_planner, parse JSON envelope, checkpoint task.
-    Goethe v0.2.6: SSH OVERHAUL — ssh_run + ssh_script + ControlMaster + complexity guard.
-              Three root causes of exit-255 SSH failures addressed:
-              (1) Double-shell escaping: new ssh_run() passes commands as argv[], not via
-              bash -c. No local shell sees the command — arrives on the remote host intact.
-              (2) nohup/disown in SSH sessions: new ssh_script() transfers script content
-              as a file via scp, executes it as bash /tmp/lse_script_<hash>.sh. Auto-injects
-              </dev/null on nohup lines to prevent SIGHUP on SSH session close.
-              (3) Per-call TCP+auth overhead: SSH ControlMaster (-o ControlMaster=auto,
-              ControlPersist=60s) maintains a persistent mux socket. After the first call,
-              all subsequent ssh/scp calls to the same host+port+user reuse the socket.
-              execute_command SSH complexity guard: commands containing nohup/disown/export/
-              eval/subshell markers are blocked and return an actionable ssh_script() hint
-              instead of silently producing exit 255.
-    Goethe v0.2.5: fetch_url reddit/camoufox browser fallback (v1.5.29).
-              When a reddit.com URL returns empty content or an HTTP error
-              (reddit blocks plain requests with 403/429), fetch_url
-              automatically retries via _reddit_browser_fallback():
-                node3090 → local Firecrawl at localhost:3002
-                LUCIFER  → ping node3090, then remote Firecrawl at node3090:3002
-              Successful result is prefixed "[browser-rendered]", cached, and
-              tagged with SOURCE-VERIFY MANDATE. Falls back gracefully if
-              node3090 is offline or Firecrawl is unreachable.
-    Goethe v0.2.4: shutdown_node — two-step confirmation gate (confirmed=False
-              returns prompt; confirmed=True executes). Model must surface the
-              prompt to the user and wait for explicit yes before second call.
-    Goethe v0.2.3: wake_node overhauled — ping-first (skip WoL if already up),
-              search_kb for current wake procedure before sending magic packet,
-              KB notes surfaced in all return paths (already-up / booted / error).
-    Goethe v0.2.2: THREE GROUND-TRUTH-BEFORE-ACTION RULES added to
-              execute_command docstring (P31 design session; Camoufox +
-              n45 incidents as empirical basis — rules abstracted to
-              pattern class, incident names kept out of rule text):
-              (1) RESOURCE-AVAILABILITY RULE: before any external connection
-              (SSH, API, docker exec, curl to service), verify resource state
-              first via ping/health-check/docker inspect. For managed nodes:
-              check _NODE_REGISTRY → wake_node if found; else search_kb
-              ("<hostname> access"); else stop and report "no recovery path,
-              operator action required." ICMP-blocked exception for
-              external/unknown hosts. Prevents 30s SSH timeouts being
-              misdiagnosed as credential failures.
-              (2) VENDOR-BEHAVIOR GROUND-TRUTH RULE: before modifying any
-              file from an external project based on an assumption about HOW
-              that software behaves internally (call order, field injection,
-              protocol semantics, version behavior), run the waterfall:
-              search_kb → vendor changelog/README → GitHub issues → search_web.
-              The write_file snapshot gate makes patches reversible; it does
-              NOT prevent acting on a false premise. Waterfall is the control.
-              (3) RELEASE ASSET RULE: before writing any download URL,
-              VERSION/RELEASE variable, image tag, or package pin, fetch the
-              source of truth — get_github_release("<owner>/<repo>") for
-              GitHub, registry page/API for Docker/PyPI/npm. Version patterns
-              cannot be inferred by incrementing a prior release. Each
-              unverified artifact reference is a potential wasted build cycle.
-              Backup: goethe-v0.2.1.py (verified identical).
-    Goethe v0.2.1: KB DOC-ID RESOLUTION (SY5 debug — mentor_correct 404).
-              mentor_correct/record_outcome did es.get(index="lse-kb", id=doc_id),
-              which requires the exact 16-char _id hash, but search_kb NEVER showed
-              the doc_id — so the model passed the TITLE as doc_id and got
-              NotFoundError(404, ...). Fixes: (a) search_kb now prints
-              'doc_id=<_id>' on every hit (the root enabler); (b) new
-              _resolve_kb_id() accepts an _id OR a title, resolving a title via an
-              exact match_phrase lookup; (c) mentor_correct + record_outcome call
-              it first and return an actionable message ("run search_kb for the
-              doc_id, or index_to_kb to create it") instead of a raw 404; ambiguous
-              titles list candidate ids. No behavior change when a correct doc_id
-              is passed. Docstrings updated. (For eval-gate review.)
-              FILENAME: switched to a stable 'goethe.py' (ends the per-bump renames
-              that kept breaking path references). The version now rides the
-              frontmatter only - title: "LSE Goethe v0.2.1" + version: 0.2.1 - so
-              it shows in the OWUI tool list and on file open (head -5). exec_test.py
-              resolves goethe.py via glob. A version bump = edit those two lines.
-    Goethe v0.2.0: MONITOR-DOWNLOAD BUGFIX + AUDIT PASS (SY5 request). Companion
-              to download-monitor.py 0.3 (version aligned with the LSE KB doc).
-              (1) download-monitor.py query_prometheus crashed on EVERY call with
-              UnboundLocalError: `import urllib.parse` lived inside the function
-              body, making `urllib` a function-local name, so the earlier
-              `urllib.parse.urlencode(...)` reference hit an unbound local. The
-              import is now module-level; the in-function and redundant
-              module-level imports were removed. (Fix is in the standalone script
-              monitor_download shells out to — REDEPLOY /opt/local-se/download-
-              monitor.py from tools/download-monitor.py for the fix to take effect.)
-              (2) download-monitor.py false-COMPLETE: completion fired at
-              pct>=99.9, reporting a 17.6 GB download "done" with ~18 MB still
-              missing; now requires current_bytes within a 64 KB absolute
-              tolerance of expected. Also: clamped negative "elapsed", guard for
-              expected_bytes<=0.
-              (3) monitor_download() interpreter selection was backwards — it used
-              the hardcoded /home/sy5/miniforge3 python unconditionally unless
-              python3 was absent from PATH, breaking on hosts without miniforge.
-              Now: use miniforge only if it exists, else which(python3).
-              (4) download-monitor.py wrong PromQL: it queried
-              node_network_receive_bytes_total{device} (node_exporter convention),
-              but this stack's speed comes from the custom download-speed-exporter
-              (:9838) exposing network_receive_bytes_per_second{interface}. The
-              mismatch returned no series -> false STALLED. Verified against the
-              exporter source + lse-net-speed-01 dashboard, not recall.
-              (5) download-monitor.py adaptive sleep: SLEEP is now a fraction of the
-              remaining ETA (converges in a few checks), and COMMAND_TIMEOUT is
-              raised 30->200s so a single `sleep N` (MAX_SLEEP_SECONDS=180) is not
-              truncated — ~5 polls on a 10-min download instead of ~20. See the
-              COMMAND_TIMEOUT valve note for the hung-command trade-off.
-              (6) IN-PLACE EDIT SAFETY NET (SY5 request — LSE edits files in place
-              without approval/git discipline). New _snapshot_before_write() + a
-              code gate in write_file: before any overwrite/append of an EXISTING
-              file it captures a recovery point (git hash-object -w blob pinned at
-              refs/lse-snapshots/, or a .lse-backups/ copy outside git) and REFUSES
-              the write if none can be made. The docstring confirmation rule was
-              attention-only and got skipped under pressure; this enforces
-              reversibility in code (sudo-blocker lineage). Unit-tested: git
-              snapshot recovers a clobbered file, fs fallback works, new files are
-              exempt, snapshot-failure blocks. NOTE (deferred for eval-gate review):
-              execute_command in-place ops (sed -i, >, >>, tee) are NOT yet gated —
-              parsing targets from arbitrary shell is fragile and the hot path is
-              risk-sensitive; recommended as a separate reviewed change. Route
-              in-place edits through write_file to get the snapshot today.
-              (7) DOWNLOAD CLOBBER GUARD (SY5 report — LSE re-ran curl/hf download
-              to "check" an in-progress download instead of monitor_download,
-              spawning a second writer into the same partial file -> corrupt GGUF).
-              New _active_download_guard(): execute_command REFUSES a download-
-              initiating command (curl/wget/aria2c/hf download/huggingface-cli/
-              git-lfs) while a real downloader process is already running, and
-              routes the model to monitor_download. Conservative: pgrep runs only
-              for download commands; curl needs an output flag so a health-check
-              curl never trips it; fail-open if the host can't be probed. Unit-
-              tested (6 cases). Companion DOWNLOAD PROGRESS RULE added to the
-              execute_command docstring.
-              AUDIT NOTES (not changed — flagged for review through the eval gate):
-              execute_command privilege/denylist matching uses substring `in`, so
-              `su `/`passwd` match mid-token (e.g. `cat /etc/passwd` is blocked,
-              `du -su` could trip the su gate). Word-boundary matching is the
-              recommended hardening — deferred to a security-reviewed change.
-    Goethe v0.1.0: FORK of Cogitator v1.7.24 — FAUST CONSOLIDATION. The Hermes<->LSE
-              OWUI channel is RETIRED, superseded by the Faust group-chat room
-              (Faust/, lse-1.7.0-b). Removed: hermes_cooperate, _cooperate_exec,
-              check_hermes_inbox, _format_hermes_messages, _flush_voicemail, and the
-              Path A/B content-marker + by-reference inbox/outbox machinery
-              (_extract_content_marker / _strip_hermes_marker). _call_hermes simplified
-              to a plain reply (no inbox/marker append). KEPT: hermes_plan (inline
-              pre-flight planner) + its _call_hermes backend + _kanban_create_card, and
-              all general LSE tooling and hardening (execute_command, sudo_delegation_block,
-              file ops, search_kb/index_to_kb, record_error, pfSense tools, WATERFALL
-              provenance, source-claim verification, SSH KB-first/fingerprint rules).
-    v1.7.24: call_hermes DEMODELED -> internal-only _call_hermes (urgent, P30/P31).
-              The model must no longer invoke the Hermes chat-completion call
-              directly: direct calls frequently surface OWUI networking errors, and
-              the direct-call entry point is being superseded by hermes_plan and
-              hermes_cooperate. RENAMED call_hermes -> _call_hermes so OWUI no longer
-              exposes it in the tool spec (leading underscore = internal helper).
-              ALL LOGIC PRESERVED — it remains the shared backend that hermes_plan
-              and hermes_cooperate (the conference call) call internally; both are
-              unchanged in behaviour. The check_hermes_inbox 'ask' reply path, which
-              previously told the model to call_hermes directly, now routes through
-              hermes_cooperate(max_rounds=1). No other tool surface changes.
-    v1.7.23: HERMES->LSE BY-REFERENCE (large-payload fix, P30). When an inbound
-              envelope carries body_ref (a path written by the Hermes producer on
-              node3090 because the full payload would overflow the reply token cap
-              and truncate the marker), _format_hermes_messages now surfaces a
-              fetch instruction (execute_command SSH cat) alongside the preview, so
-              the model can pull the full text on demand. Unknown-key safe: older
-              markers without body_ref are formatted exactly as before. No new tool;
-              the existing execute_command SSH path does the fetch.
-    v1.7.22: HERMES INBOX POLL max_tokens 8 -> 1024 (Path B companion fix, P29). The
-              poll reply carries the [[HERMES->LSE]] marker IN CONTENT (Path B), which
-              cannot fit in 8 tokens — 8 was sized for Path A (marker rode a top-level
-              field). Raised so check_hermes_inbox can actually receive queued messages.
-              call_hermes/hermes_plan already use 2048, so messages riding real calls
-              were unaffected; only the dedicated poll was clipped. No other change.
-    v1.7.21: SUDO BLOCK -> COPYABLE ```bash + VISIBLE-REPLY FORCING (P29; v1.7.20
-              emitter alone failed — content emitted mid-<think> stays collapsed). (1)
-              block reformatted as markdown with a ```bash fenced code block (copyable)
-              instead of box-art. (2) the function now RETURNS a directive telling the
-              model its entire visible reply must be the fenced block verbatim, nothing
-              else — routing the surface through the post-<think> reply, the only channel
-              that renders reliably. Emitter kept best-effort. STOP PROTOCOL + no-summary
-              tightened; args unchanged.
-    v1.7.20: SUDO BLOCK FORCE-SURFACE (code fix for the long-standing "delegation
-              block hidden in thinking" issue, SY5 P29). sudo_delegation_block is now
-              async and accepts __event_emitter__; the formatted block is pushed to the
-              UI via a {"type":"message"} event so it lands in the VISIBLE response even
-              when the model calls it mid-<think> (where the tool-result card collapses).
-              Args, return value, STOP PROTOCOL and THINKING PHASE RULE unchanged — the
-              model receives the exact same string, so its task flow is undisturbed; the
-              emitter only adds a user-facing surface. Backward compatible:
-              __event_emitter__ defaults to None (no emit = prior behaviour).
-    v1.7.19: HERMES->LSE PATH B (content marker). _format_hermes_messages now also
-              parses [[HERMES->LSE]]{json}[[/HERMES->LSE]] from the gateway reply
-              content (not just a top-level hermes_messages field), since Hermes Agent
-              cannot always add a response field. call_hermes strips the marker from
-              the visible reply. New helpers _extract_content_marker /
-              _strip_hermes_marker. Completes the LSE side of 1.7.0-b.
-    v1.7.18: WATERFALL PROVENANCE RULE (ROADMAP 1.7.6; SY5 P23 observation).
-              index_to_kb + record_error gate at the WRITE path: content making an
-              external-software version/behavior claim ("removed in v9577",
-              "deprecated since 2.8.0") with NO waterfall provenance (fetched URL /
-              RFC / ground-truth evidence / version snapshot) is stored tagged
-              [UNVERIFIED] with quality capped <=0.3 (tier forced inferred). With
-              provenance: unchanged. Helpers _wf_version_claim / _wf_has_provenance.
-              Companion docstring rule: run the waterfall (search_kb -> vendor
-              docs/README -> github -> search_web) before version/behavior diagnosis.
-              Attention is not a control plane — enforced in code.
-    v1.7.17: HERMES CONFERENCE allow_sudo ALLOWLIST. hermes_cooperate gains an
-              allow_sudo param (user-authorized exact privileged commands) and a
-              dedicated gated executor _cooperate_exec: sudo/su/doas runs only if
-              EVERY invocation is covered by the allowlist; the hard blocklist is
-              never overridable. Closes the SearXNG live-test gap (docker/systemctl
-              requests were all sudo-blocked, stalling cooperation). Default empty
-              = no sudo (prior behaviour preserved).
-    v1.7.16: HERMES <-> LSE CONFERENCE CALL (1.7.0-b). New tool hermes_cooperate()
-              — user-fired, bounded multi-round "conference call": LSE relays an
-              objective to Hermes (call_hermes, synchronous); when Hermes requests
-              infra data it cannot reach (no SSH) via a ```bash block, LSE runs it
-              through execute_command's gates and feeds the output back; loops to
-              max_rounds or until 'CONFERENCE COMPLETE'. Paradigm LSE -> Voicemail
-              <- Hermes; voicemail flushed to empty on call end (_flush_voicemail,
-              best-effort, tolerant until the persistent store lands). Works against
-              the current gateway with NO Hermes-side change (rides synchronous
-              call_hermes). See docs/lse-1.7.0-b-bidirectional-design.md.
-    v1.7.15: HERMES -> LSE INBOUND CHANNEL (1.7.0-b). LSE is request-driven (no
-              inbound listener), so Hermes holds an outbox and attaches pending
-              items as `hermes_messages` to any gateway reply. New tool
-              check_hermes_inbox() makes the no-task poll that surfaces them;
-              call_hermes now also parses hermes_messages off its own reply so
-              directives ride existing calls for free. HTTP only — no SSH, no new
-              valve. Hermes-side call_lse/outbox + Telegram mirror: see
-              docs/lse-1.7.0-b-bidirectional-design.md (self-installed on node3090).
-    v1.7.14: HERMES DIRECT CONNECT — gateway confirmed binding 0.0.0.0:8642 (P27
-              live test: ss -tlnp shows 0.0.0.0:8642, HTTP 200 from LUCIFER direct).
-              socat :8643 was a workaround from when gateway bound 127.0.0.1 only —
-              now confirmed eliminated. HERMES_API_URL default :8643 → :8642.
-              No code logic change — valve default + docstrings only.
-    v1.7.13: SSH KB-FIRST RULE (live-test incident: model attempted bare ssh root@rutx50
-              without -i key flag → 30s timeout; then searched KB with wrong topic_filter=pfsense
-              → pfSense API docs returned instead of RUTX50 access params).
-              Fix: KB-FIRST SSH RULE added to execute_command docstring — mandatory search_kb
-              before any ssh command to a managed device; no topic_filter on SSH access queries.
-              Closes: (1) bare-ssh-before-KB-lookup, (2) wrong-topic-filter-on-SSH-query.
-    v1.7.12: SSH DEVICE AUTO-FINGERPRINT (MikroTik incident: model inferred
-              RouterOS from IP/hostname for a Teltonika RUTX50 running OpenWrt,
-              committed to wrong CLI assumptions for 3+ turns. Cause: device OS
-              inferred from training knowledge, not from the device itself).
-              execute_command now intercepts ssh commands: on the FIRST call
-              to any new host, it auto-runs cat /etc/os-release + uname -srm
-              over SSH (reusing the original command's key/port options) and
-              caches the result in self._device_cache[host]. Every subsequent
-              call to the same host prepends [DEVICE FINGERPRINT: host=...
-              platform=...] to the result. Enforcement in code — the model
-              cannot skip the fingerprint, cannot infer device type from memory.
-              The fingerprint is the ground truth; all CLI decisions must be
-              grounded on it. Recursion-safe: fingerprint command skipped if
-              the command already contains os-release/uname markers.
-    v1.7.11: KB SOURCE-TIER QUALITY GATE (pfSense read-only incident: LSE
-              indexed an untested hypothesis at quality=1.0 before verifying
-              the chicken-and-egg lock. The model self-granted max score.
-              Max score must be earned by live evidence, not claimed).
-              index_to_kb: new source_tier param (ground_truth|primary|
-              secondary|inferred). Quality is hard-capped at the tier ceiling
-              regardless of what the model passes: ground_truth=1.0 (requires
-              evidence >=40 chars from a real tool result, else capped 0.7),
-              primary=0.8, secondary=0.6, inferred=0.4. Default quality_score
-              0.8->0.5; default tier=inferred. New evidence and
-              verified_against params stored in the document.
-              skill_record: same source_tier gate; tier stored in document.
-              skill_outcome: source_tier param; new_q capped at tier ceiling;
-              pushing quality to 1.0 requires source_tier=ground_truth.
-              Evidence threshold: 20->50 chars for ground_truth outcomes.
-    v1.7.10: SOURCE-CLAIM VERIFICATION (fabrication #5 root cause: evidence
-              overwrite at synthesis — the model fetched the RUTX50 wiki page,
-              had 07.22.3=Stable / 07.23.4=Latest in plain view, yet emitted
-              phantom 07.23.5 and 07.22.4 in the final answer. Prompt fences
-              do NOT hold at synthesis; the fix must be in code).
-              fetch_url now caches extracted text in self._fetch_cache[url]
-              (ttl=SOURCE_VERIFY_CACHE_TTL valve, default 300s) and appends a
-              code-emitted SOURCE-VERIFY MANDATE banner to every content return
-              (not to error returns). New verify_source_claims(url, claims)
-              re-fetches the source (or uses the cache) and returns a structured
-              FOUND / PARTIAL / NOT_FOUND report with verbatim ±300-char excerpts
-              for each comma-separated claim. PARTIAL = a specific token exists
-              but the full claim doesn't — the excerpt shows what the source
-              ACTUALLY says. NOT_FOUND = report the claim as UNVERIFIED. This
-              call does NOT count against the search budget. Enforcement in code,
-              sudo-blocker lineage: the function does the comparison, the model
-              cannot fabricate the return value.
-
-    v1.7.9: hermes_plan creates the kanban triage card itself (P24 capability
-              gap: the Hermes planner session has NO kanban-write tool — proved
-              by tool-hunting in agent.log: cronjob -> skills_list -> gave up.
-              Contract wording cannot fix a missing tool). After envelope parse
-              + checkpoint, _kanban_create_card() INSERTs directly into
-              node3090 kanban.db via ssh (status='triage', assignee='lse',
-              goal_mode=0, idempotency_key=hermes_plan:<task_id>). Schema-safe:
-              tasks.status has no CHECK constraint; 'triage' is in
-              VALID_STATUSES (board queries accept it); the
-              VALID_INITIAL_STATUSES={running,blocked} gate is Python-API-only
-              and not on this path. INSERT OR IGNORE = re-plan idempotent.
-              Fail-open: card failure is reported in the plan result
-              (card_error line), never blocks the envelope. Companion change:
-              planner contract v2.2 drops the card-creation instruction
-              (Hermes no longer burns turns hunting for a board tool).
-    v1.7.8: search_web category fix. search_web requested
-              categories="general,it,science" on EVERY call; arxiv is in
-              [science, it, technology] (settings.yml), so every query —
-              including non-science, general-domain product queries —
-              activated arxiv (weight 2, ~15%% reliable) and returned 4-5
-              off-domain physics/ML hits, burning the web budget on junk.
-              Now requests categories="general" only (google/bing/ddg cover
-              LSE's operational query mix). Science searches become an explicit
-              opt-in if ever needed. Same research-task incident, part 2.
-    v1.7.7: fetch_url CONTENT-TYPE GUARD. fetch_url fed resp.text to the HTML
-              parser unconditionally; on a PDF that dumped raw FlateDecode
-              binary (%PDF, xref tables, streams) into the agent context AND
-              broke OWUI <details> rendering downstream (control chars + stray
-              <</>> markers derailed the sanitizer, so every later tool card
-              showed as raw escaped text). Now: PDF -> pdfminer/pypdf text
-              extract, else clean refusal; other non-text content-types refused;
-              all extracted text control-char-sanitized. Found via a multi-step
-              research task that fetched a PDF source.
-    v1.7.6: hermes_plan() — planner-orchestrator layer 3 (1.7.2 phase of
-              docs/planner-orchestrator-design.md). Pre-flight triage: wraps
-              call_hermes with intent=plan, parses the plan envelope, writes
-              the initial task block (packaged_prompt as next_prompt), returns
-              steps + per-step budgets + abort criteria. Degrades to
-              "PLANNER UNAVAILABLE — proceed with default budgets, checkpoint
-              early" when Hermes is down (layers 1-2 still protect).
-              ALSO FIXES call_hermes truncated error handling, latent since
-              v1.7.3: the HTTPError handler set `body` then fell through
-              (implicit None return), and URLError/timeout raised uncaught —
-              the documented "ERROR: <reason>" returns were never reachable.
-              Restored from tools/call_hermes_draft.py.
-    v1.7.5: CONFIG GROUND-TRUTH RULE (SearxNG observability incident: LSE
-              cited an invented metrics token and a dead config path from
-              recall/stale KB, sending the operator on a 401 hunt while the
-              real outage had a different cause). Rule added to
-              execute_command and search_kb docstrings: tokens, paths, ports,
-              and config values must come from a same-session tool result
-              (read_file / execute_command / docker inspect), never from
-              recall. search_kb results now display per-hit age (updated Xd
-              ago) in code, with a staleness caveat for config values.
-    v1.7.4: compact_context KV-erase fix. The slots API was NEVER body-based:
-              llama.cpp expects POST /slots/{id}?action=erase (query param);
-              the tool sent {"action":"erase"} as JSON body -> "Invalid action"
-              on every call. Misdiagnosed in the field as "slots API removed in
-              v9577" (false — verified against llama.cpp master server README).
-              Now sends the query-param form, empty body, and reports n_erased
-              from the response. Correct the lse-errors KB entry recorded
-              during the incident.
-    v1.7.3: UNVERIFIED-URL RULE (RUTX50 incident #2: LSE fabricated hostname
-              fbidownload.teltonika-networks.com when retrieval was blocked,
-              diagnosed the NXDOMAIN as a network outage, and presented the
-              fake URL to the user). One-line rule added to the budget-refusal
-              text and the fetch_url docstring: never present a URL/hostname
-              that did not come out of a tool result.
-    v1.7.2: SEARCH_BUDGET_WINDOW_MIN default 30 → 2 min (RUTX50 incident: budget
-              exhausted instantly on task_resume because the rolling window
-              spanned sessions; LSE stalled ~7 min mid-conversation and began
-              answering from unverified training knowledge. 8 calls / 2 min
-              still forces a surface point in a reformulation spiral, but a
-              blocked budget now self-heals within the same conversation).
-    v1.7.1: ANTI-SPIRAL GATE + TASK BLOCKS (Goethe incident, P22: 34 web
-              searches / 78K tokens, no surfaced output; second turn died
-              searching. Root cause: termination decisions left to model
-              attention, which is absorbed by the task).
-              _budget_gate()    — search_web/search_reddit/fetch_url share a
-                                  rolling-window budget (SEARCH_BUDGET valve,
-                                  default 8 per 30 min). At ≤2 remaining every
-                                  result carries a surface-NOW banner; at 0 the
-                                  call is REFUSED in code with instructions to
-                                  checkpoint + surface partial results.
-                                  Enforcement in code, not docstring — same
-                                  philosophy as the sudo blocker.
-              task_checkpoint() — persistent task blocks (SQLite, TASKS_DB
-                                  valve) for work exceeding one session:
-                                  goal/plan/done/findings/UNVERIFIED/
-                                  next_prompt. Checkpoint on step completion,
-                                  on budget banner, and status=done at end.
-                                  findings/unverified separation is mandatory
-                                  (fabricated-quote lesson).
-              task_resume()     — first-call-only loader of the latest open
-                                  block; unverified items must be re-verified.
-              Planner-orchestrator (Hermes pre-flight triage) specced in
-              docs/planner-orchestrator-design.md — layers interlock: planner
-              estimates, budgets enforce, blocks carry over.
-    v1.7.0: COGITATOR — self-writing skills layer (1.7.0-c pulled forward).
-              Renamed from "LSE System Admin Terminal" to "LSE Cogitator".
-              New ES index lse-skills holds runbook-shaped procedures
-              (occupation/task/preconditions/procedure/verification/
-              failure_modes/provenance/quality/stats/pinned), per
-              docs/lse-1.7.0-design.md §3.2 and the Hermes surpass analysis
-              (docs/hermes-skill-learning-analysis.md): retrieval beats prompt
-              injection, evidence beats age, provenance is mandatory.
-              skill_search()  — SKILLS-FIRST RULE: query before any multi-step
-                                procedural operation; max 2 injected (context
-                                budget); usage stats updated on retrieval.
-              skill_record()  — EVIDENCE GATE: only ground-truth-verified
-                                procedures; <2 steps rejected (fact -> index_to_kb);
-                                verification field required; dedup at cosine 0.92;
-                                initial quality capped at 0.7.
-              skill_outcome() — quality moves on evidence only: +0.10 verified
-                                success, -0.15 verified failure, floor 0.2 ->
-                                auto-archive (pinned skills exempt); evidence
-                                string required, self-report rejected.
-              Adopted from Hermes curator: pinned flag, archived flag,
-              inspectable evidence_log. All three docstrings passed
-              lse-docstring-optimizer 8-dimension audit.
-    v1.6.4: Hermes Agent subagent — production-ready two-boss architecture.
-              LSE (on LUCIFER) and SY5 are Hermes's two principals. LSE delegates
-              autonomous multi-step tasks to Hermes via call_hermes(); Hermes runs
-              Qwen3.6-27B-Q4_K_M locally on node3090 (RTX 3090, 24GB VRAM) via
-              llama-server (port 8080) and executes with its own tool set: shell
-              execution, file read/write, browser automation, image generation.
-              Infrastructure: hermes-gateway.service (hermes-admin, enabled).
-              Gateway binds 0.0.0.0:8642 directly (confirmed P27 live test).
-              socat :8643 workaround eliminated. HERMES_API_URL valve: :8642.
-              Gate (docstring-enforced): only call when (1) task requires multi-step
-              autonomous execution, (2) single SSH can't complete it, (3) both
-              llama-server and hermes-gateway confirmed running. no_think=True for
-              reads, no_think=False mandatory for writes/destructive — skipping is a
-              protocol violation. Always pass relevant KB content via context= param.
-              Port history: originally loopback :8642; socat :8643 workaround added;
-              v1.7.14: gateway confirmed 0.0.0.0:8642 — socat eliminated.
-    v1.6.3: pfsense_query + pfsense_graphql KB-FIRST RULE.
-              Root cause: LSE knows to use pfsense_query/pfsense_graphql but constructs
-              payloads and GraphQL queries from memory — guessing field names, required
-              fields, and protocol values. API returns 400 errors → trial-and-error spiral.
-              Fix: KB-FIRST RULE added to pfsense_query docstring. Before constructing
-              any payload, LSE must call search_kb("pfsense REST API", topic_filter="pfsense").
-              KB contains full POST/PATCH payload schema, required fields, validation errors,
-              placement semantics, and working curl examples. Guessing is a protocol violation.
-              Also added field-name reminder to pfsense_graphql COMMON QUERIES section.
-    v1.6.2: call_hermes — delegate multi-step tasks to Hermes Agent on node3090.
-              Hermes runs Qwen3.6-27B locally via llama-server (port 8080) and executes
-              tasks autonomously using its own tool set (shell, file, browser, image gen).
-              Gate: only when llama-server + hermes-gateway are confirmed running AND
-              the task requires multi-step autonomous execution on node3090 (not a single
-              SSH command). no_think=True (default) for read-only tasks; no_think=False
-              required for write/destructive tasks — skipping is a protocol violation.
-              CONTEXT: always pass relevant KB entries via context= param (e.g. pfsense KB).
-              New valves: HERMES_API_URL (http://192.168.5.41:8642 as of v1.7.14), HERMES_API_KEY.
-              Port 8643 was socat workaround (gateway was loopback-only at ship time).
-              v1.7.14: gateway confirmed binding 0.0.0.0:8642 — socat eliminated.
-              Returns plain string or "ERROR: <reason>" on failure — caller must check.
-              Hermes gateway: /etc/systemd/system/hermes-gateway.service (hermes-admin,
-              disabled/on-demand). Start: systemctl start hermes-gateway on node3090.
-    v1.6.1: pfsense_graphql — SCHEMA INTROSPECTION PROHIBITION added (__schema/__type
-              queries overflow context identically to the log endpoint).
-              pfsense_query — ORDERED RULE DEPLOYMENT section added: placement=N
-              semantics, read-first pattern, explicit warning against schema introspection
-              to find placement (it is a Common Control Parameter, not endpoint-specific).
-    v1.6.0: Three-tool pfSense routing architecture:
-              pfsense_graphql()    — NEW: all reads/audits via GraphQL (/api/v2/graphql).
-                                     Single endpoint, schema introspection, multi-resource
-                                     queries in one call. Replaces GET usage in pfsense_query.
-              pfsense_query()      — writes only (POST/PATCH/PUT/DELETE). GET now returns
-                                     an error redirecting to pfsense_graphql.
-              pfsense_log_summary()— logs only. Routing triangle added to all three docstrings.
-              KB indexing cap: 4000 → 50000 chars (full docs stored).
-              KB embed cap: 8000 chars (nomic-embed-text token limit respected separately).
-              search_kb return: 200 → 5000 chars per hit (meaningful content per result).
-              fetch_url default: 3000 → 20000 chars (full pages fetched by default).
-              pfsense_log_summary: per-request api_key forwarded to gateway (?api_key=).
-              Fixed _ensure_gateway() UnboundLocalError (pf_key → api_key).
-              Fixed X-API-Key header casing in pfsense_query.
-    v1.5.28: pfsense_log_summary() — rewritten to use local gateway (localhost:9191).
-              Fixes context overflow: raw /api/v2/status/logs/firewall replaced with
-              /compact endpoint (server-side aggregation, <4KB response).
-              Added LOG ENDPOINT PROHIBITION to pfsense_query docstring.
-              New mode= param: "compact" (audit reports) vs "summary" (quick stats).
-    v1.5.27: search_web — DATE-SENSITIVE QUERIES rule: check actual date via
-              execute_command before any firmware/CVE/version/release-date search.
-    v1.5.28: shutdown_node — confirmation gate: confirmed=False (default) returns a
-              prompt; confirmed=True executes. Model must never pass confirmed=True
-              without explicit user approval.
-    v1.5.27: wake_node — ping first (skip WoL if already up), search_kb for current
-              procedure before sending WoL, surface KB notes in all return paths.
-    v1.5.26: search_web — timeout=(5,10) to prevent connection hang on VPS hiccup.
-    v1.5.25: search_reddit() — Reddit search wrapper via SearxNG site:reddit.com.
-    v1.5.24: start_node_agent / stop_node_agent — on-demand llama-cpp server lifecycle.
-    v1.5.23: _NODE_REGISTRY node3090 — agent_port 1234→8080, agent_type lmstudio→llama-cpp.
-    v1.5.22: wake_node — corrected WoL endpoint to /api/v2/services/wake_on_lan/send.
-    v1.5.21: shutdown_node uses subprocess directly — bypasses execute_command sudo blocker.
-    v1.5.20: wake_node / query_node_agent / shutdown_node — GPU node lifecycle tools.
-    v1.5.19: content cap + anti-recursion on index_to_kb; search_kb result truncated 400→200.
-    v1.5.18: search_rfc() — RFC authority KB query for protocol-level diagnosis.
-    v1.5.17: pfsense_log_summary() + nmap_summary() — compact log/scan extraction.
-    v1.5.16: pfSense SSL verification via CA cert.
-              [PFSENSE_CA_CERT valve] Path to the exported pfSense WebGUI CA certificate.
-              Default: /opt/local-se/cert/pfsense-webgui-ca.crt (sy5:sy5 644).
-              When set and file exists: verify=PFSENSE_CA_CERT (proper TLS verification).
-              When empty or file missing: falls back to verify=False with a logged warning.
-              Cert: CN=pfsense-webgui-ca, SY5TEM5/4DMIN, valid Apr 2026 → Apr 2036.
-              Export procedure: pfSense → System → Cert Manager → CAs → Export CA cert.
-    v1.5.15: pfSense REST API integration.
-              [valves] PFSENSE_URL (base URL, not a secret) and PFSENSE_API_KEY
-              (read-only key, acceptable blast radius — see VALVES.md).
-              [pfsense_query] Authenticated GET/POST/PATCH/DELETE to pfSense REST API v2
-              (pfrest.org package, Plus 26.03). Key supplied as parameter (Vaultwarden)
-              or falls back to PFSENSE_API_KEY valve. SSL verify=False — pfSense
-              self-signed cert, LAN-only access, acceptable risk.
-              Write access protocol: pfSense API is read-only by default. Any non-GET
-              call requires manually disabling Read Only in pfSense UI first, and
-              re-enabling immediately after. Leaving write enabled is a protocol
-              violation (see lse-challenge-arena.md §pfSense write access gate).
-              [LOG_FILE] Default updated to /opt/local-se/agent_commands.log.
-              ~/.lse/ is now root:sy5 710 — sy5 cannot create files there.
-    v1.5.14: sudo_delegation_block presentation improvements (Fix 3 — Run 6 gaps).
-              [sudo_delegation_block] Added step_number, total_steps, verify_command params.
-              When step_number > 0, the block header reads "Step N of Total".
-              verify_command surfaced as labelled "Verify with:" step in block body.
-              expected_output_hint retained for backward compatibility (secondary).
-              THINKING PHASE RULE added: never call inside a reasoning/thinking block.
-              [LOG_FILE] Default moved from ~/.lse/ to /opt/local-se/.
-    v1.5.13: search_web header fix + categories fix.
-              Root cause: SearXNG limiter (limiter: true) rejects requests without
-              X-Forwarded-For/X-Real-IP headers with HTTP 429. LSE was sending no
-              headers, causing silent failures mid-session.
-              Fix 1: added X-Forwarded-For and X-Real-IP headers to requests.get().
-              Fix 2: changed categories from "general,it" to "general,it,science" —
-              confirmed during SearXNG deploy that arxiv, github, google scholar,
-              stackoverflow, semantic scholar only fire on science category.
-              Verified: 11 engines active, 108 results on q=llama.cpp.
-    v1.5.12: write_file SIZE SANITY CHECK + record_outcome + mentor_correct.
-              [write_file] Added SIZE SANITY CHECK: if mode='overwrite' and new content
-              is <25% of existing file's line count, function returns an error requiring
-              explicit user confirmation before proceeding. Override with force=True
-              after user confirms intentional truncation.
-              Root cause: LSE destroyed a 323-line GUI PowerShell file by calling
-              write_file in overwrite mode with a 5-line snippet. The docstring required
-              read + confirmation but compliance was zero under recovery-loop pressure.
-              The code-level gate is the only reliable enforcement.
-              [record_outcome] New RAG function: records success/failure outcome against
-              an existing KB doc. Increments empirical_runs, success_count, failure_count.
-              Surfaces whether documented procedures actually work in production.
-              [mentor_correct] New RAG function: applies a human-authored correction to
-              a KB doc. Re-embeds corrected content, raises quality_score (never lowers),
-              increments refinement_count. Used when user identifies an error in the KB.
-              Both functions were referenced in prompt v0.5.9 TOOLS section but missing
-              from tool v1.5.11. Gap identified during 2026-06-02 tracking restructure.
-    v1.5.11: fetch_url — HTML-stripped full-page fetch for SEARCH-THEN-FETCH protocol.
-              monitor_download — Prometheus-backed download progress monitor.
-              (Note: both were added without changelog entries — reconstructed 2026-06-02.)
-    v1.4.1: Added explicit routing rules to read_file docstring (tail vs read_file).
-    v1.4.2: Fixed sudo check from startswith → 'in' to catch sudo embedded in pipelines
-            (e.g. "ls /home | sudo tee file.txt" was previously not blocked).
-    v1.4.3: Rewrote write_file docstring to enforce:
-              - full file read required before overwrite mode
-              - append mode required for single-line additions
-              - confirmation required for ALL writes, including new file creation
-            Root cause: M2 eval revealed model used tail (partial read) then overwrote
-            full file, causing data loss. Filter also tightened (see lse-routing-filter).
-    v1.5.0: Promoted two prompt-level rules into docstrings (higher compliance weight):
-              - execute_command: added COMBINE RULE — batch independent commands with &&
-                or semicolons. Root cause: S1 eval showed model making two separate calls
-                for uname -r and nproc despite OUTPUT RULES in the system prompt.
-              - search_web: strengthened announcement protocol to a numbered REQUIRED
-                SEQUENCE with explicit "protocol violation" language. Root cause: W2 eval
-                showed model skipping the announce step and producing verbose synthesis.
-            Fixed SEARXNG_URL default from port 8888 → 8088 (matches actual SearxNG port).
-    v1.5.1: Two docstring fixes from eval run 2 regressions:
-              - read_file: added PRIVILEGED PATH note — if blocked due to /root/ or
-                other privileged location, explicitly offer sudo_delegation_block with
-                sudo cat <path>. Root cause: S3 showed model reasoning correctly in
-                thinking block but not surfacing the delegation offer in output
-                (--reasoning-budget 0 suppresses thinking).
-              - sudo_delegation_block: strengthened stop instruction — "output nothing
-                further after this block." Root cause: P2 showed model continuing with
-                post-execution instructions after emitting the delegation block.
-    v1.5.4: get_context_status field-name fix + sudo_delegation_block READ-FIRST RULE.
-              [get_context_status] Root cause: llama-server build >=9307 exposes
-              n_prompt_tokens in /slots, not n_past. Always returned 0%.
-              Fix: read n_prompt_tokens, n_prompt_tokens_cache, n_prompt_tokens_processed;
-              n_decoded/n_remain/n_predict via next_token[0] and params.
-              Added truncation warning when n_decoded >= n_predict and n_remain == 0.
-              [sudo_delegation_block] Added READ-FIRST RULE: before delegating a
-              privileged file write, read the target file first (read_file or
-              execute_command cat). Root cause: P2 eval showed model issuing
-              delegation block for /etc/sysctl.conf without reading it first,
-              losing one point. Skipping the read when file is readable is now
-              explicitly a protocol violation.
-    v1.5.5: sudo_delegation_block STOP PROTOCOL — added RETURN VALUE SEMANTICS to
-              break a within-turn retry loop (29 calls observed in production).
-              Root cause: model received the tool return value (the ⚠️ block string),
-              interpreted it as "not the terminal output I requested", and retried
-              the same call repeatedly. The STOP PROTOCOL told the model what to
-              WRITE after calling the function but never explained that the return
-              value IS the emitted block — the command has not run yet, stop all
-              tool calls, yield to user.
-              Fix: added RETURN VALUE SEMANTICS block immediately after the
-              STOP PROTOCOL. Also removed the conflicting system-prompt rule
-              "wrap output in bash code block" (see prompt v0.5.2) and the
-              SUDO DELEGATION FORMAT section (format mismatch with actual output).
-            read_file: added PRIVILEGED PATH BEHAVIOUR — no workarounds.
-              Root cause: model tried cat → python3 → base64 in sequence when
-              Docker volume paths returned permission denied. Added explicit
-              prohibition: "Do NOT try cat, python3, or base64 as workarounds."
-    v1.5.3: sudo_delegation_block STOP PROTOCOL update.
-              Previous: "output nothing further" — caused S3 partial fail because the
-              tool result card in OpenWebUI is collapsed by default, so the command was
-              invisible to the user (only "Paste output to continue." appeared in text).
-              Fix: model must write exactly one echo line after the block:
-              "Please run `<command>` in your terminal and paste the output here."
-              This surfaces the command in visible text without reopening P2's
-              continuation problem (which was multi-sentence post-execution guidance).
-    v1.5.2: Denylist hardening — cross-referenced against earlier LSE supervisor project.
-            Eight gaps identified and fixed:
-              - Added to _BLOCKED_COMMANDS: shred, blkdiscard, sgdisk, partprobe
-                (destructive disk tools missing from original list).
-              - Added to _BLOCKED_COMMANDS: userdel, groupdel (account deletion).
-              - Added to _BLOCKED_COMMANDS: rm -rf, rm -fr, rm -r -f, rm -f -r
-                (recursive forced remove was only partially gated via _WRITE_OPS;
-                rm -rf on user-owned paths like /home/sy5/ was not blocked at all).
-              - Added to _BLOCKED_COMMANDS: fork bomb pattern ":(){ :|".
-              - Added to _BLOCKED_COMMANDS: "> /dev/sd", "> /dev/nvme", "of=/dev/"
-                (shell redirection into block devices; "dd of=/dev/sdb" slipped through
-                the "dd if=" substring check).
-              - Added /mnt/ to _PRIVILEGED_WRITE_PATHS: protects the Windows filesystem
-                (/mnt/c, /mnt/d, etc.) from write/delete ops via execute_command.
-              - Added "chmod -r " and "chown -r " to _WRITE_OPS: blocks recursive
-                permission changes targeting privileged paths (chmod -R on user paths
-                remains allowed).
-              - fetch_url SSRF gate: not applicable — no fetch_url function exists yet.
-                Deferred; gate must be added if fetch_url is ever introduced.
-    v1.5.9: RAG layer — Elasticsearch + nomic-embed-text knowledge base.
-              Four new tool functions: search_kb, index_to_kb, record_error, check_error_kb.
-              New valves: ES_URL, OLLAMA_URL, EMBED_MODEL.
-              KB-FIRST RULE added to search_web: always query search_kb before SearxNG.
-              index_to_kb deduplicates (cosine > 0.92 → refine, not duplicate).
-              Error KB: record_error logs mistakes + resolution; check_error_kb prevents recurrence.
-              Infrastructure: elasticsearch:8.17.0 on docker_searxng_net, Ollama nomic-embed-text
-              CPU-only on 127.0.0.1:11434. 12 docs / 32 chunks seeded at quality 0.3–0.6.
-    v1.5.8: compact_context — true in-place context compaction tool.
-              Truncates OpenWebUI chat message history via the OpenWebUI REST API,
-              prepends a summary message to preserve session state, then erases the
-              llama.cpp KV cache slot so the model starts fresh with the compacted
-              history. Requires OWUI_API_KEY and OWUI_BASE_URL valves.
-              New valves: OWUI_API_KEY, OWUI_BASE_URL.
-    v1.5.7: execute_command DESTRUCTIVE OPERATION PROTOCOL — confirmation gate
-              for rm and other irreversible commands.
-              Root cause: Run 5 eval showed P1 and P3 confirmation protocol
-              failures. P1 (write_file) has an explicit CONFIRMATION PROTOCOL
-              in its docstring and the model follows it (M2 scored 2/3 with
-              confirmation present). P3 (execute_command rm) has no equivalent
-              gate — the model went straight to rm without warning or asking yes/no.
-              Fix: added DESTRUCTIVE OPERATION PROTOCOL to execute_command docstring,
-              mirroring the write_file pattern. Required sequence before any rm,
-              truncate, or overwrite: warn → name target → ask yes/no → wait for
-              explicit yes. Also applies to > redirects that would overwrite files.
-    v1.5.6: Three fixes for Run 5 eval preconditions.
-              [execute_command] Added POST-DELETE VERIFY RULE — after any rm command
-              that succeeds, always follow up with a stat or ls call confirming the
-              target no longer exists. Root cause: P3 eval showed model deleting
-              /tmp/lse/hello.txt then immediately reporting "Done" without a
-              verification call. Partial credit (1/3) — the verify step was skipped.
-              [search_web] Added NO YEAR INJECTION rule — do not append a year to
-              queries. Root cause: W2 eval showed model searching "llama.cpp latest
-              stable release version 2025" despite system date being 2026. The model
-              used its training-data estimate of the year rather than the system date,
-              producing stale results and making 4 calls instead of 1.
-              [get_github_release] New function — read-only GitHub API call that
-              returns the latest release tag, name, and date for any public repo.
-              Directly solves W2-class lookups (llama.cpp, open-webui version checks)
-              without SearxNG and without date-injection risk.
+  Full changelog: see CHANGELOG.md at repo root.
+  Recent highlights:
+    v0.4.9 — sudo grant fail-closed (exact sudo only, no chained shell)
+    v0.4.8 — planner sync revert (async split reverted, one-call interface restored)
+    v0.4.7 — planner docstring reordered above MCP 1024-char cut
+    v0.4.5 — planner timeout fix (120→240s, Ollama fallback removed)
+    v0.4.3 — docstring optimizer pass (SCRIBE-5)
+    v0.4.2 — origin tags (web never mints ground_truth)
+    v0.4.1 — TrustPolicy + KB surface extracted to goethe_kb.py
 """
-
 from pydantic import BaseModel, Field
 import subprocess
 import os
@@ -1278,6 +303,16 @@ class Tools(KBMixin):
             "undocumented-format caveat as PLANNER_CODEX_AUTH_PATHS — on "
             "macOS this is normally in Keychain instead of a file, so this "
             "path list is a Linux/WSL-oriented best effort, not a guarantee.",
+        )
+
+        PLANNER_CLI_TIMEOUT_S: int = Field(
+            default=900,
+            description="Subprocess timeout (seconds) for backend='claude' CLI "
+            "plan generation. Was hardcoded 180 (v0.4.5); Opus-class models on "
+            "large atomization prompts measured ~10 min end-to-end (2026-07-30), "
+            "so 180 guaranteed failure. The MCP transport still gives up near "
+            "60s - the plan lands in the ledger anyway and is recovered via "
+            "task_resume(); this valve only bounds server-side generation.",
         )
 
         SEARCH_BUDGET: int = Field(
@@ -1714,7 +749,19 @@ class Tools(KBMixin):
         record which backend actually produced a plan, for the ledger's
         'backend' column and the Console's status panel) so the two never
         drift apart."""
-        return (backend or self.valves.PLANNER_BACKEND or "local").strip().lower()
+        explicit = (backend or "").strip().lower()
+        if explicit:
+            return explicit
+        # A Console selection (goethe_planner_state) outranks the valve
+        # default; the valve stays the deployment default for when nothing
+        # has been chosen. Import is local and guarded so a missing state
+        # module degrades to the old behaviour rather than breaking planner().
+        try:
+            import goethe_planner_state as _pstate  # noqa: PLC0415
+
+            return _pstate.selected_backend(self.valves.PLANNER_BACKEND or "local")
+        except Exception:
+            return (self.valves.PLANNER_BACKEND or "local").strip().lower()
 
     def _call_planner_backend(
         self, task: str, context: str = "", no_think: bool = False, backend: str = ""
@@ -1911,84 +958,145 @@ class Tools(KBMixin):
         )
 
     def _call_claude_planner(self, task: str, context: str = "", no_think: bool = False) -> str:
-        """backend='claude' — the real Anthropic Messages API (NOT force-fit
-        into the OpenAI chat-completions shape; system prompt is a top-level
-        field, response content is a content-block list, not choices[0]).
+        """backend='claude' — runs the plan through the Claude Agent SDK via
+        the `claude -p` CLI (non-interactive mode), authenticated by whatever
+        session `claude login` established.
 
-        Order of attempts, same reasoning as _call_chatgpt_planner:
-          1. Claude Code OAuth session, if `claude login` has been run
-             (_read_claude_oauth_token), sent as 'Authorization: Bearer
-             <token>' — this is how Claude Code itself authenticates
-             against api.anthropic.com when subscription-logged-in rather
-             than using an API key.
-          2. PLANNER_ANTHROPIC_API_KEY, sent as 'x-api-key' (the standard,
-             fully-documented API-key auth path) — used only when no OAuth
-             session was found at all.
+        WHY THE CLI AND NOT A DIRECT CALL TO api.anthropic.com (v1.14.0)
+          The previous implementation read Claude Code's OAuth access token
+          out of ~/.claude/.credentials.json and replayed it as a Bearer
+          token against /v1/messages. That is not what the credential
+          authorises, and it is the pattern Anthropic enforced against
+          between January and April 2026:
+
+            Consumer Terms section 3(7) permits automated access "via an
+            Anthropic API Key or where we otherwise explicitly permit it".
+            Agent SDK and `claude -p` usage on a subscription IS that
+            explicit permission — see support.claude.com article 15036540,
+            which counts third-party app usage against subscription limits.
+            Hand-rolled token replay is not: Claude Code's legal-and-
+            compliance page states OAuth is "intended exclusively for ...
+            ordinary use of Claude Code and other native Anthropic
+            applications".
+
+          Going through the CLI reaches the same subscription-funded
+          planning the OAuth path was after, through the supported door,
+          and stops depending on an undocumented credential-file format
+          that has already changed once.
+
+          _read_claude_oauth_token() is retained above for reference but is
+          deliberately no longer called by anything. Do not re-wire it.
+
+        CREDENTIAL PRECEDENCE
+          1. Whatever `claude login` established — the subscription path,
+             and the default. Nothing needs configuring here.
+          2. PLANNER_ANTHROPIC_API_KEY, if set, is exported to the child as
+             ANTHROPIC_API_KEY, switching this same code path to billed
+             pay-as-you-go. It WINS when set — treated as the operator's
+             deliberate choice, not a fallback, because someone who sets an
+             API key means it.
+
+        The binary is `claude` on PATH; GOETHE_PLANNER_CLAUDE_CLI overrides,
+        same GOETHE_<FIELD> convention goethe_mcp.py uses for valves.
         """
-        import json as _json  # noqa: PLC0415
-        import urllib.error as _uerr  # noqa: PLC0415
-        import urllib.request as _ureq  # noqa: PLC0415
+        import shutil as _shutil  # noqa: PLC0415
+        import subprocess as _sp  # noqa: PLC0415
 
-        def _messages_call(extra_headers: dict) -> str:
-            user_content = task.strip()
-            if context:
-                user_content = f"CONTEXT:\n{context.strip()}\n\nTASK:\n{user_content}"
-            if no_think:
-                user_content += " (respond directly — no extended thinking needed)"
-            payload = {
-                "model": self.valves.PLANNER_ANTHROPIC_MODEL,
-                "max_tokens": 8192,
-                "system": self._PLANNER_CONTRACT,
-                "messages": [{"role": "user", "content": user_content}],
-            }
-            headers = {
-                "Content-Type": "application/json",
-                "anthropic-version": "2023-06-01",
-                **extra_headers,
-            }
-            req = _ureq.Request(
-                "https://api.anthropic.com/v1/messages",
-                data=_json.dumps(payload).encode(),
-                headers=headers,
-                method="POST",
-            )
-            try:
-                with _ureq.urlopen(req, timeout=120) as resp:
-                    data = _json.loads(resp.read().decode())
-                    parts = data.get("content") or []
-                    text = "".join(
-                        p.get("text", "") for p in parts if p.get("type") == "text"
-                    )
-                    return text or "ERROR: empty content in Anthropic response"
-            except _uerr.HTTPError as exc:
-                body = exc.read().decode(errors="replace")[:200]
-                return f"ERROR: HTTP {exc.code} — {body}"
-            except Exception as exc:
-                return f"ERROR: {exc}"
-
-        oauth_tok = self._read_claude_oauth_token()
-        if oauth_tok:
-            self._log("PLANNER-BACKEND: claude — using Claude Code OAuth session")
-            result = _messages_call({"Authorization": f"Bearer {oauth_tok}"})
-            if not result.startswith("ERROR:"):
-                return result
+        cli = os.environ.get("GOETHE_PLANNER_CLAUDE_CLI", "").strip() or "claude"
+        resolved = _shutil.which(cli)
+        if not resolved:
             return (
-                result + " — a Claude Code OAuth session was found but was "
-                "rejected. Set PLANNER_ANTHROPIC_API_KEY to a standard "
-                "Anthropic API key, or run `claude login` again if the "
-                "session expired."
+                f"ERROR: backend='claude' needs the Claude Code CLI ({cli!r}) "
+                "on PATH and it was not found. Install it with "
+                "`npm install -g @anthropic-ai/claude-code`, then run "
+                "`claude login` once to authenticate against your "
+                "subscription. Set GOETHE_PLANNER_CLAUDE_CLI if it lives "
+                "somewhere off PATH."
             )
-        api_key = self.valves.PLANNER_ANTHROPIC_API_KEY or ""
-        if not api_key:
-            return (
-                "ERROR: backend='claude' found no Claude Code OAuth session "
-                f"(checked PLANNER_CLAUDE_AUTH_PATHS={self.valves.PLANNER_CLAUDE_AUTH_PATHS!r}) "
-                "and PLANNER_ANTHROPIC_API_KEY is not set. Run `claude login`, "
-                "or set PLANNER_ANTHROPIC_API_KEY to an Anthropic API key."
-            )
-        self._log("PLANNER-BACKEND: claude — using PLANNER_ANTHROPIC_API_KEY")
-        return _messages_call({"x-api-key": api_key})
 
+        user_content = task.strip()
+        if context:
+            user_content = f"CONTEXT:\n{context.strip()}\n\nTASK:\n{user_content}"
+        prompt = f"{self._PLANNER_CONTRACT}\n\n{user_content}"
+        if no_think:
+            prompt += "\n\n(Respond directly — no extended thinking needed.)"
+
+        cmd = [
+            resolved, "-p",
+            "--output-format", "text",
+            "--model", self.valves.PLANNER_ANTHROPIC_MODEL,
+        ]
+
+        env = dict(os.environ)
+        # ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN redirect the CLI at a
+        # custom LLM gateway instead of Anthropic. LUCIFER's ~/.bashrc
+        # exports exactly that (http://localhost:8082, found 2026-07-29),
+        # and while the gateway process does not source .bashrc today, that
+        # is an accident of how it is launched, not a guarantee. If those
+        # ever reached this process the planner would answer from somewhere
+        # other than Anthropic — or hang when that endpoint is down — while
+        # the ledger recorded backend='claude'. A wrong plan attributed to
+        # the wrong model is worse than a failed one, so strip them in both
+        # credential modes.
+        for _redirect in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
+                          "ANTHROPIC_API_URL",
+                          "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"):
+            env.pop(_redirect, None)
+        api_key = (self.valves.PLANNER_ANTHROPIC_API_KEY or "").strip()
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+            self._log("PLANNER-BACKEND: claude — CLI, PLANNER_ANTHROPIC_API_KEY (billed)")
+        else:
+            # Do not let an unrelated ambient ANTHROPIC_API_KEY leak into the
+            # child and silently bill a key the operator did not choose here.
+            env.pop("ANTHROPIC_API_KEY", None)
+            self._log("PLANNER-BACKEND: claude — CLI on the `claude login` session")
+
+        try:
+            proc = _sp.run(
+                cmd, input=prompt, capture_output=True, text=True,
+                timeout=int(self.valves.PLANNER_CLI_TIMEOUT_S), env=env,
+            )
+        except _sp.TimeoutExpired:
+            return (f"ERROR: backend='claude' timed out after "
+                    f"{int(self.valves.PLANNER_CLI_TIMEOUT_S)}s")
+        except Exception as exc:
+            return f"ERROR: backend='claude' could not run {cli!r}: {exc}"
+
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip()[:300]
+            low = err.lower()
+            hint = ""
+            if any(k in low for k in ("login", "auth", "unauthor", "401", "403")):
+                hint = (" — run `claude login` to (re)authenticate, or set "
+                        "PLANNER_ANTHROPIC_API_KEY to use a Claude Platform "
+                        "API key instead")
+            return f"ERROR: claude CLI exited {proc.returncode}: {err}{hint}"
+
+        out = (proc.stdout or "").strip()
+        if not out:
+            return "ERROR: claude CLI returned empty output"
+
+        # The CLI exits 0 when unauthenticated and prints a notice to stdout
+        # rather than stderr — verified against 2.1.220 on 2026-07-29:
+        #     $ echo hi | claude -p ; echo $?
+        #     Not logged in · Please run /login
+        #     0
+        # Exit-code checking alone therefore hands that notice back to
+        # planner() as though it were a plan, and the ledger records a
+        # "successful" run. Detect it from the output instead. Length-capped
+        # so a genuine plan that happens to discuss /login cannot trip it.
+        if len(out) < 200:
+            low = out.lower()
+            if "not logged in" in low or "please run /login" in low:
+                return (
+                    "ERROR: backend='claude' — the Claude Code CLI is installed "
+                    "but not authenticated. Run `claude login` as the same user "
+                    "the gateway runs as, then retry. (The CLI exits 0 in this "
+                    "state, so this is detected from its output, not its exit "
+                    "code.)"
+                )
+        return out
     # ── Gemma planner helpers (v0.2.8) ───────────────────────────────────────
 
     def _planner_task_class(self, task: str) -> str:
@@ -5673,6 +4781,14 @@ tail -5 /tmp/goethe-node3090.log
                 "metrics": True,
             },
         },
+        # STALE — NOT MIGRATED (flagged 2026-07-29). LM Studio was
+        # decommissioned across the fleet in favour of llama-server; node3090
+        # was migrated in v1.5.23 but this entry never was. agent_port 8081 /
+        # agent_type "lmstudio" describe software that no longer runs. The
+        # node was asleep at time of writing, so the live configuration could
+        # not be read to correct it. Do NOT treat these values as current:
+        # run check_node_agent_drift("node5090") once the node is awake and
+        # set them from what is actually there.
         "node5090": {
             "mac": "a0:ad:9f:84:d5:bf",
             "hostname": "node5090.home.arpa",
@@ -5681,6 +4797,7 @@ tail -5 /tmp/goethe-node3090.log
             "agent_type": "lmstudio",
             "os": "windows",
             "ssh_user": "sy5",
+            "_stale": "unmigrated from LM Studio; verify before use (2026-07-29)",
         },
     }
 
@@ -5837,21 +4954,46 @@ tail -5 /tmp/goethe-node3090.log
         system_prompt: str = "",
     ) -> str:
         """
-        Send a prompt to the AI agent running on a GPU node (LM Studio OpenAI-compatible API).
-        Node must already be awake — call wake_node() first if needed.
+        Send a prompt to the model served by a GPU node's llama-server.
 
-        The remote agent runs LM Studio on port 8081 (OpenAI-compatible endpoint).
+        THE NODE HAS NO TOOLS. This posts to llama-server's OpenAI-compatible
+        /v1/chat/completions and returns text. The node cannot run commands,
+        read files, or change anything. If the reply proposes an action, YOU
+        must carry it out via execute_command / ssh_run after reviewing it.
+        A tool-call block in the response means the model hallucinated one —
+        nothing ran. This is enforced, not advisory: a no-tools system prompt
+        is injected on every call and tool-call output is flagged on return.
+
+        Endpoint comes from _NODE_REGISTRY[node]["agent_port"], NOT a fixed
+        port. Do not assume 8081 — that was LM Studio, decommissioned in
+        favour of llama-server across all nodes (registry migrated in
+        v1.5.23; this docstring corrected in v1.14.0, having outlived the
+        change by long enough to cause a live misdiagnosis).
+
+        NOT the node's Goethe gateway. node3090 also runs goethe_mcp on 9700,
+        which DOES have tools and which llama-ui calls directly from the
+        browser. This function deliberately does not touch it — see
+        docs/11-node-agent-delegation.md for why that separation is load-
+        bearing rather than an oversight.
+
+        Node must already be awake — call wake_node() first if needed.
         Response is returned directly — do not re-summarise unless needed.
 
         Args:
-            node:          "node3090" or "node5090"
-            prompt:        User message to send to the remote agent.
-            model:         Model name override (uses LM Studio default if empty).
+            node:          A key of _NODE_REGISTRY (currently "node3090" or
+                           "node5090"). Note node4090 is an alias for LUCIFER
+                           itself, is not a remote node, and is not routable
+                           here.
+            prompt:        User message to send to the node's model.
+            model:         Model name override. Empty uses whatever model
+                           llama-server was started with.
             max_tokens:    Max tokens for the response (default 2000).
-            system_prompt: Optional system prompt to prepend.
+            system_prompt: Optional system prompt. The no-tools instruction is
+                           appended to it, never replaced by it.
 
         Returns:
-            The remote agent's response text, or error string.
+            The model's response text, or an error string beginning "Cannot
+            reach" / "query_node_agent error:".
         """
         import requests as _req  # noqa: PLC0415
 
@@ -5901,24 +5043,196 @@ tail -5 /tmp/goethe-node3090.log
         except Exception as exc:
             return f"query_node_agent error: {exc}"
 
-    def start_node_agent(self, node: str) -> str:
-        """
-        Start the llama-cpp inference server on a GPU node using its registered agent_profile.
+    # ── Canonical-vs-live agent profile drift (v1.14.0) ──────────────────────
+    # _NODE_REGISTRY[node]["agent_profile"] is the CANONICAL description of how
+    # a node's llama-server should run. Nothing previously checked it against
+    # reality, so the two drifted silently: on 2026-07-29 node3090's canonical
+    # profile said ctx 96000 / 129 layers / 7 threads / budget 3072 while the
+    # live server ran 131072 / 99 / 16 / 8192. start_node_agent() would have
+    # "restarted" the node into a materially different configuration and
+    # reported success.
 
-        Launches via SSH with nohup so the server persists after the SSH session ends.
-        Logs are written to /home/<ssh_user>/llama-server.log on the node.
-        Polls /health for up to 120s — returns once the server is ready to accept requests.
+    _PROFILE_FLAGS = {
+        "model": "--model",
+        "ctx_size": "--ctx-size",
+        "gpu_layers": "--n-gpu-layers",
+        "cache_type_k": "--cache-type-k",
+        "cache_type_v": "--cache-type-v",
+        "parallel": "--parallel",
+        "threads": "--threads",
+        "threads_batch": "--threads-batch",
+        "reasoning_budget": "--reasoning-budget",
+        "n_predict": "--n-predict",
+    }
+
+    def _parse_llama_cmdline(self, cmdline: str) -> dict:
+        """Parse a running llama-server command line into agent_profile keys.
+
+        Returns the profile-shaped dict plus '_unmodelled': flags the server
+        is running that agent_profile has no way to express. That second list
+        matters more than it looks — it is the set of settings a restart would
+        silently drop.
+        """
+        toks = cmdline.split()
+        flag_to_key = {v: k for k, v in self._PROFILE_FLAGS.items()}
+        out: dict = {}
+        unmodelled: list = []
+        i = 0
+        while i < len(toks):
+            t = toks[i]
+            if not t.startswith("--"):
+                i += 1
+                continue
+            nxt = toks[i + 1] if i + 1 < len(toks) else ""
+            has_val = bool(nxt) and not nxt.startswith("--")
+            if t in flag_to_key:
+                key = flag_to_key[t]
+                val = nxt if has_val else ""
+                if key != "model":
+                    try:
+                        val = int(val)
+                    except (TypeError, ValueError):
+                        pass
+                out[key] = val
+            elif t == "--flash-attn":
+                out["flash_attn"] = (nxt.lower() != "off") if has_val else True
+            elif t == "--jinja":
+                out["jinja"] = True
+            elif t == "--metrics":
+                out["metrics"] = True
+            elif t not in ("--host", "--port"):
+                unmodelled.append(t)
+            i += 2 if has_val else 1
+        out["_unmodelled"] = unmodelled
+        return out
+
+    def _live_node_profile(self, node: str):
+        """(profile_dict, error_str). Reads the running llama-server cmdline
+        over SSH. profile_dict is None when nothing is running."""
+        import subprocess as _sp  # noqa: PLC0415
+
+        reg = self._NODE_REGISTRY.get(node)
+        if not reg:
+            return None, f"Unknown node '{node}'"
+        try:
+            r = _sp.run(
+                ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+                 "-o", "BatchMode=yes", f"{reg['ssh_user']}@{reg['hostname']}",
+                 "pgrep -af 'llama[-]server' | head -1"],
+                capture_output=True, text=True, timeout=25,
+            )
+        except Exception as exc:
+            return None, f"SSH error: {exc}"
+        if r.returncode != 0 and not r.stdout.strip():
+            return None, ""
+        line = r.stdout.strip()
+        if not line:
+            return None, ""
+        parts = line.split(None, 1)
+        return (self._parse_llama_cmdline(parts[1]) if len(parts) > 1 else {}), ""
+
+    def check_node_agent_drift(self, node: str) -> str:
+        """
+        Compare a GPU node's CANONICAL agent_profile against the llama-server
+        actually running on it, and report every discrepancy.
+
+        Call this before start_node_agent() or stop_node_agent() on a node that
+        may already be serving, and whenever a node's behaviour does not match
+        what the registry claims it should be.
+
+        Reports three distinct kinds of drift, which need different responses:
+          CHANGED    — canonical and live disagree on a value. Decide which is
+                       right, then either fix the registry or restart the node.
+          MISSING    — canonical sets something the live server is not running.
+          UNMODELLED — the live server runs flags agent_profile cannot express,
+                       so a restart WOULD SILENTLY DROP THEM. This is the one
+                       that loses work.
+
+        Read-only: SSH plus pgrep, no state change. Safe to call freely.
+
+        Args:
+            node: A key of _NODE_REGISTRY ("node3090" / "node5090").
+
+        Returns:
+            A drift report, or "no drift" when canonical and live agree.
+        """
+        reg = self._NODE_REGISTRY.get(node)
+        if not reg:
+            return f"Unknown node '{node}'. Known: {list(self._NODE_REGISTRY.keys())}"
+        canon = reg.get("agent_profile")
+        if not canon:
+            return f"No agent_profile defined for '{node}' — nothing to compare."
+
+        live, err = self._live_node_profile(node)
+        if err:
+            return f"Could not read live profile for {node}: {err}"
+        if live is None:
+            return (f"{node}: no llama-server running — nothing to compare. "
+                    f"Canonical profile is the only description that exists.")
+
+        changed, missing = [], []
+        for key, want in canon.items():
+            if key not in live:
+                missing.append(f"  MISSING    {key}: canonical={want!r}, not set on live server")
+                continue
+            got = live[key]
+            if str(want) != str(got):
+                changed.append(f"  CHANGED    {key}: canonical={want!r} -> live={got!r}")
+
+        unmodelled = live.get("_unmodelled") or []
+        lines = [f"Agent profile drift for {node} (canonical _NODE_REGISTRY vs live server):"]
+        lines += changed or []
+        lines += missing or []
+        if unmodelled:
+            lines.append(
+                f"  UNMODELLED live flags agent_profile cannot express "
+                f"({len(unmodelled)}): {' '.join(unmodelled)}"
+            )
+            lines.append(
+                "             A start_node_agent() restart would DROP these."
+            )
+        if not changed and not missing and not unmodelled:
+            return f"{node}: no drift — canonical profile matches the live server."
+        lines.append(
+            "ACTION: decide which side is authoritative. If live is correct, "
+            "update _NODE_REGISTRY[\"" + node + "\"][\"agent_profile\"] to match "
+            "before any restart."
+        )
+        return "\n".join(lines)
+
+    def start_node_agent(self, node: str, force: bool = False) -> str:
+        """
+        Start the llama-cpp inference server on a GPU node using its CANONICAL
+        registered agent_profile.
+
+        REFUSES BY DEFAULT IF A SERVER IS ALREADY RUNNING. This is not
+        politeness. The previous version launched unconditionally: the second
+        process failed to bind the port, but the /health poll then answered
+        from the FIRST server and this function reported success. A restart
+        that silently did nothing looked identical to one that worked.
+
+        When a server is already up, this runs check_node_agent_drift() and
+        returns the report instead of launching. Read it before overriding —
+        drift means the live server is NOT what agent_profile describes, and
+        force=True will restart it into the canonical configuration, dropping
+        any live setting the profile cannot express.
+
+        Launches via SSH with nohup so the server persists after the SSH
+        session ends. Logs to /home/<ssh_user>/llama-server.log on the node.
+        Polls /health for up to 120s.
 
         Node must be awake — call wake_node() first if needed.
-        To stop the server later: call stop_node_agent(node).
+        To stop: stop_node_agent(node).
 
         SUDO EXEMPTION: server runs as lse-admin, no sudo required.
 
         Args:
-            node: "node3090" or "node5090"
+            node:  A key of _NODE_REGISTRY ("node3090" / "node5090").
+            force: Restart even if a server is already running. Requires the
+                   operator to have seen the drift report first.
 
         Returns:
-            Confirmation string with PID and endpoint, or error.
+            Confirmation with PID and endpoint, a drift report, or an error.
         """
         import subprocess as _sp  # noqa: PLC0415
         import time as _time  # noqa: PLC0415
@@ -5931,6 +5245,18 @@ tail -5 /tmp/goethe-node3090.log
         profile = reg.get("agent_profile")
         if not profile:
             return f"No agent_profile defined for '{node}'. Update _NODE_REGISTRY."
+
+        # Pre-flight: never relaunch over a running server. See the docstring
+        # for why the old unconditional launch reported false success.
+        _live, _err = self._live_node_profile(node)
+        if _live is not None and not force:
+            return (
+                f"{node} already has a llama-server running — NOT relaunching.\n\n"
+                + self.check_node_agent_drift(node)
+                + "\n\nIf you intend to restart it into the canonical profile, "
+                  "call stop_node_agent() first, or start_node_agent(node, "
+                  "force=True). Review the drift report above before doing so."
+            )
 
         hostname = reg["hostname"]
         user = reg["ssh_user"]
@@ -6346,6 +5672,132 @@ tail -5 /tmp/goethe-node3090.log
         return env, None
 
 
+    # Cap on auto-attached KB material. Generous on purpose: the failure this
+    # exists to prevent is under-supplying the planner, not over-supplying it.
+    _PLANNER_KB_CHAR_BUDGET = 24000
+    _PLANNER_KB_MAX_DOCS = 3
+
+    # Hard ceiling on the KB enrichment. planner() must never get slower or
+    # less reliable because an optional enrichment stalled: this was caught by
+    # test_planner_ledger.py going from 0.81s to an indefinite hang the moment
+    # a network call entered planner()'s path (2026-07-29).
+    _PLANNER_KB_TIMEOUT_S = 15
+
+    def _augment_context_with_kb(self, task: str, context: str = "") -> str:
+        """Time-bounded wrapper around _augment_context_with_kb_inner.
+
+        search_kb reaches Elasticsearch. When ES is down, slow, or absent (CI,
+        a fresh checkout, a stopped container) it can block far longer than a
+        planner call should tolerate. Enrichment is a nice-to-have; planning is
+        not. On timeout or any failure this returns the caller's context
+        unchanged, so the worst case is the old behaviour rather than a hang.
+        """
+        import concurrent.futures as _cf  # noqa: PLC0415
+
+        pool = _cf.ThreadPoolExecutor(max_workers=1)
+        try:
+            fut = pool.submit(self._augment_context_with_kb_inner, task, context)
+            return fut.result(timeout=self._PLANNER_KB_TIMEOUT_S)
+        except Exception as exc:
+            self._log(
+                f"PLANNER-KB: enrichment abandoned after "
+                f"{self._PLANNER_KB_TIMEOUT_S}s or error ({type(exc).__name__}); "
+                "planning on caller context only"
+            )
+            return context
+        finally:
+            # wait=False so a stuck ES read cannot hold the planner hostage.
+            pool.shutdown(wait=False)
+
+    def _augment_context_with_kb_inner(self, task: str, context: str = "") -> str:
+        """Append the task's top KB matches to the planner context, in full.
+
+        WHY THIS EXISTS (2026-07-29). planner(context=) relied on the caller to
+        decide what the planner was allowed to see — which meant the weaker
+        model curated input for the stronger one. Measured: the caller read a
+        7,300-char KB document in full, then passed a 450-char summary. The
+        resulting plan omitted a mkdir, an open-handle check, and a mandatory
+        post-reload systemctl restart, all of which were in the dropped text,
+        and every step's verify still passed because each verified against its
+        own flawed premise.
+
+        Summarising is now structurally impossible for KB material: whatever
+        the caller passes, the source documents are attached anyway.
+
+        Reads full document bodies via the `source:` path when a search hit
+        exposes one, because search_kb truncates. Never raises — degrades to
+        returning the caller's context unchanged, since a planner that fails
+        because its optional enrichment failed is worse than one planning on
+        less.
+        """
+        try:
+            hits = self.search_kb(task, max_results=self._PLANNER_KB_MAX_DOCS)
+        except Exception as exc:
+            self._log(f"PLANNER-KB: search failed, continuing without: {exc}")
+            return context
+        if not isinstance(hits, str) or not hits.strip():
+            return context
+
+        import os as _os  # noqa: PLC0415
+        import re as _re2  # noqa: PLC0415
+
+        chunks: list = []
+        used = 0
+        # Pinned ground truth (2026-07-30): always attach the stack map first
+        # so plans cannot cite decommissioned components (the OpenWebUI
+        # reference that stalled plan e264ed19). Missing/unreadable file
+        # degrades silently to the previous behaviour.
+        _PINNED = "/opt/local-se/kb/STACK-MAP.md"
+        try:
+            if _os.path.isfile(_PINNED):
+                with open(_PINNED, encoding="utf-8", errors="replace") as fh:
+                    _pin = fh.read()[: self._PLANNER_KB_CHAR_BUDGET // 4]
+                chunks.append(
+                    f"--- KB SOURCE (PINNED GROUND TRUTH): {_PINNED} ---\n{_pin}"
+                )
+                used += len(_pin)
+        except OSError:
+            pass
+        _pinned_n = len(chunks)
+        # Prefer full file bodies over truncated search snippets.
+        for path in _re2.findall(r"source:\s*(\S+\.md)", hits):
+            if used >= self._PLANNER_KB_CHAR_BUDGET:
+                break
+            for cand in (path, _os.path.join("/opt/local-se", path),
+                         _os.path.join("/opt/local-se/kb",
+                                       _os.path.basename(path))):
+                try:
+                    if not _os.path.isfile(cand):
+                        continue
+                    with open(cand, encoding="utf-8", errors="replace") as fh:
+                        body = fh.read()
+                except OSError:
+                    continue
+                room = self._PLANNER_KB_CHAR_BUDGET - used
+                if len(body) > room:
+                    body = body[:room] + "\n[...truncated at planner KB budget]"
+                chunks.append(f"--- KB SOURCE: {cand} ---\n{body}")
+                used += len(body)
+                break
+
+        if len(chunks) == _pinned_n:
+            # No readable semantic source; fall back to the search output itself,
+            # truncated snippets and all — still better than nothing.
+            chunks.append(f"--- KB SEARCH RESULTS ---\n{hits[:self._PLANNER_KB_CHAR_BUDGET]}")
+
+        self._log(
+            f"PLANNER-KB: attached {len(chunks)} source(s), {used} chars "
+            f"(caller context was {len(context)} chars)"
+        )
+        header = (
+            "=== AUTO-ATTACHED KB MATERIAL (verbatim, appended by planner()) ===\n"
+            "Treat this as authoritative operational detail for this system. "
+            "It was NOT summarised. If it contradicts the caller context below, "
+            "say so explicitly in the plan rather than silently choosing.\n"
+        )
+        joined = header + "\n\n".join(chunks)
+        return f"{context}\n\n{joined}" if context.strip() else joined
+
     def planner(
         self,
         task: str,
@@ -6379,12 +5831,22 @@ tail -5 /tmp/goethe-node3090.log
           Information gathering does NOT close the planning window. search_kb,
           skill_search, and read-only probes (dig, GET/status endpoints, health
           checks, config reads) BEFORE planner are correct — KB-FIRST still
-          applies — and their findings belong in context=. The window closes
+          applies — and their findings belong in context= VERBATIM, not
+          summarised (see Args: context). The window closes
           when you start CHANGING state or producing deliverables.
 
         GOOD: search_kb ×2 → pfsense_graphql reads → planner("audit DNS infra",
-              context="<topology + findings from the reads>")
-              ← reads first, findings handed to the planner. Correct order.
+              context="<the raw topology table and the full read output>")
+              ← reads first, RAW material handed over. Correct order.
+        BAD:  read a 7KB KB doc → planner(task, context="KB doc abc123 says
+              use SMB with the mandatory options")
+              ← summarised. The planner cannot see the options you did not
+                paste, and will omit them while sounding confident.
+
+        AUTO-KB: planner() runs its own search_kb on the task and appends the
+        top matches to whatever context you pass. You do not need to paste KB
+        content you already found — but pasting it again is harmless, and
+        pasting live probe output is still essential since the KB has none.
         GOOD: planner("Find the verbatim Goethe quote on architecture as
               frozen music and verify it against a primary source")
               ← research-shaped, spiral risk: plan first
@@ -6432,8 +5894,31 @@ tail -5 /tmp/goethe-node3090.log
         Args:
             task:    The user's task, verbatim or lightly cleaned — do not
                      pre-digest it; the planner needs the original shape.
-            context: Optional constraints, prior findings, or KB pointers for
-                     the planner. Passed through as context.
+            context: Source material for the planner — VERBATIM, never a
+                     summary. Paste the actual text you read: KB document
+                     bodies, command output, config file contents. Do NOT
+                     compress it into a précis of what you found.
+
+                     THIS IS THE #1 CAUSE OF BAD PLANS (measured 2026-07-29):
+                     the LSE read a 7,300-char KB doc in full, then passed a
+                     450-char summary. The planner produced a plan that was
+                     internally consistent and operationally wrong, because
+                     every omitted detail — mkdir -p of a parent directory, a
+                     pre-unmount open-handle check, a MANDATORY post-reload
+                     systemctl restart — lived in the 6,850 characters that
+                     were dropped. The planner cannot ask for what it was
+                     never shown.
+
+                     Length is not a concern. The hosted backends take tens of
+                     thousands of tokens. Passing a whole document costs
+                     nothing and removes an entire failure class. When in
+                     doubt, paste more.
+
+                     planner() ALSO auto-attaches the top KB matches for the
+                     task (see AUTO-KB below), so anything already in the KB
+                     arrives even if you forget. Your context= should carry
+                     what the KB does NOT have: live probe output, current
+                     state, user constraints.
             mode:    "new" (default) or "revise". Revise loads the ledger for
                      task_id, hands the planner the completed/failed step
                      summary, and replaces only the remaining steps.
@@ -6474,6 +5959,7 @@ tail -5 /tmp/goethe-node3090.log
         # ── v0.3.3: two-attempt envelope loop — truncated/malformed envelopes
         # (long thinking + tight completion budget) were the dominant
         # "PLANNER UNAVAILABLE" cause; one corrective retry recovers most.
+        context = self._augment_context_with_kb(task, context)
         env, error = self._request_plan_envelope(task, context, backend=effective_backend)
         if error:
             return error
