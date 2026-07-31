@@ -21,7 +21,7 @@
   .chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:3px 12px;font-size:12px;color:var(--dim)}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
-  .dot.ok{background:var(--good)} .dot.bad{background:var(--bad)}
+  .dot.ok{background:var(--good)} .dot.bad{background:var(--bad)} .dot.warn{background:var(--warn)}
   .spacer{flex:1}
   .tok{display:flex;gap:6px;align-items:center}
   .tok input{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 10px;font-family:var(--mono);font-size:12px;width:220px}
@@ -276,7 +276,8 @@
         <div class="traum-box"><h3>A/B learning-lift evidence</h3><div id="traum-eval" class="traum-meta">loading…</div></div>
       </div>
     </div>
-    <div style="margin-top:14px;display:flex;align-items:center;gap:12px">
+    <div class="chip" id="traum-health-chip" style="margin-top:14px"><span class="dot" id="traum-health-dot"></span><span id="traum-health-text">loading…</span></div>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:12px">
       <div style="font-size:11px;color:var(--dim)">CANONICAL RUNS / PASS ATTEMPTS</div>
       <label style="font-size:11px;color:var(--faint)"><input id="traum-archived" type="checkbox" onchange="loadTraumRuns()"> show archived</label>
     </div>
@@ -702,6 +703,31 @@ function setTraumMsg(message, bad){
   el.textContent = message || "";
   el.className = "traum-msg " + (bad ? "bad" : message ? "good" : "");
 }
+function renderTraumHealth(health){
+  // R3.2 (docs/TRAUM-R1-R3-PLAN.md): one line, front and centre, so the
+  // operator can tell "quiet success" from "dead for days" without
+  // reading the run table. health comes from TraumController._health_verdict()
+  // (R3.1) -- already excludes source=legacy-import, already computed the
+  // verdict server-side; this just renders it.
+  const dot = $("traum-health-dot"), text = $("traum-health-text");
+  if(!health){
+    dot.className = "dot";
+    text.textContent = "Learning loop: health unavailable";
+    return;
+  }
+  const dotClass = health.verdict === "ok" ? "ok" : health.verdict === "warn" ? "warn" : "bad";
+  dot.className = "dot " + dotClass;
+  const n = health.consecutive_unsuccessful_runs || 0;
+  let label;
+  if(health.verdict === "ok" && health.hours_since_success != null){
+    label = "Learning loop: last success " + health.hours_since_success + "h ago";
+  } else if(health.last_success_at == null){
+    label = "Learning loop: NEVER completed a cycle — " + n + " run" + (n===1?"":"s") + " recorded, none succeeded";
+  } else {
+    label = "Learning loop: " + health.reason;
+  }
+  text.textContent = label;
+}
 function traumProfileChanged(){
   $("traum-pass").disabled = $("traum-profile").value !== "single-pass";
 }
@@ -718,6 +744,7 @@ async function loadTraumStatus(){
       bn(d.reconcile_count||0,"reconcile",d.reconcile_count?"bad":"good")+
       bn(pc.APPLIED||0,"applied","good")+
       bn((rc.FAILED||0)+(rc.DEGRADED||0),"failed / degraded",(rc.FAILED||rc.DEGRADED)?"bad":"good");
+    renderTraumHealth(d.health);
     const t = d.timer || {};
     $("traum-timer").textContent = t.available
       ? "state: "+(t.active_state||"unknown")+" / "+(t.sub_state||"unknown")+
@@ -764,6 +791,7 @@ async function loadTraumStatus(){
     showErr($("traum-nums"),e);
     $("traum-timer").textContent = "unavailable";
     $("traum-eval").textContent = "unavailable";
+    renderTraumHealth(null);
   }
 }
 

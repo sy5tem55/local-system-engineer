@@ -3,11 +3,12 @@
 import importlib.util
 import io
 import os
+import sqlite3
 import sys
 import threading
 import time
 import types
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -815,3 +816,108 @@ def test_legacy_failure_reconciliation_is_stable_acknowledgeable_and_archivable(
     archived = ctl.list_runs(include_archived=True)["runs"]
     assert next(row for row in archived if row["run_id"] == legacy["run_id"])["archived"]
     assert (day / "crashes.jsonl").exists()  # archive never deletes evidence
+
+
+# --- health verdict (R3.1/R3.3, docs/TRAUM-R1-R3-PLAN.md) --------------------
+
+def _seed_run(ctl, *, source, state, hours_ago, run_id=None):
+    """Create a run through the real state API, then backdate created_at/
+    finished_at directly in sqlite. create_run/finalize_run always stamp
+    utc_now(); backdating is the only way to control a run's age for a
+    health-verdict test without waiting real hours."""
+    run = ctl.state.create_run(
+        "single-pass", ["patterns"], source=source, run_id=run_id
+    )
+    if state != "QUEUED":
+        ctl.state.finalize_run(run["run_id"], state=state)
+    ts = (
+        (datetime.now(timezone.utc) - timedelta(hours=hours_ago))
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+    finished = ts if state not in ("QUEUED", "RUNNING") else None
+    with sqlite3.connect(ctl.state.db_path) as conn:
+        conn.execute(
+            "UPDATE runs SET created_at=?, finished_at=? WHERE run_id=?",
+            (ts, finished, run["run_id"]),
+        )
+        conn.commit()
+    return run["run_id"]
+
+
+class TestHealthVerdict:
+    """R3.3. Per the plan's own instruction: prove the guard fails before
+    trusting it to pass. The legacy-exclusion case is asserted first and
+    explicitly, because if it regresses, the verdict is permanently green
+    and the health panel becomes worse than no panel at all -- it would
+    actively hide a dead loop instead of just not mentioning it.
+    """
+
+    def test_only_legacy_successes_is_critical_never_ok(self, tmp_path):
+        # All 9 real legacy-backfill runs in production are exactly this
+        # shape: SUCCEEDED, source=legacy-import. Even a legacy success
+        # from moments ago must not count -- this is the actual defect
+        # docs/TRAUM-ANALYSIS-2026-07-31.md identified: without this
+        # exclusion the loop would report healthy forever regardless of
+        # whether a single real cycle has ever run.
+        ctl, _ = _controller(tmp_path)
+        _seed_run(ctl, source="legacy-import", state="SUCCEEDED", hours_ago=0.01)
+        _seed_run(ctl, source="legacy-import", state="SUCCEEDED", hours_ago=48)
+        health = ctl.status()["health"]
+        assert health["verdict"] == "critical"
+        assert health["last_success_at"] is None
+        assert "never" in health["reason"]
+
+    def test_no_runs_at_all_is_critical(self, tmp_path):
+        ctl, _ = _controller(tmp_path)
+        health = ctl.status()["health"]
+        assert health["verdict"] == "critical"
+        assert health["last_success_at"] is None
+        assert health["consecutive_unsuccessful_runs"] == 0
+
+    def test_recent_real_success_is_ok(self, tmp_path):
+        ctl, _ = _controller(tmp_path)
+        _seed_run(ctl, source="legacy-import", state="SUCCEEDED", hours_ago=100)
+        _seed_run(ctl, source="scheduled", state="SUCCEEDED", hours_ago=2)
+        health = ctl.status()["health"]
+        assert health["verdict"] == "ok"
+        assert health["last_success_at"] is not None
+        assert health["consecutive_unsuccessful_runs"] == 0
+        assert health["hours_since_success"] == pytest.approx(2.0, abs=0.05)
+
+    def test_three_consecutive_unsuccessful_since_success_is_critical(self, tmp_path):
+        ctl, _ = _controller(tmp_path)
+        _seed_run(ctl, source="scheduled", state="SUCCEEDED", hours_ago=10)
+        _seed_run(ctl, source="scheduled", state="BLOCKED", hours_ago=7)
+        _seed_run(ctl, source="scheduled", state="FAILED", hours_ago=5)
+        _seed_run(ctl, source="scheduled", state="BLOCKED", hours_ago=3)
+        health = ctl.status()["health"]
+        assert health["verdict"] == "critical"
+        assert health["consecutive_unsuccessful_runs"] == 3
+        assert "3" in health["reason"]
+
+    def test_success_between_24h_and_48h_is_warn_not_critical(self, tmp_path):
+        ctl, _ = _controller(tmp_path)
+        _seed_run(ctl, source="scheduled", state="SUCCEEDED", hours_ago=30)
+        health = ctl.status()["health"]
+        assert health["verdict"] == "warn"
+
+    def test_success_over_48h_is_critical(self, tmp_path):
+        ctl, _ = _controller(tmp_path)
+        _seed_run(ctl, source="scheduled", state="SUCCEEDED", hours_ago=60)
+        health = ctl.status()["health"]
+        assert health["verdict"] == "critical"
+        assert "48h" in health["reason"]
+
+    def test_in_progress_run_does_not_count_toward_consecutive_failures(self, tmp_path):
+        # A QUEUED/RUNNING run is unresolved, not a failure -- it must be
+        # skipped by the streak count, not treated as a 3rd unsuccessful
+        # run that tips the verdict to critical prematurely.
+        ctl, _ = _controller(tmp_path)
+        _seed_run(ctl, source="scheduled", state="SUCCEEDED", hours_ago=10)
+        _seed_run(ctl, source="scheduled", state="BLOCKED", hours_ago=7)
+        _seed_run(ctl, source="scheduled", state="QUEUED", hours_ago=0.01)
+        health = ctl.status()["health"]
+        assert health["consecutive_unsuccessful_runs"] == 1
+        assert health["verdict"] == "ok"
+
