@@ -2,6 +2,16 @@
 > decommission (2026-07-17). Wherever this doc conflicts with `kb/STACK-MAP.md`,
 > **STACK-MAP.md wins.** Known-stale here: OpenWebUI :3000 (gone), Grafana :3001
 > (now :3002), `tools/openwebui-tool-vX.X.X.py` (now `goethe.py` via goethe_mcp.py/MCP).
+>
+> **ALSO STALE AS OF D7 (2026-07-31):** this document describes the tool surface as
+> one `Tools` class in `tools/goethe.py`. It is now split across six files —
+> `goethe.py` keeps the safety wedge (execute_command, write_file, read_file,
+> sudo_delegation_block and the `_validate_command_safety` / `_is_allowed_*` gate)
+> and inherits `KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin`
+> from `goethe_kb.py`, `goethe_netsec.py`, `goethe_node.py`, `goethe_planner.py`,
+> `goethe_web.py`, with shared constants in `goethe_constants.py`. The tool tables
+> below are still correct about *behaviour and signatures*; only the file a tool
+> lives in has changed. See `kb/STACK-MAP.md` for the authoritative tool→file map.
 
 # LSE Architecture — Technical Design Document
 > Version: 2026-06-07 (aligned with tool v1.5.27)
@@ -157,7 +167,7 @@ sudo, su, doas
 | `search_reddit` | `(query, subreddit="", max_results=5)` | Reddit via `site:reddit.com` operator. No OAuth. Routes through SearxNG/Google/Bing. |
 | `fetch_url` | `(url, max_chars=3000)` | Fetches and strips HTML from a URL. |
 | `get_github_release` | `(repo)` | Gets latest release tag from GitHub API. Preferred over search_web for version lookups. |
-| `search_rfc` | `(symptom, protocol="")` | Queries RFC authority KB for protocol-level diagnosis. |
+| ~~`search_rfc`~~ | — | **DECOMMISSIONED 2026-07-31.** Removed from goethe.py (149 lines) after an episode-corpus audit found 0 invocations in 6,967 tool calls since v1.5.18. The `lse-rfc-kb` Elasticsearch index (1,490 chunks) is left in place but dormant. Do not reference this tool in plans. |
 
 **Critical search_web rules**:
 1. **KB-FIRST**: always call `search_kb()` before `search_web()`. KB miss required to proceed.
