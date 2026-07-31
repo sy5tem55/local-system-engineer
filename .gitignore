@@ -29,10 +29,9 @@ nohup.out
 # lse/ is an EMBEDDED GIT REPO of its own (the lse product tree) — ignored
 # here wholesale; its content (incl. the goethe-dream unit templates) is
 # committed inside lse/.git, not this repo.
-# NOTE (2026-07-31, D1 audit): lse/goethe/ was removed — it was a stale fork of
-# tools/goethe.py (83.8% similar, no unique code). Filesystem backup exists at
-# /home/sy5/tda_d1_backups/lse_goethe_20260731_020702. tools/goethe.py is the
-# single source of truth for the Goethe Tools class.
+# NOTE (2026-07-31, D1 audit): lse/goethe/ was removed — stale fork of tools/goethe.py
+# (83.8% similar, no unique code). Backup at /home/sy5/tda_d1_backups/lse_goethe_20260731_020702.
+# tools/goethe.py is the single source of truth for the Goethe Tools class.
 lse/
 
 # Security: credential files — never commit (audit 2026-07)
@@ -52,3 +51,40 @@ token*.json
 
 # Backup directory (may contain sensitive snapshots)
 /opt/local-se/bkp/
+
+# Dream run artifacts (proposals, patterns, etc.)
+/opt/local-se/dreams/*.jsonl
+/opt/local-se/dreams/*.db
+.pytest_cache/
+tasks.db
+
+# Session handover/learnings — regenerated each session
+*session*.md
+Backups/
+hermes-skill/
+# Sanitation: never track these (removed from repo, kept on disk)
+*.docx
+searxng_settings.yaml
+ha-agent.py
+lse_agent.py
+pfsense-agent.py
+pfsense-agent.conf.example
+backups/
+# eval/ is ignored as a class (bulky run logs, scratch results), but the
+# TRAUM A/B artifacts the repo's own docs cite must be tracked (Thread 4
+# close decision, 2026-07-13): the frozen gold set (DATA-3), the harness,
+# the pre-registered design, its verdict report, and the v3.5 suite text.
+eval/*
+!eval/traum-ab-design.md
+!eval/traum-ab-design-v2.md
+!eval/eval-report-traum-1.md
+!eval/v35_harness.py
+!eval/retrieval-gold-v1.jsonl
+!eval/test-suite-v3.5.md
+!eval/traum-eval-spec-v2.schema.json
+!eval/traum-isolation-attestation-v1.schema.json
+!eval/traum-eval-trial-v2.schema.json
+!eval/traum-eval-status-v2.schema.json
+!eval/traum-eval-registry-v2.schema.json
+!eval/traum-continuous-evidence-v1.schema.json
+!eval/traum-evidence-summary-v1.schema.json
