@@ -134,6 +134,10 @@
   .abtn.deny,.abtn.revoke,.abtn.delete{color:var(--bad);border-color:rgba(247,118,142,.45)}
   .perm-cleanup{display:none;align-items:center;justify-content:space-between;gap:12px;margin:-2px 0 12px;padding:8px 10px;border:1px solid rgba(247,118,142,.3);border-radius:8px;background:rgba(247,118,142,.06);color:var(--dim);font-size:11.5px}
   .perm-cleanup strong{color:var(--bad)}
+  .sync-row{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .sync-msg{font-size:11px;color:var(--dim)}
+  .sync-msg.ok{color:var(--good)} .sync-msg.bad{color:var(--bad)}
+  .sync-fine{margin-top:8px;font-size:10.5px;color:var(--dim);line-height:1.5}
   .note{display:none;margin-top:12px;font-size:11.5px;color:var(--warn);background:rgba(224,175,104,.08);border:1px solid rgba(224,175,104,.3);border-radius:8px;padding:8px 12px}
   .note code{font-family:var(--mono);color:var(--text)}
 
@@ -199,6 +203,20 @@
       <code>goethe-perm sync-sudoers</code> in a terminal to install valid
       grants. Unsafe legacy grants are marked <strong>not installable</strong>
       and ignored during sync; revoke and recreate them as exact commands.
+      <div class="sync-row">
+        <button class="abtn always" id="sync-btn" onclick="openSyncTerminal(this)"
+                title="Opens a terminal with the command pre-typed. It is NOT run for you — press Enter there, then authenticate to sudo.">
+          Open sync terminal
+        </button>
+        <button class="abtn" id="sync-copy" onclick="copySyncCmd(this)"
+                title="Copy the command to the clipboard">Copy command</button>
+        <span class="sync-msg" id="sync-msg"></span>
+      </div>
+      <div class="sync-fine">
+        The Console never writes <code>/etc/sudoers.d/goethe-grants</code>. The
+        button only opens a terminal with the command ready; you confirm it and
+        sudo still prompts for your password.
+      </div>
     </div>
   </div>
 
@@ -462,7 +480,14 @@ async function loadPerms(){
         }).join("")
       : '<tr><td class="empty">no active grants</td></tr>';
 
-    $("perms-sudo-note").style.display = sudoGrants ? "block" : "none";
+    // Show whenever sudo is in play OR a sudo request is pending approval.
+    // Also keep it visible for one refresh after the last sudo grant is
+    // revoked: the sudoers file still holds the old line until you sync, so
+    // hiding the sync button at exactly that moment strands you.
+    const sudoPending = pend.filter(r=>r.kind==="sudo").length;
+    if (sudoGrants || sudoPending) window._sawSudo = true;
+    $("perms-sudo-note").style.display =
+      (sudoGrants || sudoPending || window._sawSudo) ? "block" : "none";
   }catch(e){ showErr($("perms-pending"), e); }
 }
 
@@ -481,6 +506,45 @@ async function createGrant(ev){
     loadPerms();
   }catch(e){ set("bad", e.message); }
   return false;
+}
+
+const SYNC_CMD = "goethe-perm sync-sudoers";
+
+function syncMsg(cls, text){
+  const el = $("sync-msg");
+  el.className = "sync-msg " + (cls || "");
+  el.textContent = text || "";
+}
+
+async function copySyncCmd(btn){
+  try{
+    await navigator.clipboard.writeText(SYNC_CMD);
+    syncMsg("ok", "copied — paste it into a terminal");
+  }catch(e){
+    // clipboard API needs a secure context; fall back to a selectable prompt
+    window.prompt("Copy this command:", SYNC_CMD);
+    syncMsg("", "");
+  }
+}
+
+async function openSyncTerminal(btn){
+  btn.disabled = true;
+  syncMsg("", "opening terminal\u2026");
+  try{
+    const r = await apiPost("/api/ui/perms/sync-terminal", {});
+    if (r && r.ok){
+      syncMsg("ok", r.note || "terminal opened");
+    } else {
+      // Not an error the operator can fix by retrying — give them the command.
+      syncMsg("bad", (r && r.error) || "could not open a terminal");
+      await copySyncCmd(btn);
+    }
+  }catch(e){
+    syncMsg("bad", e.message + " — copying the command instead");
+    await copySyncCmd(btn);
+  }finally{
+    btn.disabled = false;
+  }
 }
 
 async function permAction(action, id, once, btn){
