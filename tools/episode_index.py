@@ -66,8 +66,14 @@ import sqlite3
 import sys
 from datetime import date, datetime
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 # 1.0.0 — initial release (TRAUM Thread 1, Prompt 1.4).
+# 1.1.0 — build_manifest() gains opt-in prune=False param (default off,
+#         existing callers unaffected) that removes manifest rows whose
+#         backing session file no longer exists. See
+#         docs/SPEC-manifest-prune-2026-08.md for the two hazards this
+#         guards against (dreamed_at reset on re-insert; a partial scan
+#         being mistaken for "everything else is orphaned").
 
 DAY_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SESSION_FILE_RE = re.compile(r"^(?P<session_id>.+)\.jsonl(?P<gz>\.gz)?$")
@@ -230,25 +236,125 @@ def upsert_session(conn: sqlite3.Connection, row: dict) -> None:
     )
 
 
+def _session_file_exists(episode_dir: str, session_id: str) -> bool:
+    """Check whether a backing file for session_id still exists anywhere
+    under episode_dir, as either .jsonl or .jsonl.gz, in any day dir.
+
+    Used by build_manifest's prune path for its per-row orphan check. This
+    is deliberately a direct filesystem existence check keyed on session_id
+    — not a lookup against whatever this scan happened to enumerate — so
+    that a file which exists but is empty/unparseable (parse_session_file
+    returns None for it, so it never makes it into `rows`) is correctly
+    treated as NOT orphaned. Set-difference against `rows` alone cannot make
+    that distinction, and collapsing it would delete a row for a file that
+    is still sitting right there on disk.
+    """
+    for _day, day_dir in iter_day_dirs(episode_dir):
+        jsonl = os.path.join(day_dir, f"{session_id}.jsonl")
+        if os.path.exists(jsonl) or os.path.exists(jsonl + ".gz"):
+            return True
+    return False
+
+
+def _existing_session_ids(manifest_db: str) -> set:
+    """Read the session_ids currently in manifest_db without creating the
+    file (or its schema) if it doesn't already exist. Needed so the
+    dry_run=True prune-preview path can report what it WOULD prune without
+    the side effect of materializing an empty manifest.db just by asking."""
+    if not os.path.exists(manifest_db):
+        return set()
+    conn = sqlite3.connect(manifest_db, timeout=10)
+    try:
+        return {r[0] for r in conn.execute("SELECT session_id FROM sessions")}
+    except sqlite3.OperationalError:
+        # File exists but has no sessions table yet (e.g. 0-byte or
+        # freshly-touched) — nothing to prune against.
+        return set()
+    finally:
+        conn.close()
+
+
 def build_manifest(episode_dir: str, manifest_db: str, dry_run: bool = False,
-                    verbose: bool = False) -> dict:
+                    verbose: bool = False, prune: bool = False) -> dict:
     """Scan every session file under episode_dir and upsert manifest.db.
-    Returns a summary dict for logging/tests."""
-    stats = {"scanned": 0, "written": 0, "skipped_empty": 0, "day_dirs": 0}
+    Returns a summary dict for logging/tests.
+
+    prune=False (the default) is byte-for-byte the original behaviour: scan,
+    upsert, never delete. Existing callers that don't pass `prune` are
+    unaffected — this includes dream_runner's guard-time refresh call, which
+    deliberately keeps calling this with prune's default (see
+    docs/SPEC-manifest-prune-2026-08.md §4.3).
+
+    prune=True additionally removes manifest rows whose backing session file
+    no longer exists anywhere under episode_dir, subject to two guarantees
+    (docs/SPEC-manifest-prune-2026-08.md §3):
+
+      Hazard A — a surviving row's dreamed_at is never touched by a prune.
+      Rows for session_ids seen in this scan go through the normal
+      upsert_session() ON CONFLICT path, which already preserves
+      dreamed_at; pruning only ever considers session_ids that are NOT in
+      this scan's live set, so a survivor is never even a delete candidate.
+
+      Hazard B — pruning only proceeds after a *provably complete* scan. If
+      any exception escapes the scan loop, or no day dirs were found at
+      all, pruning is skipped entirely and `prune_skipped_reason` records
+      why. An interrupted or partial scan must never be treated as
+      "everything else is orphaned" — that is exactly the shape of bug that
+      would silently delete unrecoverable dreamed_at state.
+
+    Even once pruning proceeds, a candidate row (a manifest session_id not
+    seen in this scan) is only actually deleted after an explicit
+    filesystem check confirms no backing .jsonl or .jsonl.gz exists for
+    that session_id in ANY day dir — not by trusting set-difference against
+    the scan alone. See _session_file_exists().
+    """
+    stats = {"scanned": 0, "written": 0, "skipped_empty": 0, "day_dirs": 0,
+              "pruned": 0, "prune_skipped_reason": None}
 
     rows = []
-    for day, day_dir in iter_day_dirs(episode_dir):
-        stats["day_dirs"] += 1
-        for path in iter_session_files(day_dir):
-            stats["scanned"] += 1
-            row = parse_session_file(path, verbose=verbose)
-            if row is None:
-                stats["skipped_empty"] += 1
-                continue
-            rows.append(row)
+    scan_complete = True
+    scan_error = None
+    try:
+        for day, day_dir in iter_day_dirs(episode_dir):
+            stats["day_dirs"] += 1
+            for path in iter_session_files(day_dir):
+                stats["scanned"] += 1
+                row = parse_session_file(path, verbose=verbose)
+                if row is None:
+                    stats["skipped_empty"] += 1
+                    continue
+                rows.append(row)
+    except Exception as exc:
+        if not prune:
+            # prune=False must be byte-for-byte identical to the original
+            # behaviour: an exception here always propagated out of
+            # build_manifest, so it still does.
+            raise
+        scan_complete = False
+        scan_error = exc
+
+    pruned_ids = []
+    if prune:
+        if not scan_complete:
+            stats["prune_skipped_reason"] = (
+                f"scan did not complete ({scan_error!r}); corpus may be "
+                "incompletely enumerated, refusing to prune"
+            )
+        elif stats["day_dirs"] == 0:
+            stats["prune_skipped_reason"] = (
+                "no day dirs found under episode_dir; refusing to prune an "
+                "apparently-empty corpus"
+            )
+        else:
+            seen_ids = {row["session_id"] for row in rows}
+            candidates = _existing_session_ids(manifest_db) - seen_ids
+            for session_id in sorted(candidates):
+                if not _session_file_exists(episode_dir, session_id):
+                    pruned_ids.append(session_id)
 
     if dry_run:
         stats["written"] = len(rows)
+        stats["pruned"] = len(pruned_ids)
         return stats
 
     os.makedirs(os.path.dirname(manifest_db) or ".", exist_ok=True)
@@ -257,10 +363,13 @@ def build_manifest(episode_dir: str, manifest_db: str, dry_run: bool = False,
         ensure_schema(conn)
         for row in rows:
             upsert_session(conn, row)
+        for session_id in pruned_ids:
+            conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
         conn.commit()
     finally:
         conn.close()
     stats["written"] = len(rows)
+    stats["pruned"] = len(pruned_ids)
     return stats
 
 
