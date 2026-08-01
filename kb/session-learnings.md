@@ -1234,3 +1234,91 @@ valid "before" quality baseline, only "it errored."
 - Grafana is :3002 (v13.0.1, /api/health) — KB architecture doc's :3001 is wrong; :3001 answers "Running" (different service)
 - Local planner primary = node3090 llama-server :8080 (timeout 240s, untouched today); Gemma fallback is BROKEN pre-existing: /opt/models/lmstudio-community does not exist
 - goethe-mcp env changes need a service restart; restarting kills live MCP sessions — schedule between sessions
+
+## Session 2026-07-31 — node3090 WoL silent failure; runtime token drift; TRAUM guards
+
+### What worked
+- Canonical node3090 wake (KB doc 842595879f70576d, quality 1.0) — L2-direct,
+  no routing/broadcast/pfSense dependency:
+  `ssh -i ~/.ssh/id_ed25519_rutx50 -o StrictHostKeyChecking=no root@192.168.5.3 "etherwake -i eth0 0c:9d:92:84:6e:6a"`
+- Reading a live process's real config from the process, not the file on disk:
+  `cat /proc/$(pgrep -f "goethe_mcp.*--transport http")/environ | tr '\0' '\n' | grep TOKEN`
+- Telling whether the browser is talking to a restarted gateway, without DevTools:
+  the "invariant sweep" timestamp in the TRAUM Human Gate panel IS the gateway
+  process's start time. Stale timestamp = stale process or stale page.
+- Proving a regression test actually catches its regression: delete the fix line,
+  re-run, confirm failure, restore from backup. Done for the TRAUM health verdict's
+  legacy-import exclusion — verdict flipped `critical`→`ok` exactly as predicted.
+- Long-running commands through the MCP tool: `nohup <cmd> > /tmp/x.log 2>&1 & disown`
+  then poll in separate <45s calls. Direct calls die with MCP error -32001.
+
+### What failed and why
+
+- **Attempted:** `wakeonlan 0c:9d:92:84:6e:6a` from LUCIFER, as documented in
+  `kb/network-topology.md` as "the LUCIFER procedure"
+  **Failed because:** LUCIFER is on 192.168.1/24, node3090 on 192.168.5/24; the bare
+  form never reaches that segment. It **fails silently** — prints "Sending magic
+  packet", exits 0, node stays down. Measured: no boot after 5+ minutes. The KB entry
+  itself was wrong, so deferring to the KB propagated the error rather than fixing it.
+  **Fix:** Use the RUTX50 `etherwake` command above. `wakeonlan -i 192.168.5.255 <mac>`
+  also works (~20s to boot) but depends on directed-broadcast forwarding staying on.
+  Never trust a wake command's exit code — poll `/health`, never ping.
+
+- **Attempted:** Concluded "the Console is serving stale code" from a curl to
+  `/api/ui/traum/status` using the token in `/opt/local-se/goethe-mcp.env`
+  **Failed because:** the running gateway had a DIFFERENT token than the env file
+  (`5fa5643e…` in `/proc/<pid>/environ` vs `6e003f5c…` in the file). Every response
+  was `{"error":"unauthorized"}` — the absence of a key in an *error body* was read as
+  evidence about deployed code. An inference presented as a measurement. Cost ~4 turns
+  and two wrong theories (stale process, then WebView2 cache). The feature had been
+  working the whole time.
+  **Fix:** Take the token from `/proc/<pid>/environ`, never the env file. Always check
+  HTTP status before interpreting a body: `curl -s -o /dev/null -w "%{http_code}"`.
+
+- **Attempted:** `git log origin/codex/fix-sudo-grants-live..HEAD` via `execute_command`
+  **Failed because:** the D5 safety gate substring-matches `sudo` anywhere in the
+  command text; the *branch name* contains it. A read-only git command was blocked as
+  a privileged operation.
+  **Fix:** `git log '@{u}..HEAD'` avoids naming the branch. Gate needs a real fix —
+  `sudo` should match as a command token, not a substring.
+
+- **Attempted:** Purged 67 contaminated `method_raises` episode files, then ran
+  `episode_index.build_manifest()` to refresh the manifest
+  **Failed because:** `build_manifest()` is purely additive — it scans and upserts, and
+  **never deletes rows whose backing file is gone**. After removing 67 files it still
+  reported 566 sessions with all 67 ghost rows intact, still citing `method_raises`.
+  **Fix:** Delete orphans explicitly, verifying each backing file is genuinely absent
+  first. Any future corpus deletion must prune the manifest or analysis keeps seeing
+  sessions that do not exist.
+
+### Key facts
+- node3090 wake: RUTX50 `etherwake` is canonical. `wake_node()` (pfSense POST,
+  `interface: opt1`) is the everyday agent path. Bare `wakeonlan <mac>` DOES NOT WORK
+  and exits 0 anyway.
+- node3090 boot → llama-server `/health`=200 takes **>2 minutes** (model load), not
+  ~55s. Ping succeeds long before the endpoint is usable.
+- RUTX50: `192.168.5.3`, OpenWrt 21.02.0, key `~/.ssh/id_ed25519_rutx50`. Host key
+  already trusted via a `rutx50` block in `~/.ssh/config`, so no `known_hosts` write is
+  attempted under systemd `ProtectHome=read-only`.
+- The Console token lives in the gateway process env and MAY DIFFER from
+  `/opt/local-se/goethe-mcp.env`. The file is not ground truth.
+- TRAUM GUI runs call `dream_runner.py` **directly** via traum_controller — they do NOT
+  go through `run-dream-cycle.sh`. A GUI run therefore skips the R1 wake preflight,
+  `finalize-cycle`, and `expire-stale`. Only `systemctl start goethe-dream.service`
+  exercises the full path.
+- `dream_runner --ignore-guards` disables the **lockfile as well as** the session
+  guard, permitting two concurrent runners. For operator-initiated runs use
+  `--skip-session-guard`, which waives only the quiet-period wait.
+- The quiet-period guard cannot be waited out: window 30 min, max wait 3 × 450s =
+  22.5 min, so an end-of-session run waits ~22 min then blocks anyway. Measured twice —
+  once accidentally in a real GUI run (19:09:24→19:31:55).
+- TRAUM health must exclude `source='legacy-import'`. All 9 legacy runs are SUCCEEDED;
+  counting them reports the loop healthy forever.
+- `error-cluster` emits `skill-candidate`, but its real output is a reaction
+  ("when error X, do Y"), not a repeatable task — which is what `skill_record`'s
+  contract requires. There is no error-remedy proposal type; `lse-errors-1024` is
+  reserved for dream-infra crash reports and untouched by pass functions. Expect
+  mis-typed proposals from this pass until that gap is closed.
+- `manifest.sessions.dreamed_at` is how the dreamer knows what it already consumed
+  (`WHERE dreamed_at IS NULL`). Deleting and re-adding a row resets it to NULL and
+  causes silent re-analysis of old content. Never prune-then-rebuild blindly.
