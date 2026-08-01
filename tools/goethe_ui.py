@@ -22,6 +22,11 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
   GET  /api/ui/ledger     → tasks.db task blocks + step progress  (token-gated)
   POST /api/ui/ledger/delete {task_id} → archive + delete a task  (token-gated)
   GET  /api/ui/episodes   → 7-day episode call stats by exit_class(token-gated)
+  GET  /api/ui/episodes/purge-preview?tool=<name> → read-only purge preview
+                            (token-gated) — classifies matches as entire/mixed
+  POST /api/ui/episodes/purge {session_ids,reason} → quarantine-only purge
+                            (token-gated) — moves 'entire' matches only, never
+                            deletes; see docs/SPEC-console-corpus-hygiene-2026-08.md
   GET  /api/ui/perms      → goethe_perms pending requests + grants(token-gated)
   GET  /api/ui/backends   → planner backend config status (read-only,      (token-gated)
   POST /api/ui/backends/select {backend} → set the active planner backend
@@ -46,8 +51,9 @@ accept a raw command/path/environment/argv.  The timer API is read-only.
 
 Every legacy GET /api/ui/* endpoint is READ-ONLY by construction: ES access is
 a POST to _search only, sqlite opens with mode=ro, and dream/episode access is
-os.scandir + open-for-read. The permission actions and task-ledger deletion are
-the deliberate, token-gated write exceptions. Permission actions were added
+os.scandir + open-for-read. The permission actions, task-ledger deletion, backend selection, and
+episode-corpus purge are the deliberate, token-gated write exceptions.
+Permission actions were added
 2026-07-20
 so the yes/no/always approval flow (previously CLI-only via `goethe-perm`,
 and before that not reachable at all — see session-learnings.md 2026-07-20)
@@ -70,9 +76,16 @@ The exception is intentionally as narrow as possible:
     surfaces this reminder in the UI rather than doing it for you.
   - Gated by the same bearer token as every other /api/ui/* route — no new
     trust boundary, just a new capability behind the existing one.
-Nothing else in this module can mutate state. Both write surfaces use the same
-bearer token normalisation as goethe_mcp._TokenGuard ("Bearer <t>" or raw
-"<t>").
+  - Episode-corpus purge (POST /api/ui/episodes/purge) only ever MOVES
+    session files with shutil.move() — it never deletes. It accepts exact
+    session_ids only, never a free-text pattern; refuses any file whose
+    lines span more than one tool ('mixed', re-verified at execution time,
+    not trusted from the preview response); and every resolved path is
+    checked with os.path.realpath to stay inside _episode_dir() before
+    anything touches disk. See docs/SPEC-console-corpus-hygiene-2026-08.md.
+Nothing else in this module can mutate state beyond the write surfaces listed
+above. All of them use the same bearer token normalisation as
+goethe_mcp._TokenGuard ("Bearer <t>" or raw "<t>").
 
 CONFIG (env, mirrors the GOETHE_* valve-override convention)
   GOETHE_ES_URL          default http://127.0.0.1:9200
@@ -98,7 +111,7 @@ import time
 import urllib.request
 import urllib.parse
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 # 0.1.1 — kb_stats 400 fix: terms aggs on source_tier/volatility/origin must
 #          target the .keyword subfield — live lse-kb-1024 maps them as text
 #          (the trust-migration keyword mapping didn't survive the 1024-dim
@@ -112,6 +125,11 @@ __version__ = "0.4.0"
 #          requests and active grants from the delete path.
 # 0.3.0 — Ledger returns every task block. Exact-ID Console deletion archives
 #          the full row transactionally before removing it from the live table.
+# 0.5.0 — Episode corpus hygiene: GET /api/ui/episodes/purge-preview
+#          (read-only classify) and POST /api/ui/episodes/purge
+#          (quarantine-only write; explicit session_ids; refuses mixed
+#          files; calls episode_index.build_manifest(prune=True)). See
+#          docs/SPEC-console-corpus-hygiene-2026-08.md.
 
 # goethe_perms.py lives next to this file but this module is loaded via
 # importlib.util.spec_from_file_location (not a normal package import — see
@@ -144,10 +162,22 @@ try:
 except Exception:
     _planner_state = None
 
+# episode_index.py lives next to this file too. episode_purge() below reuses
+# its build_manifest(prune=True) rather than reimplementing pruning (Hazard D,
+# docs/SPEC-console-corpus-hygiene-2026-08.md). ImportError only -- a missing
+# or broken sibling module degrades the purge routes to a clean "error" field
+# instead of a blind except-Exception (keeps this file's BLE001 count clean).
+try:
+    import episode_index as _episode_index
+except ImportError:
+    _episode_index = None
+
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_EPISODE_LINES_PER_DAY = 20000   # token-bomb lesson: cap reads at the source
 _MAX_DIGEST_BYTES = 64 * 1024
 _ES_TIMEOUT = 6
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,200}$")
+_PURGE_PREVIEW_CAP = 500
 
 
 def _env(name: str, default: str) -> str:
@@ -602,6 +632,302 @@ def episode_stats() -> dict:
         ({"tool": t, "count": n} for t, n in tool_totals.items()),
         key=lambda x: -x["count"])[:10]
     return out
+
+
+# --------------------------------------------------------------------------
+# Episode corpus hygiene -- quarantine-only purge. See
+# docs/SPEC-console-corpus-hygiene-2026-08.md. This never deletes: matching
+# files are relocated with shutil.move() into a timestamped quarantine
+# sibling of _episode_dir(). `rm`, `os.remove`/`os.unlink`, and
+# `shutil.rmtree` do not appear anywhere below -- deleting a quarantine
+# directory afterwards stays a manual, separate action at a shell (Hazard A).
+# The destructive POST route takes only explicit session_ids, never a
+# free-text pattern (Hazard B), and refuses to move any file whose lines
+# span more than one tool (Hazard C) -- re-verified at execution time, not
+# trusted from the preview response. Pruning the manifest afterwards always
+# goes through episode_index.build_manifest(prune=True); this module does
+# not reimplement that logic (Hazard D).
+# --------------------------------------------------------------------------
+
+
+def _manifest_db_path(episode_dir: str) -> str:
+    return os.path.join(episode_dir, "manifest.db")
+
+
+def _classify_session_lines(path: str, tool: str = None):
+    """Parse one .jsonl session file's valid lines.
+
+    Returns (total_lines, matching_lines, distinct_tools):
+      total_lines     -- count of parseable JSON-object lines.
+      matching_lines  -- count of those lines whose "tool" field == `tool`
+                         (always 0 if tool is None -- used by the purge
+                         re-verification path, which only needs the
+                         distinct set, not a specific-tool count).
+      distinct_tools  -- set of every "tool" value seen across all lines.
+
+    A file is "entirely" one tool iff distinct_tools == {tool}: every valid
+    line in it names that one tool and no other. That single check is used
+    both by preview (classifying against the queried tool) and by purge's
+    re-verification (checking the file is still single-tool at all,
+    independent of which tool -- see episode_purge()). Malformed individual
+    lines are skipped, same tolerance as episode_index.parse_session_file.
+    """
+    total = 0
+    matching = 0
+    distinct = set()
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            total += 1
+            t = rec.get("tool")
+            if isinstance(t, str):
+                distinct.add(t)
+                if tool is not None and t == tool:
+                    matching += 1
+    return total, matching, distinct
+
+
+def episode_purge_preview(tool: str) -> dict:
+    """GET /api/ui/episodes/purge-preview?tool=<name>. Side-effect free:
+    scans the corpus for .jsonl session files containing at least one line
+    with "tool" == `tool`, and classifies each as "entire" (every valid
+    line in the file is that tool) or "mixed" (some lines are other
+    tools -- never purgeable here, per Hazard C). `tool` is a selector for
+    this preview only; it is never sent to, or used by, the purge route.
+    """
+    tool = (tool or "").strip()
+    if not tool:
+        return {"error": "tool is required"}
+
+    eroot = _episode_dir()
+    if not eroot or not os.path.isdir(eroot):
+        return {"error": f"episode directory not found: {eroot!r}"}
+    eroot_real = os.path.realpath(eroot)
+
+    manifest_ids = set()
+    if _episode_index is not None:
+        try:
+            manifest_ids = _episode_index._existing_session_ids(
+                _manifest_db_path(eroot_real))
+        except sqlite3.Error:
+            manifest_ids = set()
+
+    try:
+        day_entries = sorted(
+            (e for e in os.scandir(eroot_real)
+             if e.is_dir() and _DAY_RE.match(e.name)),
+            key=lambda e: e.name)
+    except OSError:
+        day_entries = []
+
+    entries = []
+    scanned = 0
+    truncated = False
+    for day_entry in day_entries:
+        try:
+            files = sorted(
+                (f for f in os.scandir(day_entry.path)
+                 if f.is_file() and f.name.endswith(".jsonl")),
+                key=lambda f: f.name)
+        except OSError:
+            continue
+        for f in files:
+            scanned += 1
+            if len(entries) >= _PURGE_PREVIEW_CAP:
+                truncated = True
+                continue
+            try:
+                total, matching, distinct = _classify_session_lines(f.path, tool)
+            except OSError:
+                continue
+            if matching == 0:
+                continue
+            session_id = f.name[: -len(".jsonl")]
+            classification = "entire" if distinct == {tool} else "mixed"
+            entries.append({
+                "session_id": session_id,
+                "day": day_entry.name,
+                "matching_lines": matching,
+                "total_lines": total,
+                "classification": classification,
+                "manifest_has_row": session_id in manifest_ids,
+            })
+
+    purgeable = [e["session_id"] for e in entries
+                 if e["classification"] == "entire"]
+    return {
+        "tool": tool,
+        "episode_dir": eroot_real,
+        "scanned_files": scanned,
+        "matched_files": len(entries),
+        "entire_count": len(purgeable),
+        "mixed_count": len(entries) - len(purgeable),
+        "truncated": truncated,
+        "entries": entries,
+        "purgeable_session_ids": purgeable,
+    }
+
+
+def _valid_session_id(session_id) -> bool:
+    return isinstance(session_id, str) and bool(_SESSION_ID_RE.match(session_id))
+
+
+def _find_session_file(eroot_real: str, session_id: str):
+    """Return (day, real_path) for session_id's .jsonl file under
+    eroot_real, or (None, None) if it does not exist. Every candidate path
+    is resolved with os.path.realpath and required to stay inside
+    eroot_real -- a symlink or traversal that would escape the corpus root
+    is refused here even though _valid_session_id() already rejects any
+    session_id containing '/' (defense in depth, per the anti-goal that
+    every resolved path must be verified after os.path.realpath)."""
+    try:
+        day_entries = sorted(
+            (e for e in os.scandir(eroot_real)
+             if e.is_dir() and _DAY_RE.match(e.name)),
+            key=lambda e: e.name)
+    except OSError:
+        return None, None
+    for day_entry in day_entries:
+        candidate = os.path.join(day_entry.path, f"{session_id}.jsonl")
+        real = os.path.realpath(candidate)
+        if real != candidate and not real.startswith(eroot_real + os.sep):
+            continue  # symlink escape -- refuse
+        if os.path.isfile(real):
+            return day_entry.name, real
+    return None, None
+
+
+def episode_purge(session_ids, reason: str) -> dict:
+    """POST /api/ui/episodes/purge. The write surface. `session_ids` must
+    be a non-empty list of strings, each matching the strict id pattern --
+    never a pattern/glob (Hazard B). Every id is re-verified right now: the
+    file must still exist and must still be single-tool ("entire"); a file
+    that is now mixed (e.g. it grew a real call since preview, or was
+    always mixed and was passed in anyway) is skipped and reported, never
+    moved (Hazard C). Matches are relocated with shutil.move() into a
+    timestamped quarantine directory next to _episode_dir() -- never
+    deleted (Hazard A) -- then episode_index.build_manifest(prune=True) is
+    called to drop the now-orphaned manifest rows (Hazard D); pruning
+    itself is never reimplemented here.
+    """
+    if _episode_index is None:
+        return {"error": "episode_index module not importable -- purge unavailable"}
+
+    if not isinstance(session_ids, list) or not session_ids:
+        return {"error": "session_ids must be a non-empty list"}
+    if not all(isinstance(s, str) for s in session_ids):
+        return {"error": "session_ids must all be strings"}
+    reason = reason.strip() if isinstance(reason, str) else ""
+    if not reason:
+        return {"error": "reason is required"}
+
+    bad_ids = [s for s in session_ids if not _valid_session_id(s)]
+    if bad_ids:
+        return {"error": "invalid session_id(s), rejected: "
+                          f"{bad_ids[:5]!r}"}
+
+    # De-dup, preserving order -- a repeated id must not be moved twice or
+    # double-counted in the response.
+    seen = set()
+    ids = []
+    for s in session_ids:
+        if s not in seen:
+            seen.add(s)
+            ids.append(s)
+
+    eroot = _episode_dir()
+    if not eroot or not os.path.isdir(eroot):
+        return {"error": f"episode directory not found: {eroot!r}"}
+    eroot_real = os.path.realpath(eroot)
+    manifest_db = _manifest_db_path(eroot_real)
+
+    try:
+        rows_before = len(_episode_index._existing_session_ids(manifest_db))
+    except sqlite3.Error as e:
+        return {"error": f"could not read manifest: {type(e).__name__}: {e}"}
+
+    slug = re.sub(r"[^a-z0-9]+", "-", reason.lower()).strip("-")[:40] or "purge"
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+
+    moved = []
+    skipped = []
+    quarantine_dir = None
+
+    for session_id in ids:
+        day, path = _find_session_file(eroot_real, session_id)
+        if path is None:
+            skipped.append({"session_id": session_id,
+                             "reason": "file not found under episode_dir"})
+            continue
+        try:
+            total, _matching, distinct = _classify_session_lines(path)
+        except OSError as e:
+            skipped.append({"session_id": session_id,
+                             "reason": f"could not read file: {e}"})
+            continue
+        if total == 0:
+            skipped.append({"session_id": session_id,
+                             "reason": "file has no parseable lines"})
+            continue
+        if len(distinct) != 1:
+            skipped.append({"session_id": session_id,
+                             "reason": "file is mixed (contains more than "
+                                       "one tool) -- refusing to purge"})
+            continue
+
+        if quarantine_dir is None:
+            quarantine_dir = os.path.join(
+                os.path.dirname(eroot_real),
+                f"episodes-quarantine-{slug}-{ts}")
+        dest_dir = os.path.join(quarantine_dir, day)
+        dest = os.path.join(dest_dir, f"{session_id}.jsonl")
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+            shutil.move(path, dest)
+        except OSError as e:
+            skipped.append({"session_id": session_id,
+                             "reason": f"move failed: {e}"})
+            continue
+        moved.append({"session_id": session_id, "day": day,
+                       "quarantined_to": dest})
+
+    if quarantine_dir is not None:
+        try:
+            with open(os.path.join(quarantine_dir, "MOVED-FILES.txt"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(f"# corpus hygiene purge -- {ts}\n")
+                fh.write(f"# reason: {reason}\n")
+                for m in moved:
+                    fh.write(f"{m['day']}/{m['session_id']}.jsonl\n")
+        except OSError:
+            pass  # the moves themselves already succeeded and are reported
+
+    try:
+        stats = _episode_index.build_manifest(eroot_real, manifest_db, prune=True)
+    except (OSError, sqlite3.Error) as e:
+        stats = {"error": f"{type(e).__name__}: {e}"}
+    rows_after = stats["written"] if "error" not in stats else rows_before
+
+    return {
+        "status": "ok",
+        "reason": reason,
+        "moved_count": len(moved),
+        "moved": moved,
+        "skipped_count": len(skipped),
+        "skipped": skipped,
+        "quarantine_path": quarantine_dir,
+        "manifest_rows_before": rows_before,
+        "manifest_rows_after": rows_after,
+        "manifest_prune_stats": stats,
+    }
 
 
 def overview() -> dict:
@@ -1204,6 +1530,56 @@ class UIRouter:
             )
             await self._respond(
                 send, 409 if "error" in data else 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # Episode corpus hygiene -- quarantine-only write surface. See the
+        # module docstring's ROUTES section and
+        # docs/SPEC-console-corpus-hygiene-2026-08.md. Preview never writes;
+        # purge only ever moves files (never deletes) and only accepts
+        # explicit session_ids, never a pattern.
+        if path == "/api/ui/episodes/purge-preview" and method == "GET":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            query = self._query(scope)
+            try:
+                tool = self._one_query(query, "tool", "")
+            except ValueError as e:
+                await self._respond(
+                    send, 400,
+                    json.dumps({"error": str(e)}).encode(),
+                    "application/json")
+                return
+            t0 = time.monotonic()
+            data = await asyncio.to_thread(episode_purge_preview, tool)
+            data["_elapsed_ms"] = int((time.monotonic() - t0) * 1000)
+            await self._respond(
+                send, 400 if "error" in data else 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        if path == "/api/ui/episodes/purge" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(send, 401, b'{"error":"unauthorized"}',
+                                    "application/json")
+                return
+            try:
+                payload = await self._read_json_body(receive)
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 400,
+                    json.dumps({"error": f"bad body: {e}"}).encode(),
+                    "application/json")
+                return
+            data = await asyncio.to_thread(
+                episode_purge, payload.get("session_ids"),
+                payload.get("reason", ""))
+            await self._respond(
+                send, 400 if "error" in data else 200,
                 json.dumps(data, ensure_ascii=False, default=str).encode(),
                 "application/json")
             return
