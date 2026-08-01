@@ -58,6 +58,43 @@ elsewhere. This is the operator-facing half of the original complaint
 ("it is not very intuitive how to operate it correctly") that R3 only
 partly addressed.
 
+**Give `error-cluster` a correctly-shaped output type.** Raised
+2026-08-01 by the operator, and the strongest single design finding of the
+first real run.
+
+`skill_record`'s contract is a repeatable *task* with steps
+(preconditions → procedure → verification → failure modes). What
+`error-cluster` actually produces is a *reaction*: "when you see error X,
+do Y". Those are different genres — a reaction is a runbook/error-KB
+entry, not a task — but `skill-candidate` is the only container the
+dreamer has for it. The six emittable types are `reverify`, `demote`,
+`dedup`, `kb-fact`, `prompt-rule`, `skill-candidate`; none means
+"recurring error → known remedy".
+
+The mismatch is visible in three places:
+
+- `dream_runner.py:1953` concedes it in a comment — *"skill_record's real
+  signature has no 'trigger' parameter (DESIGN.md §6.3) — fold it into
+  procedure's own text"* — then reconstructs the missing field as
+  `WHEN THIS HAPPENS: … FIX: …` inside free text. A schema needing a slot
+  it does not have is the wrong schema.
+- The correct target exists but is walled off: `lse-errors-1024` is
+  reserved for dream-infra's own crash reports and is *"never touched by
+  any pass function"*.
+- Corroboration: a hand-written, genuinely verified entry of this shape,
+  submitted as `quality=0.8, source_tier=verified`, was recorded by the
+  skills index at **0.40**. The index is correctly scoring down a genre it
+  was not built for.
+
+Both `skill-candidate` proposals from the 2026-07-31 run are reactions,
+not tasks — a 2-of-2 mis-typing rate on the pass's first real output.
+
+Fix shape: add an `error-remedy` proposal type that writes to
+`lse-errors-1024` through the Human Gate, and let `error-cluster` emit
+`skill-candidate` only when a genuine repeatable procedure exists.
+Requires opening the error index to pass functions under gate control —
+deliberately, and with the dream-infra provenance boundary preserved.
+
 ---
 
 ## 2. `/etc` change automation — spec, then build
