@@ -117,6 +117,8 @@
   #grant-form select:focus,#grant-form input:focus{outline:none;border-color:var(--accent)}
   #grant-msg{font-family:var(--mono);font-size:11px;margin-bottom:12px;color:var(--faint)}
   #grant-msg.ok{color:var(--good)} #grant-msg.bad{color:var(--bad)}
+  #purge-msg{font-family:var(--mono);font-size:11px;margin:8px 0;color:var(--faint)}
+  #purge-msg.ok{color:var(--good)} #purge-msg.bad{color:var(--bad)}
   .badge.kind-read{color:var(--cyan);border-color:rgba(125,207,255,.4)}
   .badge.kind-write{color:var(--warn);border-color:rgba(224,175,104,.4)}
   .badge.kind-sudo{color:var(--bad);border-color:rgba(247,118,142,.4);font-weight:600}
@@ -346,6 +348,22 @@
       <span><i style="background:var(--warn)"></i>timeout</span>
     </div>
     <div style="margin-top:14px"><div style="font-size:11px;color:var(--dim);margin-bottom:6px">TOP TOOLS</div><div class="hbars" id="ep-tools"></div></div>
+    <div id="ep-hygiene" style="margin-top:16px">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:6px">CORPUS HYGIENE — quarantine-only purge (never deletes; see docs/SPEC-console-corpus-hygiene-2026-08.md)</div>
+      <div class="chips">
+        <input id="purge-tool" type="text" placeholder="tool name (e.g. method_raises)"
+               autocomplete="off" spellcheck="false">
+        <button class="abtn" id="purge-preview-btn" onclick="episodePreview()">Preview</button>
+      </div>
+      <div id="purge-msg"></div>
+      <table id="purge-table"></table>
+      <div class="chips" style="margin-top:8px">
+        <input id="purge-reason" type="text" placeholder="reason (required)"
+               autocomplete="off" spellcheck="false" style="flex:1">
+        <button class="abtn deny" id="purge-btn" onclick="episodePurgeRun()" disabled
+                title="Moves only the previewed 'entire' matches to a timestamped quarantine directory. Never deletes.">Purge</button>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -1091,6 +1109,81 @@ async function loadEpisodes(){
     $("ep-daylbl").innerHTML = days.map(x=>"<div>"+x.date.slice(5)+"</div>").join("");
     $("ep-tools").innerHTML = hbar(d.top_tools,"var(--purple)");
   }catch(e){ showErr($("ep-days"), e); }
+}
+
+// ---- Episode corpus hygiene (quarantine-only purge) ----
+let _purgePreview = null;
+
+function purgeMsg(cls, text){
+  const el = $("purge-msg");
+  el.className = cls || "";
+  el.textContent = text || "";
+}
+
+async function episodePreview(){
+  const tool = $("purge-tool").value.trim();
+  const btn = $("purge-preview-btn");
+  $("purge-btn").disabled = true;
+  _purgePreview = null;
+  purgeMsg("", "");
+  if(!tool){ purgeMsg("bad", "enter a tool name first"); return; }
+  btn.disabled = true;
+  try{
+    const d = await api("/api/ui/episodes/purge-preview?tool=" + encodeURIComponent(tool));
+    _purgePreview = d;
+    const rows = (d.entries || []).map(e =>
+      "<tr><td>"+esc(e.session_id)+"</td><td>"+esc(e.day)+"</td>"+
+      "<td>"+e.matching_lines+"/"+e.total_lines+"</td>"+
+      "<td><span class='badge "+(e.classification==="entire"?"gt":"fail")+"'>"+
+        esc(e.classification)+(e.classification==="mixed"?" \u2014 not purgeable here":"")+
+      "</span></td>"+
+      "<td>"+(e.manifest_has_row?"yes":"no")+"</td></tr>").join("");
+    $("purge-table").innerHTML = rows
+      ? "<tr><th>session</th><th>day</th><th>matching/total</th><th>class</th><th>in manifest</th></tr>"+rows
+      : "<tr><td class='empty'>no matching session files</td></tr>";
+    const n = d.purgeable_session_ids ? d.purgeable_session_ids.length : 0;
+    purgeMsg("", d.matched_files+" matched ("+d.entire_count+" purgeable, "+d.mixed_count+
+      " mixed)"+(d.truncated?" \u2014 truncated at "+d.scanned_files+" files scanned":""));
+    $("purge-btn").disabled = n === 0;
+  }catch(e){
+    showErr($("purge-table"), e);
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+async function episodePurgeRun(){
+  if(!_purgePreview || !_purgePreview.purgeable_session_ids ||
+     !_purgePreview.purgeable_session_ids.length){
+    purgeMsg("bad", "run Preview first");
+    return;
+  }
+  const reason = $("purge-reason").value.trim();
+  if(!reason){ purgeMsg("bad", "a reason is required"); return; }
+  const ids = _purgePreview.purgeable_session_ids;
+  if(!confirm("Move "+ids.length+" session file(s) to quarantine?\n\nThis does not "+
+      "delete anything \u2014 files are relocated and the manifest is re-pruned. "+
+      "Deleting the quarantine directory afterwards is a manual, separate step.")){
+    return;
+  }
+  const btn = $("purge-btn");
+  btn.disabled = true;
+  try{
+    const d = await apiPost("/api/ui/episodes/purge", { session_ids: ids, reason });
+    purgeMsg("ok", "moved "+d.moved_count+" file(s)"+(d.quarantine_path?" to "+d.quarantine_path:"")+
+      "; manifest "+d.manifest_rows_before+" \u2192 "+d.manifest_rows_after+
+      (d.skipped_count ? "; "+d.skipped_count+" skipped (see below)" : ""));
+    if(d.skipped_count){
+      $("purge-table").innerHTML += "<tr><td colspan='5' class='err'>skipped: "+
+        d.skipped.map(s=>esc(s.session_id)+" ("+esc(s.reason)+")").join(", ")+"</td></tr>";
+    }
+    _purgePreview = null;
+    $("purge-reason").value = "";
+    loadEpisodes();
+  }catch(e){
+    purgeMsg("bad", "purge failed: " + e.message);
+    btn.disabled = false;
+  }
 }
 
 function refreshAll(){
