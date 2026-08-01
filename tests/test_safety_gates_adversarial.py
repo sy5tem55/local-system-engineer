@@ -357,3 +357,199 @@ def test_heredoc_scanner_failure_falls_back_to_scanning_raw_text(tools, monkeypa
         tools, "_HEREDOC_PATTERN", "(?P<unclosed", raising=False
     )
     assert _blocked(tools, "sudo id"), "gate stopped blocking when the scanner broke"
+
+
+# ─────────── 2026-08 fix: privilege-token gate false positives ───────────
+#
+# SPEC-privtoken-false-positive-2026-08.md. _PRIVILEGED_TOKEN_RE stays a
+# wide word-boundary match (see the D5-FIX comment above) -- narrowing it
+# to command position would silently reopen the three indirection bypasses
+# it was built to close. Instead, a match is exempt only when the character
+# immediately before OR after it is one of -/_. : the token then sits
+# inside a path, branch name, or hyphenated/dotted identifier rather than
+# at a position where it could execute. Every D5 bypass shape keeps a
+# non-exempt neighbour (space, =, ;, |, &, `, (, newline, or string
+# start/end) on both sides, so it stays blocked.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # SPEC §1 -- three of the four false positives measured
+        # 2026-08-01, all read-only, all blocked only because the branch
+        # name `codex/fix-sudo-grants-live` puts "sudo" between hyphens
+        # (and once behind a '/').
+        "git log origin/codex/fix-sudo-grants-live..HEAD",
+        "git status ; echo codex/fix-sudo-grants-live",
+        "git rev-list --count origin/codex/fix-sudo-grants-live..HEAD",
+    ],
+)
+def test_identifier_embedded_privilege_token_is_exempt(tools, command):
+    """FIXED 2026-08. These are read-only and never execute sudo -- the
+    token is part of an identifier, not a command."""
+    assert not _blocked(tools, command), f"identifier false positive still blocked: {command!r}"
+
+
+def test_grep_quoted_token_remains_blocked_known_limitation(tools):
+    """The fourth SPEC §1 measurement -- `grep -n "sudo" tools/goethe.py`
+    -- is deliberately NOT fixed by the identifier exemption. The token
+    sits between two `"` characters, which are not in the exempt set
+    (-/_.): widening the exempt set to cover quotes would also exempt
+    `sh -c "sudo id"` / `ssh host "sudo systemctl stop x"`, a real
+    execution path where a double-quoted argument is run directly by the
+    shell it's handed to -- a genuine bypass, not a false positive. SPEC
+    §4.1 documents the bare-grep case as a deliberate, out-of-scope known
+    limitation (needs real shell tokenisation) and gives the workaround:
+    `grep 's[u]do'`."""
+    assert _blocked(tools, 'grep -n "sudo" tools/goethe.py')
+    assert _blocked(tools, "grep sudo file.py")
+    assert not _blocked(tools, "grep 's[u]do' file.py")  # documented workaround
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "codex/fix-sudo-grants-live",
+        "/etc/sudoers",
+        "goethe-perm sync-sudoers",
+        "sudo_delegation_block",
+        "check_sudo",
+    ],
+)
+def test_more_identifier_shapes_are_exempt(tools, command):
+    """Path separator, leading/trailing hyphen, and snake_case are all
+    exempt; none of these strings are executable as a command on their own."""
+    assert not _blocked(tools, command), f"identifier false positive still blocked: {command!r}"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sudo id",
+        "sudo rm -rf /important",
+        "ls; sudo id",
+        "ls && sudo id",
+        "ls | sudo tee /etc/hosts",
+        "su - root",
+        "doas id",
+        "/usr/bin/sudo id",
+        "env sudo id",
+        "echo x > /tmp/f; sudo systemctl stop nginx",
+        "S=sudo; $S id",
+        "$(echo sudo) id",
+        "echo id | xargs sudo",
+    ],
+)
+def test_d5_bypasses_still_blocked_after_identifier_exemption(tools, command):
+    """Re-asserted explicitly here, local to the 2026-08 fix, so the intent
+    is visible without cross-referencing the parametrize blocks above: the
+    identifier exemption must not touch any of these. None of them have an
+    exempt-set character (-/_.) immediately before or after the matched
+    token -- they are bounded by start-of-string, space, ;, &, |, or the
+    output side of a command substitution."""
+    assert _blocked(tools, command), f"D5 bypass reopened by identifier exemption: {command!r}"
+
+
+# ASYMMETRIC by design. before-exempt has no "/": a "/" immediately before
+# the token is how a real invocation looks ("/usr/bin/sudo id", "./sudo id",
+# "bin/sudo id" all execute the real binary by path, no PATH lookup needed).
+# after-exempt keeps "/": "sudo/foo" is one path token naming a "sudo"
+# subdirectory, never the real /usr/bin/sudo binary. See the "2026-08 FIX"
+# comment above _IDENTIFIER_ADJACENT_BEFORE/_AFTER in tools/goethe.py for
+# the full rationale and the regression this asymmetry fixes.
+_ADJACENT_EXEMPT_BEFORE = list("-_.")
+_ADJACENT_EXEMPT_AFTER = list("-_./")
+_ADJACENT_BLOCKING = [" ", "=", ";", "|", "&", "`", "("]
+
+
+@pytest.mark.parametrize("token", ["sudo", "su", "doas"])
+@pytest.mark.parametrize("ch", _ADJACENT_EXEMPT_BEFORE)
+def test_adjacency_matrix_exempt_before(tools, token, ch):
+    command = f"x{ch}{token} y"
+    assert not _blocked(tools, command), f"{command!r} should be exempt (before={ch!r})"
+
+
+@pytest.mark.parametrize("token", ["sudo", "su", "doas"])
+@pytest.mark.parametrize("ch", _ADJACENT_EXEMPT_AFTER)
+def test_adjacency_matrix_exempt_after(tools, token, ch):
+    command = f"y {token}{ch}x"
+    assert not _blocked(tools, command), f"{command!r} should be exempt (after={ch!r})"
+
+
+@pytest.mark.parametrize("token", ["sudo", "su", "doas"])
+@pytest.mark.parametrize("ch", _ADJACENT_BLOCKING + ["/"])
+def test_adjacency_matrix_blocked_before(tools, token, ch):
+    command = f"x{ch}{token} y"
+    assert _blocked(tools, command), f"{command!r} should stay blocked (before={ch!r})"
+
+
+@pytest.mark.parametrize("token", ["sudo", "su", "doas"])
+@pytest.mark.parametrize("ch", _ADJACENT_BLOCKING)
+def test_adjacency_matrix_blocked_after(tools, token, ch):
+    command = f"y {token}{ch}x"
+    assert _blocked(tools, command), f"{command!r} should stay blocked (after={ch!r})"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/usr/bin/sudo id",
+        "/bin/su root",
+        "/usr/bin/doas id",
+        "./sudo id",
+        "bin/sudo id",
+        "/opt/tools/sudo id",
+    ],
+)
+def test_absolute_or_relative_path_invocation_stays_blocked(tools, command):
+    """Regression pin for the exact hazard this fix's second attempt had:
+    putting "/" in the BEFORE-exempt set treated a leading path separator
+    as identifier-embedding, which silently exempted the standard idiom
+    for invoking a binary by path -- "/usr/bin/sudo id" is a real,
+    unambiguous privilege escalation, not a false positive. Caught by the
+    pre-existing pin in test_privilege_escalation_is_blocked; re-asserted
+    here, explicitly, with siblings covering su/doas and relative-path
+    forms too."""
+    assert _blocked(tools, command), f"path-invoked privilege escalation allowed: {command!r}"
+
+
+@pytest.mark.parametrize("token", ["sudo", "su", "doas"])
+def test_adjacency_matrix_blocked_at_newline_boundary(tools, token):
+    command = f"echo hi\n{token} id"
+    assert _blocked(tools, command), f"{command!r} should stay blocked (newline before)"
+
+
+@pytest.mark.parametrize("token", ["sudo", "su", "doas"])
+def test_adjacency_matrix_blocked_at_start_of_string(tools, token):
+    """Regression guard for the exact bug this fix's first attempt had:
+    Python's `"" in "-/_."` is True, so a naive membership check treats
+    start-of-string (no preceding character at all) as if it were an
+    exempt character. That would silently un-block bare `sudo id`."""
+    command = f"{token} id"
+    assert _blocked(tools, command), f"{command!r} should stay blocked (start-of-string)"
+
+
+@pytest.mark.parametrize("token", ["sudo", "su", "doas"])
+def test_adjacency_matrix_blocked_at_end_of_string(tools, token):
+    """Same bug, other end: end-of-string must not be treated as exempt."""
+    command = f"echo id | xargs {token}"
+    assert _blocked(tools, command), f"{command!r} should stay blocked (end-of-string)"
+
+
+def test_etc_sudoers_write_still_blocked_by_privileged_write_gate(tools):
+    """SPEC §5 item 5 -- the one place the identifier exemption and the
+    privileged-write gate interact. /etc/sudoers is itself an exempt
+    IDENTIFIER for the token scan ('/' immediately before "sudo" inside
+    "sudoers"), but writes to it must still be caught by the separate
+    _PRIVILEGED_WRITE_PATHS mechanism, which matches on the /etc/ prefix
+    and has nothing to do with the word "sudo" at all."""
+    assert not tools._is_allowed_write("/etc/sudoers")
+    for command in [
+        "echo 'evil ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
+        "echo 'evil ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers",
+        "tee /etc/sudoers",
+        "tee -a /etc/sudoers",
+        "cp /tmp/x /etc/sudoers",
+        "sed -i s/a/b/ /etc/sudoers",
+    ]:
+        assert _blocked(tools, command), f"write to /etc/sudoers allowed: {command!r}"

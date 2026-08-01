@@ -766,7 +766,54 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         # all reached the shell with the gate none the wiser.
         import re as _re_priv  # noqa: PLC0415
 
-        _priv_hit = _re_priv.search(self._PRIVILEGED_TOKEN_RE, cmd_lower)
+        # 2026-08 FIX (privtoken false positives): the word-boundary match
+        # above is intentionally wide (see D5-FIX comment) and must stay
+        # that way -- narrowing it to command position would silently
+        # reopen the "S=sudo; $S id" / "$(echo sudo) id" / "echo id | xargs
+        # sudo" bypasses it was built to close. Instead, exempt a match
+        # only when it is embedded *inside* a longer identifier rather than
+        # reachable as an executable.
+        #
+        # The exempt sets are DELIBERATELY ASYMMETRIC:
+        #   before: - _ .        (NOT /)
+        #   after:  - _ . /
+        # A hyphen/underscore/dot immediately before or after the token
+        # only ever makes it part of a longer NAME ("fix-sudo-grants",
+        # "goethe-perm sync-sudoers", "sudo_delegation_block") -- the
+        # shell can never peel that back into the bare "sudo" invocation.
+        # "/" is different on each side. AFTER the token it is harmless:
+        # "sudo/foo" is one path token naming a "sudo" subdirectory, never
+        # the real /usr/bin/sudo binary. BEFORE the token it is exactly
+        # how a real invocation looks -- "/usr/bin/sudo id", "./sudo id",
+        # "bin/sudo id" all run the actual binary by path, and bash needs
+        # no PATH lookup once a "/" is present. An earlier version of this
+        # fix put "/" in both sets and silently un-blocked
+        # "/usr/bin/sudo id" (caught by the existing regression pin in
+        # test_privilege_escalation_is_blocked -- see
+        # docs/SPEC-privtoken-false-positive-2026-08.md report). "/etc/
+        # sudoers" stays exempt regardless, because \b never matches
+        # between "sudo" and "ers" in "sudoers" in the first place (both
+        # are word characters -- no boundary, no match, nothing to exempt).
+        _IDENTIFIER_ADJACENT_BEFORE = "-_."
+        _IDENTIFIER_ADJACENT_AFTER = "-_./"
+        _priv_hit = None
+        for _m in _re_priv.finditer(self._PRIVILEGED_TOKEN_RE, cmd_lower):
+            _before = cmd_lower[_m.start() - 1] if _m.start() > 0 else ""
+            _after = cmd_lower[_m.end()] if _m.end() < len(cmd_lower) else ""
+            # `_before`/`_after` are "" at start/end of string. Python's
+            # `"" in "-_."` is True (empty string is a substring of
+            # everything), so a naive `_before in _IDENTIFIER_ADJACENT_BEFORE`
+            # would treat start-of-string / end-of-string as exempt --
+            # exactly the shape of the D5 bypasses this gate exists to
+            # block (bare "sudo id" starts the string). Guard with a
+            # truthiness check first so only a REAL adjacent character
+            # can exempt the match.
+            if (_before and _before in _IDENTIFIER_ADJACENT_BEFORE) or (
+                _after and _after in _IDENTIFIER_ADJACENT_AFTER
+            ):
+                continue
+            _priv_hit = _m
+            break
         if _priv_hit:
             priv = _priv_hit.group(0)
             self._log(f"PRIV-BLOCKED: {command}")
