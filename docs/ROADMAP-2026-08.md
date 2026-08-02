@@ -179,6 +179,88 @@ here; these three items connect wires that are already run.
 
 ---
 
+## 1b. Fleet architecture — the dreamer cascade points at the wrong machine
+
+Established 2026-08-02, and it invalidates a premise R1 was built on.
+
+**node4090 IS LUCIFER.** `goethe_node.py:293` states it plainly — *"node4090
+is an alias for LUCIFER itself, is not a remote node, and is not routable
+here."* `getent hosts node4090.home.arpa` → `192.168.1.57`, this machine.
+node4090 is the **primary dreamer**; node3090 and node5090 are on-demand
+compute for specialised workloads.
+
+The cascade's defaults contradict that:
+
+| Leg | Default | Should be |
+|---|---|---|
+| 0 `GOETHE_DREAM_LLM_URL` | `""` (unset) | LUCIFER/node4090 — the primary |
+| 1 `GOETHE_NODE3090_LLM_URL` | `node3090:8080` | on-demand secondary |
+| 2 `GOETHE_NODE3090_OLLAMA_URL` | `node3090:11434` | on-demand tertiary |
+
+R1's stated premise — *"both real legs are on node3090, so a sleeping node
+has zero fallback"* — was true of the **code** and wrong about the
+**architecture**. The 2026-08-02 03:32 run proved it accidentally: the wake
+"failed", the cycle "fell back" to LUCIFER, and completed all five passes
+successfully. It had not degraded; it had reached the primary dreamer by
+accident.
+
+**Fix (small, high leverage):** default leg 0 to LUCIFER's local
+llama-server. Leg 0 is health-probed, so if it is down the cascade still
+falls through to node3090 unchanged. This removes node3090 from the nightly
+critical path entirely.
+
+### The on-demand service model this implies
+
+No node auto-starts services **by design** — all nodes share one versatile
+architecture, and the LSE starts what a given task needs. That makes
+`wake-node-for-dream.sh`'s `/health` poll wrong in principle, not just in
+detail: it waits for a service nothing was ever going to start. Confirmed
+2026-08-02 — node3090 woke in 29s, then sat idle while the script polled
+port 8080 for 300s (`systemctl is-enabled llama-server` → `not-found`).
+
+Correct shape: wake → wait for **SSH** → start the required engine with the
+right profile → *then* poll `/health`.
+
+### Hardware-aware inference profiles *(operator priority)*
+
+Elevate the LSE to start inference engines with parameters matched to the
+specific node's hardware. The seed already exists: `_NODE_REGISTRY`'s
+`agent_profile` and `_PROFILE_FLAGS` in `goethe_node.py`, hand-tuned for
+node3090 on 2026-08-01 (ctx 131072, KV cache q4_0, 16 threads,
+`--reasoning-format none`). Generalise to **profile per node per workload** —
+chat, dreaming, voice, image, video — since the fleet spans 3090/4090/5090
+with materially different VRAM and throughput.
+
+### ML root-cause analysis
+
+Strengthen structured RCA. Today failure analysis is ad hoc; TRAUM's
+`error-cluster` finds recurring failures but has no correctly-shaped output
+for them (see the `error-remedy` gap in §1). RCA and that gap are the same
+problem seen from two ends.
+
+### Multi-agent orchestration — deliberately later
+
+LangGraph / AutoGen / CrewAI / Semantic Kernel were considered 2026-08-02.
+Recommendation: **not yet, and probably LangGraph if ever.**
+
+Reasoning: a framework coordinates capabilities you already have. The
+capabilities are the gap — engines cannot yet be started with
+hardware-appropriate parameters, and there is no RCA structure. Building a
+control plane over that is premature. MCP already provides the substrate
+(`query_node_agent` is agent-to-agent delegation today).
+
+When revisited: LangGraph fits best — explicit state, conditional routing,
+least opinionated, and this system's workflows are pipelines with gates.
+AutoGen is conversation-centric and these agents execute rather than
+negotiate. CrewAI is the most opinionated and would fight the invariant and
+safety-gate discipline this codebase is built on. Semantic Kernel is
+plausible given `Goethe.App` is .NET, but the substance lives in Python.
+
+Revisit **after** profiles and RCA land, using real data about where
+coordination actually hurts.
+
+---
+
 ## 2. `/etc` change automation — spec, then build
 
 Deferred from 2026-07-31 by explicit request; now unblocked.
