@@ -57,6 +57,13 @@ PFSENSE_URL="${PFSENSE_URL:-https://pfsense.home.arpa}"
 PFSENSE_IFACE="opt1"
 
 WAKE_TIMEOUT_S="${GOETHE_DREAM_WAKE_TIMEOUT_S:-300}"
+
+# Written ONLY when this script actually performed a wake. run-dream-cycle.sh
+# uses its presence to decide whether it may power the node back down
+# afterwards. The rule is "only power down what we powered up": if node3090
+# was already awake when we looked, the operator (or something else) owns it,
+# and the cycle must leave it running.
+WOKE_MARKER="${GOETHE_DREAM_WOKE_MARKER:-/var/lib/lse-dream/.woke-node3090}"
 POLL_INTERVAL_S=5
 
 log() {
@@ -67,8 +74,13 @@ health_ok() {
   curl -sf -o /dev/null -m 3 "$NODE_HEALTH_URL"
 }
 
+# A marker left behind by a previous run (crash, kill -9) must never grant
+# shutdown authority to THIS run.
+rm -f "$WOKE_MARKER" 2>/dev/null || true
+
 if health_ok; then
   log "node3090 already reachable, /health OK -- nothing to do"
+  log "no wake performed; this cycle will NOT power the node down afterwards"
   exit 0
 fi
 
@@ -119,6 +131,12 @@ elapsed=0
 while (( elapsed < WAKE_TIMEOUT_S )); do
   if health_ok; then
     log "node3090 /health OK after ${elapsed}s -- awake"
+    if mkdir -p "$(dirname "$WOKE_MARKER")" 2>/dev/null && \
+       printf 'woken by wake-node-for-dream.sh at %s\n' "$(date -Is)" > "$WOKE_MARKER" 2>/dev/null; then
+      log "wrote wake marker $WOKE_MARKER -- this cycle owns the node and may power it down"
+    else
+      log "WARNING: could not write $WOKE_MARKER; the node will be LEFT RUNNING after the cycle"
+    fi
     exit 0
   fi
   sleep "$POLL_INTERVAL_S"

@@ -139,6 +139,17 @@ if ! "$PYTHON_BIN" "$REPO_DIR/tools/traum_state.py" expire-stale \
   echo "[dream-cycle] stale-proposal maintenance failed"
 fi
 
+# Return node3090 to standby if -- and only if -- this cycle's preflight woke
+# it. Runs before the failure check on purpose: a node we woke should go back
+# down whether or not the passes succeeded. The helper always exits 0, so it
+# can never turn a good cycle into a failed one.
+SLEEP_SCRIPT="$REPO_DIR/tools/sleep-node-after-dream.sh"
+if [[ -x "$SLEEP_SCRIPT" ]]; then
+  "$SLEEP_SCRIPT" || true
+else
+  echo "[dream-cycle] WARNING: $SLEEP_SCRIPT missing or not executable -- node3090 left as-is"
+fi
+
 if (( failures > 0 )); then
   echo "[dream-cycle] completed with $failures non-successful operation(s)"
   exit 1
