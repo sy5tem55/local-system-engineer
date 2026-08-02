@@ -39,6 +39,35 @@ removes rows for files that no longer exist (found 2026-08-01 during the
 path must prune explicitly, or analysis keeps seeing sessions that aren't
 there. Small fix, real correctness bug.
 
+**Credential rotation as an LSE skill.** Raised 2026-08-02 after
+`tools/start-goethe-node3090.sh` was found carrying a hardcoded
+`NODE3090_TOKEN` literal, committed and pushed. Repo is private, so this is
+hygiene rather than incident — but it is the second credential-shaped item
+after the parked BW_PASSWORD one, which makes it a pattern rather than a
+one-off.
+
+Rotation is harder here than "generate a new string", which is why it wants a
+skill with verification rather than a runbook:
+
+- A token lives in **more than one place**, and they drift. Measured
+  2026-07-31: the running gateway's `GOETHE_MCP_TOKEN` was `5fa5643e…` while
+  `/opt/local-se/goethe-mcp.env` on disk said `6e003f5c…`. Reading the file
+  gave the *wrong* token and produced `{"error":"unauthorized"}`, which was
+  then misread as "the feature is not deployed" and cost four turns. Ground
+  truth is `/proc/<pid>/environ`, not the file.
+- Rotation is therefore: update the store, restart the consumer, **verify the
+  new value is live in the process**, and confirm the old one is rejected.
+  A rotation that updates the file and stops there has changed nothing.
+- Secrets should not sit in scripts at all. The convention already exists in
+  this codebase — `tools/pfsense-gateway-tools.sh` states plainly that
+  `PFSENSE_API_KEY` is *not* stored there and is passed in from Vaultwarden.
+  `start-goethe-node3090.sh` should follow it.
+
+Scope: an LSE skill that enumerates where a given credential lives, rotates
+it, restarts what consumes it, and proves the new value is the live one and
+the old value is dead. Vaultwarden is already wired (`vault_unlock`,
+`get_vault_secret`, `set_vault_secret`).
+
 **Fix the D5 safety-gate substring match.** The gate blocks any command
 containing `sudo` as a substring — including read-only `git log` commands
 that merely name the branch `codex/fix-sudo-grants-live`. It should match
