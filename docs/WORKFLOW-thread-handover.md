@@ -72,10 +72,75 @@ Hard constraints:
     gate's substring match. Use `git log '@{u}..HEAD'`.
   - <task-specific destructive-operation constraints>
 
-Finish with <report path>, including before/after ruff and test counts, and
-an explicit note of anything in the spec's ground-truth table that turned out
-to be wrong.
+Finish with docs/reports/YYYY-MM-DD-<task>.md (committed, NOT /tmp),
+including before/after ruff and test counts, an explicit note of anything in
+the spec's ground-truth table that turned out to be wrong, and a closing
+ACCEPTANCE block (see §1b). Keep any bulky evidence the report cites -- a
+verbatim run, a log excerpt -- next to it in docs/reports/.
 ```
+
+---
+
+## 1b. The return leg — pointer, not payload
+
+The outbound leg (spec -> prompt -> implementer) works. The **return** leg was
+the weak one: the operator pasted the implementer's prose summary back into
+the reviewing thread.
+
+That is the wrong primitive, and it was demonstrated redundant on 2026-08-02:
+the reviewer verified an entire handover from `git show`, the repo, and an
+independent probe **without reading the pasted summary at all**. Pasting is
+manual work for the operator, lossy for the reviewer (who reads the real
+artifacts anyway), and it creates a trust surface -- the reviewer ends up
+verifying claims *about* claims.
+
+### Protocol
+
+**Operator says:** `done <commit>` — or just `done`.
+
+**Reviewer runs:**
+
+```bash
+python3 scripts/verify-handover.py docs/reports/<report>.md
+python3 scripts/verify-handover.py docs/reports/<report>.md --run-tests   # slow, authoritative
+```
+
+then spends its attention on judgement: is the design right, is the guard
+narrow enough, did a hazard get handled or worked around.
+
+### Reports live in `docs/reports/`, never `/tmp`
+
+Named `YYYY-MM-DD-<task>.md`, committed.
+
+**Measured 2026-08-02:** of four handover reports written during this roadmap
+push -- node-facts, privtoken-fix, corpus-hygiene, manifest-prune -- **three
+had already evaporated from `/tmp`** within days. The surviving one was less
+than a day old. That is the same write-only-memory failure fixed for
+`kb/session-learnings.md`: an artifact nothing can read later is an artifact
+that did not compound.
+
+Keep alongside the report any bulky evidence it cites (a verbatim real-run
+JSON, a log excerpt). It is the proof, and it is worth the bytes.
+
+### Every report ends with an ACCEPTANCE block
+
+```
+<!-- ACCEPTANCE
+task: node-facts
+commit: 24391cb
+tests_before: 728
+tests_after: 743
+files_changed: tools/node_facts.py, tests/test_node_facts.py
+ruff_clean: tools/node_facts.py, tests/test_node_facts.py
+runtime_verified: true
+-->
+```
+
+`verify-handover.py` checks each line against reality. It deliberately does
+**not** judge design correctness, guard narrowness or hazard handling -- all
+of which mattered on this project -- and it flags a non-true
+`runtime_verified` so behavioural claims are read as test-only evidence.
+It clears the mechanical claims; a reviewer still does the rest.
 
 ---
 

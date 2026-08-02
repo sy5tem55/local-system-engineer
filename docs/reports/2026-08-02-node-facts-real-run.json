@@ -1,0 +1,797 @@
+{
+  "hardware": {
+    "node4090": {
+      "node": "node4090",
+      "gpu": [
+        {
+          "name": "NVIDIA GeForce RTX 4090",
+          "vram_total_mib": 24564,
+          "driver": "610.74",
+          "cuda": "13.3",
+          "vram_bandwidth_gbps": null,
+          "bandwidth_source": "not-probed"
+        }
+      ],
+      "cpu": {
+        "model": "Intel(R) Core(TM) i9-14900KF",
+        "sockets": 1,
+        "cores": 10,
+        "threads": 20,
+        "isa_flags": [
+          "avx",
+          "avx2",
+          "avx_vnni"
+        ]
+      },
+      "ram": {
+        "total_gib": 47.04,
+        "available_gib": 37.68
+      },
+      "host": {
+        "hostname": "LUCIFER",
+        "kernel": "6.18.33.2-microsoft-standard-WSL2",
+        "reachable": true
+      },
+      "probed_at": "2026-08-02T19:17:50.549242+00:00",
+      "source": "local-probe"
+    },
+    "node3090": {
+      "node": "node3090",
+      "gpu": [
+        {
+          "name": "NVIDIA GeForce RTX 3090",
+          "vram_total_mib": 24576,
+          "driver": "610.43.02",
+          "cuda": "13.3",
+          "vram_bandwidth_gbps": null,
+          "bandwidth_source": "not-probed"
+        }
+      ],
+      "cpu": {
+        "model": "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz",
+        "sockets": 1,
+        "cores": 8,
+        "threads": 16,
+        "isa_flags": [
+          "avx",
+          "avx2"
+        ]
+      },
+      "ram": {
+        "total_gib": 31.25,
+        "available_gib": 20.13
+      },
+      "host": {
+        "hostname": "node3090",
+        "kernel": "6.8.0-136-generic",
+        "reachable": true
+      },
+      "probed_at": "2026-08-02T19:17:50.615667+00:00",
+      "source": "ssh"
+    },
+    "node5090": {
+      "node": "node5090",
+      "gpu": null,
+      "cpu": null,
+      "ram": null,
+      "host": {
+        "hostname": null,
+        "kernel": null,
+        "reachable": false
+      },
+      "probed_at": "2026-08-02T19:17:51.187919+00:00",
+      "source": "unreachable"
+    }
+  },
+  "models": {
+    "probed_at": "2026-08-02T19:17:51.342614+00:00",
+    "roots": [
+      {
+        "root": "/home/sy5/models",
+        "reachable": true,
+        "source": "local-scan",
+        "files": [
+          {
+            "path": "/home/sy5/models/Ornith-1.0-35b-Q5_K_M/ornith-1.0-35b-Q5_K_M.gguf",
+            "size_bytes": 24729130848,
+            "mtime": 1784267258.1544123,
+            "quant": "Q5_K_M"
+          },
+          {
+            "path": "/home/sy5/models/DavidAU/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf",
+            "size_bytes": 18498575840,
+            "mtime": 1785365737.3130596,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/home/sy5/models/unsloth/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+            "size_bytes": 22360456160,
+            "mtime": 1782029165.5940108,
+            "quant": "UD-Q4_K_XL"
+          },
+          {
+            "path": "/home/sy5/models/unsloth/mmproj-BF16.gguf",
+            "size_bytes": 931146304,
+            "mtime": 1782233518.824337,
+            "quant": null
+          },
+          {
+            "path": "/home/sy5/models/unsloth/Gemma-4-31B-it-UD-Q4_K_XL.gguf",
+            "size_bytes": 18822968320,
+            "mtime": 1782583208.738532,
+            "quant": "UD-Q4_K_XL"
+          },
+          {
+            "path": "/home/sy5/models/unsloth/Qwen3.6-27B-UD-Q4_K_XL.gguf",
+            "size_bytes": 17612564704,
+            "mtime": 1782423107.0995839,
+            "quant": "UD-Q4_K_XL"
+          },
+          {
+            "path": "/home/sy5/models/unsloth/Qwen3.6-27B-Q4_K_M.gguf",
+            "size_bytes": 16817244384,
+            "mtime": 1782030904.5040593,
+            "quant": "Q4_K_M"
+          }
+        ]
+      },
+      {
+        "root": "/opt/local-se/nas/Models",
+        "reachable": true,
+        "source": "local-scan",
+        "files": [
+          {
+            "path": "/opt/local-se/nas/Models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
+            "size_bytes": 19851335552,
+            "mtime": 1782769810.3841536,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Qwen3-14B-Q6_K.gguf",
+            "size_bytes": 12121937696,
+            "mtime": 1782770605.4443986,
+            "quant": "Q6_K"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Qwen3.6-40B-Deck-Opus-NEO-CODE-HERE-2T-OT-Q4_K_S.gguf",
+            "size_bytes": 22801818656,
+            "mtime": 1784629614.3689618,
+            "quant": "Q4_K_S"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Qwen3-Next-80B-A3B-Instruct-Q3_K_M.gguf",
+            "size_bytes": 38299874080,
+            "mtime": 1784635717.564793,
+            "quant": "Q3_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf",
+            "size_bytes": 21166758272,
+            "mtime": 1784630171.9218826,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/GLM-4.7-Flash-Q4_K_M/GLM-4.7-Flash-Q4_K_M.gguf",
+            "size_bytes": 18474983296,
+            "mtime": 1780018064.0,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Qwen3.6-27B-Q5_K_M.gguf",
+            "size_bytes": 20965122560,
+            "mtime": 1784637906.8940206,
+            "quant": "Q5_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Laguna-XS-2.1-Q4_K_M.gguf",
+            "size_bytes": 20274304032,
+            "mtime": 1784724559.7838428,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Gemma-4-26B-A4B-it-GGUF/mmproj-gemma-4-26B-A4B-it-BF16.gguf",
+            "size_bytes": 1194827744,
+            "mtime": 1779142678.9286213,
+            "quant": null
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-Q4_K_M.gguf",
+            "size_bytes": 16796015040,
+            "mtime": 1779142877.506755,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Qwen3.6-35B-A3B-uncensored-heretic-Q4_K_M.gguf",
+            "size_bytes": 21233608512,
+            "mtime": 1784661538.5275023,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Huihui-ai_DeepSeek-R1-Distill-Llama-70B-abliterated-Q4_K_M.gguf",
+            "size_bytes": 42520396416,
+            "mtime": 1784642286.815004,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Qwen3-Embedding-8B-Q4_K_M.gguf",
+            "size_bytes": 4676804928,
+            "mtime": 1784757402.5660248,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Gemma-4-31B-it-Q4_K_M/Gemma-4-31B-it-Q4_K_M.gguf",
+            "size_bytes": 18687061664,
+            "mtime": 1784630716.734562,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Gemma-4-31B-it-Q4_K_M/mmproj-gemma-4-31B-it-BF16.gguf",
+            "size_bytes": 1200725984,
+            "mtime": 1779142291.3879473,
+            "quant": null
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Ex0bit-Qwen3.6-27B-PRISM-EAGLE3-GGUF/Ex0bit-Qwen3.6-27B-PRISM-EAGLE3-GGUF-Q5_K_M.gguf",
+            "size_bytes": 1328237120,
+            "mtime": 1781987216.7813218,
+            "quant": "Q5_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Ex0bit-Qwen3.6-27B-PRISM-EAGLE3-GGUF/Ex0bit-Qwen3.6-27B-PRISM-EAGLE3-GGUF-Q4_K_M.gguf",
+            "size_bytes": 1290881600,
+            "mtime": 1781987092.241742,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Huihui-Qwen3.6-27B-abliterated-MTP/Huihui-Qwen3.6-27B-abliterated-ggml-model-Q4_K.gguf",
+            "size_bytes": 16810713408,
+            "mtime": 1784645737.4478507,
+            "quant": "Q4_K"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-ggml-model-Q4_K/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-ggml-model-Q4_K.gguf",
+            "size_bytes": 21712410016,
+            "mtime": 1779831365.0699916,
+            "quant": "Q4_K"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/DavidAU-Qwen3.6-27B-Fable-Fusion-711/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q5_K_S.gguf",
+            "size_bytes": 20630789600,
+            "mtime": 1785365704.090513,
+            "quant": "Q5_K_S"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/DavidAU-Qwen3.6-27B-Fable-Fusion-711/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf",
+            "size_bytes": 18498575840,
+            "mtime": 1785365737.3130596,
+            "quant": "Q4_K_M"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/DavidAU-Qwen3.6-27B-Fable-Fusion-711/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-AMD-MTP-Q6_K.gguf",
+            "size_bytes": 24033705440,
+            "mtime": 1785365756.1713443,
+            "quant": "Q6_K"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Unsloth/Qwen3.6-27B-UD-Q5_K_XL.gguf",
+            "size_bytes": 20038256864,
+            "mtime": 1782785965.0983505,
+            "quant": "UD-Q5_K_XL"
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Qwen3.6-27B-Q4_K_M/mmproj-Qwen3.6-27B-BF16.gguf",
+            "size_bytes": 931145856,
+            "mtime": 1781564966.6285627,
+            "quant": null
+          },
+          {
+            "path": "/opt/local-se/nas/Models/Qwen3.6-27B-Q4_K_M/Qwen3.6-27B-Q4_K_M.gguf",
+            "size_bytes": 17984872960,
+            "mtime": 1779745925.0862508,
+            "quant": "Q4_K_M"
+          }
+        ]
+      }
+    ]
+  },
+  "match": {
+    "live_pid": 335865,
+    "live_model": "/home/sy5/models/DavidAU/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf",
+    "best_match": {
+      "file": "/mnt/c/Goethe3.0/Qwen3.6-27B-UD-Q4_K_XL-165000.gguf.md",
+      "identity_matches": 16,
+      "identity_total": 31
+    },
+    "ranked": [
+      {
+        "file": "/mnt/c/Goethe3.0/Qwen3.6-27B-UD-Q4_K_XL-165000.gguf.md",
+        "exact": false,
+        "identity_diffs": [
+          {
+            "flag": "--alias",
+            "canonical": "Qwen3.6-27B",
+            "live": "Qwen3.6-27B-Fus-711-MTP-Q4_K_M"
+          },
+          {
+            "flag": "--cache-type-k",
+            "canonical": "f16",
+            "live": "q4_0"
+          },
+          {
+            "flag": "--cache-type-v",
+            "canonical": "f16",
+            "live": "q4_0"
+          },
+          {
+            "flag": "--chat-template-kwargs",
+            "canonical": "{\"preserve_thinking\": true}",
+            "live": "{preserve_thinking:"
+          },
+          {
+            "flag": "--ctx-size",
+            "canonical": "165000",
+            "live": "150000"
+          },
+          {
+            "flag": "--fit",
+            "canonical": "on",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--repeat-penalty",
+            "canonical": "<absent>",
+            "live": "1.0"
+          },
+          {
+            "flag": "--spec-draft-n-max",
+            "canonical": "<absent>",
+            "live": "2"
+          },
+          {
+            "flag": "--spec-draft-p-min",
+            "canonical": "<absent>",
+            "live": "0.50"
+          },
+          {
+            "flag": "--spec-ngram-map-k4v-min-hits",
+            "canonical": "1",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--spec-ngram-map-k4v-size-m",
+            "canonical": "24",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--spec-ngram-map-k4v-size-n",
+            "canonical": "16",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--spec-type",
+            "canonical": "ngram-map-k4v",
+            "live": "draft-mtp"
+          },
+          {
+            "flag": "-fitt",
+            "canonical": "50",
+            "live": "<absent>"
+          },
+          {
+            "flag": "-m",
+            "canonical": "/home/sy5/models/unsloth/Qwen3.6-27B-UD-Q4_K_XL.gguf",
+            "live": "/home/sy5/models/DavidAU/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf"
+          }
+        ],
+        "hardware_diffs": [
+          {
+            "flag": "--batch-size",
+            "canonical": "512",
+            "live": "1024"
+          },
+          {
+            "flag": "--threads",
+            "canonical": "15",
+            "live": "14"
+          },
+          {
+            "flag": "--threads-batch",
+            "canonical": "15",
+            "live": "14"
+          },
+          {
+            "flag": "--ubatch-size",
+            "canonical": "512",
+            "live": "1024"
+          },
+          {
+            "flag": "-ngl",
+            "canonical": "99",
+            "live": "<absent>"
+          }
+        ],
+        "deployment_diffs": [
+          {
+            "flag": "--host",
+            "canonical": "0.0.0.0",
+            "live": "127.0.0.1"
+          },
+          {
+            "flag": "--path",
+            "canonical": "<absent>",
+            "live": "/home/sy5/.local/share/lse/llama-ui/releases/pr25631-6faf261-on-b9992/dist"
+          }
+        ],
+        "identity_matches": 16,
+        "identity_total": 31
+      },
+      {
+        "file": "/mnt/c/Goethe3.0/131K-Qwen3.6-27B-UD-Q4_K_XL.gguf.md",
+        "exact": false,
+        "identity_diffs": [
+          {
+            "flag": "--alias",
+            "canonical": "Qwen3.6-27B",
+            "live": "Qwen3.6-27B-Fus-711-MTP-Q4_K_M"
+          },
+          {
+            "flag": "--cache-type-k",
+            "canonical": "q8_0",
+            "live": "q4_0"
+          },
+          {
+            "flag": "--cache-type-v",
+            "canonical": "q8_0",
+            "live": "q4_0"
+          },
+          {
+            "flag": "--chat-template-kwargs",
+            "canonical": "{\"preserve_thinking\": true}",
+            "live": "{preserve_thinking:"
+          },
+          {
+            "flag": "--ctx-size",
+            "canonical": "131072",
+            "live": "150000"
+          },
+          {
+            "flag": "--fit",
+            "canonical": "on",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--reasoning-preserve",
+            "canonical": true,
+            "live": "<absent>"
+          },
+          {
+            "flag": "--repeat-penalty",
+            "canonical": "<absent>",
+            "live": "1.0"
+          },
+          {
+            "flag": "--spec-draft-n-max",
+            "canonical": "<absent>",
+            "live": "2"
+          },
+          {
+            "flag": "--spec-draft-p-min",
+            "canonical": "<absent>",
+            "live": "0.50"
+          },
+          {
+            "flag": "--spec-ngram-map-k4v-min-hits",
+            "canonical": "1",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--spec-ngram-map-k4v-size-m",
+            "canonical": "24",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--spec-ngram-map-k4v-size-n",
+            "canonical": "16",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--spec-type",
+            "canonical": "ngram-map-k4v",
+            "live": "draft-mtp"
+          },
+          {
+            "flag": "-fitt",
+            "canonical": "50",
+            "live": "<absent>"
+          },
+          {
+            "flag": "-m",
+            "canonical": "/home/sy5/models/unsloth/Qwen3.6-27B-UD-Q4_K_XL.gguf",
+            "live": "/home/sy5/models/DavidAU/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf"
+          }
+        ],
+        "hardware_diffs": [
+          {
+            "flag": "--batch-size",
+            "canonical": "512",
+            "live": "1024"
+          },
+          {
+            "flag": "--threads",
+            "canonical": "15",
+            "live": "14"
+          },
+          {
+            "flag": "--threads-batch",
+            "canonical": "15",
+            "live": "14"
+          },
+          {
+            "flag": "--ubatch-size",
+            "canonical": "512",
+            "live": "1024"
+          },
+          {
+            "flag": "-ngl",
+            "canonical": "99",
+            "live": "<absent>"
+          }
+        ],
+        "deployment_diffs": [
+          {
+            "flag": "--host",
+            "canonical": "0.0.0.0",
+            "live": "127.0.0.1"
+          },
+          {
+            "flag": "--path",
+            "canonical": "<absent>",
+            "live": "/home/sy5/.local/share/lse/llama-ui/releases/pr25631-6faf261-on-b9992/dist"
+          }
+        ],
+        "identity_matches": 16,
+        "identity_total": 32
+      },
+      {
+        "file": "/mnt/c/Goethe3.0/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf.md",
+        "exact": false,
+        "identity_diffs": [
+          {
+            "flag": "--alias",
+            "canonical": "<absent>",
+            "live": "Qwen3.6-27B-Fus-711-MTP-Q4_K_M"
+          },
+          {
+            "flag": "--cache-type-k",
+            "canonical": "<absent>",
+            "live": "q4_0"
+          },
+          {
+            "flag": "--cache-type-v",
+            "canonical": "<absent>",
+            "live": "q4_0"
+          },
+          {
+            "flag": "--chat-template-kwargs",
+            "canonical": "{\"preserve_thinking\": true}",
+            "live": "{preserve_thinking:"
+          },
+          {
+            "flag": "--ctx-checkpoints",
+            "canonical": "16",
+            "live": "64"
+          },
+          {
+            "flag": "--ctx-size",
+            "canonical": "100000",
+            "live": "150000"
+          },
+          {
+            "flag": "--repeat-penalty",
+            "canonical": "<absent>",
+            "live": "1.0"
+          },
+          {
+            "flag": "--spec-default",
+            "canonical": "<absent>",
+            "live": true
+          },
+          {
+            "flag": "--spec-draft-n-max",
+            "canonical": "<absent>",
+            "live": "2"
+          },
+          {
+            "flag": "--spec-draft-p-min",
+            "canonical": "<absent>",
+            "live": "0.50"
+          },
+          {
+            "flag": "--spec-type",
+            "canonical": "<absent>",
+            "live": "draft-mtp"
+          },
+          {
+            "flag": "-m",
+            "canonical": "/home/sy5/models/unsloth/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+            "live": "/home/sy5/models/DavidAU/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf"
+          }
+        ],
+        "hardware_diffs": [
+          {
+            "flag": "--threads",
+            "canonical": "16",
+            "live": "14"
+          },
+          {
+            "flag": "--threads-batch",
+            "canonical": "16",
+            "live": "14"
+          },
+          {
+            "flag": "-ngl",
+            "canonical": "99",
+            "live": "<absent>"
+          }
+        ],
+        "deployment_diffs": [
+          {
+            "flag": "--host",
+            "canonical": "0.0.0.0",
+            "live": "127.0.0.1"
+          },
+          {
+            "flag": "--path",
+            "canonical": "<absent>",
+            "live": "/home/sy5/.local/share/lse/llama-ui/releases/pr25631-6faf261-on-b9992/dist"
+          }
+        ],
+        "identity_matches": 14,
+        "identity_total": 26
+      },
+      {
+        "file": "/mnt/c/Goethe3.0/ACTUAL-Qwen3.6-27B-UD-Q4_K_XL.gguf.md",
+        "exact": false,
+        "identity_diffs": [
+          {
+            "flag": "--alias",
+            "canonical": "Qwen3.6-27B",
+            "live": "Qwen3.6-27B-Fus-711-MTP-Q4_K_M"
+          },
+          {
+            "flag": "--cache-type-k",
+            "canonical": "q8_0",
+            "live": "q4_0"
+          },
+          {
+            "flag": "--cache-type-v",
+            "canonical": "q8_0",
+            "live": "q4_0"
+          },
+          {
+            "flag": "--chat-template-kwargs",
+            "canonical": "{\"preserve_thinking\": true}",
+            "live": "{preserve_thinking:"
+          },
+          {
+            "flag": "--ctx-size",
+            "canonical": "131072",
+            "live": "150000"
+          },
+          {
+            "flag": "--fit",
+            "canonical": "on",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--log-timestamps",
+            "canonical": true,
+            "live": "<absent>"
+          },
+          {
+            "flag": "--reasoning-budget",
+            "canonical": "-1",
+            "live": "16000"
+          },
+          {
+            "flag": "--reasoning-format",
+            "canonical": "auto",
+            "live": "none"
+          },
+          {
+            "flag": "--repeat-penalty",
+            "canonical": "<absent>",
+            "live": "1.0"
+          },
+          {
+            "flag": "--spec-draft-n-max",
+            "canonical": "<absent>",
+            "live": "2"
+          },
+          {
+            "flag": "--spec-draft-p-min",
+            "canonical": "<absent>",
+            "live": "0.50"
+          },
+          {
+            "flag": "--spec-ngram-map-k4v-min-hits",
+            "canonical": "1",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--spec-ngram-map-k4v-size-m",
+            "canonical": "24",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--spec-ngram-map-k4v-size-n",
+            "canonical": "16",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--spec-type",
+            "canonical": "ngram-map-k4v",
+            "live": "draft-mtp"
+          },
+          {
+            "flag": "-fitt",
+            "canonical": "50",
+            "live": "<absent>"
+          },
+          {
+            "flag": "-m",
+            "canonical": "/home/sy5/models/unsloth/Qwen3.6-27B-UD-Q4_K_XL.gguf",
+            "live": "/home/sy5/models/DavidAU/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M.gguf"
+          }
+        ],
+        "hardware_diffs": [
+          {
+            "flag": "--batch-size",
+            "canonical": "512",
+            "live": "1024"
+          },
+          {
+            "flag": "--threads",
+            "canonical": "15",
+            "live": "14"
+          },
+          {
+            "flag": "--threads-batch",
+            "canonical": "15",
+            "live": "14"
+          },
+          {
+            "flag": "--ubatch-size",
+            "canonical": "512",
+            "live": "1024"
+          },
+          {
+            "flag": "-ngl",
+            "canonical": "99",
+            "live": "<absent>"
+          }
+        ],
+        "deployment_diffs": [
+          {
+            "flag": "--host",
+            "canonical": "0.0.0.0",
+            "live": "127.0.0.1"
+          },
+          {
+            "flag": "--log-file",
+            "canonical": "/tmp/llama-4090.log",
+            "live": "<absent>"
+          },
+          {
+            "flag": "--path",
+            "canonical": "<absent>",
+            "live": "/home/sy5/.local/share/lse/llama-ui/releases/pr25631-6faf261-on-b9992/dist"
+          }
+        ],
+        "identity_matches": 14,
+        "identity_total": 32
+      }
+    ],
+    "verdict": "closest"
+  }
+}
