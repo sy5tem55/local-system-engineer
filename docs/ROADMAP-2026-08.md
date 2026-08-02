@@ -50,6 +50,38 @@ would be removed, quarantine rather than delete, rebuild *and* prune the
 manifest as one step. Design it as a typed operation in the existing
 Human Gate idiom, not a raw delete button.
 
+**"QUARANTINED" means two opposite things.** Raised 2026-08-01 by the
+operator, who reasonably asked how a doc can be `source_tier=ground_truth`
+and QUARANTINED at once. It cannot — the label is wrong, not the data.
+
+Two code paths both end at `stale=True` + low quality, and the Console shows
+both as QUARANTINED:
+
+| Path | Meaning | Floor |
+|---|---|---|
+| `kb_verify` failure decay (`goethe_kb.py:919`) | *"repeatedly failed — do not trust"* | 0.2 |
+| `mentor_demote` (`goethe_kb.py:1227`) | *"correct but redundant — use the better copy"* | none |
+
+The first is a correctness warning; the second is a filing decision. Shown
+identically, and shown beside `ground_truth` (which is provenance and
+correctly never changes), the second reads as a contradiction.
+
+Live example: `RUTX50 Alternative WoL for node3090 via etherwake` and
+`node3090 Full Stack Startup Procedure` both sit at quality 0.10, stale,
+`failure_count: 0`, with `demote_reason` = *"Superseded by definitive doc
+842595879f70576d (quality 1.0) … all its content is fully absorbed into the
+definitive procedure."* They never failed. They are retired duplicates of a
+doc that is healthy (quality 1.0, 7 empirical runs, 0 failures).
+
+The diagnostic tell: 0.10 is **below** the 0.2 floor that failure-decay can
+reach, so anything at 0.10 was demoted by human decision, not by failing.
+
+Fix is display-level; the data needed already exists. A doc with
+`mentor_demoted_at` set and `failure_count == 0` should render as
+**SUPERSEDED → <target doc id>**, not QUARANTINED. Reserve QUARANTINED for
+the failure-decay path. Same root cause as the `prp_` hashes below: the
+Console surfaces internal state rather than its meaning.
+
 **Human Gate legibility.** Proposals are presented as `prp_` hashes with
 JSON-ish reasons and no plain-language statement of what approving would
 actually do. There is also no edit action — a proposal with a correct
