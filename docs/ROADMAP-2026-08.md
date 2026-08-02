@@ -127,6 +127,56 @@ Fix shape: add an `error-remedy` proposal type that writes to
 Requires opening the error index to pass functions under gate control —
 deliberately, and with the dream-infra provenance boundary preserved.
 
+**Close the compound-engineering loop.** Raised 2026-08-02. Compound
+engineering (Every, Inc., Jan 2026) structures work as Plan → Work →
+Review → Compound, where each cycle emits both the artifact and documented
+learnings written back to persistent context that future cycles ingest.
+
+This project already runs most of that, and in places exceeds it:
+
+| Stage | State |
+|---|---|
+| Plan | Strong — the `SPEC-*.md` pattern (ground truth marked verify-don't-trust, hazards before design, named load-bearing tests, anti-goals) is ~40% of each cycle |
+| Work | Spec → implementer → commit |
+| Review | Partial — automated checks are strong, and break-and-restore exceeds the norm; structural review of *decisions* is ad hoc and uncodified |
+| Compound | **Half-built** |
+
+TRAUM *is* an automated compound stage: mine episodes → extract lessons →
+propose → Human Gate → persistent KB. That is more ambitious than the
+standard formulation. The gap is the human-authored half.
+
+**Measured 2026-08-02:** `kb/session-learnings.md` is 1,300+ lines and is
+indexed into `lse-kb-1024` **zero** times. Nothing reads it back. The
+`lse-session-debrief` skill writes it; no retrieval path ingests it. It is
+write-only memory — the exact failure the practice exists to prevent. There
+is also no `AGENTS.md` or `CLAUDE.md` at this repo root for an agent to load
+at session start.
+
+Three concrete items, smallest first:
+
+1. **Index `session-learnings.md` into the KB.** Chunk per `## Session`
+   entry so retrieval returns one incident, not a 1,300-line file. Tag
+   `source_tier` honestly — these are verified post-hoc observations, not
+   ground truth. Once indexed, `search_kb` surfaces them and the loop closes.
+   This is the single highest-leverage item on this list: the content already
+   exists and is good; it is simply unreachable.
+
+2. **Add a repo-root agent brief.** `docs/WORKFLOW-thread-handover.md`
+   already is one in substance — tool-loading preamble, when to flip vs start
+   fresh, turn budget, the six sections a spec needs, the verification rules.
+   It is not in the conventional location or name, so nothing loads it
+   automatically.
+
+3. **Codify the review stage.** Independent re-verification of an
+   implementer's report has caught real things (a mislabelled security
+   "regression" that was the intended fix; a purge harness that needed
+   adversarial probing separate from the implementer's own tests). Today that
+   depends on whoever is reviewing remembering to do it. It belongs in the
+   workflow doc as a named step with its own checklist.
+
+Do **not** treat this as adopting a new methodology. The practice is already
+here; these three items connect wires that are already run.
+
 ---
 
 ## 2. `/etc` change automation — spec, then build
