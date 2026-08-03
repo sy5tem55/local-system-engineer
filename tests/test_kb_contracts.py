@@ -199,6 +199,28 @@ SKILLS_TEST_MAPPING = {
     },
 }
 
+ERRORS_TEST_MAPPING = {
+    "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+    "mappings": {
+        "properties": {
+            "error_hash": {"type": "keyword"},
+            "error_text": {"type": "text"},
+            "context": {"type": "text"},
+            "resolution": {"type": "text"},
+            "interpretation": {"type": "text"},
+            "anti_response": {"type": "text"},
+            "provenance": {"type": "keyword"},
+            "embedding": {
+                "type": "dense_vector", "dims": 768,
+                "index": True, "similarity": "cosine",
+            },
+            "occurrence_count": {"type": "integer"},
+            "first_seen": {"type": "date"},
+            "last_seen": {"type": "date"},
+        }
+    },
+}
+
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -218,6 +240,7 @@ def es(raw_es):
     for name, mapping in (
         ("lse-kb-test", KB_TEST_MAPPING),
         ("lse-skills-test", SKILLS_TEST_MAPPING),
+        ("lse-errors-test", ERRORS_TEST_MAPPING),
     ):
         if raw_es.indices.exists(index=name):
             raw_es.indices.delete(index=name)
@@ -1237,3 +1260,105 @@ class TestOriginTags:
         assert doc["origin"] == "local-probe"
         assert doc["source_tier"] == "ground_truth"
         assert doc["quality_score"] == pytest.approx(1.0)
+
+
+# ══ record_error — diagnosis proposal type (SPEC-diagnosis-proposal-type-2026-08) ══
+#
+# Covers spec §6 tests 1, 2, 6 against a real (throwaway) lse-errors-test
+# index. Tests 3-5, 7, 8 (error-cluster prompt routing, structural validation,
+# dream-infra distinguishability, Console rendering) live in
+# tests/test_diagnosis_proposal_type.py, which needs no live ES.
+
+import re as _re  # noqa: E402
+
+
+def error_hash_from_result(result: str) -> str:
+    m = _re.search(r"hash=([0-9a-f]{16})", result)
+    assert m, f"no hash in result: {result}"
+    return m.group(1)
+
+
+def error_doc(es, error_hash):
+    return es.get(index="lse-errors-1024", id=error_hash)["_source"]
+
+
+class TestRecordErrorDiagnosisFields:
+    def test_three_positional_args_unaffected(self, tools, es):
+        """Test 1: record_error with three positional args behaves exactly
+        as before -- old-style callers (every live MCP session so far)
+        must see no change in return shape or success."""
+        r = tools.record_error(
+            "ConnectionRefusedError: [Errno 111]", "connecting to node3090",
+            "restarted the ollama service",
+        )
+        assert r.startswith("Error KB created: new error pattern recorded")
+        h = error_hash_from_result(r)
+        doc = error_doc(es, h)
+        assert doc["error_text"] == "ConnectionRefusedError: [Errno 111]"
+        assert doc["resolution"] == "restarted the ollama service"
+        # additive fields default to empty, never absent-vs-error -- same
+        # dynamic-mapping safety the spec calls out for the existing 62 docs
+        assert doc["interpretation"] == ""
+        assert doc["anti_response"] == ""
+
+    def test_new_fields_persist_and_are_retrievable(self, tools, es):
+        """Test 2: interpretation/anti_response are real ES fields, not
+        smuggled into resolution (Hazard A)."""
+        r = tools.record_error(
+            "MCP error -32001", "running pytest tests/ inline",
+            "run backgrounded via nohup ... & disown, then poll the log",
+            interpretation=(
+                "the MCP request timeout is shorter than the test suite's "
+                "runtime, not a sign the suite itself hung"
+            ),
+            anti_response="do not retry the same blocking call expecting a different result",
+        )
+        assert r.startswith("Error KB created")
+        h = error_hash_from_result(r)
+        doc = error_doc(es, h)
+        assert "MCP request timeout is shorter" in doc["interpretation"]
+        assert doc["anti_response"] == (
+            "do not retry the same blocking call expecting a different result"
+        )
+        # Hazard A: never folded into resolution's free text
+        assert "MCP request timeout is shorter" not in doc["resolution"]
+        assert "do not retry the same blocking call" not in doc["resolution"]
+
+    def test_diagnosis_write_lands_in_errors_index_not_kb(self, tools, es):
+        """Test 6: applying a diagnosis writes to lse-errors-1024, not
+        lse-kb -- record_error must never touch the KB index."""
+        before = kb_count(es)
+        r = tools.record_error(
+            "TimeoutError: node3090 unreachable", "SSH connectivity check",
+            "verify node3090 is powered on before retrying",
+            interpretation="the node is asleep (WoL-managed), not the network being down",
+            anti_response="do not assume the network is broken and start debugging switches",
+        )
+        assert r.startswith("Error KB created")
+        assert kb_count(es) == before  # lse-kb untouched
+        h = error_hash_from_result(r)
+        doc = error_doc(es, h)  # lse-errors-1024 -> lse-errors-test, present
+        assert doc["error_text"] == "TimeoutError: node3090 unreachable"
+
+    def test_repeat_call_does_not_blank_existing_interpretation(self, tools, es):
+        """A plain 3-arg record_error call that happens to re-hit an
+        existing diagnosis (occurrence bump) must not erase its
+        interpretation/anti_response -- only overwrite fields it actually
+        supplied a value for."""
+        r1 = tools.record_error(
+            "PermissionError: /var/lib/docker", "restarting a container",
+            "chown the socket to the service user",
+            interpretation="the service user changed after the last host rebuild",
+            anti_response="do not chmod 777 the socket",
+        )
+        h = error_hash_from_result(r1)
+        r2 = tools.record_error(
+            "PermissionError: /var/lib/docker", "restarting a container",
+            "chown the socket to the service user (confirmed again)",
+        )
+        assert r2.startswith("Error KB updated")
+        doc = error_doc(es, h)
+        assert doc["interpretation"] == "the service user changed after the last host rebuild"
+        assert doc["anti_response"] == "do not chmod 777 the socket"
+        assert doc["resolution"] == "chown the socket to the service user (confirmed again)"
+        assert doc["occurrence_count"] == 2

@@ -657,7 +657,8 @@ class KBMixin:
             self._log(f"INDEX-KB ERROR: {e}")
             return f"KB index error: {e}"
 
-    def record_error(self, error_text: str, context: str, resolution: str) -> str:
+    def record_error(self, error_text: str, context: str, resolution: str,
+                      interpretation: str = "", anti_response: str = "") -> str:
         """
         Record an error and its resolution to the LSE error knowledge base.
 
@@ -667,9 +668,15 @@ class KBMixin:
           made again in any future session.
 
         Args:
-            error_text:  The exact error message or clear description of the failure.
-            context:     What you were trying to do when the error occurred.
-            resolution:  Exactly what fixed it.
+            error_text:     The exact error message or clear description of the failure.
+            context:        What you were trying to do when the error occurred.
+            resolution:     Exactly what fixed it.
+            interpretation: Optional. What the failure actually means (not just
+                             what it looks like) — the diagnosis proposal type's
+                             load-bearing field. Never fold this into resolution.
+            anti_response:  Optional. What NOT to do — the intuitive-but-wrong
+                             response this failure tempts. May legitimately be
+                             empty; interpretation may not.
         """
         import hashlib, re  # noqa: PLC0415
         from datetime import timezone  # noqa: PLC0415
@@ -705,16 +712,23 @@ class KBMixin:
             if dup_hits and dup_hits[0]["_score"] >= 0.90:
                 existing = dup_hits[0]
                 new_count = existing["_source"]["occurrence_count"] + 1
+                update_doc = {
+                    "last_seen": now,
+                    "occurrence_count": new_count,
+                    "resolution": resolution,
+                }
+                # Hazard A: interpretation/anti_response are real fields, never
+                # smuggled into resolution's free text. Only overwrite on a
+                # repeat if this call actually supplied one -- an old-style
+                # 3-arg call re-hitting an existing diagnosis must not blank it.
+                if interpretation:
+                    update_doc["interpretation"] = interpretation
+                if anti_response:
+                    update_doc["anti_response"] = anti_response
                 es.update(
                     index="lse-errors-1024",
                     id=existing["_id"],
-                    body={
-                        "doc": {
-                            "last_seen": now,
-                            "occurrence_count": new_count,
-                            "resolution": resolution,
-                        }
-                    },
+                    body={"doc": update_doc},
                 )
                 return f"Error KB updated: known error now seen {new_count}x. Resolution updated.{wf_note}"
             doc = {
@@ -722,6 +736,8 @@ class KBMixin:
                 "error_text": error_text,
                 "context": context,
                 "resolution": resolution,
+                "interpretation": interpretation,
+                "anti_response": anti_response,
                 "embedding": embedding,
                 "occurrence_count": 1,
                 "first_seen": now,
