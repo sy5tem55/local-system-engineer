@@ -724,6 +724,27 @@ function setTraumMsg(message, bad){
   el.textContent = message || "";
   el.className = "traum-msg " + (bad ? "bad" : message ? "good" : "");
 }
+function proposalAction(body){
+  // Say what approving would DO, in the operator's language, from args the
+  // payload already carries. Before this the panel showed a hash, a type and
+  // a truncated rationale -- never the actual subject of the decision.
+  const a = body.args || {}, call = body.call || "";
+  if(call==="skill_record")        return ["Record skill", a.task||"(untitled)"];
+  if(call==="index_to_kb")         return ["Add KB fact", a.title||"(untitled)"];
+  if(call==="kb_verify")           return ["Re-verify KB doc", a.doc_id||"?"];
+  if(call==="record_outcome")      return [(a.success===false?"Demote KB doc":"Record outcome"), a.doc_id||"?"];
+  if(call==="append_learned_rule") return ["Append rule to", a.target_file||"?"];
+  if(call==="skill_outcome")       return ["Record skill outcome", a.skill_id||"?"];
+  return [call||body.type||"unknown action", a.title||a.task||a.doc_id||""];
+}
+function proposalDupKey(body){
+  // Two proposals that would perform the same write are duplicates for the
+  // operator even if their rationales differ. error-cluster emits these in
+  // pairs (2026-08-03: two CancelledError, two SSH-triage in one run).
+  const a = body.args || {};
+  const subj = (a.task||a.title||a.doc_id||"").toLowerCase().replace(/[^a-z0-9]+/g,"").slice(0,40);
+  return (body.call||"")+"|"+subj;
+}
 function renderTraumHealth(health){
   // R3.2 (docs/TRAUM-R1-R3-PLAN.md): one line, front and centre, so the
   // operator can tell "quiet success" from "dead for days" without
@@ -930,9 +951,16 @@ async function loadTraumProposals(){
       (total!==null?" · total "+(exact?total:("at least "+total)):" · total unknown");
     $("traum-proposal-ms").textContent=d._elapsed_ms+"ms · showing "+shown+"/"+
       (total!==null?(exact?total:("at least "+total)):"unknown");
+    const dupCounts={};
+    (d.proposals||[]).forEach(p=>{
+      const k=proposalDupKey(p.proposal||{});
+      dupCounts[k]=(dupCounts[k]||0)+1;
+    });
     const rows=(d.proposals||[]).map(p=>{
       const body=p.proposal||{};
       const why=body.why||"";
+      const act=proposalAction(body);
+      const isDup=dupCounts[proposalDupKey(body)]>1;
       const pid=esc(p.proposal_id), rev=Number(p.revision)||0;
       let actions='<div class="actions">'+
         '<button class="abtn" data-proposal-action="preview" data-proposal="'+pid+'" data-revision="'+rev+'">Preview</button>';
@@ -943,8 +971,13 @@ async function loadTraumProposals(){
         actions+='<span class="badge state-APPLY_FAILED">RECONCILE BEFORE RETRY</span>';
       }
       actions+='<button class="abtn deny" data-proposal-action="reject" data-proposal="'+pid+'" data-revision="'+rev+'">Reject</button></div>';
-      return "<tr><td title='"+esc(p.proposal_id)+"'>"+esc(p.proposal_id.slice(0,18))+"</td>"+
-        "<td>"+esc(p.proposal_type||body.type||"unknown")+"<br><span style='color:var(--faint)'>"+esc(p.call_type||body.call||"")+"</span></td>"+
+      const dupTag=isDup
+        ? " <span class='badge' style='background:var(--warn);color:#000' title='another pending proposal would perform the same write'>DUPLICATE</span>"
+        : "";
+      return "<tr><td><strong>"+esc(act[0])+"</strong>"+dupTag+
+          "<br><span style='color:var(--dim)'>"+esc(String(act[1]).slice(0,90))+"</span>"+
+          "<br><span style='color:var(--faint);font-size:10px' title='"+esc(p.proposal_id)+"'>"+
+          esc(p.proposal_id.slice(0,18))+" · "+esc(p.proposal_type||body.type||"?")+"</span></td>"+
         "<td>"+esc(why.slice(0,180))+"</td><td>"+stateBadge(p.state)+" r"+esc(p.revision)+"</td><td>"+actions+"</td></tr>";
     }).join("");
     const incomplete=!exact||d.inventory_truncated;
@@ -954,14 +987,14 @@ async function loadTraumProposals(){
         ? "human gate is clear — "+d.hidden_future_deferred+" proposal(s) deferred until due"
         : "human gate is clear — no semantic decisions pending";
     const truncation=(d.truncated||incomplete)
-      ? '<tr><td colspan="5" class="empty">'+esc(
+      ? '<tr><td colspan="4" class="empty">'+esc(
           incomplete
             ? "Inventory count is a lower bound; refine or continue only after the full queue is available."
             : "Showing the first "+shown+" of "+total+" matching proposals; decisions remain in canonical history."
         )+'</td></tr>'
       : "";
     $("traum-proposals").innerHTML=rows
-      ? "<tr><th>proposal</th><th>type / call</th><th>why</th><th>state</th><th>decision</th></tr>"+rows+truncation
+      ? "<tr><th>what approving would do</th><th>why</th><th>state</th><th>decision</th></tr>"+rows+truncation
       : '<tr><td class="empty">'+esc(emptyText)+'</td></tr>';
     wireTraumProposalButtons();
   }catch(e){showErr($("traum-proposals"),e);}
