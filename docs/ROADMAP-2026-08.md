@@ -119,7 +119,39 @@ elsewhere. This is the operator-facing half of the original complaint
 ("it is not very intuitive how to operate it correctly") that R3 only
 partly addressed.
 
-**Give `error-cluster` a correctly-shaped output type.** Raised
+**Add the `diagnosis` proposal type — spec'd, next up.** See
+`docs/SPEC-diagnosis-proposal-type-2026-08.md`. Raised by the operator three
+times; the third time with the definition the system was missing:
+
+> *An agent skill is a series of actions the agent learns to concatenate
+> together for a specific and repeatable deterministic outcome. These
+> proposals are different — they are errors.*
+
+The codebase already polices **fact vs skill** (`skill_record`'s docstring
+rejects `task="llama-server port"` as a fact). It does not police **skill vs
+diagnosis**, and everything `error-cluster` produces lands on the wrong side.
+
+The axis is initiation: a skill is something you *decide to do*; a diagnosis
+is something that *happens to you*. Routing tests — (1) can I decide to do
+this? (2) is the value in the steps, or in "it is not what it looks like"?
+By both, all six proposals pending 2026-08-03 are diagnoses, as is the
+CancelledError skill recorded 2026-08-02 which the skills index scored 0.40
+despite `source_tier=verified`.
+
+The load-bearing new field is **`anti_response`** — what *not* to do. Three of
+the six pending proposals are wrong precisely because they prescribe the
+intuitive action (retry), which reproduces the failure. No existing type has
+anywhere to say that.
+
+Target is the existing `lse-errors-1024` (62 docs, `record_error`), extended
+with `interpretation` and `anti_response` as real fields — not concatenated
+into `resolution`, which is the mistake `skill_record` already made with
+`trigger` and admits to at `dream_runner.py:1953`.
+
+**Superseded:** the earlier "error-remedy" entry, which named the gap without
+defining it.
+
+**Superseded — original framing:** **Give `error-cluster` a correctly-shaped output type.** Raised
 2026-08-01 by the operator, and the strongest single design finding of the
 first real run.
 
