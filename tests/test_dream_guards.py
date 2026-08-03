@@ -629,3 +629,77 @@ class TestDreamLLMCircuitBreaker:
     def test_limit_is_env_tunable_and_disableable(self):
         """0 disables the breaker entirely -- an escape hatch, not a default."""
         assert dr._DREAM_LLM_FAILURE_LIMIT >= 1
+
+
+# --- envelope parsing past a Python-repr decoy -------------------------------
+
+class TestDreamEnvelopeDecoyBrace:
+    """2026-08-03: three consecutive cycles reported dependency=dream-llm and
+    blocked stale-contradiction for 28-37 minutes each. The dreamer answered
+    correctly every time.
+
+    The episode corpus contains Python-repr dicts -- {'tool_calls': '[2 items]'}
+    -- and when the model quotes that content in its prose, a bare
+    clean.find("{") locked onto the quoted fragment and raw_decode died on the
+    single quote without ever reaching the real envelope further down.
+    """
+
+    DECOY = ("Looking at the episode, the harness produced "
+             "{'tool_calls': '[2 items]'} which it silently discards.\n\n")
+
+    def test_finds_envelope_after_a_python_repr_decoy(self):
+        """The load-bearing case -- this exact shape cost ~90 minutes of
+        production budget across three cycles."""
+        reply = self.DECOY + '{"proposals": [{"type": "demote", "why": "x"}]}'
+        env, err = dr.parse_dream_envelope(reply)
+        assert env is not None, f"decoy defeated the parser again: {err}"
+        assert env["proposals"][0]["type"] == "demote"
+        assert err == ""
+
+    def test_finds_envelope_after_several_decoys(self):
+        reply = (self.DECOY + "{'another': 'repr'}\nand {not json at all}\n"
+                 + '{"proposals": []}')
+        env, err = dr.parse_dream_envelope(reply)
+        assert env is not None, err
+        assert env["proposals"] == []
+
+    def test_skips_a_valid_json_object_lacking_the_key(self):
+        """A decoy can be valid JSON yet not be the envelope."""
+        reply = '{"summary": "not the envelope"}\n{"proposals": [{"a": 1}]}'
+        env, err = dr.parse_dream_envelope(reply)
+        assert env is not None, err
+        assert "proposals" in env
+
+    def test_honours_a_non_default_key(self):
+        reply = self.DECOY + '{"insights": [{"a": 1}]}'
+        env, err = dr.parse_dream_envelope(reply, key="insights")
+        assert env is not None, err
+
+    def test_genuinely_absent_envelope_still_fails(self):
+        """The fix must not turn a real failure into a false success."""
+        env, err = dr.parse_dream_envelope(self.DECOY + "no envelope here")
+        assert env is None
+        assert err
+
+    def test_empty_proposals_list_is_still_valid(self):
+        """DESIGN.md 6.1: zero proposals is a valid, expected outcome."""
+        env, err = dr.parse_dream_envelope('{"proposals": []}')
+        assert env is not None and env["proposals"] == []
+
+
+class TestUnparseableIsNotUnavailable:
+    """Conflating 'no reply' with 'reply would not parse' cost three
+    misdiagnosed cycles: operator and runner both chased a dreamer outage
+    that never happened."""
+
+    def test_labels_are_verbally_distinct(self):
+        src = open(dr.__file__, encoding="utf-8").read()
+        assert "DREAMER OUTPUT UNPARSEABLE" in src
+        assert "DREAMER UNAVAILABLE" in src
+
+    def test_both_labels_still_trigger_dependency_blocked(self):
+        src = open(dr.__file__, encoding="utf-8").read()
+        assert 'if "DREAMER UNAVAILABLE" in narrative or "DREAMER OUTPUT UNPARSEABLE" in narrative:' in src, (
+            "a pass whose dreamer output never parses must still block, not "
+            "silently report success"
+        )

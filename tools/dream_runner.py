@@ -1510,16 +1510,38 @@ def parse_dream_envelope(reply: str, key: str = "proposals") -> tuple[dict | Non
     """
     clean = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
     clean = re.sub(r"^```[a-z]*\n?", "", clean).rstrip("`").strip()
+    # Scan EVERY candidate '{', not just the first.
+    #
+    # 2026-08-03: three consecutive cycles reported dependency=dream-llm and
+    # blocked stale-contradiction for 28-37 minutes each. The dreamer was
+    # answering correctly every time. The episode corpus contains Python-repr
+    # dicts -- e.g. {'tool_calls': '[2 items]'} -- and when the model quotes
+    # that content in its prose, a bare clean.find("{") locks onto the quoted
+    # fragment and raw_decode dies on the single quote without ever reaching
+    # the real envelope further down.
+    #
+    # So: try each '{' in turn and accept the first that both decodes AND
+    # carries the required key. A quoted fragment fails one or the other, and
+    # the genuine envelope is found. Cost is a few failed raw_decode calls on
+    # a string already in memory.
+    decoder = json.JSONDecoder()
+    first_err = ""
     idx = clean.find("{")
     if idx == -1:
         return None, f"no JSON object in reply. RAW: {clean[:200]!r}"
-    try:
-        env, _ = json.JSONDecoder().raw_decode(clean, idx)
-    except Exception as exc:
-        return None, f"JSON parse failed ({exc}). RAW: {clean[idx:idx + 200]!r}"
-    if key not in env or not isinstance(env[key], list):
-        return None, f"envelope has no {key!r} array"
-    return env, ""
+    while idx != -1:
+        try:
+            env, _ = decoder.raw_decode(clean, idx)
+        except Exception as exc:
+            if not first_err:
+                first_err = f"JSON parse failed ({exc}). RAW: {clean[idx:idx + 200]!r}"
+        else:
+            if isinstance(env, dict) and isinstance(env.get(key), list):
+                return env, ""
+            if not first_err:
+                first_err = f"envelope has no {key!r} array"
+        idx = clean.find("{", idx + 1)
+    return None, first_err or f"no {key!r} envelope in reply. RAW: {clean[:200]!r}"
 
 
 def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConfig,
@@ -1561,7 +1583,11 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
             "no thinking, no prose, no code fences."
         )
     if env is None:
-        return None, f"DREAMER UNAVAILABLE — {fail_reason} (after retry)."
+        # NOT "DREAMER UNAVAILABLE": we got a reply, it just would not parse.
+        # Conflating the two cost three misdiagnosed cycles on 2026-08-02/03 --
+        # the operator and the runner both chased a dreamer outage that never
+        # happened. Keep the two conditions verbally distinct.
+        return None, f"DREAMER OUTPUT UNPARSEABLE — {fail_reason} (after retry)."
     return env, None
 
 
@@ -4424,7 +4450,7 @@ def _raise_if_dependency_blocked(cfg: DreamConfig, narrative: str,
         raise DependencyBlocked(reason or "incomplete-evidence", narrative)
     if reason == "embedding_unavailable":
         raise DependencyBlocked("embedding-service", narrative)
-    if "DREAMER UNAVAILABLE" in narrative:
+    if "DREAMER UNAVAILABLE" in narrative or "DREAMER OUTPUT UNPARSEABLE" in narrative:
         raise DependencyBlocked("dream-llm", narrative)
     if cfg.pass_name == "patterns" and reason == "log_missing_or_empty" \
             and not os.path.exists(cfg.agent_log):
