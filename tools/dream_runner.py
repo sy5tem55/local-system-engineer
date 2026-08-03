@@ -1356,6 +1356,47 @@ def _build_payload(system_prompt: str, user_content: str, no_think: bool, model:
     return json.dumps(payload_obj).encode()
 
 
+# --- dreamer circuit breaker -------------------------------------------------
+# A single LLM call can burn the WHOLE cascade before failing: leg 0 (180s) +
+# leg 1 (120s) + leg 2 (300s) = up to 600s. Nothing used to stop a pass from
+# doing that again, and again, for every item it wanted to reason about.
+#
+# Measured twice in production, both fatal to the cycle:
+#   2026-08-02  stale-contradiction burned 2244s, starved 4 passes
+#   2026-08-03  stale-contradiction burned 2081s, then error-cluster SUCCEEDED
+#               100s later -- the dreamer was transiently unavailable, and the
+#               cost of discovering that was 35 minutes of a 45-minute budget.
+#
+# A health probe does not prevent this: a LOADED endpoint passes the probe and
+# then times out on the actual completion.
+#
+# So: after _DREAM_LLM_FAILURE_LIMIT consecutive whole-cascade failures, stop
+# trying. A dreamer that has failed every leg twice running is down, and the
+# right move is to fail the pass fast and leave budget for the passes behind
+# it -- exactly what R2 did for the quiet-period guard.
+#
+# Reset on any success, so a genuinely transient blip does not poison the rest
+# of the run.
+_DREAM_LLM_FAILURE_LIMIT = int(os.environ.get("GOETHE_DREAM_LLM_FAILURE_LIMIT", "2"))
+_dream_llm_consecutive_failures = 0
+
+
+def _dream_llm_breaker_open() -> bool:
+    return (_DREAM_LLM_FAILURE_LIMIT > 0
+            and _dream_llm_consecutive_failures >= _DREAM_LLM_FAILURE_LIMIT)
+
+
+def _dream_llm_record(success: bool) -> None:
+    global _dream_llm_consecutive_failures
+    _dream_llm_consecutive_failures = 0 if success else _dream_llm_consecutive_failures + 1
+
+
+def reset_dream_llm_breaker() -> None:
+    """Called once per pass so a failure streak never leaks between passes."""
+    global _dream_llm_consecutive_failures
+    _dream_llm_consecutive_failures = 0
+
+
 def call_dream_llm(system_prompt: str, user_content: str, cfg: DreamConfig, no_think: bool = True) -> str:
     """Same 3-step endpoint cascade as goethe.py's _call_node_planner
     (tools/goethe.py:1322):
@@ -1378,6 +1419,17 @@ def call_dream_llm(system_prompt: str, user_content: str, cfg: DreamConfig, no_t
         return f"BUDGET_EXHAUSTED: {cfg.budget.truncation_reason}"
     if cfg.budget is not None:
         cfg.budget.record_llm_call()
+
+    # Breaker is checked AFTER budget accounting, deliberately. Its job is to
+    # save the ~600s cascade (180+120+300), not to alter budget semantics:
+    # short-circuiting earlier skipped record_llm_call() and silently changed
+    # when a budget reports truncated -- caught by
+    # TestStaleContradictionLoopTruncation. The call is still "spent"; what is
+    # saved is the ten minutes of timeouts behind it.
+    if _dream_llm_breaker_open():
+        return (f"ERROR: dreamer circuit breaker open after "
+                f"{_dream_llm_consecutive_failures} consecutive cascade "
+                f"failures — not attempting further calls this pass")
 
     if cfg.dream_llm_url:
         force_url = cfg.dream_llm_url.rstrip("/")
@@ -1495,7 +1547,9 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
             # exhausted budget for free -- pointless).
             return None, reply
         if not reply or reply.startswith("ERROR:"):
+            _dream_llm_record(success=False)
             return None, f"DREAMER UNAVAILABLE — ({(reply or 'no reply')[:160]})"
+        _dream_llm_record(success=True)
         env, fail_reason = parse_dream_envelope(reply, key=key)
         if env is not None:
             break
@@ -4550,6 +4604,11 @@ def main(argv=None) -> int:
             except Exception as exc:
                 raise DependencyBlocked("elasticsearch", str(exc)) from exc
 
+            # Fresh breaker per pass: a dreamer outage during one pass must
+            # not pre-block the next, which may run minutes later against a
+            # recovered endpoint (2026-08-03: error-cluster SUCCEEDED 100s
+            # after stale-contradiction gave up on the same dreamer).
+            reset_dream_llm_breaker()
             raw_proposals, narrative, null_record = PASS_FUNCS[cfg.pass_name](
                 cfg, sessions, episodes_by_session, kb_docs, error_docs
             )

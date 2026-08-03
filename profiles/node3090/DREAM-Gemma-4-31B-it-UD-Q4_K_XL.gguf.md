@@ -1,7 +1,7 @@
 /usr/local/bin/llama-server \
   -m /opt/models/unsloth/Gemma-4-31B-it-UD-Q4_K_XL.gguf \
   --alias Gemma-4-31B-it-dream \
-  --ctx-size 32768 \
+  --ctx-size 65536 \
   -ngl 99 \
   --flash-attn on \
   --batch-size 512 \
@@ -85,10 +85,12 @@ never drift.
 
 ## Guesses to replace with measurement
 
-1. **`--ctx-size 32768`** — the least-confident value in this file. Gemma-4-31B's
-   per-token KV cost was not derived; 32768 is a deliberately low starting
-   point. Run it, read actual VRAM from `nvidia-smi`, and raise until ~1–2 GB
-   free remains. TRAUM feeds 50 sessions per pass, so context is the binding
+1. **`--ctx-size 65536`** — raised from 32768 by the operator on 2026-08-03,
+   on measurement: at 32768 the live run used 20802 / 24576 MiB, leaving
+   **3314 MiB free** — far more headroom than the ~1–2 GiB target. Gemma-4-31B
+   is a 31B **dense** model, so KV scales linearly with context and the spare
+   3.3 GiB plausibly absorbs a doubling. 80k is the next step if 65536 proves
+   comfortable; measure again before going there rather than extrapolating. TRAUM feeds 50 sessions per pass, so context is the binding
    constraint for this workload — this is the value most worth getting right.
 2. **`--cache-type-k/v q8_0`** — chosen for quality over footprint. Dropping to
    `q4_0` roughly halves KV and is what node4090 uses at 150k context. Try it

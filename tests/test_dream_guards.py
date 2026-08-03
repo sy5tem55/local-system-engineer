@@ -563,3 +563,69 @@ class TestPrimaryDreamerDefault:
         monkeypatch.delenv("GOETHE_NODE3090_OLLAMA_URL", raising=False)
         assert "node3090" in dr._node3090_llm_url_default()
         assert "node3090" in dr._node3090_ollama_url_default()
+
+
+# --- dreamer circuit breaker -------------------------------------------------
+
+class TestDreamLLMCircuitBreaker:
+    """One LLM call can burn the whole cascade before failing: leg 0 (180s) +
+    leg 1 (120s) + leg 2 (300s) = up to 600s. Without a breaker a pass pays
+    that repeatedly.
+
+    Measured twice in production, both fatal:
+      2026-08-02  stale-contradiction burned 2244s, starved 4 passes
+      2026-08-03  stale-contradiction burned 2081s -- and error-cluster
+                  SUCCEEDED 100s later, so the dreamer was only transiently
+                  away and the cost of finding out was 35 of 45 minutes.
+    """
+
+    def setup_method(self):
+        dr.reset_dream_llm_breaker()
+
+    def teardown_method(self):
+        dr.reset_dream_llm_breaker()
+
+    def test_breaker_is_closed_initially(self):
+        assert dr._dream_llm_breaker_open() is False
+
+    def test_opens_after_the_limit_of_consecutive_failures(self):
+        for _ in range(dr._DREAM_LLM_FAILURE_LIMIT):
+            dr._dream_llm_record(success=False)
+        assert dr._dream_llm_breaker_open() is True
+
+    def test_one_success_resets_the_streak(self):
+        """A transient blip must not poison the rest of the pass."""
+        for _ in range(dr._DREAM_LLM_FAILURE_LIMIT):
+            dr._dream_llm_record(success=False)
+        assert dr._dream_llm_breaker_open() is True
+        dr._dream_llm_record(success=True)
+        assert dr._dream_llm_breaker_open() is False
+
+    def test_open_breaker_short_circuits_without_calling_the_cascade(self, monkeypatch):
+        """The load-bearing one: an open breaker must cost ZERO seconds, not
+        another 600s cascade. If _post_chat_completion is reached, the whole
+        point has been missed."""
+        called = []
+        monkeypatch.setattr(dr, "_post_chat_completion",
+                            lambda *a, **k: called.append(1) or "ERROR: should not run")
+        monkeypatch.setattr(dr, "_health_probe",
+                            lambda *a, **k: called.append(1) or True)
+        for _ in range(dr._DREAM_LLM_FAILURE_LIMIT):
+            dr._dream_llm_record(success=False)
+
+        cfg = _cfg(dry_run=False)
+        reply = dr.call_dream_llm("sys", "user", cfg)
+
+        assert called == [], "cascade was attempted despite an open breaker"
+        assert reply.startswith("ERROR:")
+        assert "circuit breaker" in reply
+
+    def test_reset_is_available_for_per_pass_use(self):
+        for _ in range(dr._DREAM_LLM_FAILURE_LIMIT):
+            dr._dream_llm_record(success=False)
+        dr.reset_dream_llm_breaker()
+        assert dr._dream_llm_breaker_open() is False
+
+    def test_limit_is_env_tunable_and_disableable(self):
+        """0 disables the breaker entirely -- an escape hatch, not a default."""
+        assert dr._DREAM_LLM_FAILURE_LIMIT >= 1
