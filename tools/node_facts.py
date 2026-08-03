@@ -390,10 +390,27 @@ def parse_profile(path: str) -> dict:
     {"file", "flags", "source": "documented"}. Files may carry a UTF-8 BOM
     (spec §4.3); some also use CRLF line endings without a BOM. Both are
     normalized before tokenizing.
+
+    A profile file may carry free-text documentation AFTER the command
+    block, separated by a line that is exactly "---" (see
+    profiles/node3090/*.gguf.md, added 2026-08-02/03 for the on-demand
+    engine-start work). Only the command block is the profile; everything
+    from that separator onward is prose and must never be tokenized as
+    flags (found 2026-08-03: without this cut, match_live() against a
+    documented profile spuriously reports "closest" instead of "exact"
+    because markdown text after "---" gets shlex-split into garbage
+    pseudo-flags). Files with no such line are unaffected -- this is a
+    strict prefix truncation, not a reinterpretation of existing profiles.
     """
     with open(path, encoding="utf-8-sig", newline="") as fh:
         text = fh.read()
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    cmd_lines = []
+    for line in text.split("\n"):
+        if line.strip() == "---":
+            break
+        cmd_lines.append(line)
+    text = "\n".join(cmd_lines)
     joined = text.replace("\\\n", " ")
     tokens = shlex.split(joined, comments=False)
     flags = _parse_flags_from_tokens(tokens[1:]) if tokens else {}

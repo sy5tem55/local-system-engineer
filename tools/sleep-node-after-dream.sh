@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # sleep-node-after-dream.sh — return node3090 to standby after a dream cycle,
-# but ONLY if this cycle is the thing that woke it.
+# but ONLY stopping what this cycle itself started.
 #
-# Counterpart to wake-node-for-dream.sh. That script writes WOKE_MARKER only
-# when it actually performed a wake; if node3090 was already awake when the
-# preflight looked, somebody else owns it -- most likely the operator working
-# late -- and powering it off would be destructive.
+# Counterpart to wake-node-for-dream.sh. As of the 2026-08-03 rework
+# (docs/SPEC-on-demand-engine-start-2026-08.md §4.3), that script tracks two
+# INDEPENDENT ownership facts, each with its own marker:
+#   WOKE_MARKER   — this cycle changed node3090's POWER STATE; only present
+#                   authority to shut the node down.
+#   ENGINE_MARKER — this cycle LAUNCHED a llama-server; only present
+#                   authority to stop that process.
+# A cycle can hold either, both, or neither (e.g. the node was already
+# awake but no engine was running yet: engine marker only, node power is
+# left alone). Treating these as one fact was Hazard E in the spec — this
+# script must not assume "we woke it" implies "we started its engine", or
+# the reverse.
 #
-#   RULE: only power down what we powered up.
+#   RULE: only power down what we powered up. Only stop what we started.
 #
 # MECHANISM. Matches goethe_node.shutdown_node(): node3090 carries
 # /etc/sudoers.d/lse-shutdown granting lse-admin NOPASSWD on shutdown.
@@ -22,18 +30,35 @@
 #     the expected outcome. Treating it as failure would log a false alarm on
 #     every successful shutdown.
 #
-# CONTRACT: always exits 0. A node left running is a cost, not a corruption,
-# and must never turn a successful dream cycle into a failed one.
+# CONTRACT: always exits 0. A node (or engine) left running is a cost, not
+# a corruption, and must never turn a successful dream cycle into a failed
+# one.
 
 set -uo pipefail
 
 WOKE_MARKER="${GOETHE_DREAM_WOKE_MARKER:-/var/lib/lse-dream/.woke-node3090}"
+ENGINE_MARKER="${GOETHE_DREAM_ENGINE_MARKER:-/var/lib/lse-dream/.engine-started-node3090}"
 NODE_USER="${GOETHE_NODE3090_SSH_USER:-lse-admin}"
 NODE_HOST="${GOETHE_NODE3090_SSH_HOST:-node3090.home.arpa}"
 NODE_SSH="${NODE_USER}@${NODE_HOST}"
 SSH_OPTS=(-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes)
 
 log() { echo "[sleep-node] $(date -u +%H:%M:%SZ) $*"; }
+
+# ── Engine: stop only what this cycle started, before anything else ──────
+if [[ -f "$ENGINE_MARKER" ]]; then
+  log "this cycle started an engine on node3090 -- stopping it before power actions"
+  # Bracketed char so pkill -f does not match its own ssh cmdline (the same
+  # footgun documented in start-engine-on-node.sh / ssh_run's PKILL RULE).
+  if timeout 30 ssh "${SSH_OPTS[@]}" "$NODE_SSH" "pkill -f 'llama[-]server'" >/dev/null 2>&1; then
+    log "engine stop signal sent"
+  else
+    log "WARNING: engine stop failed or nothing was running to stop -- continuing"
+  fi
+  rm -f "$ENGINE_MARKER" 2>/dev/null || true
+else
+  log "no engine marker at $ENGINE_MARKER -- this cycle did not start an engine, leaving any running engine alone"
+fi
 
 if [[ ! -f "$WOKE_MARKER" ]]; then
   log "no wake marker at $WOKE_MARKER -- node3090 was already awake before this cycle; leaving it running"
