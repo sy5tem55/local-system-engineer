@@ -517,3 +517,49 @@ class TestSkipSessionGuardKeepsTheLock:
         assert dr.acquire_lock(cfg) is False, (
             "skipping the session guard must not weaken the lock guard"
         )
+
+
+# --- cascade leg 0 defaults to node4090/LUCIFER ------------------------------
+
+class TestPrimaryDreamerDefault:
+    """node4090 IS LUCIFER (goethe_node.py:293) and is the primary dreamer.
+
+    Leg 0 defaulting to "" left legs 1 and 2 -- both node3090 -- as the only
+    real endpoints, which contradicted the fleet architecture and caused a
+    live failure on 2026-08-02: a GUI-triggered run cannot pick up
+    run-dream-cycle.sh's fallback export, so with node3090 asleep there was
+    no reachable endpoint and every call burned its full 180s timeout.
+    stale-contradiction hung 37 minutes and starved four passes.
+    """
+
+    def test_leg0_defaults_to_local_llama_server(self, monkeypatch):
+        monkeypatch.delenv("GOETHE_DREAM_LLM_URL", raising=False)
+        assert dr._dream_llm_url_default() == "http://127.0.0.1:8080"
+
+    def test_leg0_default_is_not_empty(self, monkeypatch):
+        """The regression guard. An empty leg 0 means a GUI run with node3090
+        asleep has no dreamer at all."""
+        monkeypatch.delenv("GOETHE_DREAM_LLM_URL", raising=False)
+        assert dr._dream_llm_url_default(), (
+            "leg 0 must not default to empty -- that leaves node3090 as the "
+            "only reachable dreamer and a sleeping node costs 180s per call"
+        )
+
+    def test_env_still_overrides_the_default(self, monkeypatch):
+        monkeypatch.setenv("GOETHE_DREAM_LLM_URL", "http://elsewhere:9999")
+        assert dr._dream_llm_url_default() == "http://elsewhere:9999"
+
+    def test_uses_ipv4_literal_not_localhost(self, monkeypatch):
+        """localhost resolves to ::1 first on a dual-stack host; llama-server
+        may be bound v4-only. 0.0.0.0 also accepts loopback, so the literal
+        works under either binding the Goethe GUI offers."""
+        monkeypatch.delenv("GOETHE_DREAM_LLM_URL", raising=False)
+        assert "localhost" not in dr._dream_llm_url_default()
+        assert "127.0.0.1" in dr._dream_llm_url_default()
+
+    def test_node3090_legs_are_unchanged(self, monkeypatch):
+        """This adds a preferred path; it must remove no fallback."""
+        monkeypatch.delenv("GOETHE_NODE3090_LLM_URL", raising=False)
+        monkeypatch.delenv("GOETHE_NODE3090_OLLAMA_URL", raising=False)
+        assert "node3090" in dr._node3090_llm_url_default()
+        assert "node3090" in dr._node3090_ollama_url_default()

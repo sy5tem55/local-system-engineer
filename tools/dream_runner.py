@@ -288,7 +288,34 @@ def _agent_log_default() -> str:
 
 
 def _dream_llm_url_default() -> str:
-    return os.environ.get("GOETHE_DREAM_LLM_URL", "")
+    """Cascade leg 0 -- the PRIMARY dreamer.
+
+    Defaults to LUCIFER's own llama-server, because node4090 IS LUCIFER
+    (goethe_node.py:293: "node4090 is an alias for LUCIFER itself, is not a
+    remote node, and is not routable here") and node4090 is the primary
+    dreamer. node3090 and node5090 are on-demand compute for specialised
+    workloads, not the default dreaming host.
+
+    This default used to be "" -- leaving legs 1 and 2 (both node3090) as the
+    only real endpoints. That contradicted the fleet architecture and caused
+    a live failure on 2026-08-02: a GUI-triggered run cannot pick up
+    run-dream-cycle.sh's fallback export (the GUI calls dream_runner.py
+    directly via traum_controller, never the cycle wrapper), so with node3090
+    asleep the cascade had no reachable endpoint at all. Every LLM call then
+    burned its full 180s _post_chat_completion timeout instead of failing
+    fast: stale-contradiction hung 37 minutes, exhausted the 45-minute
+    operation budget, and starved the four passes behind it.
+
+    Leg 0 is health-probed before use (see call_dream_llm), so when LUCIFER's
+    llama-server is down this still falls through to node3090 exactly as
+    before. Setting a default adds a preferred path; it removes no fallback.
+
+    127.0.0.1 rather than "localhost" is deliberate: localhost resolves to
+    ::1 first on a dual-stack host, and llama-server may be bound v4-only.
+    A --host of 0.0.0.0 also accepts loopback, so this works under either
+    binding the Goethe GUI offers.
+    """
+    return os.environ.get("GOETHE_DREAM_LLM_URL", "http://127.0.0.1:8080")
 
 
 def _node3090_llm_url_default() -> str:
