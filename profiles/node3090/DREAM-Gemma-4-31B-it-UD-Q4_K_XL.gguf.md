@@ -1,4 +1,4 @@
-/opt/models/unsloth/llama-server-placeholder-see-notes \
+/usr/local/bin/llama-server \
   -m /opt/models/unsloth/Gemma-4-31B-it-UD-Q4_K_XL.gguf \
   --alias Gemma-4-31B-it-dream \
   --ctx-size 32768 \
@@ -34,11 +34,21 @@
 measurement exercise, not a tuned profile. Every value below is either
 measured, or explicitly flagged as a guess to be replaced by measurement.
 
-Replace the first line with the binary you settle on — node3090 has **two**:
-`/usr/local/bin/llama-server` and
-`/home/lse-admin/llama.cpp/build/bin/llama-server`. Confirm which is current
-before pinning it; on LUCIFER the documented path was wrong and the running
-process used the build tree (TRAUM demote proposal, 2026-08-02).
+**Binary resolved 2026-08-03**: `/usr/local/bin/llama-server`. node3090 has
+two copies — `/usr/local/bin/llama-server` and
+`/home/lse-admin/llama.cpp/build/bin/llama-server` — and they are, as of
+this check, byte-identical (`sha256sum` match, same BuildID
+`8f9ba242f6d2ab46c5d97a02bc2770d49a301cb3`, same `version: 10106
+(1425386fd)`). Chosen `/usr/local/bin/llama-server` because it is what the
+kernel says the node's actual live production process is running:
+`readlink -f /proc/<pid>/exe` for the running llama-server (pid 404963,
+serving Qwen3.6-35B on :8080 at check time) resolves there, not to the
+build tree. It also matches `which llama-server` (PATH resolution) and the
+existing `NODE3090_PLANNER_LLAMA_BIN` pin in `start-goethe-node3090.sh`.
+Being byte-identical today, either path would run the same binary; this
+path is the one to keep pinned because it's what the node's own PATH and
+its currently-running process both already agree on — if the two copies
+ever diverge, this is the one that reflects what actually runs.
 
 ## Measured facts this is built on
 
