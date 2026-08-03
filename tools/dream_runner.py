@@ -1594,7 +1594,7 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
 # --- proposal shape guard (structural only — NOT the hard-invariant validator) -
 
 REQUIRED_PROPOSAL_KEYS = {"type", "call", "args", "why"}
-KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact", "prompt-rule"}
+KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact", "prompt-rule", "diagnosis"}
 
 # Prompt 3.6: the ONLY file a prompt-rule proposal may ever target. Fixed
 # here as a constant (not read from a proposal's own args at generation
@@ -1652,6 +1652,25 @@ def validate_proposal_shape(p: dict) -> str | None:
             val = p.get("args", {}).get(key, "")
             if not isinstance(val, str) or not val.strip():
                 return f"prompt-rule proposal's args.{key} is missing or empty"
+    if p.get("type") == "diagnosis":
+        # SPEC-diagnosis-proposal-type-2026-08 §6 test 5 (LOAD-BEARING):
+        # interpretation IS the value a diagnosis exists to record -- a
+        # diagnosis without one is an incomplete draft, same reasoning as
+        # skill-candidate's task/trigger/procedure/verification/why filter
+        # in _draft_error_cluster_proposals(). anti_response is Hazard B's
+        # load-bearing field for a DIFFERENT reason (what NOT to do) but the
+        # model may legitimately have none to report -- e.g. a diagnosis
+        # whose only value is "this is not what it looks like" with no
+        # single obvious wrong move to warn against. Structural floor only;
+        # do NOT require anti_response here.
+        interpretation = p.get("args", {}).get("interpretation", "")
+        if not isinstance(interpretation, str) or not interpretation.strip():
+            return (
+                "diagnosis proposal's args.interpretation is missing or empty "
+                "-- the interpretation is the value (SPEC-diagnosis-proposal-"
+                "type-2026-08 §1); a diagnosis with no interpretation is an "
+                "incomplete draft, reject it rather than guess one"
+            )
     provenance = p.get("args", {}).get("provenance")
     if provenance is not None and not re.fullmatch(r"dream-\d{4}-\d{2}-\d{2}", str(provenance)):
         # DESIGN.md §6.2: a Thread 2 dream always writes "dream-YYYY-MM-DD"
@@ -1996,20 +2015,46 @@ def cluster_by_similarity(embeddings: dict, threshold: float) -> list:
     return list(groups.values())
 
 
-_SKILL_CANDIDATE_SYSTEM_PROMPT = """You are the TRAUM dreamer's error-cluster pass (Thread 2, Prompt 2.4).
+_ERROR_CLUSTER_SYSTEM_PROMPT = """You are the TRAUM dreamer's error-cluster pass (Thread 2, Prompt 2.4).
 
 You will be given a cluster of tool-call failures/timeouts that repeated
 across multiple sessions, already judged to share the same underlying root
 cause (grouped by embedding similarity, not by you) -- plus, if one exists,
 an existing lse-errors catalog entry's resolution text for the same pattern.
 
-Draft ONE reusable procedure (a skill_record candidate) that would help a
-future session recognize and resolve this class of failure faster. Do not
-invent facts the evidence doesn't support -- if the evidence doesn't show a
-clear fix, say so in failure_modes/preconditions rather than guessing at one.
+FIRST, route this cluster with two tests (SPEC-diagnosis-proposal-type-2026-08 §1):
+  1. Can a future session DECIDE to do this on purpose? Yes -> skill. It
+     happens TO the session, unchosen -> diagnosis.
+  2. Is the value in the STEPS, or in "this is not what it looks like"?
+     Steps -> skill. Interpretation -> diagnosis.
+Most error/timeout clusters are diagnoses: a failure signature, what it
+actually means, and the correct response INCLUDING what not to do. Only
+draft a skill when the cluster genuinely yields a repeatable multi-step
+procedure a session would choose to run -- routing goes both ways; do not
+force every cluster into one type just because it's the default.
+
+For a DIAGNOSIS, the anti_response field is the whole point of the type
+and the model will not volunteer it unless asked directly: state plainly
+what the tempting, obvious, WRONG response is (e.g. "retry immediately"
+when the real cause is a timeout, not flakiness) even if that means saying
+"do not do X". Leave anti_response empty ONLY if there truly is no single
+obvious wrong move to warn against -- interpretation must never be empty;
+that is the field a diagnosis exists to record.
+
+Do not invent facts the evidence doesn't support -- if the evidence doesn't
+show a clear meaning or fix, say so rather than guessing at one, or emit no
+proposal for that cluster.
 
 Return ONLY this JSON object -- no prose, no thinking, no code fences:
-{"proposals": [
+{"diagnoses": [
+  {"error_text": "the failure signature -- symptom/error text pattern that identifies this class",
+   "context": "what was being attempted when this triggers (tool, exit_class, situation)",
+   "interpretation": "what this actually means -- not just what it looks like. REQUIRED, never empty.",
+   "resolution": "the correct response once you recognize this pattern",
+   "anti_response": "the intuitive but WRONG response this failure tempts (empty string only if none exists)",
+   "why": "one line: why this cluster is worth recording as a diagnosis now"}
+ ],
+ "skill_candidates": [
   {"task": "short imperative description of what this skill helps do",
    "trigger": "how to recognize this failure class is happening (symptoms, tool, exit_class, error text pattern)",
    "occupation": "one of: linux-sysadmin, network-engineer, sre, homeassistant_admin, or 'Local System Engineer' as catch-all",
@@ -2019,14 +2064,18 @@ Return ONLY this JSON object -- no prose, no thinking, no code fences:
    "failure_modes": "known ways this fix itself can fail (or empty string)",
    "why": "one line: why this cluster is worth a skill entry now"}
 ]}
-Zero proposals is a valid, expected outcome if the cluster's evidence isn't
-actually enough to draft a grounded procedure yet."""
+Zero proposals in both arrays is a valid, expected outcome if the cluster's
+evidence isn't actually enough to draft a grounded diagnosis or procedure yet."""
 
 
-def _draft_skill_candidate(cfg: DreamConfig, cluster_episode_members: list, lse_errors_context: list) -> tuple:
+def _draft_error_cluster_proposals(cfg: DreamConfig, cluster_episode_members: list, lse_errors_context: list) -> tuple:
     """One request_dream_envelope() call: a cluster's occurrences (+ any
-    existing lse-errors resolution) -> zero or more skill-candidate
-    proposals. Returns (proposals, note_or_None)."""
+    existing lse-errors resolution) -> zero or more diagnosis proposals
+    (record_error) and zero or more skill-candidate proposals (skill_record),
+    routed by the prompt's own two tests (SPEC-diagnosis-proposal-type-2026-08
+    §1) -- NOT a wholesale replacement of skill-candidate; a genuinely
+    repeatable procedure still emits one (test 4, load-bearing).
+    Returns (diagnosis_proposals, skill_proposals, note_or_None)."""
     numbered = [
         f"[{i}] session={m['session_id']} tool={m['tool']} exit_class={m['exit_class']} "
         f"result={m['result_truncated'][:CONTRADICTION_EVIDENCE_SNIPPET_LEN]!r}"
@@ -2039,14 +2088,44 @@ def _draft_skill_candidate(cfg: DreamConfig, cluster_episode_members: list, lse_
             for c in lse_errors_context
         )
 
-    env, err = request_dream_envelope(_SKILL_CANDIDATE_SYSTEM_PROMPT, user_content, cfg)
+    env, err = request_dream_envelope(_ERROR_CLUSTER_SYSTEM_PROMPT, user_content, cfg)
     if env is None:
-        return [], err
+        return [], [], err
 
     today = date.today().isoformat()
     episode_ids = [m["key"] for m in cluster_episode_members]  # ALL members, not just the capped prompt subset
-    proposals = []
-    for item in env.get("proposals", []):
+
+    diagnosis_proposals = []
+    for item in env.get("diagnoses", []):
+        if not isinstance(item, dict):
+            continue
+        error_text = str(item.get("error_text", "")).strip()
+        context = str(item.get("context", "")).strip()
+        interpretation = str(item.get("interpretation", "")).strip()
+        resolution = str(item.get("resolution", "")).strip()
+        why = str(item.get("why", "")).strip()
+        # Hazard B: anti_response may legitimately be empty (test 5b); every
+        # OTHER field, including interpretation (test 5a, LOAD-BEARING), may
+        # not -- an incomplete draft is skipped, not proposed half-built.
+        if not (error_text and context and interpretation and resolution and why):
+            continue
+        anti_response = str(item.get("anti_response", "")).strip()
+        diagnosis_proposals.append({
+            "type": "diagnosis",
+            "call": "record_error",
+            "args": {
+                "error_text": error_text,
+                "context": context,
+                "interpretation": interpretation,
+                "resolution": resolution,
+                "anti_response": anti_response,
+            },
+            "evidence": episode_ids,  # the cluster's episode ids, per Prompt 2.4
+            "why": why,
+        })
+
+    skill_proposals = []
+    for item in env.get("skill_candidates", []):
         if not isinstance(item, dict):
             continue
         task = str(item.get("task", "")).strip()
@@ -2062,7 +2141,7 @@ def _draft_skill_candidate(cfg: DreamConfig, cluster_episode_members: list, lse_
         # self-contained, while ALSO keeping it as a top-level proposal field
         # (like dedup's pair_id/role) for confirm-gate readability.
         combined_procedure = f"WHEN THIS HAPPENS: {trigger}\n\nFIX: {procedure}"
-        proposals.append({
+        skill_proposals.append({
             "type": "skill-candidate",
             "call": "skill_record",
             "args": {
@@ -2080,7 +2159,8 @@ def _draft_skill_candidate(cfg: DreamConfig, cluster_episode_members: list, lse_
             "evidence": episode_ids,  # the cluster's episode ids, per Prompt 2.4
             "why": why,
         })
-    return proposals, None
+
+    return diagnosis_proposals, skill_proposals, None
 
 
 # --- passes ------------------------------------------------------------
@@ -2459,10 +2539,14 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
 def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, error_docs) -> tuple:
     """Prompt 2.4 — group lse-errors docs + episode error/timeout occurrences
     by embedding similarity; clusters with >=ERROR_CLUSTER_MIN_OCCURRENCES
-    episode occurrences spanning >=ERROR_CLUSTER_MIN_SESSIONS sessions get a
-    drafted "skill-candidate" proposal. A matching lse-errors doc supplies
-    prior-art context (its resolution text, if any) but never counts toward
-    the occurrence/session bar itself — see collect_lse_errors_items.
+    episode occurrences spanning >=ERROR_CLUSTER_MIN_SESSIONS sessions get
+    routed by the prompt's own two tests (SPEC-diagnosis-proposal-type-2026-08
+    §1) to a drafted "diagnosis" proposal (record_error), a "skill-candidate"
+    proposal (skill_record), both, or neither -- routing goes both ways, this
+    is not a wholesale replacement of skill-candidate (test 4, load-bearing).
+    A matching lse-errors doc supplies prior-art context (its resolution
+    text, if any) but never counts toward the occurrence/session bar itself
+    — see collect_lse_errors_items.
     """
     thresholds = {
         "error_cluster_threshold": cfg.error_cluster_threshold,
@@ -2508,6 +2592,8 @@ def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_d
 
     proposals = []
     qualifying = 0
+    diagnoses_drafted = 0
+    skills_drafted = 0
     for cluster_keys in clusters:
         if _budget_checkpoint(cfg):  # Prompt 4.2
             break
@@ -2517,8 +2603,11 @@ def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_d
         if len(episode_members) < ERROR_CLUSTER_MIN_OCCURRENCES or len(distinct_sessions) < ERROR_CLUSTER_MIN_SESSIONS:
             continue
         qualifying += 1
-        batch_proposals, note = _draft_skill_candidate(cfg, episode_members, errors_context)
-        proposals.extend(batch_proposals)
+        diagnosis_batch, skill_batch, note = _draft_error_cluster_proposals(cfg, episode_members, errors_context)
+        proposals.extend(diagnosis_batch)
+        proposals.extend(skill_batch)
+        diagnoses_drafted += len(diagnosis_batch)
+        skills_drafted += len(skill_batch)
         if note:
             narrative_lines.append(
                 f"cluster ({len(episode_members)} occ, {len(distinct_sessions)} sessions): {note}"
@@ -2526,7 +2615,8 @@ def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_d
 
     narrative_lines.append(
         f"{qualifying} cluster(s) met the >={ERROR_CLUSTER_MIN_OCCURRENCES} occurrences / "
-        f">={ERROR_CLUSTER_MIN_SESSIONS} sessions bar; {len(proposals)} skill-candidate(s) drafted."
+        f">={ERROR_CLUSTER_MIN_SESSIONS} sessions bar; {diagnoses_drafted} diagnosis(es) and "
+        f"{skills_drafted} skill-candidate(s) drafted ({len(proposals)} proposal(s) total)."
     )
     null_record = None
     if qualifying == 0:

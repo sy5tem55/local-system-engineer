@@ -627,6 +627,21 @@ def render_group(group: list, dream_dir: str) -> str:
                 ("evidence refs:", ", ".join(p.get("evidence", [])) or "(none)"),
             ]
             multiline = {"rule": args.get("rule", ""), "rationale": args.get("rationale", "")}
+        elif call == "record_error":
+            # SPEC-diagnosis-proposal-type-2026-08 §4.2 — a "diagnosis"
+            # proposal's confirm-gate block. anti_response rendered even
+            # when empty (Hazard B: the reviewer should SEE it was
+            # considered and left blank, not wonder if it was dropped).
+            lines = [
+                ("context:", args.get("context", "")),
+                ("evidence (episode ids):", ", ".join(p.get("evidence", [])) or "(none)"),
+            ]
+            multiline = {
+                "error_text": args.get("error_text", ""),
+                "interpretation": args.get("interpretation", ""),
+                "resolution": args.get("resolution", ""),
+                "anti_response": args.get("anti_response", "") or "(none identified)",
+            }
         blocks.append(_fmt_block(call, i, len(group), lines, multiline))
         blocks.append(f"why:               {p.get('why', '')}")
         blocks.append("")
@@ -754,6 +769,7 @@ def _checked_result(call: str, result):
             re.match(r"^KB (?:created|updated \(refined\)): doc_id=\S+", s)
         ),
         "append_learned_rule": lambda s: s.startswith("learned-rules.md updated"),
+        "record_error": lambda s: s.startswith(("Error KB created", "Error KB updated")),
     }.get(call)
     if success is None or not success(text):
         safe_text = traum_state.redact_persisted_text(text)
@@ -881,6 +897,22 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
                     repo_root, args, p.get("evidence", []), today
                 )
             )
+            results.append({"proposal": p, "result": result})
+
+        elif call == "record_error":
+            # SPEC-diagnosis-proposal-type-2026-08 — a "diagnosis" proposal.
+            # record_error itself is hardcoded to lse-errors-1024 only
+            # (test_embedding_index_contract.py::test_error_surface_routes_
+            # only_to_1024_index); no doc_id, no lse-kb/lse-skills dream-field
+            # stamp — that stamping convention is specific to lse-kb/lse-skills
+            # docs and record_error's own occurrence_count/last_seen fields
+            # already serve the equivalent purpose for this index.
+            result = _checked_result(call, tools.record_error(
+                error_text=args["error_text"], context=args["context"],
+                resolution=args["resolution"],
+                interpretation=args.get("interpretation", ""),
+                anti_response=args.get("anti_response", ""),
+            ))
             results.append({"proposal": p, "result": result})
 
         else:
