@@ -2458,13 +2458,17 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
     }
     if not kb_docs:
         narrative = "stale-contradiction pass: lse-kb returned zero docs (empty index or ES unreachable this run) — nothing to check. Null result (PH3-2)."
+        sub_passes = {
+            "reverify": {"state": "NULL", "proposals": 0},
+            "demote": {"state": "NULL", "proposals": 0},
+        }
         return [], narrative, _null_record(
             "stale-contradiction", "empty_kb", looked=True,
             corpus_size={"kb_docs": 0, "sessions_considered": len(sessions),
                          "sessions_with_candidates": 0, "reverify_candidates": 0,
                          "demote_confirmed": 0},
             thresholds=thresholds,
-        )
+        ), sub_passes
 
     docs_by_id = {d["_id"]: d for d in kb_docs if d.get("_id")}
 
@@ -2473,6 +2477,7 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
 
     demote_proposals = []
     demoted_doc_ids = set()  # one demote per doc_id per run -- see note below
+    demote_dependency = None  # set once if any demote call hits the LLM dependency
     sessions_with_candidates = 0
     for row in sessions:
         if _budget_checkpoint(cfg):  # Prompt 4.2
@@ -2509,6 +2514,10 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
             demote_proposals.extend(batch_proposals)
             if note:
                 narrative_lines.append(note)
+                if demote_dependency is None and (
+                    "DREAMER UNAVAILABLE" in note or "DREAMER OUTPUT UNPARSEABLE" in note
+                ):
+                    demote_dependency = "dream-llm"
 
     narrative_lines.append(
         f"contradiction: {sessions_with_candidates} session(s) had both a "
@@ -2522,6 +2531,20 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
             "KB doc and had other tool evidence to check it against this run."
         )
 
+    reverify_state = "SUCCEEDED" if reverify_proposals else "NULL"
+    if demote_dependency:
+        demote_state = "BLOCKED"
+    elif demote_proposals:
+        demote_state = "SUCCEEDED"
+    else:
+        demote_state = "NULL"
+    sub_passes = {
+        "reverify": {"state": reverify_state, "proposals": len(reverify_proposals)},
+        "demote": {
+            "state": demote_state, "proposals": len(demote_proposals),
+            **({"dependency": demote_dependency} if demote_dependency else {}),
+        },
+    }
     null_record = None
     if not reverify_proposals and not demote_proposals:
         null_record = _null_record(
@@ -2533,7 +2556,7 @@ def run_pass_stale_contradiction(cfg: DreamConfig, sessions, episodes_by_session
             thresholds=thresholds,
         )
 
-    return reverify_proposals + demote_proposals, "\n".join(narrative_lines), null_record
+    return reverify_proposals + demote_proposals, "\n".join(narrative_lines), null_record, sub_passes
 
 
 def run_pass_error_cluster(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, error_docs) -> tuple:
@@ -3583,12 +3606,13 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
             corpus_size={"session_summaries": 0, "domains_with_data": 0,
                          "insights_accepted": 0, "proposals": 0},
             thresholds=thresholds,
-        )
+        ), {d: {"state": "NULL", "proposals": 0} for d in INSIGHT_DOMAINS}
 
     today = date.today().isoformat()
     all_insights = []
     all_proposals = []
     notes = []
+    sub_passes = {}
     for domain in INSIGHT_DOMAINS:
         if _budget_checkpoint(cfg):  # Prompt 4.2
             notes.append(f"{domain}: skipped -- {cfg.budget.truncation_reason}.")
@@ -3600,6 +3624,16 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
         all_proposals.extend(proposals)
         if note:
             notes.append(note)
+        if insights:
+            domain_state, domain_dep = "SUCCEEDED", None
+        elif note and ("DREAMER UNAVAILABLE" in note or "DREAMER OUTPUT UNPARSEABLE" in note):
+            domain_state, domain_dep = "BLOCKED", "dream-llm"
+        else:
+            domain_state, domain_dep = "NULL", None
+        sub_passes[domain] = {
+            "state": domain_state, "proposals": len(proposals),
+            **({"dependency": domain_dep} if domain_dep else {}),
+        }
 
     narrative_lines = [
         f"insights pass: {len(session_summaries)} session summary(ies) considered "
@@ -3639,7 +3673,7 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
                 narrative_lines.append("   - flowed into proposals.jsonl")
             narrative_lines.append("")
 
-    return all_proposals, "\n".join(narrative_lines), null_record
+    return all_proposals, "\n".join(narrative_lines), null_record, sub_passes
 
 
 PASS_FUNCS = {
@@ -4534,13 +4568,25 @@ def _finish_attempt_best_effort(state, cfg: DreamConfig, outcome: str, **kwargs)
 
 
 def _raise_if_dependency_blocked(cfg: DreamConfig, narrative: str,
-                                 null_record: dict | None) -> None:
+                                 null_record: dict | None,
+                                 raw_proposals: list | None = None) -> None:
+    """raw_proposals is the pass's own return value, before validation/
+    staging. SPEC-subpass-outcomes-2026-08 Hazard B: a pass with
+    independent sub-passes (stale-contradiction, insights) can have one
+    sub-pass hit a dependency failure -- named in the shared narrative --
+    while another sub-pass already produced real, usable proposals. Those
+    must not be discarded just because the narrative also names an
+    unrelated failure; the failure itself still surfaces via the pass's
+    own sub_passes summary, not by raising here.
+    """
     reason = (null_record or {}).get("reason")
     if null_record is not None and null_record.get("looked") is False:
         raise DependencyBlocked(reason or "incomplete-evidence", narrative)
     if reason == "embedding_unavailable":
         raise DependencyBlocked("embedding-service", narrative)
-    if "DREAMER UNAVAILABLE" in narrative or "DREAMER OUTPUT UNPARSEABLE" in narrative:
+    if not raw_proposals and (
+        "DREAMER UNAVAILABLE" in narrative or "DREAMER OUTPUT UNPARSEABLE" in narrative
+    ):
         raise DependencyBlocked("dream-llm", narrative)
     if cfg.pass_name == "patterns" and reason == "log_missing_or_empty" \
             and not os.path.exists(cfg.agent_log):
@@ -4725,10 +4771,18 @@ def main(argv=None) -> int:
             # recovered endpoint (2026-08-03: error-cluster SUCCEEDED 100s
             # after stale-contradiction gave up on the same dreamer).
             reset_dream_llm_breaker()
-            raw_proposals, narrative, null_record = PASS_FUNCS[cfg.pass_name](
+            pass_result = PASS_FUNCS[cfg.pass_name](
                 cfg, sessions, episodes_by_session, kb_docs, error_docs
             )
-            _raise_if_dependency_blocked(cfg, narrative, null_record)
+            if len(pass_result) == 4:
+                # SPEC-subpass-outcomes-2026-08: a pass with independent
+                # sub-passes (stale-contradiction, insights) reports each
+                # one's outcome for the attempt summary (Hazard B).
+                raw_proposals, narrative, null_record, sub_passes = pass_result
+            else:
+                raw_proposals, narrative, null_record = pass_result
+                sub_passes = None
+            _raise_if_dependency_blocked(cfg, narrative, null_record, raw_proposals)
 
             if cfg.budget.truncated:
                 narrative = (
@@ -4818,6 +4872,7 @@ def main(argv=None) -> int:
                         "proposals_pending": len(proposals),
                         "null_reason": (null_record or {}).get("reason"),
                         "budget_truncated": cfg.budget.truncated,
+                        **({"sub_passes": sub_passes} if sub_passes else {}),
                     },
                     artifacts={"report": report_path, "proposals": proposals_path},
                     error=(DependencyBlocked("budget", cfg.budget.truncation_reason)

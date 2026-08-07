@@ -447,10 +447,13 @@ class TestStaleContradictionLoopTruncation:
         cfg = _cfg(pass_name="stale-contradiction")
         cfg.budget = dr.DreamBudget(max_sessions=999, max_llm_calls=3, max_wall_clock_s=999)
 
-        proposals, narrative, null_record = dr.run_pass_stale_contradiction(
+        proposals, narrative, null_record, sub_passes = dr.run_pass_stale_contradiction(
             cfg, sessions, episodes_by_session, kb_docs, []
         )
 
+        # SPEC-subpass-outcomes-2026-08: every stale-contradiction attempt
+        # reports both sub-passes, budget truncation or not.
+        assert set(sub_passes) == {"reverify", "demote"}
         assert cfg.budget.truncated
         assert "LLM-call" in cfg.budget.truncation_reason
         # Exactly 3 sessions should have been processed (one call_dream_llm
@@ -698,8 +701,44 @@ class TestUnparseableIsNotUnavailable:
         assert "DREAMER UNAVAILABLE" in src
 
     def test_both_labels_still_trigger_dependency_blocked(self):
-        src = open(dr.__file__, encoding="utf-8").read()
-        assert 'if "DREAMER UNAVAILABLE" in narrative or "DREAMER OUTPUT UNPARSEABLE" in narrative:' in src, (
-            "a pass whose dreamer output never parses must still block, not "
-            "silently report success"
-        )
+        """Behavioural, not source-text: SPEC-subpass-outcomes-2026-08
+        reformatted this check (added a `not raw_proposals` guard, see
+        TestRawProposalsGuardsTheNarrativeScrape below) without weakening
+        it -- a pass that produced NOTHING must still block on either
+        label, exactly as before.
+        """
+        cfg = _cfg(pass_name="dedup")
+        for label in ("DREAMER UNAVAILABLE", "DREAMER OUTPUT UNPARSEABLE"):
+            with pytest.raises(dr.DependencyBlocked) as exc_info:
+                dr._raise_if_dependency_blocked(cfg, f"pass failed: {label} — down", None, [])
+            assert exc_info.value.dependency == "dream-llm"
+
+
+class TestRawProposalsGuardsTheNarrativeScrape:
+    """SPEC-subpass-outcomes-2026-08 Hazard B / S5.2: a pass with independent
+    sub-passes must not have its already-produced proposals discarded just
+    because the shared narrative also names an unrelated dependency failure
+    from a DIFFERENT sub-pass. The guard is narrow: it only withholds the
+    raise when the pass's own raw_proposals return value is non-empty.
+    """
+
+    def test_narrative_mentioning_dreamer_unavailable_does_not_raise_when_proposals_exist(self):
+        cfg = _cfg(pass_name="stale-contradiction")
+        narrative = "reverify: 1 proposal.\ndoc_id=x: DREAMER UNAVAILABLE — down"
+        dr._raise_if_dependency_blocked(cfg, narrative, None, [{"type": "reverify"}])
+        # no exception -- the whole point of the guard
+
+    def test_same_narrative_still_raises_when_nothing_was_produced(self):
+        cfg = _cfg(pass_name="stale-contradiction")
+        narrative = "doc_id=x: DREAMER UNAVAILABLE — down"
+        with pytest.raises(dr.DependencyBlocked):
+            dr._raise_if_dependency_blocked(cfg, narrative, None, [])
+
+    def test_looked_false_null_record_still_raises_regardless_of_proposals(self):
+        """The embedding_unavailable / looked=False paths are untouched --
+        this guard is scoped to the narrative text-scrape only, per the
+        spec's anti-goal against relaxing the NULL/BLOCKED boundary."""
+        cfg = _cfg(pass_name="dedup")
+        null_record = {"reason": "embedding_unavailable", "looked": False}
+        with pytest.raises(dr.DependencyBlocked):
+            dr._raise_if_dependency_blocked(cfg, "no dreamer text here", null_record, [])
