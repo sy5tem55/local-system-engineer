@@ -770,3 +770,59 @@ def test_sync_command_is_a_fixed_constant_with_no_interpolation():
     # the payload string must be built from the constant, not from a parameter
     assert "self._SYNC_CMD" in src
     assert "payload" not in src and "receive" not in src
+
+
+# --- SPEC-subpass-outcomes-2026-08 SS5.4: Console shows the DEGRADED ratio ---
+
+def _dashboard_script_text():
+    with open(
+        os.path.join(_HERE, "..", "tools", "goethe_dashboard.html"),
+        encoding="utf-8",
+    ) as dashboard:
+        html = dashboard.read()
+    import re
+    chunks = re.findall(r"<script>(.*?)</script>", html, flags=re.DOTALL)
+    assert chunks, "goethe_dashboard.html has no inline <script> block"
+    return "\n".join(chunks)
+
+
+def test_state_badge_takes_a_ratio_and_only_suffixes_when_given_one():
+    js = _dashboard_script_text()
+    assert "function stateBadge(state, ratio){" in js
+    assert "const suffix = ratio ? ' ('+esc(ratio)+')' : '';" in js
+    assert "esc(s)+suffix+'</span>'" in js
+
+
+def test_run_table_computes_ratio_from_run_summary_only_for_degraded():
+    js = _dashboard_script_text()
+    assert 'const rsum = run.summary || {};' in js
+    assert 'run.state==="DEGRADED"' in js
+    assert "rsum.passes_good" in js and "rsum.passes_total" in js
+    # wired into the actual badge call for the run-table row, not left unused
+    assert "stateBadge(run.state,ratio)" in js
+
+
+def test_extracted_dashboard_js_is_syntactically_valid():
+    """Best-effort real parse, not just string matching -- SPEC test 7.
+    Skips (does not fail) when node is not installed on this host; a
+    missing interpreter is an environment gap, not a code defect. See the
+    2026-08 subpass-outcomes report for whether this ran for real here.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which("node") or shutil.which("nodejs")
+    if not node:
+        pytest.skip("node is not installed in this environment")
+    js = _dashboard_script_text()
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(js)
+        tmp_path = fh.name
+    try:
+        result = subprocess.run(
+            [node, "--check", tmp_path], capture_output=True, text=True, timeout=30
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        os.unlink(tmp_path)

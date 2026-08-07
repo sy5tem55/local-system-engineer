@@ -501,7 +501,7 @@ class TestRunPassInsightsEndToEnd:
     def test_null_result_when_nothing_to_feed(self, monkeypatch):
         monkeypatch.setattr(dr, "read_agent_log_window", lambda cfg: [])
         cfg = _make_cfg()
-        proposals, narrative, null_record = dr.run_pass_insights(cfg, [], {}, [], [])
+        proposals, narrative, null_record, sub_passes = dr.run_pass_insights(cfg, [], {}, [], [])
         assert proposals == []
         assert "Null result (PH3-2)" in narrative
         # Prompt 3.8: no patterns.json domain data and no session summaries
@@ -511,6 +511,10 @@ class TestRunPassInsightsEndToEnd:
         assert null_record["reason"] == "no_data_to_feed"
         assert null_record["corpus_size"]["session_summaries"] == 0
         assert null_record["thresholds"]["insights_max_sessions_in_prompt"] == cfg.insights_max_sessions_in_prompt
+        # SPEC-subpass-outcomes-2026-08: nothing to feed any of the four
+        # domains -- every one reports NULL, not just the pass overall.
+        assert set(sub_passes) == set(dr.INSIGHT_DOMAINS)
+        assert all(v["state"] == "NULL" for v in sub_passes.values())
 
     def test_registered_in_pass_funcs(self):
         assert dr.PASS_FUNCS["insights"] is dr.run_pass_insights
@@ -550,7 +554,7 @@ class TestRunPassInsightsEndToEnd:
 
         monkeypatch.setattr(dr, "request_dream_envelope", fake)
         cfg = _make_cfg(patterns_session_gap_minutes=60)
-        proposals, narrative, null_record = dr.run_pass_insights(cfg, sessions, {}, [], [])
+        proposals, narrative, null_record, sub_passes = dr.run_pass_insights(cfg, sessions, {}, [], [])
 
         # 4 domains total; failure-retry has no data (no failing commands in
         # this fixture) so it must be skipped -- at most 3 real calls.
@@ -563,6 +567,10 @@ class TestRunPassInsightsEndToEnd:
         assert "## Cross-session insights" in narrative
         assert "flowed into proposals.jsonl" in narrative
         assert "hallucinated ref" not in narrative
+        # SPEC-subpass-outcomes-2026-08: the domain that produced the
+        # accepted insight is its own SUCCEEDED sub-pass entry.
+        assert sub_passes["automation-candidates"]["state"] == "SUCCEEDED"
+        assert sub_passes["automation-candidates"]["proposals"] == 1
 
 
 if __name__ == "__main__":

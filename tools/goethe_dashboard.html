@@ -715,9 +715,10 @@ async function loadDream(){
   }catch(e){ showErr($("dream-digest"), e); }
 }
 
-function stateBadge(state){
+function stateBadge(state, ratio){
   const s = String(state||"UNKNOWN").toUpperCase();
-  return '<span class="badge state-'+esc(s)+'">'+esc(s)+'</span>';
+  const suffix = ratio ? ' ('+esc(ratio)+')' : '';
+  return '<span class="badge state-'+esc(s)+'">'+esc(s)+suffix+'</span>';
 }
 function setTraumMsg(message, bad){
   const el = $("traum-msg");
@@ -848,6 +849,11 @@ async function loadTraumRuns(){
       const ack = attempts.find(a=>(a.state==="FAILED"||a.state==="BLOCKED")&&!a.acknowledged);
       const terminal = ["SUCCEEDED","DEGRADED","FAILED","CANCELLED","BLOCKED"].includes(run.state);
       const date = (run.config||{}).legacy_date || (run.config||{}).day || run.created_at || "";
+      // SPEC-subpass-outcomes-2026-08 SS5.4: DEGRADED gains the good/total
+      // ratio already carried on run.summary by _aggregate_run.
+      const rsum = run.summary || {};
+      const ratio = (run.state==="DEGRADED" && rsum.passes_good!=null && rsum.passes_total!=null)
+        ? (rsum.passes_good+"/"+rsum.passes_total) : "";
       const passText = attempts.length
         ? attempts.map(a=>a.pass_name+":"+a.state).join(" · ")
         : (run.requested_passes||[]).join(", ");
@@ -863,7 +869,7 @@ async function loadTraumRuns(){
         ? ' <span class="badge state-FAILED" title="'+esc(run.control_note||"process status unknown; no PID action")+'">UNOWNED / STATUS UNKNOWN</span>'
         : "";
       return "<tr><td title='"+esc(run.run_id)+"'>"+esc(String(date).slice(0,16))+"<br><span style='color:var(--faint)'>"+esc(run.run_id.slice(0,18))+"</span></td>"+
-        "<td>"+esc(run.profile)+"</td><td>"+stateBadge(run.state)+ownership+(run.archived?' <span class="badge">ARCHIVED</span>':"")+"</td>"+
+        "<td>"+esc(run.profile)+"</td><td>"+stateBadge(run.state,ratio)+ownership+(run.archived?' <span class="badge">ARCHIVED</span>':"")+"</td>"+
         "<td style='color:var(--dim);font-size:10.5px'>"+esc(passText)+"</td><td>"+actions+"</td></tr>";
     }).join("");
     $("dream-days").innerHTML = rows

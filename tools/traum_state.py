@@ -626,6 +626,7 @@ class TraumState:
         latest = {}
         for row in rows:
             latest.setdefault(row["pass_name"], row)
+        summary_update = None
         if any(row["state"] in {"QUEUED", "RUNNING"} for row in latest.values()):
             state, finished = "RUNNING", None
         elif any(p not in latest for p in requested):
@@ -644,10 +645,20 @@ class TraumState:
             else:
                 state = "FAILED"
             finished = utc_now()
-        conn.execute(
-            "UPDATE runs SET state=?, finished_at=? WHERE run_id=?",
-            (state, finished, run_id),
-        )
+            # SPEC-subpass-outcomes-2026-08 SS5.3: record the ratio so
+            # DEGRADED can be read as "5 of 6", not a bare word.
+            prior_summary = _loads(run["summary_json"], {})
+            summary_update = {**prior_summary, "passes_good": good, "passes_total": len(states)}
+        if summary_update is not None:
+            conn.execute(
+                "UPDATE runs SET state=?, finished_at=?, summary_json=? WHERE run_id=?",
+                (state, finished, _json(summary_update), run_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE runs SET state=?, finished_at=? WHERE run_id=?",
+                (state, finished, run_id),
+            )
 
     def finish_attempt(self, attempt_id: str, state: str,
                        summary: dict | None = None, artifacts: dict | None = None,
@@ -1438,10 +1449,13 @@ class TraumState:
                 # Missing requested attempts at controller finalization is an
                 # incomplete cycle, never a success.
                 current = "DEGRADED" if digest_exit_code == 0 else "FAILED"
+            # SPEC-subpass-outcomes-2026-08 SS5.3: merge, do not clobber,
+            # so passes_good/passes_total from _aggregate_run survive.
+            prior_summary = _loads(row["summary_json"], {})
             conn.execute(
                 "UPDATE runs SET state=?,finished_at=COALESCE(finished_at,?),"
                 "summary_json=? WHERE run_id=?",
-                (current, now, _json({"digest_exit_code": digest_exit_code,
+                (current, now, _json({**prior_summary, "digest_exit_code": digest_exit_code,
                                       "stranded_attempts_reconciled": len(stranded)}), run_id),
             )
             updated = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
