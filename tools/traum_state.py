@@ -488,7 +488,7 @@ class TraumState:
                         f"run id collision with different immutable identity: {run_id}"
                     )
                 return self._run_row(existing)
-            if source in {"gui", "scheduled"}:
+            if source in {"gui", "scheduled", "manual"}:
                 admission = self._recover_orphaned_controller_work_tx(
                     conn, owned_run_ids=(), now=_as_utc(now),
                     grace_seconds=DEFAULT_RECOVERY_GRACE_SECONDS,
@@ -539,7 +539,7 @@ class TraumState:
                         or existing["retry_of"] != retry_of):
                     raise ConflictError(f"attempt id already belongs to another operation: {attempt_id}")
                 return self._attempt_row(existing)
-            if run_row["source"] in {"gui", "scheduled"}:
+            if run_row["source"] in {"gui", "scheduled", "manual"}:
                 admission = self._recover_orphaned_controller_work_tx(
                     conn, owned_run_ids=(run_id,), now=_as_utc(now),
                     grace_seconds=DEFAULT_RECOVERY_GRACE_SECONDS,
