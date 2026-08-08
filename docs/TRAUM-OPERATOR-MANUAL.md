@@ -31,7 +31,7 @@ TRAUM controls and Goethe Permissions are intentionally separate.
 | TRAUM Digest / control surface | Dream runs, pass attempts, proposals, redacted logs, acknowledgement, archive, learning-lift evidence | This manual |
 | Permissions — Pending Approvals | Agent requests for read/write/sudo authority | Unchanged; TRAUM neither creates nor consumes requests |
 | Active Grants | Existing operational grants and sudo-grant workflow | Unchanged; TRAUM does not inspect or mutate grants |
-| Nightly systemd timer | Unattended scheduling | Status is visible, but pause/resume/start/stop are not exposed |
+| Nightly systemd timer | **Retired 2026-08-08** (SPEC-manual-dreaming-2026-08) -- dreaming is started by hand, from the Console or `tools/run-dream-cycle.sh` | The read-only status box (§8) is left in place but reports the unit unavailable once the delegated removal lands |
 
 Authentication uses the existing gateway bearer token. TRAUM controls fail
 closed when no token is configured, even though older read-only Console panels
@@ -239,11 +239,17 @@ stable `legacy_*` runs. This makes the 2026-07-17 and 2026-07-20 failures
 acknowledgeable and archivable while preserving their original files. If a
 legacy import is interrupted, the next startup resumes idempotently.
 
-## 8. Timer status
+## 8. Timer status (retired mechanism)
 
-The timer box performs one fixed read-only query for
-`goethe-dream.timer` and shows enabled/active state, last trigger, and next run.
-There is no timer mutation route.
+**Dreaming is manual as of 2026-08-08** (SPEC-manual-dreaming-2026-08).
+`goethe-dream.timer` is being decommissioned; start cycles from the
+Console or by running `tools/run-dream-cycle.sh` directly. The timer box
+still performs one fixed read-only query for `goethe-dream.timer` and
+shows enabled/active state, last trigger, and next run -- there is no
+timer mutation route -- but once the unit is removed it will report the
+unit unavailable rather than a schedule. That is expected, not an error.
+Retiring this read-only status feature itself is out of this spec's
+scope and is left for a follow-up.
 
 If scheduling must change, treat it as a separate operational task. Do not use
 TRAUM to create a Pending Approval or Active Grant, and do not alter the sudo
@@ -340,7 +346,7 @@ sandbox into `$A_ROOT`, then freeze them. Sources must be absolute paths inside
 `$A_ROOT`; they are hashed before and after copying and are never modified.
 
 **5. Let the system actually learn.** Leave the window open across several real
-scheduled dream cycles. `open-b` refuses to advance before the pinned interval
+dream cycles, run by hand. `open-b` refuses to advance before the pinned interval
 elapses and reports the remaining seconds. Do not shorten the window to finish
 an experiment.
 

@@ -9,6 +9,11 @@
 
 ## 0. Immediate — run cycles, change nothing
 
+**Update 2026-08-08:** `goethe-dream.timer` is retired
+(SPEC-manual-dreaming-2026-08). "Run a standard cycle at the end of each
+session" is no longer a wish alongside an unattended nightly timer -- it
+is now the actual, sole, supported way a cycle starts.
+
 The highest-value next action is **not code**. Run a standard cycle at the
 end of each session for about a week, then re-read
 `docs/TRAUM-ANALYSIS-2026-07-31.md` §1 against real numbers.
