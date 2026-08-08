@@ -32,8 +32,11 @@ Run on LUCIFER (ES on localhost:9200):
 
 import hashlib
 import math
+import os
 import random
+import re
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -46,12 +49,34 @@ import goethe  # noqa: E402
 
 # ── test-index safety layer ──────────────────────────────────────────────────
 
+# 2026-08-08: these used to be fixed names. Two pytest runs sharing one
+# Elasticsearch then fought over the same indices -- one creates while the
+# other is mid-test, and you get resource_already_exists_exception on the
+# create and index_not_found_exception on the read. It surfaced as five
+# "pre-existing failures" in test_kb_contracts.py that were neither
+# pre-existing nor reproducible: alone this file is 91/91 green.
+#
+# The names are now unique per pytest process, so concurrent runs cannot
+# collide. PID is in the name deliberately -- a leaked index from a crashed
+# run is traceable to the process that leaked it, and _sweep_orphaned_indices
+# below reclaims it once that PID is gone.
+_RUN_TAG = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+KB_TEST_INDEX = f"lse-kb-test-{_RUN_TAG}"
+SKILLS_TEST_INDEX = f"lse-skills-test-{_RUN_TAG}"
+ERRORS_TEST_INDEX = f"lse-errors-test-{_RUN_TAG}"
+
 INDEX_MAP = {
-    "lse-kb": "lse-kb-test",
-    "lse-skills": "lse-skills-test",
-    "lse-errors-1024": "lse-errors-test",
+    "lse-kb": KB_TEST_INDEX,
+    "lse-skills": SKILLS_TEST_INDEX,
+    "lse-errors-1024": ERRORS_TEST_INDEX,
 }
 TEST_INDICES = set(INDEX_MAP.values())
+
+# Any index this suite has ever created, by any process. Used only for
+# orphan reclamation -- never for rewriting.
+_TEST_INDEX_GLOB = "lse-kb-test-*,lse-skills-test-*,lse-errors-test-*"
+_TEST_INDEX_RE = re.compile(r"^lse-(?:kb|skills|errors)-test-(\d+)-[0-9a-f]{8}$")
 
 
 def _rewrite(index: str) -> str:
@@ -224,6 +249,37 @@ ERRORS_TEST_MAPPING = {
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 
+def _sweep_orphaned_indices(es):
+    """Delete test indices left behind by pytest processes that are gone.
+
+    A crashed run cannot clean up after itself, and unique-per-process names
+    mean the debris would otherwise accumulate forever. The PID embedded in
+    the name makes this safe: an index is only reclaimed once its owning
+    process no longer exists. A concurrently running suite keeps its own
+    indices because its PID is still alive.
+    """
+    try:
+        existing = es.indices.get(index=_TEST_INDEX_GLOB, ignore_unavailable=True)
+    except Exception:
+        return  # reclamation is best-effort; never fail a run over it
+    for name in list(existing):
+        if name in TEST_INDICES:
+            continue  # ours, in use
+        m = _TEST_INDEX_RE.match(name)
+        if not m:
+            continue  # unrecognised shape -- leave it alone
+        pid = int(m.group(1))
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            try:
+                es.indices.delete(index=name)
+            except Exception:
+                pass
+        except PermissionError:
+            pass  # alive, owned by another user
+
+
 @pytest.fixture(scope="session")
 def raw_es():
     from elasticsearch import Elasticsearch
@@ -231,16 +287,25 @@ def raw_es():
     es = Elasticsearch("http://127.0.0.1:9200", request_timeout=10)
     if not es.ping():
         pytest.skip("Elasticsearch not reachable on 127.0.0.1:9200")
-    return es
+    _sweep_orphaned_indices(es)
+    yield es
+    # Session teardown: drop this process's indices even if a test aborted
+    # mid-way and the per-test fixture never got to run its own cleanup.
+    for name in TEST_INDICES:
+        try:
+            if es.indices.exists(index=name):
+                es.indices.delete(index=name)
+        except Exception:
+            pass
 
 
 @pytest.fixture()
 def es(raw_es):
     """Fresh throwaway test indices per test; deleted afterwards."""
     for name, mapping in (
-        ("lse-kb-test", KB_TEST_MAPPING),
-        ("lse-skills-test", SKILLS_TEST_MAPPING),
-        ("lse-errors-test", ERRORS_TEST_MAPPING),
+        (KB_TEST_INDEX, KB_TEST_MAPPING),
+        (SKILLS_TEST_INDEX, SKILLS_TEST_MAPPING),
+        (ERRORS_TEST_INDEX, ERRORS_TEST_MAPPING),
     ):
         if raw_es.indices.exists(index=name):
             raw_es.indices.delete(index=name)
@@ -261,16 +326,16 @@ def tools(es, monkeypatch, tmp_path):
 
 
 def kb_doc(es, doc_id):
-    return es.get(index="lse-kb-test", id=doc_id)["_source"]
+    return es.get(index=KB_TEST_INDEX, id=doc_id)["_source"]
 
 
 def kb_count(es):
-    return es.count(index="lse-kb-test")["count"]
+    return es.count(index=KB_TEST_INDEX)["count"]
 
 
 def skill_doc(es, skill_id):
     r = es.search(
-        index="lse-skills-test",
+        index=SKILLS_TEST_INDEX,
         body={"query": {"term": {"skill_id": skill_id}}, "size": 1},
     )
     hits = r["hits"]["hits"]
@@ -657,7 +722,7 @@ class TestSkillRecord:
             provenance="incident 2026-06-07", quality=0.6, source_tier="secondary",
         )
         assert "SKILL updated" in r2
-        assert es.count(index="lse-skills-test")["count"] == 1
+        assert es.count(index=SKILLS_TEST_INDEX)["count"] == 1
         s = skill_doc(es, "sre/resync-docker-config-from-repo")
         assert s["quality"] == pytest.approx(0.6)  # max(existing, new), cap 0.7
         assert s["version"] == 2
@@ -691,11 +756,11 @@ class TestSkillOutcome:
             # skill_record clamps starting quality — set the exact test state
             # directly in the throwaway index (fixture-only path).
             r = es.search(
-                index="lse-skills-test",
+                index=SKILLS_TEST_INDEX,
                 body={"query": {"term": {"skill_id": skill_id}}, "size": 1},
             )
             es.update(
-                index="lse-skills-test", id=r["hits"]["hits"][0]["_id"],
+                index=SKILLS_TEST_INDEX, id=r["hits"]["hits"][0]["_id"],
                 body={"doc": {"quality": quality, "pinned": pinned}},
             )
         return skill_id
@@ -927,7 +992,7 @@ def _backdate(es, doc_id, days):
     from datetime import datetime, timedelta
 
     old = (datetime.now().astimezone() - timedelta(days=days)).isoformat()
-    es.update(index="lse-kb-test", id=doc_id, body={"doc": {"updated_at": old}})
+    es.update(index=KB_TEST_INDEX, id=doc_id, body={"doc": {"updated_at": old}})
 
 
 class TestChronosTimeBanner:
