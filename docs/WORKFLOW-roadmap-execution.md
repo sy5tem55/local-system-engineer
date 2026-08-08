@@ -51,6 +51,39 @@ procedure, P3 cosmetic lint, bulk rote edits with a green suite.
 **Never route here:** security gates, anything with unstated invariants,
 anything where "looks done" and "is done" can diverge silently.
 
+**Never route here — writing the test that guards its own work.** Measured
+2026-08-08 on roadmap #7 (SUPERSEDED vs QUARANTINED), a deliberate calibration
+run. The *production edit was correct* — both files, including the
+`(failure_count||0)` guard for the live `None` case, `esc()` on the tooltip,
+correct branch order, no new CSS, no doc-id parsing out of free text. For a
+fully-specified mechanical edit it passed cleanly.
+
+Its **test was vacuous**: it string-matched the source for `"SUPERSEDED"`,
+`"QUARANTINED"` and their relative position, and never evaluated the branch.
+Mutating the condition from `===0` to `!==0` — exactly inverting the
+behaviour — left it green. A gate that cannot fail for the reason it exists
+is not a gate. Replaced with three behavioural tests that execute the shipped
+ternary in node; both mutations now fail, and dropping the `||0` guard fails
+only the `None` fixture.
+
+Its **numbers were wrong, but its failures were real** — and the reviewer
+(Opus) got this wrong first. It cited baseline 781 against an actual 830, and
+attributed failures in `test_kb_contracts.py` to "pre-existing" issues. An
+exclusive run showed 831 passed, so the failures were initially called
+fabricated. That was unfair. `test_kb_contracts.py` is an Elasticsearch
+integration suite that creates and drops a shared `lse-kb-test` index; two
+overlapping pytest runs collide with `resource_already_exists_exception` and
+`index_not_found_exception`. Run alone it is 91/91 green. The LSE observed
+something real and misdiagnosed its cause; the reviewer then misdiagnosed the
+misdiagnosis by trusting a single clean run.
+
+**Two operational rules follow.**
+1. An LSE verification claim carries no information *by itself*. Re-run the
+   suite — but re-run it **exclusively**, and check `pgrep -af pytest` first.
+   Every baseline in this repo is only valid for a run with sole access to
+   Elasticsearch.
+2. Route the edit to the LSE; write the test yourself or route it to Sonnet.
+
 ### Sonnet 5 High — the workhorse
 
 **Evidence for, this session, 3 for 3:** held the 39-tool invariant across a
