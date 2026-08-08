@@ -79,15 +79,39 @@ else
   echo "[dream-cycle] WARNING: $WAKE_SCRIPT missing or not executable -- skipping wake preflight, cascade runs unassisted"
 fi
 
+# Prompt/Defect 2 (SPEC-cycle-completes-2026-08 §3, §8 item 2): each pass
+# gets a SHARE of what remains, not the whole cycle -- otherwise one pass
+# that legitimately uses its budget starves every pass behind it (measured
+# on run_63614781: stale-contradiction took 36.8 of 45 minutes and left
+# error-cluster/patterns/insights/digest ~11ms each). The share is
+# remaining_seconds / passes_left, floored so a slice never gets so thin a
+# pass dies mid-write (Hazard C), and never inflated above what is
+# genuinely left for the final pass (test 7). An early finisher's unused
+# time returns to the pool automatically: remaining_seconds is recomputed
+# from the wall clock at the top of every iteration, not decremented by an
+# a-priori allocation.
+PASS_FLOOR_SECONDS="${GOETHE_DREAM_PASS_FLOOR_S:-60}"
+total_passes=${#passes[@]}
+pass_index=0
 for pass_name in "${passes[@]}"; do
+  pass_index=$((pass_index + 1))
   remaining_seconds=$(( cycle_deadline - $(date +%s) ))
   if (( remaining_seconds <= 5 )); then
     echo "[dream-cycle] shared cycle deadline exhausted before pass: $pass_name"
     failures=$((failures + 1))
     break
   fi
-  echo "[dream-cycle] starting pass: $pass_name"
-  if timeout --signal=TERM --kill-after=10s "${remaining_seconds}s" \
+  passes_left=$(( total_passes - pass_index + 1 ))
+  pass_budget=$(( remaining_seconds / passes_left ))
+  if (( pass_budget < PASS_FLOOR_SECONDS )); then
+    if (( remaining_seconds > PASS_FLOOR_SECONDS )); then
+      pass_budget=$PASS_FLOOR_SECONDS
+    else
+      pass_budget=$remaining_seconds
+    fi
+  fi
+  echo "[dream-cycle] starting pass: $pass_name (budget ${pass_budget}s of ${remaining_seconds}s remaining, $passes_left pass(es) left)"
+  if timeout --signal=TERM --kill-after=10s "${pass_budget}s" \
     "$PYTHON_BIN" "$REPO_DIR/tools/dream_runner.py" \
       --pass "$pass_name" \
       --dream-dir "$DREAM_DIR" \
@@ -97,7 +121,7 @@ for pass_name in "${passes[@]}"; do
       --run-profile standard \
       --run-source scheduled \
       --requested-passes "$pass_csv" \
-      --budget-max-wall-clock-s "$remaining_seconds" \
+      --budget-max-wall-clock-s "$pass_budget" \
       --no-dry-run; then
     echo "[dream-cycle] completed pass: $pass_name"
   else

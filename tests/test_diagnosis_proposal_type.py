@@ -120,7 +120,7 @@ def _episode_members(n=3, sessions=2):
 
 class TestDiagnosisEmission:
     def test_draft_emits_diagnosis_for_triggered_cluster(self, monkeypatch):
-        def fake_envelope(system_prompt, user_content, cfg):
+        def fake_envelope(system_prompt, user_content, cfg, **_kwargs):
             return {
                 "diagnoses": [{
                     "error_text": "MCP error -32001",
@@ -155,7 +155,7 @@ class TestDiagnosisEmission:
         }
 
     def test_run_pass_error_cluster_produces_diagnosis_type(self, monkeypatch, tmp_path):
-        def fake_envelope(system_prompt, user_content, cfg):
+        def fake_envelope(system_prompt, user_content, cfg, **_kwargs):
             return {
                 "diagnoses": [{
                     "error_text": "MCP error -32001",
@@ -207,7 +207,7 @@ class TestSkillCandidateStillRoutable:
         """A cluster whose evidence yields a real repeatable multi-step fix
         must still be able to emit skill-candidate -- diagnosis is additive
         routing, not a wholesale replacement (spec §4 item 6)."""
-        def fake_envelope(system_prompt, user_content, cfg):
+        def fake_envelope(system_prompt, user_content, cfg, **_kwargs):
             return {
                 "diagnoses": [],
                 "skill_candidates": [{
@@ -239,7 +239,7 @@ class TestSkillCandidateStillRoutable:
     def test_both_can_be_emitted_from_the_same_envelope(self, monkeypatch):
         """Routing is per-cluster in the model's judgment, not all-or-nothing
         at the pass level -- one call can return both arrays populated."""
-        def fake_envelope(system_prompt, user_content, cfg):
+        def fake_envelope(system_prompt, user_content, cfg, **_kwargs):
             return {
                 "diagnoses": [{
                     "error_text": "err A", "context": "ctx A",
@@ -319,7 +319,7 @@ class TestDiagnosisStructuralValidation:
         """The drafting filter (pre-validator, at generation time) must also
         drop an incomplete diagnosis -- same discipline as skill-candidate's
         existing task/trigger/procedure/verification/why filter."""
-        def fake_envelope(system_prompt, user_content, cfg):
+        def fake_envelope(system_prompt, user_content, cfg, **_kwargs):
             return {
                 "diagnoses": [{
                     "error_text": "err", "context": "ctx",
