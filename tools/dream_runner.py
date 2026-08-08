@@ -1350,6 +1350,14 @@ def _build_payload(system_prompt: str, user_content: str, no_think: bool, model:
         # 0 ends thinking immediately, overrides any CLI --reasoning-budget.
         # Endpoints without think-tags (Gemma) ignore this field.
         "thinking_budget_tokens": 0,
+        # SPEC-cycle-completes-2026-08 §5/§8 item 4: probed 2026-08-08 on
+        # this model, only this field actually suppressed thinking -- the
+        # three mechanisms above were all ineffective on their own. Added
+        # ADDITIVELY (cascade legs 1/2 -- node3090 llama-server, Ollama --
+        # are still unprofiled and may rely on the others), per-request
+        # only; this is a payload field, not a launch flag or node profile
+        # (Hazard F untouched).
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     if model:
         payload_obj["model"] = model
@@ -1496,7 +1504,8 @@ def call_dream_llm(system_prompt: str, user_content: str, cfg: DreamConfig, no_t
     return _post_chat_completion(ollama_url, payload, 300)
 
 
-def parse_dream_envelope(reply: str, key: str = "proposals") -> tuple[dict | None, str]:
+def parse_dream_envelope(reply: str, key: str = "proposals",
+                          keys: tuple[str, ...] | None = None) -> tuple[dict | None, str]:
     """Parse a dream-pass reply into its JSON envelope. Same strip +
     raw_decode approach as goethe.py's _parse_planner_envelope
     (tools/goethe.py:6751), adapted to this envelope's required key —
@@ -1506,10 +1515,29 @@ def parse_dream_envelope(reply: str, key: str = "proposals") -> tuple[dict | Non
     envelope shape (Prompt 3.2's insights pass uses key="insights") without
     duplicating this parse logic — every existing caller relies on the
     "proposals" default, so behavior there is unchanged.
+
+    `keys`, when given, overrides `key` with a multi-key OR contract: an
+    envelope is accepted if it carries ANY of `keys` as a list (each may be
+    empty). This is opt-in per call site (SPEC-cycle-completes-2026-08
+    Hazard B) -- the default single-`key` behavior below is unchanged for
+    every caller that does not pass `keys`, e.g. error-cluster's two real,
+    independently-optional arrays (`diagnoses`, `skill_candidates`) where
+    validating only one would silently drop the other (Hazard A).
     Returns (envelope_dict, "") on success, (None, fail_reason) on failure.
     """
     clean = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
     clean = re.sub(r"^```[a-z]*\n?", "", clean).rstrip("`").strip()
+    # SPEC-cycle-completes-2026-08 §5/§8 item 4: an opening <think> that
+    # survives the strip above never got a matching </think> -- the reply
+    # was truncated mid-thought. That used to fall straight through to the
+    # generic "no JSON object in reply" message (indistinguishable from a
+    # model that just didn't answer). Name the real cause, and only look
+    # for an envelope in whatever text preceded the truncation -- content
+    # after an unterminated <think> was never reasoned about and is not a
+    # candidate envelope.
+    unterminated_think = "<think>" in clean
+    if unterminated_think:
+        clean = clean.split("<think>", 1)[0].strip()
     # Scan EVERY candidate '{', not just the first.
     #
     # 2026-08-03: three consecutive cycles reported dependency=dream-llm and
@@ -1528,6 +1556,8 @@ def parse_dream_envelope(reply: str, key: str = "proposals") -> tuple[dict | Non
     first_err = ""
     idx = clean.find("{")
     if idx == -1:
+        if unterminated_think:
+            return None, "reply truncated mid-<think> block (no closing tag) before any JSON object appeared"
         return None, f"no JSON object in reply. RAW: {clean[:200]!r}"
     while idx != -1:
         try:
@@ -1536,23 +1566,39 @@ def parse_dream_envelope(reply: str, key: str = "proposals") -> tuple[dict | Non
             if not first_err:
                 first_err = f"JSON parse failed ({exc}). RAW: {clean[idx:idx + 200]!r}"
         else:
-            if isinstance(env, dict) and isinstance(env.get(key), list):
-                return env, ""
-            if not first_err:
+            if isinstance(env, dict):
+                if keys is not None:
+                    if any(isinstance(env.get(k), list) for k in keys):
+                        return env, ""
+                    if not first_err:
+                        names = " or ".join(repr(k) for k in keys)
+                        first_err = f"envelope has neither {names} array"
+                elif isinstance(env.get(key), list):
+                    return env, ""
+                elif not first_err:
+                    first_err = f"envelope has no {key!r} array"
+            elif not first_err:
                 first_err = f"envelope has no {key!r} array"
         idx = clean.find("{", idx + 1)
+    if keys is not None:
+        names = " or ".join(repr(k) for k in keys)
+        return None, first_err or f"no {names} envelope in reply. RAW: {clean[:200]!r}"
     return None, first_err or f"no {key!r} envelope in reply. RAW: {clean[:200]!r}"
 
 
 def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConfig,
-                            key: str = "proposals") -> tuple[dict | None, str | None]:
+                            key: str = "proposals",
+                            keys: tuple[str, ...] | None = None) -> tuple[dict | None, str | None]:
     """Two-attempt retry loop, same shape as goethe.py's
     _request_plan_envelope (tools/goethe.py:6860): call the LLM, parse the
     envelope; on failure, append a corrective note describing exactly what
     was wrong and retry exactly once. `key` is forwarded to
     parse_dream_envelope (see its docstring) and used in the corrective
     retry message so the model sees the SAME key name it was asked for the
-    first time.
+    first time. `keys`, when given, switches both the parse and the
+    corrective message to the multi-key OR contract (SPEC-cycle-completes-
+    2026-08 Hazard B) -- opt-in per call site, default single-`key` callers
+    are unaffected.
     Returns (envelope_dict, None) on success, (None, error_message) on
     failure (both attempts exhausted, or the LLM cascade itself errored).
     """
@@ -1572,14 +1618,18 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
             _dream_llm_record(success=False)
             return None, f"DREAMER UNAVAILABLE — ({(reply or 'no reply')[:160]})"
         _dream_llm_record(success=True)
-        env, fail_reason = parse_dream_envelope(reply, key=key)
+        env, fail_reason = parse_dream_envelope(reply, key=key, keys=keys)
         if env is not None:
             break
         print(f"[dream_runner] attempt {attempt} rejected — {fail_reason[:120]}", file=sys.stderr)
+        if keys is not None:
+            envelope_hint = "{" + ", ".join(f'\"{k}\": [...]' for k in keys) + "}"
+        else:
+            envelope_hint = f'{{\"{key}\": [...]}}'
         content = (
             user_content
             + "\n\nPREVIOUS REPLY REJECTED: " + fail_reason[:200]
-            + f"\nReturn ONLY the JSON envelope object {{\"{key}\": [...]}} — "
+            + f"\nReturn ONLY the JSON envelope object {envelope_hint} — "
             "no thinking, no prose, no code fences."
         )
     if env is None:
@@ -2088,7 +2138,10 @@ def _draft_error_cluster_proposals(cfg: DreamConfig, cluster_episode_members: li
             for c in lse_errors_context
         )
 
-    env, err = request_dream_envelope(_ERROR_CLUSTER_SYSTEM_PROMPT, user_content, cfg)
+    env, err = request_dream_envelope(
+        _ERROR_CLUSTER_SYSTEM_PROMPT, user_content, cfg,
+        keys=("diagnoses", "skill_candidates"),
+    )
     if env is None:
         return [], [], err
 
@@ -4845,10 +4898,19 @@ def main(argv=None) -> int:
             report_path, proposals_path = write_report(
                 cfg, sessions, proposals, narrative, null_record
             )
-            outcome = (
-                "BLOCKED" if cfg.budget.truncated
-                else ("NULL" if null_record is not None else "SUCCEEDED")
-            )
+            # Defect 3 (SPEC-cycle-completes-2026-08 Sec4, Hazard D): budget
+            # exhaustion is a deliberate stop, not a dependency failure --
+            # call_dream_llm's own docstring already says so for the
+            # request-level BUDGET_EXHAUSTED: prefix (Sec1414). This is that
+            # same contract applied at the pass level: a truncated pass is
+            # SUCCEEDED if it produced proposals, NULL if it looked and
+            # found nothing -- exactly the existing null_record-based read
+            # used for every non-truncated outcome, unchanged. Only the old
+            # "BLOCKED if truncated" override is removed; a real dependency
+            # failure still raises DependencyBlocked above in
+            # _raise_if_dependency_blocked (untouched, Hazard E) and is
+            # still reported BLOCKED via that separate except-clause.
+            outcome = "NULL" if null_record is not None else "SUCCEEDED"
             consume_ids = [] if cfg.budget.truncated else [row["session_id"] for row in sessions]
             null_suffix = (
                 f" null_result={null_record['reason']} (looked={null_record['looked']})"
@@ -4872,11 +4934,22 @@ def main(argv=None) -> int:
                         "proposals_pending": len(proposals),
                         "null_reason": (null_record or {}).get("reason"),
                         "budget_truncated": cfg.budget.truncated,
+                        # Defect 3: the truncation reason must survive into
+                        # the summary even though outcome is no longer
+                        # BLOCKED, so the operator still sees it stopped
+                        # early and why.
+                        "budget_truncation_reason": (
+                            cfg.budget.truncation_reason if cfg.budget.truncated else None
+                        ),
                         **({"sub_passes": sub_passes} if sub_passes else {}),
                     },
                     artifacts={"report": report_path, "proposals": proposals_path},
-                    error=(DependencyBlocked("budget", cfg.budget.truncation_reason)
-                           if cfg.budget.truncated else None),
+                    # No DependencyBlocked here: budget exhaustion is not a
+                    # dependency failure (see above). exit_code stays 3 on
+                    # truncation as a process-level signal that the pass
+                    # stopped early -- orthogonal to `outcome`/error_type,
+                    # which now read SUCCEEDED/NULL like any other pass.
+                    error=None,
                     exit_code=3 if cfg.budget.truncated else 0,
                     consumed_session_ids=consume_ids,
                 )
