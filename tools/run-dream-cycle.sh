@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Canonical unattended TRAUM cycle. The outer systemd timeout bounds the
-# complete cycle; each pass retains dream_runner.py's own per-pass budgets.
+# Canonical TRAUM cycle -- the manual CLI entry point (goethe-dream.timer
+# was retired 2026-08-08, SPEC-manual-dreaming-2026-08; this script is now
+# started by the operator, from a terminal or the Console). An outer
+# GOETHE_DREAM_CYCLE_MAX_SECONDS deadline bounds the complete cycle; each
+# pass retains dream_runner.py's own per-pass budgets.
 set -uo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -119,7 +122,7 @@ for pass_name in "${passes[@]}"; do
       --state-db "$STATE_DB" \
       --run-id "$RUN_ID" \
       --run-profile standard \
-      --run-source scheduled \
+      --run-source manual \
       --requested-passes "$pass_csv" \
       --budget-max-wall-clock-s "$pass_budget" \
       --no-dry-run; then

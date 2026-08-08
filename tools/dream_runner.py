@@ -4021,7 +4021,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--requested-passes",
                     default=os.environ.get("GOETHE_TRAUM_RUN_PASSES", ""),
                     help="comma-separated complete pass set for run aggregation")
-    ap.add_argument("--run-source", choices=("cli", "scheduled", "gui"),
+    ap.add_argument("--run-source", choices=("cli", "scheduled", "gui", "manual"),
                     default=os.environ.get("GOETHE_TRAUM_RUN_SOURCE", "cli"))
     ap.add_argument("--es-url", default=_es_url_default())
     ap.add_argument("--tasks-db", default=_tasks_db_default())
