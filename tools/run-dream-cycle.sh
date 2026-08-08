@@ -13,6 +13,7 @@ EPISODE_DIR="${GOETHE_EPISODE_DIR:-/opt/local-se/episodes}"
 STATE_DB="${GOETHE_TRAUM_STATE_DB:-$DREAM_DIR/traum-state.db}"
 RUN_ID="${GOETHE_TRAUM_RUN_ID:-run_$(date -u +%Y%m%dT%H%M%SZ)_$$}"
 CYCLE_MAX_SECONDS="${GOETHE_DREAM_CYCLE_MAX_SECONDS:-2700}"
+SKIP_SESSION_GUARD="${GOETHE_DREAM_SKIP_SESSION_GUARD:-1}"
 
 if [[ ! "$CYCLE_MAX_SECONDS" =~ ^[0-9]+$ ]] || (( CYCLE_MAX_SECONDS < 60 )); then
   echo "[dream-cycle] invalid GOETHE_DREAM_CYCLE_MAX_SECONDS=$CYCLE_MAX_SECONDS"
@@ -94,6 +95,17 @@ fi
 # from the wall clock at the top of every iteration, not decremented by an
 # a-priori allocation.
 PASS_FLOOR_SECONDS="${GOETHE_DREAM_PASS_FLOOR_S:-60}"
+# Manual entry point default (SPEC-manual-dreaming-2026-08 §4.3): an
+# operator-initiated run waives the quiet-period guard by default --
+# the invocation itself is the "operator is not working right now"
+# signal the guard exists to infer. Opt out with
+# GOETHE_DREAM_SKIP_SESSION_GUARD=0. The flag and the underlying
+# _recent_session_active check stay intact in dream_runner.py
+# (Hazard D) -- only this entry point's default changed.
+guard_args=()
+if [[ "$SKIP_SESSION_GUARD" != "0" ]]; then
+  guard_args+=(--skip-session-guard)
+fi
 total_passes=${#passes[@]}
 pass_index=0
 for pass_name in "${passes[@]}"; do
@@ -124,6 +136,7 @@ for pass_name in "${passes[@]}"; do
       --run-profile standard \
       --run-source manual \
       --requested-passes "$pass_csv" \
+      "${guard_args[@]}" \
       --budget-max-wall-clock-s "$pass_budget" \
       --no-dry-run; then
     echo "[dream-cycle] completed pass: $pass_name"
