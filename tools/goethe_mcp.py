@@ -63,7 +63,20 @@ import sys
 import time
 import typing
 
-__version__ = "1.12.0"
+__version__ = "1.13.0"
+# 1.13.0 — tool-description cap: the bare `__doc__[:1024]` slice (v1.9.3,
+#           2026-07-01) silently dropped the tail of 39 of 48 docstrings. The
+#           v0.4.7 incident (planner's MANDATORY TRIGGER cut) produced
+#           tests/test_docstring_mcp_truncation.py, but that gate only reads
+#           goethe.py's Tools class and only counts methods with >=1 real
+#           parameter -- so the pfsense/vaultwarden/net-discovery add-ons and
+#           every zero-arg tool were never checked. Four tools were losing
+#           contract keywords unnoticed: pfsense_query (NEVER@2997, RULE@2032),
+#           pfsense_graphql (NEVER@1256), pfsense_log_summary (NEVER@1091) and
+#           time_check (GATE@2037 -- in goethe.py, missed for taking no args).
+#           Cap raised to 3072, the cheapest value that loses zero contracts
+#           (measured 2026-08-08: 1024 -> 45,564 chars total; 3072 -> 83,294).
+#           Truncation is now bounded AND loud -- never silent again.
 # 1.12.0 — Goethe Console: mount tools/goethe_ui.py (UIRouter) into the HTTP
 #           stack — GET /ui serves the dashboard (goethe_dashboard.html,
 #           static, no token needed), GET /api/ui/* are read-only JSON panels
@@ -157,6 +170,16 @@ INJECTED = {
 # the body was removed from goethe.py on 2026-07-31. The lse-rfc-kb ES index
 # (1490 chunks) is deliberately left in place, dormant.
 SKIP_TOOLS = {"compact_context"}
+
+# Upper bound on the tool description handed to the MCP client. A docstring IS
+# the tool's contract here (see docs and the lse-docstring-optimizer skill), so
+# a cap that cuts one mid-sentence removes a rule the model is still judged by.
+# 3072 is measured, not guessed: it is the smallest value at which no tool's
+# MUST/MANDATORY/NEVER/GATE/RULE/REQUIRED keyword falls past the cut
+# (2026-08-08; pfsense_query's NEVER sits at 2997, the deepest in the fleet).
+# Raising this is cheap in code and expensive in context -- every byte here is
+# resident in every request. Prefer front-loading a docstring over raising it.
+_TOOL_DESC_MAX = int(os.environ.get("GOETHE_MCP_TOOL_DESC_MAX", "3072"))
 
 
 def _goethe_version(path: str) -> str:
@@ -638,7 +661,17 @@ def register(mcp, inst, seen=None) -> list:
         wrapper.__annotations__ = {p.name: p.annotation for p in params}
         wrapper.__annotations__["return"] = str
 
-        mcp.add_tool(wrapper, name=name, description=wrapper.__doc__[:1024])
+        _doc = wrapper.__doc__
+        if len(_doc) > _TOOL_DESC_MAX:
+            # Loud, always. The v0.4.7 incident was expensive precisely because
+            # the drop was silent: the model violated a rule it had never been
+            # shown, and nothing in the logs said so.
+            print(f"[goethe_mcp] WARNING: {name} description truncated "
+                  f"{len(_doc)} -> {_TOOL_DESC_MAX} chars "
+                  f"({len(_doc) - _TOOL_DESC_MAX} dropped). Front-load its "
+                  f"contract or raise GOETHE_MCP_TOOL_DESC_MAX.",
+                  file=sys.stderr)
+        mcp.add_tool(wrapper, name=name, description=_doc[:_TOOL_DESC_MAX])
         seen.add(name)
         exposed_names.append(name)
     return exposed_names
