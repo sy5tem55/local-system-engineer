@@ -17,6 +17,7 @@ change does not touch that code region.
 """
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -99,6 +100,68 @@ def test_cycle_script_passes_run_source_manual():
     text = CYCLE.read_text(encoding="utf-8")
     assert "--run-source manual" in text
     assert "--run-source scheduled" not in text
+
+
+# --- Test 4: --skip-session-guard defaults on, opt-out omits it ------------
+
+class TestGuardDefaultOnManualEntryPoint:
+    """Runs the real script (not a reimplementation) with a stub
+    dream_runner.py/dream_digest.py/traum_state.py that just record the argv
+    they were called with, so these assertions are against the actual
+    shipped conditional, the same technique test_cycle_completes.py uses for
+    the wall-clock formula."""
+
+    @staticmethod
+    def _run_cycle(tmp_path, env_overrides=None):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        capture = tmp_path / "argv.log"
+
+        stub = (
+            "#!/usr/bin/env bash\n"
+            f"echo \"$0 $*\" >> \"{capture}\"\n"
+            "exit 0\n"
+        )
+        python_stub = bin_dir / "python3-stub.sh"
+        python_stub.write_text(stub)
+        python_stub.chmod(0o755)
+
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "GOETHE_DREAM_PYTHON": str(python_stub),
+            "GOETHE_DREAM_DIR": str(tmp_path / "dreams"),
+            "GOETHE_EPISODE_DIR": str(tmp_path / "episodes"),
+            "GOETHE_TRAUM_STATE_DB": str(tmp_path / "state.db"),
+            "GOETHE_TRAUM_RUN_ID": "run_test_guard_default",
+            "GOETHE_DREAM_CYCLE_MAX_SECONDS": "120",
+        }
+        if env_overrides:
+            env.update(env_overrides)
+
+        subprocess.run(
+            ["bash", str(CYCLE)], env=env, capture_output=True, text=True, timeout=30,
+        )
+        if capture.exists():
+            return capture.read_text()
+        return ""
+
+    def test_skip_session_guard_present_by_default(self, tmp_path):
+        argv_log = self._run_cycle(tmp_path)
+        pass_invocations = [
+            line for line in argv_log.splitlines() if "dream_runner.py" in line
+        ]
+        assert pass_invocations, "expected at least one dream_runner.py invocation"
+        assert all("--skip-session-guard" in line for line in pass_invocations)
+
+    def test_skip_session_guard_omitted_with_explicit_opt_out(self, tmp_path):
+        argv_log = self._run_cycle(
+            tmp_path, env_overrides={"GOETHE_DREAM_SKIP_SESSION_GUARD": "0"}
+        )
+        pass_invocations = [
+            line for line in argv_log.splitlines() if "dream_runner.py" in line
+        ]
+        assert pass_invocations, "expected at least one dream_runner.py invocation"
+        assert all("--skip-session-guard" not in line for line in pass_invocations)
 
 
 # --- Test 6: no test/fixture/doc this change touches treats the timer as
