@@ -13,6 +13,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
 import sqlite3
 import sys
 
@@ -828,36 +829,106 @@ def test_extracted_dashboard_js_is_syntactically_valid():
         os.unlink(tmp_path)
 
 
-def test_kb_panel_superseded_vs_quarantined_badge_branch():
-    """Console KB panel must distinguish mentor-demoted (SUPERSEDED)
-    from kb_verify-decayed (QUARANTINED) — SPEC fix for dual-path stale docs.
+def _kb_badge_cell_expression():
+    """Pull the KB panel's badge ternary out of the dashboard, verbatim.
 
-    Four cases covered by the JS branch:
-      a. mentor_demoted_at set, failure_count 0    -> SUPERSEDED
-      b. mentor_demoted_at set, failure_count None -> SUPERSEDED  (None||0===0)
-      c. stale true, no mentor_demoted_at          -> QUARANTINED
-      d. not stale                                 -> empty cell
+    Anchored on the literal `"<td>"+(` ... `)+"</td></tr>"` that wraps it, so
+    the test evaluates the SHIPPED expression rather than a copy that can
+    drift away from it.
     """
     js = _dashboard_script_text()
+    m = re.search(r'"<td>"\+\((w\.mentor_demoted_at.*?)\)\+"</td></tr>"', js, re.S)
+    assert m, "could not locate the KB badge ternary in goethe_dashboard.html"
+    return m.group(1)
 
-    # The branch must test mentor_demoted_at first, with failure_count guard
-    assert "mentor_demoted_at" in js, "JS does not check mentor_demoted_at"
-    assert "failure_count" in js, "JS does not check failure_count"
-    assert "SUPERSEDED" in js, "JS does not render SUPERSEDED badge"
-    assert "QUARANTINED" in js, "JS does not render QUARANTINED badge"
 
-    # Verify branch order: SUPERSEDED condition must appear before QUARANTINED
-    # in the ternary chain (mentor_demoted_at && ... : stale ? QUARANTINED)
-    superseded_pos = js.find("SUPERSEDED")
-    quarantined_pos = js.find("QUARANTINED")
-    assert superseded_pos < quarantined_pos, \
-        "SUPERSEDED branch must come before QUARANTINED in the ternary"
+def _render_kb_badge(fixtures):
+    """Evaluate the real ternary in node against `fixtures`; return rendered cells."""
+    import json
+    import shutil
+    import subprocess
+    import tempfile
 
-    # demote_reason must be used as title via esc()
-    assert "esc(w.demote_reason" in js, \
-        "demote_reason should be escaped and used as tooltip"
+    node = shutil.which("node") or shutil.which("nodejs")
+    if not node:
+        pytest.skip("node is not installed in this environment")
 
-    # goethe_ui.py doc_fields must include the three new fields
+    esc_src = (
+        'const esc = s => String(s ?? "").replace(/[&<>"\']/g, '
+        'c => ({"&":"&amp;","<":"&lt;",">":"&gt;",\'"\':"&quot;","\'":"&#39;"}[c]));'
+    )
+    harness = (
+        esc_src
+        + "\nfunction cell(w){ return (" + _kb_badge_cell_expression() + "); }\n"
+        + "const out = " + json.dumps(fixtures) + ".map(cell);\n"
+        + "console.log(JSON.stringify(out));\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(harness)
+        path = fh.name
+    try:
+        r = subprocess.run([node, path], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, f"node failed: {r.stderr}"
+        return json.loads(r.stdout.strip())
+    finally:
+        os.unlink(path)
+
+
+def test_kb_panel_superseded_vs_quarantined_badge_branch():
+    """Console KB panel must distinguish mentor-demoted (SUPERSEDED) from
+    kb_verify-decayed (QUARANTINED).
+
+    BEHAVIOURAL, deliberately. The first version of this test asserted only
+    that the strings "SUPERSEDED" and "QUARANTINED" appeared in the source in
+    that order. Mutating the branch condition from `===0` to `!==0` -- exactly
+    inverting it -- left that test green (47 passed, 2026-08-08). A gate that
+    cannot fail for the reason it exists is not a gate. Same anti-pattern as
+    the docstring-truncation gate that checked 36 of 48 tools, and the
+    source-text match ccbe879 replaced.
+    """
+    a, b, c, d = _render_kb_badge([
+        # a. mentor-demoted, failure_count 0 -> SUPERSEDED
+        {"mentor_demoted_at": "2026-07-22T09:07:32Z", "failure_count": 0,
+         "stale": True, "demote_reason": "Superseded by definitive doc 842595879f70576d"},
+        # b. mentor-demoted, failure_count MISSING -> still SUPERSEDED.
+        #    Live data has this: 'node3090 Model Store (part 2)' carries
+        #    mentor_demoted_at with no failure_count at all. A strict `=== 0`
+        #    without the `||0` guard renders QUARANTINED here and is wrong.
+        {"mentor_demoted_at": "2026-07-20T05:08:38Z",
+         "stale": True, "demote_reason": "Redundant — merged into doc 116550382e3854cf"},
+        # c. stale by failure decay, never demoted -> QUARANTINED
+        {"stale": True, "failure_count": 3},
+        # d. healthy -> empty cell
+        {"stale": False, "failure_count": 0},
+    ])
+
+    assert "SUPERSEDED" in a and "QUARANTINED" not in a, a
+    assert "SUPERSEDED" in b and "QUARANTINED" not in b, b
+    assert "QUARANTINED" in c and "SUPERSEDED" not in c, c
+    assert d == "", f"healthy doc must render an empty cell, got {d!r}"
+
+    # the reason travels as an escaped tooltip, not as body text
+    assert 'title="Superseded by definitive doc 842595879f70576d"' in a, a
+    assert ">SUPERSEDED<" in a, a
+
+
+def test_kb_panel_badge_tooltip_is_escaped():
+    """demote_reason is operator-authored free text and reaches the DOM."""
+    (cell,) = _render_kb_badge([
+        {"mentor_demoted_at": "2026-07-22T09:07:32Z", "failure_count": 0,
+         "stale": True, "demote_reason": '<script>alert("x")</script>'},
+    ])
+    assert "<script>" not in cell, cell
+    assert "&lt;script&gt;" in cell, cell
+
+
+def test_kb_panel_api_exposes_the_fields_the_badge_needs():
+    """goethe_ui.py must actually send what the branch reads.
+
+    The roadmap claimed this fix was display-only because 'the data needed
+    already exists'. It exists in Elasticsearch; it was NOT in the API
+    payload. Without these three fields every doc renders QUARANTINED again.
+    """
     with open(_UI_PATH, encoding="utf-8") as f:
         ui_source = f.read()
     for field in ("mentor_demoted_at", "failure_count", "demote_reason"):
