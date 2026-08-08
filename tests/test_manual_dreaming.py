@@ -70,6 +70,21 @@ def test_scheduled_source_is_still_accepted(tmp_path):
     assert run["source"] == "scheduled"
 
 
+def test_scheduled_source_still_gets_admission_control(tmp_path):
+    """The regression Hazard B actually guards against, measured: narrowing
+    the {gui, scheduled, manual} set at traum_state.py:491/:542 does not
+    make scheduled rows unreadable (there is no read-path validation --
+    _run_row applies none) -- it silently drops the same-run-active
+    admission-control protection scheduled runs are supposed to keep.
+    Confirmed by deliberately narrowing the set during this spec's
+    break/red/restore exercise: this is the test that actually went red,
+    not a read-path failure."""
+    store = _store(tmp_path)
+    store.create_run("single-pass", ["patterns"], source="scheduled", lease_seconds=300)
+    with pytest.raises(ts.ConflictError):
+        store.create_run("single-pass", ["dedup"], source="scheduled", lease_seconds=300)
+
+
 def test_preexisting_scheduled_row_reads_back_through_run_table_path(tmp_path):
     """Simulates one of the historical rows carrying source='scheduled':
     created, then read back through get_run exactly as the Console's
