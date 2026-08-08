@@ -26,6 +26,11 @@ Two specific things to watch:
   2026-07-31 with node3090 healthy — most likely llama-server's slot was
   busy with interactive work. End-of-session runs should avoid that. If it
   still blocks, the cascade's slot-contention logic needs a look.
+  **Update 2026-08-07:** part of this was never slot contention. `insights`
+  runs one LLM call per domain; until `ccbe879` a single domain losing the
+  dreamer marked the whole pass BLOCKED and threw away the other domains'
+  proposals. Re-read this question against runs after that commit — the
+  cascade may have been fine all along. See R4 in §3.
 
 ---
 
@@ -348,13 +353,81 @@ primitive, and that is a design problem, not an implementation one.
 From `docs/TRAUM-ANALYSIS-2026-07-31.md` §6, unchanged in priority but now
 with a first data point.
 
-**R4 — honour the NULL/BLOCKED distinction** *(~1 session)*. A pass that
-examined the corpus and found nothing is `NULL`; one that could not
-examine it is `BLOCKED`. Today they are conflated, which is why the run
-table is hard to read. The manual already specifies the correct semantics,
-so this is making the code match its own documented contract. Best done
-now-ish: the 2026-07-31 run finally produced non-blocked outcomes to
-distinguish.
+**R4 — done 2026-08-07 (`ccbe879`), but not as written.** The premise was
+wrong and the fix landed one level below where this entry pointed.
+
+The NULL/BLOCKED boundary was **already correct**. `traum_state.py`'s run
+aggregation and the controller's durable-state precedence both honoured the
+distinction; confirmed as written in `SPEC-subpass-outcomes-2026-08` §2. What
+made the run table hard to read was something else.
+
+The real defect: `dream_runner.py`'s `_raise_if_dependency_blocked` scraped a
+pass's *combined* narrative text for `DREAMER UNAVAILABLE` /
+`DREAMER OUTPUT UNPARSEABLE` and raised unconditionally. In a pass with
+independent sub-passes over the same pull — stale-contradiction's
+`reverify` + `demote`, insights' one LLM call per domain — one sub-pass naming
+its own failure in the shared narrative **discarded a sibling sub-pass's
+already-good proposals** and recorded the whole attempt BLOCKED. A pass that
+had partly succeeded was filed as one that never looked. That is why the
+NULL/BLOCKED reading looked broken from the Console: the boundary was fine,
+the input to it was not.
+
+Fix, per `docs/SPEC-subpass-outcomes-2026-08.md`:
+
+- `run_pass_stale_contradiction` and `run_pass_insights` return a 4th value,
+  `sub_passes`, naming each sub-pass's own state / proposal count /
+  dependency, folded into the attempt summary (Hazard B). Dispatch is
+  length-tolerant, so the three 3-tuple passes are unchanged.
+- The guard raises on the narrative-text markers **only when the pass
+  produced nothing at all** (`if not raw_proposals and …`). The
+  `looked is False` and `embedding_unavailable` paths still raise
+  unconditionally, as they should.
+- No new attempt state — `ATTEMPT_STATES` is byte-for-byte unchanged (Hazard
+  A), no `PARTIAL`. `call_dream_llm`, the cascade and the circuit breaker are
+  untouched.
+- `_aggregate_run` records `passes_good`/`passes_total`, and `finalize_cycle`
+  merges rather than overwrites `summary_json`, so a 5-of-6 DEGRADED run reads
+  differently from a 1-of-6 one. It renders on the run-table
+  `.badge.state-DEGRADED` — *not* `.chip`, which is what the spec assumed.
+
+**Independently re-verified 2026-08-08** (review stage, §1 item 3), against
+the repo rather than the report: guard and call site read as described;
+`ATTEMPT_STATES` diff empty; 806 passed / 1 skipped reproduced; ruff 18 + 4 +
+14 = 36 on `dream_runner.py` / `traum_state.py` / `traum_controller.py`,
+identical before and after; new test files ruff-clean. Break/restore
+reproduced from scratch — reverting the `not raw_proposals` clause turns
+exactly two tests red
+(`test_1_reverify_succeeds_demote_blocked_attempt_is_succeeded`,
+`test_narrative_mentioning_dreamer_unavailable_does_not_raise_when_proposals_exist`),
+restoring returns an empty diff and green.
+
+Two corrections to the implementer's report, both open:
+
+1. **The survey of the other passes is wrong for two of the three.** `dedup`
+   (per-batch loop, `DEDUP_LLM_BATCH_SIZE`) and `error-cluster` (per-cluster
+   loop) are *not* "single linear pipelines" — each makes one independent
+   `request_dream_envelope` call per batch/cluster and appends the failure
+   note to a shared `narrative_lines`, which is precisely the shape that
+   caused this bug. They are protected from the data loss anyway, because the
+   guard fix is global; what they lack is per-sub-pass reporting, so a dedup
+   run that lost the dreamer on 1 of 4 batches is indistinguishable from one
+   where all four ran. Extending `sub_passes` to both is small and should
+   follow. Only `patterns` genuinely does not qualify — it is mechanical and
+   makes no LLM call at all.
+
+2. **The 1 skipped test is a `PATH` artifact, not a missing interpreter.**
+   The report flags it honestly as "no `node` on this host"; in fact `node`
+   v22.22.3 is at `~/.local/bin/node`, and with it on `PATH` the JS syntax
+   check **passes**. The suite is under-reporting itself. Fix the test
+   environment's `PATH` (or widen the `shutil.which` lookup) so the run is a
+   clean 807.
+
+**Superseded — original framing:** *honour the NULL/BLOCKED distinction
+(~1 session). A pass that examined the corpus and found nothing is `NULL`;
+one that could not examine it is `BLOCKED`. Today they are conflated, which
+is why the run table is hard to read. The manual already specifies the
+correct semantics, so this is making the code match its own documented
+contract.* — accurate about the symptom, wrong about the cause.
 
 **R5 — collapse the proposal state machine** *(1–2 sessions)*. Ten states;
 production has ever used four. Explicitly gated on the loop running
