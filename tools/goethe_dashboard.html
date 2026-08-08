@@ -694,7 +694,7 @@ async function loadKB(){
           "<td>"+tierBadge(w.source_tier)+"</td>"+
           "<td class='q "+qcls(q)+"'>"+q.toFixed(2)+"</td>"+
           "<td style='font-family:var(--mono);color:"+(w.consecutive_failures?"var(--bad)":"var(--faint)")+"'>"+(w.consecutive_failures||0)+"</td>"+
-          "<td>"+(w.stale?'<span class="badge stale">QUARANTINED</span>':"")+"</td></tr>";
+          "<td>"+(w.mentor_demoted_at && (w.failure_count||0)===0?'<span class="badge stale" title="'+esc(w.demote_reason||"Superseded by operator")+'">SUPERSEDED</span>':w.stale?'<span class="badge stale">QUARANTINED</span>':"")+"</td></tr>";
       }).join("");
   }catch(e){ showErr(panel.querySelector("#kb-nums")||panel, e); }
 }

@@ -242,7 +242,8 @@ def kb_stats() -> dict:
     }
     doc_fields = ["doc_id", "title", "topic", "quality_score", "source_tier",
                   "volatility", "consecutive_failures", "stale", "updated_at",
-                  "origin", "verified_against"]
+                  "origin", "verified_against",
+                  "mentor_demoted_at", "failure_count", "demote_reason"]
     worst_body = {"size": 10, "_source": doc_fields,
                   "sort": [{"quality_score": "asc"}],
                   "query": {"match_all": {}}}

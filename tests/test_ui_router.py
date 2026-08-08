@@ -826,3 +826,40 @@ def test_extracted_dashboard_js_is_syntactically_valid():
         assert result.returncode == 0, result.stderr
     finally:
         os.unlink(tmp_path)
+
+
+def test_kb_panel_superseded_vs_quarantined_badge_branch():
+    """Console KB panel must distinguish mentor-demoted (SUPERSEDED)
+    from kb_verify-decayed (QUARANTINED) — SPEC fix for dual-path stale docs.
+
+    Four cases covered by the JS branch:
+      a. mentor_demoted_at set, failure_count 0    -> SUPERSEDED
+      b. mentor_demoted_at set, failure_count None -> SUPERSEDED  (None||0===0)
+      c. stale true, no mentor_demoted_at          -> QUARANTINED
+      d. not stale                                 -> empty cell
+    """
+    js = _dashboard_script_text()
+
+    # The branch must test mentor_demoted_at first, with failure_count guard
+    assert "mentor_demoted_at" in js, "JS does not check mentor_demoted_at"
+    assert "failure_count" in js, "JS does not check failure_count"
+    assert "SUPERSEDED" in js, "JS does not render SUPERSEDED badge"
+    assert "QUARANTINED" in js, "JS does not render QUARANTINED badge"
+
+    # Verify branch order: SUPERSEDED condition must appear before QUARANTINED
+    # in the ternary chain (mentor_demoted_at && ... : stale ? QUARANTINED)
+    superseded_pos = js.find("SUPERSEDED")
+    quarantined_pos = js.find("QUARANTINED")
+    assert superseded_pos < quarantined_pos, \
+        "SUPERSEDED branch must come before QUARANTINED in the ternary"
+
+    # demote_reason must be used as title via esc()
+    assert "esc(w.demote_reason" in js, \
+        "demote_reason should be escaped and used as tooltip"
+
+    # goethe_ui.py doc_fields must include the three new fields
+    with open(_UI_PATH, encoding="utf-8") as f:
+        ui_source = f.read()
+    for field in ("mentor_demoted_at", "failure_count", "demote_reason"):
+        assert f'"{field}"' in ui_source, \
+            f"goethe_ui.py doc_fields missing field: {field}"
