@@ -192,18 +192,19 @@ different profile than the dreamer's own — see below — but healthy and
 reachable, so the cascade used it as intended). Launched directly
 (`bash tools/run-dream-cycle.sh`) with the same environment the
 `goethe-dream.service` unit sets, **run ID `run_20260808T070930Z_1436902`**,
-started 07:09:30Z. Verbatim log as observed through 07:30Z kept at
+started 07:09:30Z. The process (PID 1436902, launched via `nohup ... &
+disown`) was left running independently of this session between checks;
+verbatim log through the final check at 07:40Z kept at
 `docs/reports/2026-08-08-cycle-completes.traum-cycle.log` next to this
-report; the underlying process (PID 1436902, launched via `nohup ... &
-disown`) was left running independently of this session and may have
-progressed further by the time this is read — check
-`run_20260808T070930Z_1436902` in `traum-state.db` for the true final state.
+report. It may have progressed further still by the time this is read —
+check `run_20260808T070930Z_1436902` in `traum-state.db` for the true
+final state.
 
-**Result as observed through this report's cutoff (07:30Z, ~21 minutes into
-the 45-minute budget): 3 of 6 passes attempted (dedup, stale-contradiction,
-error-cluster), all three BLOCKED before doing any pass-specific work; the
-run had not reached patterns/insights/digest or produced a diagnosis
-proposal by cutoff.** Reporting this plainly, per §12 ("if the cycle still
+**Result as observed through this report's final check (07:40Z, ~31
+minutes into the 45-minute budget): 4 of 6 passes attempted (dedup,
+stale-contradiction, error-cluster, patterns), all four BLOCKED before
+doing any pass-specific work; the run had not reached insights/digest or
+produced a diagnosis proposal by the final check.** Reporting this plainly, per §12 ("if the cycle still
 cannot finish, say so plainly and report what consumed it. A partial result
 honestly reported beats a green suite.") — and per the operator's own
 verify-don't-trust discipline (§5 of the workflow doc: "an inference is not
@@ -237,20 +238,22 @@ finish", not because it's part of the deliverable.
 
 **What the partial run DID prove, live, about the actual defects:**
 
-- **Defect 2 (wall-clock allocation) — confirmed live across THREE
+- **Defect 2 (wall-clock allocation) — confirmed live across FOUR
   consecutive pass transitions, exactly matching the formula every time:**
   `dedup` started with `budget 540s of 2700s remaining, 5 pass(es) left`
   (2700÷5=540, exact). `stale-contradiction` then started with
   `budget 541s of 2164s remaining, 4 pass(es) left` (2164÷4=541, exact).
   `error-cluster` then started with `budget 542s of 1628s remaining,
-  3 pass(es) left` (1628÷3=542.67→542, exact, floor division). Each is a
-  genuinely different, freshly wall-clock-derived share, not the whole
-  remaining cycle — this is the defect measured as broken in spec §3
-  (every pass used to get handed the *entire* remaining budget); here it
-  visibly did not, three times in a row, on the real production script.
+  3 pass(es) left` (1628÷3=542.67→542, exact, floor division). `patterns`
+  then started with `budget 545s of 1090s remaining, 2 pass(es) left`
+  (1090÷2=545, exact). Each is a genuinely different, freshly
+  wall-clock-derived share, not the whole remaining cycle — this is the
+  defect measured as broken in spec §3 (every pass used to get handed the
+  *entire* remaining budget); here it visibly did not, four times in a
+  row, on the real production script.
 - **Defect 3 scope discipline (Hazard D) — confirmed live, by a negative
-  result:** all three guard blocks (`dedup`, `stale-contradiction`,
-  `error-cluster`) are a **real** dependency condition
+  result:** all four guard blocks (`dedup`, `stale-contradiction`,
+  `error-cluster`, `patterns`) are a **real** dependency condition
   (recent-session-activity), not a budget exhaustion. Each was correctly
   recorded `BLOCKED` (`rc=3`, `"pass ended non-successfully: <pass>"`), i.e.
   the reclassification fix did **not** leak into a real block — proving the
