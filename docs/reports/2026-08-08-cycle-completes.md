@@ -195,7 +195,7 @@ reachable, so the cascade used it as intended). Launched directly
 started 07:09:30Z. The process (PID 1436902, launched via `nohup ... &
 disown`) was left running independently of this session between checks;
 verbatim log through the final check at 07:40Z kept at
-`docs/reports/2026-08-08-cycle-completes.traum-cycle.log` next to this
+`docs/reports/2026-08-08-cycle-completes.traum-cycle.txt` next to this
 report. It may have progressed further still by the time this is read —
 check `run_20260808T070930Z_1436902` in `traum-state.db` for the true
 final state.

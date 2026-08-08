@@ -1,0 +1,33 @@
+[dream-cycle] preflight: checking node3090 dreamer availability
+[wake-node-for-dream] 07:09:30Z phase 1 (wake): node3090 already reachable (ping) -- no wake needed
+[wake-node-for-dream] 07:09:30Z phase 1 (wake): no wake performed; this cycle will NOT power the node down afterwards
+[wake-node-for-dream] 07:09:30Z phase 2 (start): invoking start-engine-on-node.sh --node node3090 --role dream --timeout-s 300
+[wake-node-for-dream] 07:09:30Z phase 2 (start): [start-engine-on-node] 07:09:30Z resolved profile: /home/sy5/projects/local-system-engineer/profiles/node3090/DREAM-Gemma-4-31B-it-UD-Q4_K_XL.gguf.md
+[wake-node-for-dream] 07:09:30Z phase 2 (start): RESULT=conflict
+[wake-node-for-dream] 07:09:30Z phase 2 (start): a DIFFERENT engine is already serving node3090:8080 (pid 46934) -- not killing it
+[wake-node-for-dream] 07:09:30Z phase 2 (start): requested profile: /home/sy5/projects/local-system-engineer/profiles/node3090/DREAM-Gemma-4-31B-it-UD-Q4_K_XL.gguf.md
+[wake-node-for-dream] 07:09:30Z phase 2 (start): live cmdline:      /usr/local/bin/llama-server -m /home/lse-admin/Qwen3.6-27B-Q5_K_M.gguf --alias Qwen3.6-27B-Q5_K_M --host 0.0.0.0 --port 8080 --threads 15 --threads-batch 15 --flash-attn on --ctx-size 262144 --batch-size 2048 --ubatch-size 512 --n-gpu-layers 99 --tensor-split 3,1 --parallel 1 --cache-type-k q8_0 --cache-type-v q8_0 --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.0 --repeat-penalty 1.0 --jinja --reasoning-format deepseek
+[wake-node-for-dream] 07:09:30Z phase 2 (start): something else -- plausibly the operator -- owns this process. Report and stop.
+[wake-node-for-dream] 07:09:30Z phase 2 (start): CONFLICT -- a different profile is already serving node3090:8080; leaving it running, not treating this as a wake failure
+[wake-node-for-dream] 07:09:30Z phase 3 (verify): /health OK -- node3090 up and serving
+[dream-cycle] preflight: node3090 reachable -- cascade will use it as usual
+[dream-cycle] starting pass: dedup (budget 540s of 2700s remaining, 5 pass(es) left)
+[dream_runner] recent-session-activity guard: waiting 450s (retry 1/3) before re-checking: session 'sess-1141242-74924efcc830' was active 0.2 min ago (< 30min window)
+[dream_runner] recent-session-activity guard: waiting 85s (retry 2/3) before re-checking: session 'sess-1454177-70099a428380' was active 1.0 min ago (< 30min window)
+[dream_runner] recent-session-activity guard: no cycle budget left to wait -- giving up early
+[dream_runner] BLOCKED run (pass=dedup): session 'sess-1462919-7a44de5304a0' was active 0.4 min ago (< 30min window) (waited 535s across 2 retries before giving up)
+[dream-cycle] pass ended non-successfully: dedup (rc=3); continuing
+[dream-cycle] starting pass: stale-contradiction (budget 541s of 2164s remaining, 4 pass(es) left)
+[dream_runner] recent-session-activity guard: waiting 450s (retry 1/3) before re-checking: session 'sess-1462919-7a44de5304a0' was active 0.5 min ago (< 30min window)
+[dream_runner] recent-session-activity guard: waiting 86s (retry 2/3) before re-checking: session 'sess-1478340-70daf949c740' was active 0.1 min ago (< 30min window)
+[dream_runner] recent-session-activity guard: no cycle budget left to wait -- giving up early
+[dream_runner] BLOCKED run (pass=stale-contradiction): session 'sess-1478340-70daf949c740' was active 0.1 min ago (< 30min window) (waited 536s across 2 retries before giving up)
+[dream-cycle] pass ended non-successfully: stale-contradiction (rc=3); continuing
+[dream-cycle] starting pass: error-cluster (budget 542s of 1628s remaining, 3 pass(es) left)
+[dream_runner] recent-session-activity guard: waiting 450s (retry 1/3) before re-checking: session 'sess-1478340-70daf949c740' was active 0.1 min ago (< 30min window)
+[dream_runner] recent-session-activity guard: waiting 87s (retry 2/3) before re-checking: session 'sess-1478340-70daf949c740' was active 0.3 min ago (< 30min window)
+[dream_runner] recent-session-activity guard: no cycle budget left to wait -- giving up early
+[dream_runner] BLOCKED run (pass=error-cluster): session 'sess-1478340-70daf949c740' was active 0.3 min ago (< 30min window) (waited 537s across 2 retries before giving up)
+[dream-cycle] pass ended non-successfully: error-cluster (rc=3); continuing
+[dream-cycle] starting pass: patterns (budget 545s of 1090s remaining, 2 pass(es) left)
+[dream_runner] recent-session-activity guard: waiting 450s (retry 1/3) before re-checking: session 'sess-1478340-70daf949c740' was active 0.3 min ago (< 30min window)
