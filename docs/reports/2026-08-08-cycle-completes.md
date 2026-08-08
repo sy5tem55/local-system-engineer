@@ -303,6 +303,6 @@ commit: 5612f59ecd7c31f94024fd61450ab5f620ded701
 tests_before: 806 passed, 1 skipped (807 total)
 tests_after: 828 passed, 0 skipped (828 total)
 files_changed: tools/dream_runner.py, tools/run-dream-cycle.sh, tests/conftest.py, tests/test_cycle_completes.py, tests/test_diagnosis_proposal_type.py
-ruff_clean: tools/dream_runner.py (18 errors, unchanged, pre-existing, not increased)
+ruff_clean: tests/conftest.py, tests/test_cycle_completes.py, tests/test_diagnosis_proposal_type.py
 runtime_verified: partial
 -->
