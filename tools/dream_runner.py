@@ -4781,6 +4781,11 @@ def main(argv=None) -> int:
     )
 
     sessions: list = []
+    # SPEC-gate-toil-2026-08 Hazard D: bound before the try so that either
+    # the ES dependency check below or the pass function itself raising
+    # before ever assigning sub_passes can't turn a clean BLOCKED outcome
+    # into a NameError in the except DependencyBlocked handler.
+    sub_passes = None
     try:
         if state is not None and state.is_cancel_requested(cfg.run_id):
             _finish_attempt_best_effort(state, cfg, "CANCELLED", exit_code=4)
@@ -4966,7 +4971,17 @@ def main(argv=None) -> int:
         )
         if state is not None:
             state.finish_attempt(
-                cfg.attempt_id, "BLOCKED", summary={"dependency": exc.dependency},
+                cfg.attempt_id, "BLOCKED",
+                summary={
+                    "dependency": exc.dependency,
+                    # SPEC-gate-toil-2026-08 Sec1: same shape as the
+                    # success-path summary above -- a blocked pass still
+                    # names which sub-pass/domain already ran before the
+                    # dependency failure, instead of collapsing to just
+                    # {"dependency": ...} with no way to tell "all domains
+                    # looked and found nothing" from "one couldn't look".
+                    **({"sub_passes": sub_passes} if sub_passes else {}),
+                },
                 artifacts={"report": report_path, "blocked_log": blocked_path},
                 error=exc, exit_code=3,
             )
