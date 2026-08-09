@@ -7,78 +7,6 @@
 
 ---
 
-## Status — 2026-08-09
-
-> This section is the index. The prose below is the original reasoning, kept
-> because *why* an item exists outlives its state. Where the two disagree,
-> this table wins.
-
-**Closed since 2026-08-01** (14 items, 11 verified independently):
-
-| Item | § | Landed | Note |
-|---|---|---|---|
-| Manifest orphan-pruning | 1 | `f9379c1` | opt-in `prune=True`, wired into the Console purge |
-| D5 safety-gate substring | 1 | `4ef18c7` | retested 2026-08-08; **new** false positive found, see Open |
-| Corpus hygiene in the Console | 1 | `bc5680c` | quarantine-only, never destructive |
-| SUPERSEDED vs QUARANTINED | 1 | `0622a09` + `2cd8c45` | LSE-implemented; its test was vacuous and was replaced |
-| `diagnosis` proposal type | 1 | `668bfb1` | **proven in production 2026-08-08**: 9 applied |
-| Index `session-learnings.md` | 1 | `a99146f` | verified: 73 hits in `lse-kb` |
-| Cascade leg 0 → LUCIFER | 1b | `4968d31` | node3090 off the critical path |
-| On-demand engine start | 1b | `9242ae2` | wake → SSH → start → poll |
-| Node facts + profile matcher | 1b | `24391cb` | Layer 0+1 |
-| R4 — sub-pass outcomes | 3 | `ccbe879` | reframed; the premise was wrong, see §3 |
-| Cycle completes | 0 | `5612f59` | error-cluster envelope key, per-pass wall clock |
-| Timer retired, dreaming manual | 0 | `b0a2758`…`3639fce` | units gone, templates deleted, test inverted |
-| Tool-description cap | — | `594ccc9` | 39 of 48 docstrings were silently cut; gate now covers 48/48 |
-| Test-suite concurrency safety | — | `ce7dfb7` | ES indices per-process; see the warning below |
-
-**Two milestones met.** The loop now completes unattended-in-principle
-(`run_49835c9f`, 2026-08-08: 6 of 6 passes, 11.4 min against a 45-min
-deadline), and the Human Gate has adjudicated real output — 9 `diagnosis`
-proposals applied, the first since the type shipped.
-
-**A measurement warning that invalidates older numbers.** `test_kb_contracts.py`
-is an Elasticsearch integration suite. Until `ce7dfb7` it used fixed index
-names, so two overlapping pytest runs corrupted each other. **Every baseline
-count recorded before 2026-08-09 is only meaningful if that run had exclusive
-access to ES.** Check `pgrep -af pytest` before trusting any figure, including
-one in this file.
-
-### Open, ordered — see `docs/WORKFLOW-roadmap-execution.md` §5 for tier and ETA
-
-| # | Item | § | State |
-|---|---|---|---|
-| 1 | Gate toil: duplicate diagnoses + `sub_passes` on the blocked path | 3 | spec'd `81d9fb8`, ready for Sonnet |
-| 2 | `skill_outcome` cannot find its own documents | — | **feedback loop dead**; 4 verified runs unrecorded |
-| 3 | Repo-root agent brief (`AGENTS.md`) | 1 | absent; would have prevented the pin incident |
-| 4 | Profile-questions eval set | 1b | spec'd `8177714`; `eval/profile-questions-v1.jsonl` absent — gates the whole web-search block |
-| 5 | Hardware-aware profiles per node per workload | 1b | in flight — uncommitted `agent_profile` edit in `goethe_node.py` |
-| 6 | Human Gate legibility — the edit action | 1 | half done (`22d3528` added apply-preview, which caught #1) |
-| 7 | `/etc` change automation | 2 | not started; motivated again by the mask-ordering error below |
-| 8 | Credential rotation skill | 1 | not started; `~/.git-credentials` is a third instance |
-| 9 | Codify the review stage as a named step | 1 | partial — tiers and the LSE calibration are recorded, the step is not |
-| 10 | R5 — collapse the proposal state machine | 3 | **unblocked**: 6 of 10 states now used in production, 8 runs of data |
-| 11 | P2/P3 ruff backlog | 4 | 232 findings repo-wide (was 147) |
-| 12 | R6 — split `dream_runner.py` | 3 | last, by design |
-
-### Open, small, found 2026-08-08/09
-
-- **Mask the retired timer.** The delegated block masked *before* `rm`, so
-  mask failed ("file already exists") and the unit path is now unmasked.
-  Mask belongs last, after `rm` and `daemon-reload`. Operator action.
-- **Nine stale launcher pins.** `bin/` build outputs and the PR worktree still
-  pin the pre-`594ccc9` hash of `tools/goethe_mcp.py`. Harmless until one is
-  launched. `tests/test_gateway_pin.py` gates the two that matter.
-- **Privilege gate trips on commit messages.** A `git commit` whose *message*
-  quotes a privileged command is refused. Distinct from the identifier case
-  `4ef18c7` fixed. Workaround: `git commit -F`.
-- **Two clones.** The Cowork-mounted Windows checkout is on
-  `feat/traum-control-plane` at `88f3130` (2026-08-03) with 66 dirty files;
-  the live tree is the WSL checkout on `codex/fix-sudo-grants-live`. Same
-  remote, five days apart. This has already cost confusion twice.
-
----
-
 ## 0. Immediate — run cycles, change nothing
 
 **Update 2026-08-08:** `goethe-dream.timer` is retired
@@ -297,36 +225,20 @@ at session start.
 
 Three concrete items, smallest first:
 
-1. **Index `session-learnings.md` into the KB.** — **DONE** `a99146f`.
-   Verified 2026-08-09: 73 `lse-kb` hits for `session-learnings`. Original
-   text kept below.
-    Chunk per `## Session`
+1. **Index `session-learnings.md` into the KB.** Chunk per `## Session`
    entry so retrieval returns one incident, not a 1,300-line file. Tag
    `source_tier` honestly — these are verified post-hoc observations, not
    ground truth. Once indexed, `search_kb` surfaces them and the loop closes.
    This is the single highest-leverage item on this list: the content already
    exists and is good; it is simply unreachable.
 
-2. **Add a repo-root agent brief.** — **STILL OPEN, and it has now cost
-   something.** `tools/goethe_mcp.py` is content-pinned by a Windows launcher
-   that no file in this repo mentions; editing it broke the gateway on
-   2026-08-08 and the refusal surfaced as a `ProcessLookupError` in a systemd
-   supervisor, two layers from the cause. A root brief is where that kind of
-   invisible coupling belongs.
-    `docs/WORKFLOW-thread-handover.md`
+2. **Add a repo-root agent brief.** `docs/WORKFLOW-thread-handover.md`
    already is one in substance — tool-loading preamble, when to flip vs start
    fresh, turn budget, the six sections a spec needs, the verification rules.
    It is not in the conventional location or name, so nothing loads it
    automatically.
 
-3. **Codify the review stage.** — **PARTIAL.** The tiers, the verification
-   dials and the 2026-08-08 LSE calibration are now recorded in
-   `docs/WORKFLOW-roadmap-execution.md`; the review *step itself* is still not
-   a named part of the loop. Evidence it earns its keep: independent
-   re-verification has now caught a vacuous test, two wrong ground-truth
-   rows, a fabricated-looking baseline that turned out to be a real
-   concurrency bug, and a reviewer error in the other direction.
-    Independent re-verification of an
+3. **Codify the review stage.** Independent re-verification of an
    implementer's report has caught real things (a mislabelled security
    "regression" that was the intended fix; a purge harness that needed
    adversarial probing separate from the implementer's own tests). Today that
@@ -522,19 +434,10 @@ is why the run table is hard to read. The manual already specifies the
 correct semantics, so this is making the code match its own documented
 contract.* — accurate about the symptom, wrong about the cause.
 
-**R5 — collapse the proposal state machine** *(1–2 sessions)*. **The gate has
-lifted.** It was "do not restructure a state machine whose real behaviour is
-barely observed"; as of 2026-08-09 production has used **six** of the ten —
-`APPLIED`, `PENDING`, `REJECTED`, `SUPERSEDED`, `SYSTEM_REJECTED`, `EXPIRED` —
-across 8 runs since dreaming went manual, including a full six-pass cycle and
-nine applied diagnoses.
-
-Six of ten is a different question from four of ten: the surviving four now
-need a reason to exist rather than an absence of evidence. Do **not** start
-until item #1 lands, though — the duplicate-diagnosis fix turns on
-`SUPERSEDED` firing where it currently does not, which will change the
-distribution again. Restructure after that has run for a few cycles, not
-before.
+**R5 — collapse the proposal state machine** *(1–2 sessions)*. Ten states;
+production has ever used four. Explicitly gated on the loop running
+first — do not restructure a state machine whose real behaviour is still
+barely observed. Still true: one run is not enough.
 
 **R6 — split `dream_runner.py`** *(4,550 lines, later)*. Same method as
 the D7 work that took `goethe.py` from 6,565 to 2,109 lines. Explicitly
