@@ -1,4 +1,19 @@
-"""Static deployment contracts for the repository-owned TRAUM timer."""
+"""Static deployment contracts for the manual TRAUM cycle.
+
+2026-08-08: the timer was retired (SPEC-manual-dreaming-2026-08) and the
+units removed from /etc. This file used to assert the repo-owned templates
+at scripts/systemd/goethe-dream.{service,timer} were well-formed -- which
+meant the suite went green *because* the templates still existed, quietly
+enforcing the mechanism we had just deleted.
+
+Worse, the template read `Persistent=true` while the unit actually installed
+had `Persistent=false`. They had already drifted, and that drift is part of
+why the nightly never fired. Any install step copying scripts/systemd/* would
+therefore have reinstated the timer with catch-up runs enabled -- firing
+harder than the one that was removed.
+
+The templates are gone. These tests now assert they stay gone.
+"""
 
 from pathlib import Path
 
@@ -9,23 +24,22 @@ TIMER = REPO_ROOT / "scripts" / "systemd" / "goethe-dream.timer"
 CYCLE = REPO_ROOT / "tools" / "run-dream-cycle.sh"
 
 
-def test_service_uses_authoritative_checkout_and_surfaces_failures():
-    text = SERVICE.read_text(encoding="utf-8")
-    assert "/home/sy5/projects/local-system-engineer/tools/run-dream-cycle.sh" in text
-    assert "ConditionFileIsExecutable=" in text
-    assert "ConditionPathIsExecutable=" not in text
-    assert "ExecStart=-" not in text
-    assert "ExecStart=/usr/bin/timeout --foreground 45m " in text
-    assert "Restart=no" in text
-    assert "GOETHE_EMBED_MODEL=qwen3-embedding:0.6b" in text
+def test_timer_units_are_not_reintroduced():
+    """Dreaming is manual. A unit template in the repo is a loaded gun."""
+    assert not TIMER.exists(), (
+        f"{TIMER} is back. Dreaming is manual since 2026-08-08; a systemd "
+        "timer template in the repo can be installed by any deploy step and "
+        "will resurrect the nightly schedule."
+    )
+    assert not SERVICE.exists(), f"{SERVICE} is back; see above."
 
 
-def test_service_sandbox_allows_only_required_state_writes():
-    text = SERVICE.read_text(encoding="utf-8")
-    assert "ProtectSystem=strict" in text
-    assert "ProtectHome=read-only" in text
-    assert "ReadWritePaths=/opt/local-se/dreams /opt/local-se/episodes /var/lib/lse-dream" in text
-    assert "ReadOnlyPaths=/home/sy5/projects/local-system-engineer" in text
+def test_no_systemd_timer_wiring_survives_in_the_cycle_script():
+    """run-dream-cycle.sh stays -- as the MANUAL entry point, not a unit."""
+    assert CYCLE.exists(), "run-dream-cycle.sh is the manual entry point; do not delete it"
+    text = CYCLE.read_text(encoding="utf-8")
+    assert "OnCalendar" not in text
+    assert "systemctl" not in text
 
 
 def test_cycle_runs_every_registered_production_pass_and_digest():
@@ -45,10 +59,3 @@ def test_cycle_runs_every_registered_production_pass_and_digest():
     assert "set -uo pipefail" in text
     assert "finalize-cycle" in text
     assert "remaining_seconds" in text
-
-
-def test_timer_is_persistent_and_jittered():
-    text = TIMER.read_text(encoding="utf-8")
-    assert "OnCalendar=*-*-* 03:30:00" in text
-    assert "RandomizedDelaySec=15m" in text
-    assert "Persistent=true" in text
