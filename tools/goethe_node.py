@@ -60,18 +60,29 @@ class NodeLifecycleMixin:
             "os": "linux",
             "ssh_user": "lse-admin",
             "agent_profile": {
-                "model": "/opt/models/lmstudio-community/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf",
-                "ctx_size": 131072,
+                "model": "/home/lse-admin/Qwen3.6-27B-Q5_K_M.gguf",
+                "ctx_size": 262144,
                 "gpu_layers": 99,
+                # node3090 is DUAL-GPU: RTX 3090 (24GiB) + RTX 5060 Ti (16GiB).
+                # --tensor-split 3,1 is TENSOR parallelism, not pipeline: every
+                # layer's weight matrices are split horizontally ~75/25 and both
+                # GPUs compute each layer, then all-reduce. All 65 layers are
+                # offloaded; nothing on CPU. Live 2026-08-09: 3090 at 22.1/24.6
+                # GiB, 5060 Ti at 9.3/16.3 GiB.
+                #
+                # Load-bearing: without this the engine spreads evenly and a
+                # 262144 ctx at Q5_K_M will not fit the smaller card. A profile
+                # that cannot reproduce the running process is not a profile.
+                "tensor_split": "3,1",
+                "batch_size": 2048,
+                "ubatch_size": 512,
                 "flash_attn": True,
-                "cache_type_k": "q4_0",
-                "cache_type_v": "q4_0",
+                "cache_type_k": "q8_0",
+                "cache_type_v": "q8_0",
                 "parallel": 1,
-                "threads": 16,
-                "threads_batch": 16,
-                "reasoning_format": "none",
-                "reasoning_budget": 16000,
-                "n_predict": 8192,
+                "threads": 15,
+                "threads_batch": 15,
+                "reasoning_format": "deepseek",
                 "jinja": True,
                 "metrics": True,
             },
@@ -100,6 +111,12 @@ class NodeLifecycleMixin:
         "model": "--model",
         "ctx_size": "--ctx-size",
         "gpu_layers": "--n-gpu-layers",
+        # Added 2026-08-09: the profile carried no tensor_split, so a key set
+        # here would have emitted nothing. Verified against node3090's live
+        # cmdline rather than assumed.
+        "tensor_split": "--tensor-split",
+        "batch_size": "--batch-size",
+        "ubatch_size": "--ubatch-size",
         "cache_type_k": "--cache-type-k",
         "cache_type_v": "--cache-type-v",
         "parallel": "--parallel",
