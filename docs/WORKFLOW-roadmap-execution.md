@@ -196,90 +196,24 @@ gets indexed.
 
 ---
 
-## 5. Execution plan — 2026-08-09
+## 5. Queue after it
 
-Re-derived after the manual-dreaming and cycle-completes work landed. Tier and
-verification depth are pre-assigned so the decision is not re-litigated per
-item. **ETA is in sessions, not hours** — a session is one focused thread with
-a spec, an implementer and a review. Observed throughput over 2026-08-07/09 is
-roughly 2–3 sessions/day when specs already exist, ~1 when one must be
-written.
+Ordered by return, with tier and verification pre-assigned so the decision is
+not re-litigated each time.
 
-### Wave 1 — unblock the loop's own feedback (2–3 sessions)
+| # | Item | Tier | V | Why this tier |
+|---|---|---|---|---|
+| 1 | node facts + matcher *(spec'd)* | Sonnet | V2+V3 | judgment in taxonomy; output drives later decisions |
+| 2 | Disk at 82%, ~7 GB/day | LSE | V0 | pure fact-gathering; findings are self-evidencing |
+| 3 | Wake → SSH → start engine → poll | Sonnet | V3 | live behaviour is the whole point; needs a real sleeping node |
+| 4 | Retrieval eval set for profile questions | Opus spec → LSE runs | V1 | defining "good enough" is judgment; running evals is mechanical |
+| 5 | Web/community data quality (firecrawl, camoufox on node3090) | Sonnet | V2 | the expensive layer; gated on #4 existing so it has an exit condition |
+| 6 | `error-remedy` proposal type | Sonnet | V1 | schema change with a clear contract |
+| 7 | SUPERSEDED vs QUARANTINED display | LSE | V0 | display-only; data already carries the distinction |
+| 8 | Human Gate legibility | Sonnet | V1 | UX judgment, low blast radius |
+| 9 | `/etc` change automation | Opus spec → Sonnet | V2 | root-write primitive; the failure mode is over-generality |
+| 10 | P2/P3 ruff backlog (147) | LSE | V0 | mechanical, green suite proves it |
 
-Everything here is small and everything downstream reads better once it lands.
-
-| # | Item | Tier | V | ETA | Why this tier |
-|---|---|---|---|---|---|
-| 1 | Gate toil — duplicate diagnoses + `sub_passes` on the blocked path | Sonnet | V2+V3 | 1 | spec'd (`81d9fb8`), six hazards named, two load-bearing |
-| 2 | `skill_outcome` cannot find its own documents | Sonnet | V2 | 0.5 | small, but it is the scoring loop; a wrong fix silently keeps it dead |
-| 3 | Repo-root `AGENTS.md` | Opus draft → operator edit | V1 | 0.5 | judgment about what an agent must know before touching anything; short |
-| 4 | Mask the retired timer + clear 9 stale launcher pins | operator + LSE | V0 | 0.5 | one privileged command; the pins are mechanical |
-
-**Do not start #10 (R5) during Wave 1.** Item #1 changes when `SUPERSEDED`
-fires, which changes the state distribution R5 would be reasoning from.
-
-### Wave 2 — the operator-priority block (4–6 sessions)
-
-| # | Item | Tier | V | ETA | Why this tier |
-|---|---|---|---|---|---|
-| 5 | Profile-questions eval set (`eval/profile-questions-v1.jsonl`) | Opus spec exists → LSE runs | V1 | 1 | authoring the question set is judgment; running evals is mechanical |
-| 6 | Hardware-aware profiles, per node per workload | Sonnet | V3 | 2 | live behaviour is the whole point; needs a real second node |
-| 7 | Web/community data quality (firecrawl, camoufox) | Sonnet | V2 | 2 | the expensive layer — gated on #5 so it has a definition of done |
-
-#5 is the exit condition for the whole block. Without it "improve web search"
-is judged by vibes, which is the one thing this project has been rigorous
-about avoiding.
-
-### Wave 3 — structural, now that the loop is observable (3–5 sessions)
-
-| # | Item | Tier | V | ETA | Why this tier |
-|---|---|---|---|---|---|
-| 8 | R5 — collapse the proposal state machine | Opus spec → Sonnet | V2 | 2 | six of ten states now used; the other four need a reason to exist |
-| 9 | Human Gate legibility — the edit action | Sonnet | V1 | 1 | UX judgment, low blast radius |
-| 10 | `/etc` change automation | Opus spec → Sonnet | V2 | 1.5 | root-write primitive; the failure mode is over-generality |
-| 11 | Credential rotation skill | Sonnet | V3 | 1 | must prove the new value is live in the process, not just on disk |
-
-### Wave 4 — filler, and the one that waits (2–4 sessions)
-
-| # | Item | Tier | V | ETA | Why this tier |
-|---|---|---|---|---|---|
-| 12 | P2/P3 ruff backlog (232 findings) | LSE | V0 | 1–2 | mechanical; a green suite proves it. **Verify the count yourself.** |
-| 13 | Codify the review stage as a named step | Opus | V0 | 0.5 | doc-only; the evidence is already gathered |
-| 14 | R6 — split `dream_runner.py` (4,926 lines) | Sonnet | V2 | 2 | explicitly last; D7's lesson holds |
-| 15 | ML root-cause analysis | Opus spec first | — | — | revisit after #6; still not well-posed |
-
-**Total to a clean roadmap: 11–18 sessions**, call it 1–2 weeks at observed
-throughput. Wave 1 is the only part with a hard internal ordering.
-
-**Not on this list, deliberately:** multi-agent orchestration frameworks. A
-framework coordinates capabilities you already have; the capabilities are
-still the gap. Revisit after Wave 2, with real data about where coordination
-hurts.
-
----
-
-## 6. Allocation rules learned the hard way
-
-Three routing rules earned on this codebase, each with a measured incident
-behind it. They matter more than the table above, because the table goes stale
-and these do not.
-
-**Write the spec at the tier above the implementation.** Naming a hazard costs
-three sentences and saves an afternoon. Every Sonnet success on this codebase
-had a spec that named the traps; the one spec that shipped with two wrong
-ground-truth rows and a hazard describing the wrong mechanism still produced a
-correct implementation, *because Sonnet re-probed and corrected it* — which is
-exactly what the "verify, don't trust" table exists to provoke.
-
-**Never let the implementer write the gate for its own work.** The LSE's
-production edit on #7 was correct; its test string-matched the source and
-survived an inverted branch condition. Sonnet does better, but the same
-pressure exists — `ccbe879` records it replacing a source-text match with a
-behavioural test only after the reformatted guard broke.
-
-**Re-run every verification claim, from every tier, including Opus.** On
-2026-08-08 the LSE reported a wrong baseline and misattributed real failures;
-the reviewer then called those failures fabricated on the strength of a single
-clean run, and was wrong too. Both errors were cheap to catch and expensive to
-inherit. One command.
+**Not on this list, deliberately:** multi-agent orchestration frameworks.
+A framework coordinates capabilities you already have; the capabilities are
+the gap. Revisit after #1–#5, with real data about where coordination hurts.
