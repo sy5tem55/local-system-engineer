@@ -192,8 +192,17 @@ SKILLS_TEST_MAPPING = {
     "settings": {"number_of_shards": 1, "number_of_replicas": 0},
     "mappings": {
         "properties": {
-            "skill_id": {"type": "keyword"},
-            "occupation": {"type": "keyword"},
+            # 2026-08-09: these were plain `keyword`. Production (dynamic
+            # mapping) makes them `text` with a `.keyword` subfield, so a
+            # term query on the bare field matches in this index and can
+            # NEVER match in production. That divergence hid a total failure:
+            # skill_outcome resolved with term on `skill_id` and had never
+            # once succeeded -- 24 live skills, 0 episode_successes, 0
+            # failures, 0 evidence_log entries -- while 91 contract tests
+            # stayed green. A test index that is easier to satisfy than
+            # production is not a contract.
+            "skill_id": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "occupation": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
             "task": {"type": "text"},
             "preconditions": {"type": "text"},
             "procedure": {"type": "text"},
@@ -336,7 +345,9 @@ def kb_count(es):
 def skill_doc(es, skill_id):
     r = es.search(
         index=SKILLS_TEST_INDEX,
-        body={"query": {"term": {"skill_id": skill_id}}, "size": 1},
+        # .keyword, for the same reason the production lookup needs it: with
+        # the mapping now mirroring production, skill_id is analysed text.
+        body={"query": {"term": {"skill_id.keyword": skill_id}}, "size": 1},
     )
     hits = r["hits"]["hits"]
     assert hits, f"skill {skill_id} not found in test index"
@@ -662,6 +673,82 @@ class TestMentorCorrect:
         assert "mentor_correct:" in r
 
 
+# ══ skill_outcome — the lookup that never matched ════════════════════════════
+
+
+class TestSkillOutcomeLookup:
+    """skill_outcome resolved its skill with a term query on `skill_id`.
+
+    That field is mapped `text` with a `.keyword` subfield, so a term query on
+    the analysed field cannot match a multi-token id -- and every id here is
+    multi-token ("linux-sysadmin/free-disk-space-by-..."). Measured against the
+    live index 2026-08-09: term on `skill_id` returned 0 hits, term on
+    `skill_id.keyword` returned 1.
+
+    Consequence: skill_outcome had NEVER succeeded. 24 skills in production
+    with 0 episode_successes, 0 episode_failures and 0 evidence_log entries.
+    The documented reinforcement loop -- +0.10 verified success, -0.15 verified
+    failure, floor 0.2 then auto-archive -- had never once run, so every skill
+    score was whatever skill_record seeded it with.
+
+    These tests fail against the analysed field and pass against .keyword.
+    """
+
+    TASK = "free disk space by removing duplicate models"
+    SKILL_ID = "linux-sysadmin/free-disk-space-by-removing-duplicate-models"
+    EVIDENCE = (
+        "verify: df -h /opt shows 17GB reclaimed; sha256sum of the survivor "
+        "matches the pre-delete value; 4 of 4 assertions pass"
+    )
+
+    def _seed(self, tools):
+        return tools.skill_record(
+            task=self.TASK, occupation="linux-sysadmin", procedure=PROC,
+            verification=VERIF, provenance="episode node-t3-002",
+            quality=0.5, source_tier="secondary",
+        )
+
+    def test_outcome_finds_the_skill_it_was_given(self, tools, es):
+        """The regression itself: a real id must resolve, not 'not found'."""
+        self._seed(tools)
+        r = tools.skill_outcome(
+            skill_id=self.SKILL_ID, success=True, evidence=self.EVIDENCE,
+            source_tier="secondary",
+        )
+        assert "not found" not in r, r
+
+    def test_verified_success_raises_quality_and_counts_it(self, tools, es):
+        self._seed(tools)
+        before = skill_doc(es, self.SKILL_ID)["quality"]
+        tools.skill_outcome(
+            skill_id=self.SKILL_ID, success=True, evidence=self.EVIDENCE,
+            source_tier="secondary",
+        )
+        after = skill_doc(es, self.SKILL_ID)
+        assert after["quality"] == pytest.approx(min(0.6, before + 0.10))
+        assert after["stats"]["episode_successes"] == 1
+        assert len(after.get("evidence_log") or []) == 1
+
+    def test_verified_failure_lowers_quality_and_counts_it(self, tools, es):
+        self._seed(tools)
+        before = skill_doc(es, self.SKILL_ID)["quality"]
+        tools.skill_outcome(
+            skill_id=self.SKILL_ID, success=False, evidence=self.EVIDENCE,
+            source_tier="secondary",
+        )
+        after = skill_doc(es, self.SKILL_ID)
+        assert after["quality"] == pytest.approx(max(0.2, before - 0.15))
+        assert after["stats"]["episode_failures"] == 1
+
+    def test_unknown_skill_still_reports_not_found(self, tools, es):
+        """The .keyword fix must not turn a genuine miss into a silent pass."""
+        r = tools.skill_outcome(
+            skill_id="linux-sysadmin/no-such-skill-exists-here", success=True,
+            evidence=self.EVIDENCE, source_tier="secondary",
+        )
+        assert "not found" in r, r
+
+
 # ══ skill_record — clamp, gates, dedup ════════════════════════════════════════
 
 PROC = "enumerate candidates; verify sha256 of survivor; delete duplicate; df delta"
@@ -757,7 +844,7 @@ class TestSkillOutcome:
             # directly in the throwaway index (fixture-only path).
             r = es.search(
                 index=SKILLS_TEST_INDEX,
-                body={"query": {"term": {"skill_id": skill_id}}, "size": 1},
+                body={"query": {"term": {"skill_id.keyword": skill_id}}, "size": 1},
             )
             es.update(
                 index=SKILLS_TEST_INDEX, id=r["hits"]["hits"][0]["_id"],

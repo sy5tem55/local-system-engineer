@@ -1292,7 +1292,13 @@ class KBMixin:
             es = self._es()
             filters = [{"term": {"archived": False}}]
             if occupation:
-                filters.append({"term": {"occupation": occupation}})
+                # Same defect as skill_outcome's lookup: occupation is analysed
+                # text. term "Local System Engineer" -> 0 hits,
+                # occupation.keyword -> 15. The filter silently matched
+                # nothing for every value, so an occupation-filtered
+                # skill_search read as "no such skill" rather than
+                # "filter broken".
+                filters.append({"term": {"occupation.keyword": occupation}})
             body = {
                 "knn": {
                     "field": "embedding",
@@ -1583,7 +1589,13 @@ class KBMixin:
             resp = es.search(
                 index="lse-skills",
                 body={
-                    "query": {"term": {"skill_id": skill_id}},
+                    # skill_id is mapped text with a .keyword subfield. A term query on
+                    # the analysed field can never match a multi-token id, and
+                    # every id here is multi-token. Measured 2026-08-09: term on
+                    # skill_id -> 0 hits, term on skill_id.keyword -> 1. So
+                    # skill_outcome had NEVER succeeded: 24 skills, 0
+                    # episode_successes, 0 failures, 0 evidence_log entries.
+                    "query": {"term": {"skill_id.keyword": skill_id}},
                     "_source": ["quality", "stats", "pinned"],
                     "size": 1,
                 },
