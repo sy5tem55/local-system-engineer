@@ -209,8 +209,53 @@ _IDENTITY_IGNORED_KEYS = {
 }
 
 
+# SPEC-gate-toil-2026-08 Sec2/Sec5.2, Hazard B: `diagnosis` proposals hash
+# their full body by default, and that body is mostly model prose
+# (args.interpretation, args.resolution, args.anti_response, why) plus
+# `evidence`, a session-key list that grows as new episodes join the
+# cluster. All of that is reworded/extended every run, so a fresh
+# fingerprint is guaranteed by construction and repeat_prior() never fires
+# -- fourteen distinct fingerprints for fourteen re-drafts of the same
+# handful of errors. The stable identity of a diagnosis is
+# `error_text` + `context`: the failure signature and what was being
+# attempted, both derived from the cluster rather than invented by the
+# model, and what record_error keys on.
+#
+# Scoped to `diagnosis` ONLY. SPEC-gate-toil-2026-08 Hazard B named
+# `skill-candidate` as sharing this shape and due the same narrowing "the
+# moment error-cluster emits one again". Re-probed against the two live
+# call sites that emit type="skill-candidate" (dream_runner.py's
+# error-cluster pass and its insights pass): neither one's `args` has ever
+# had `error_text`/`context` keys -- the shape is task/occupation/
+# procedure/verification/preconditions/failure_modes/provenance/
+# source_tier/quality instead. Narrowing skill-candidate to
+# {type, call, args.error_text, args.context} the same way would make
+# args.get("error_text") and args.get("context") both resolve to None for
+# every skill-candidate proposal ever produced, collapsing all of them
+# onto one identical fingerprint regardless of task -- the opposite of
+# Hazard A's warning, and worse than the defect this fix closes. Left on
+# full-body identity (unchanged) until skill-candidate actually carries a
+# stable error_text/context pair of its own.
+_NARROW_IDENTITY_TYPES = {"diagnosis"}
+_NARROW_IDENTITY_ARG_KEYS = ("error_text", "context")
+
+
 def canonical_proposal(proposal: dict) -> dict:
-    """Return the semantic proposal body used for exact deduplication."""
+    """Return the semantic proposal body used for exact deduplication.
+
+    Most proposal types are identified by their full body (minus the
+    volatile bookkeeping keys in _IDENTITY_IGNORED_KEYS). Types in
+    _NARROW_IDENTITY_TYPES are identified narrowly instead, by
+    {type, call, args.error_text, args.context} alone -- see the comment
+    above _NARROW_IDENTITY_TYPES for why.
+    """
+    if proposal.get("type") in _NARROW_IDENTITY_TYPES:
+        args = proposal.get("args") or {}
+        return {
+            "type": proposal.get("type"),
+            "call": proposal.get("call"),
+            "args": {k: args.get(k) for k in _NARROW_IDENTITY_ARG_KEYS},
+        }
     return {k: v for k, v in proposal.items() if k not in _IDENTITY_IGNORED_KEYS}
 
 
@@ -834,8 +879,15 @@ class TraumState:
                     for item in group
                 )
                 if reviewable and all(item["prior"] is not None for item in group):
-                    prior_ids = sorted({item["prior"]["proposal_id"] for item in group})
-                    reason = "exact_pair_already_resolved_or_queued:" + ",".join(prior_ids)
+                    # SPEC-gate-toil-2026-08 Sec5.3: name each prior's state
+                    # alongside its id so the Console can say "already
+                    # applied as prp_..." instead of a bare id the operator
+                    # has to go look up.
+                    prior_named = sorted({
+                        f"{item['prior']['proposal_id']}:{item['prior']['state']}"
+                        for item in group
+                    })
+                    reason = "exact_pair_already_resolved_or_queued:" + ",".join(prior_named)
                     for item in group:
                         item["initial_state"] = "SUPERSEDED"
                         item["initial_reason"] = reason
@@ -872,7 +924,14 @@ class TraumState:
                 prior = item["prior"]
                 if prior and initial_state in {"STAGED", "PENDING"}:
                     initial_state = "SUPERSEDED"
-                    initial_reason = f"exact_already_resolved_or_queued:{prior['proposal_id']}"
+                    # SPEC-gate-toil-2026-08 Sec5.3: name the prior's state
+                    # too, not just its id -- "already applied as prp_...",
+                    # not a silently dropped proposal the operator has to
+                    # chase down.
+                    initial_reason = (
+                        f"exact_already_resolved_or_queued:"
+                        f"{prior['proposal_id']}:{prior['state']}"
+                    )
                 # IDs are controller-owned. A model/file cannot choose an ID
                 # that aliases a different canonical proposal.
                 proposal_id = _validate_id(new_id("proposal"), "proposal_id")
