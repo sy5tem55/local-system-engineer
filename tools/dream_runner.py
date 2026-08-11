@@ -258,8 +258,11 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+import functools
+
 import episode_index as _epidx
 import dream_digest
+import diagnosis_rules
 import traum_state
 
 __version__ = "0.13.0"
@@ -620,6 +623,13 @@ class DreamConfig:
     patterns_top_commands: int = 50
     patterns_out: str | None = None
     insights_max_sessions_in_prompt: int = 20
+    # SPEC-auto-adjudication-2026-08: content rules for `diagnosis`
+    # proposals, each individually switchable (Hazard A) and defaulted on.
+    rule_r1_enabled: bool = True
+    rule_r2_enabled: bool = True
+    rule_r3_enabled: bool = True
+    diagnosis_dup_threshold: float = diagnosis_rules.DIAGNOSIS_DUP_THRESHOLD_DEFAULT
+    diagnosis_redundant_threshold: float = diagnosis_rules.DIAGNOSIS_REDUNDANT_THRESHOLD_DEFAULT
     # Prompt 4.1 (TRAUM-AUTO) -- remote VRAM gate for the node3090 llama-server
     # leg. Defaulted (not required) so direct DreamConfig(...) construction
     # elsewhere (tests, ad hoc scripts) keeps working without every caller
@@ -694,6 +704,11 @@ def build_config(args: argparse.Namespace) -> DreamConfig:
         dedup_floor=args.dedup_floor,
         dedup_threshold=args.dedup_threshold,
         error_cluster_threshold=args.error_cluster_threshold,
+        rule_r1_enabled=not args.no_rule_r1,
+        rule_r2_enabled=not args.no_rule_r2,
+        rule_r3_enabled=not args.no_rule_r3,
+        diagnosis_dup_threshold=args.diagnosis_dup_threshold,
+        diagnosis_redundant_threshold=args.diagnosis_redundant_threshold,
         runner_session_prefix=args.runner_session_prefix,
         sessions_limit=args.sessions,
         since=args.since,
@@ -2063,6 +2078,83 @@ def cluster_by_similarity(embeddings: dict, threshold: float) -> list:
     for k in keys:
         groups.setdefault(find(k), []).append(k)
     return list(groups.values())
+
+
+def apply_diagnosis_rules(cfg: DreamConfig, state: "traum_state.TraumState",
+                           proposals: list) -> dict:
+    """SPEC-auto-adjudication-2026-08: R1/R2/R3 content rules for `diagnosis`
+    proposals, evaluated here (before record_proposals is called) by
+    annotating `_initial_state`/`_initial_reason` on `proposals` in place --
+    the same extension point the existing malformed-shape and
+    incomplete-budget-truncation checks use. Scoped to `type == "diagnosis"`
+    only (Hazard E); every other proposal in `proposals` is left untouched.
+
+    Order: R2 (cheap, structural) -> R3 (single embedding pair, intra-
+    proposal) -> R1 (the expensive one -- fetches and embeds every current
+    PENDING/APPLIED diagnosis prior). A proposal decided by R2/R3 is never
+    also evaluated by R1. Each rule is individually switchable
+    (cfg.rule_r{1,2,3}_enabled, Hazard A) and every fire/skip is counted and
+    returned so the caller can surface it -- never a rule that fires
+    silently.
+
+    Must be called BEFORE the cfg.budget.truncated overwrite in main()'s
+    pass-execution loop -- that overwrite unconditionally stamps every
+    `valid` proposal to SYSTEM_REJECTED:incomplete_budget_truncation when it
+    fires, so calling this first means budget truncation still wins exactly
+    as before this change (Hazard F): nothing R1-R3 decide survives a
+    truncated run either way.
+
+    Only compares against ALREADY-PERSISTED priors (state.list_proposals),
+    never against other proposals in the same `proposals` batch -- the
+    upstream error-cluster pass already groups same-run occurrences into one
+    cluster per diagnosis by construction, so same-batch near-duplicates are
+    not the case this closes (cross-run reworded redrafts are); comparing
+    against not-yet-assigned proposal_ids would have nothing real to name in
+    the SUPERSEDED reason anyway.
+    """
+    counts = {
+        "r1_enabled": cfg.rule_r1_enabled, "r2_enabled": cfg.rule_r2_enabled,
+        "r3_enabled": cfg.rule_r3_enabled,
+        "r1_superseded": 0, "r2_rejected": 0, "r3_rejected": 0,
+        "diagnoses_seen": 0,
+    }
+    if not any((cfg.rule_r1_enabled, cfg.rule_r2_enabled, cfg.rule_r3_enabled)):
+        return counts
+    diagnosis_proposals = [p for p in proposals if p.get("type") == "diagnosis"]
+    if not diagnosis_proposals:
+        return counts
+    counts["diagnoses_seen"] = len(diagnosis_proposals)
+
+    priors = None  # fetched lazily -- only if R1 actually reaches a candidate
+    embed_fn = functools.partial(embed_text, cfg)
+    embed_cache: dict = {}
+    for proposal in diagnosis_proposals:
+        verdict = None
+        if cfg.rule_r2_enabled:
+            verdict = diagnosis_rules.rule_r2_third_party_resource_error(proposal)
+            if verdict:
+                counts["r2_rejected"] += 1
+        if verdict is None and cfg.rule_r3_enabled:
+            verdict = diagnosis_rules.rule_r3_resolution_redundant(
+                proposal, embed_fn=embed_fn, threshold=cfg.diagnosis_redundant_threshold,
+            )
+            if verdict:
+                counts["r3_rejected"] += 1
+        if verdict is None and cfg.rule_r1_enabled:
+            if priors is None:
+                priors = [
+                    row for row in state.list_proposals(state="PENDING,APPLIED")
+                    if row.get("proposal_type") == "diagnosis"
+                ]
+            verdict = diagnosis_rules.rule_r1_semantic_duplicate(
+                proposal, priors, embed_fn=embed_fn,
+                threshold=cfg.diagnosis_dup_threshold, embed_cache=embed_cache,
+            )
+            if verdict:
+                counts["r1_superseded"] += 1
+        if verdict is not None:
+            proposal["_initial_state"], proposal["_initial_reason"] = verdict
+    return counts
 
 
 _ERROR_CLUSTER_SYSTEM_PROMPT = """You are the TRAUM dreamer's error-cluster pass (Thread 2, Prompt 2.4).
@@ -4081,6 +4173,23 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="cosine floor for grouping error/timeout occurrences as the same "
                     "underlying failure (default: 0.80)")
 
+    rules_group = ap.add_argument_group("diagnosis content rules (SPEC-auto-adjudication-2026-08)")
+    rules_group.add_argument("--no-rule-r1", action="store_true",
+                    help="disable R1 (semantic near-duplicate diagnosis -> SUPERSEDED)")
+    rules_group.add_argument("--no-rule-r2", action="store_true",
+                    help="disable R2 (third-party resource error -> SYSTEM_REJECTED)")
+    rules_group.add_argument("--no-rule-r3", action="store_true",
+                    help="disable R3 (resolution redundant with error_text -> SYSTEM_REJECTED)")
+    rules_group.add_argument("--diagnosis-dup-threshold", type=float,
+                    default=diagnosis_rules.DIAGNOSIS_DUP_THRESHOLD_DEFAULT,
+                    help="R1 cosine floor for semantic-duplicate diagnoses "
+                    f"(default: {diagnosis_rules.DIAGNOSIS_DUP_THRESHOLD_DEFAULT}, calibrated "
+                    "against the live PENDING queue -- see tools/diagnosis_rules.py)")
+    rules_group.add_argument("--diagnosis-redundant-threshold", type=float,
+                    default=diagnosis_rules.DIAGNOSIS_REDUNDANT_THRESHOLD_DEFAULT,
+                    help="R3 cosine floor for resolution-redundant-with-error_text "
+                    f"(default: {diagnosis_rules.DIAGNOSIS_REDUNDANT_THRESHOLD_DEFAULT})")
+
     patterns_group = ap.add_argument_group("patterns pass (Prompt 3.1, TRAUM-INSIGHT)")
     patterns_group.add_argument("--patterns-max-lines", type=int,
                     default=_patterns_max_lines_default(),
@@ -4875,6 +4984,9 @@ def main(argv=None) -> int:
 
             proposals = valid
             if state is not None:
+                rule_counts = apply_diagnosis_rules(cfg, state, valid)
+                if rule_counts.get("diagnoses_seen"):
+                    print(f"[dream_runner] diagnosis rules: {rule_counts}", file=sys.stderr)
                 proposals_for_state = [*valid, *malformed]
                 if cfg.budget.truncated:
                     proposals_for_state = [
