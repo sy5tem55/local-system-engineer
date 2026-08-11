@@ -30,6 +30,7 @@
 # Check this pin first.
 
 import hashlib
+import os
 import pathlib
 import re
 
@@ -42,26 +43,34 @@ UPSTREAM = pathlib.Path("tools/goethe_mcp.py")
 # Goethe host. Absent on any other machine -> the whole module skips.
 GOETHE_ROOT = pathlib.Path("/mnt/c/Goethe3.0")
 
-# Only shims that are actually launched, or that propagate into a launch, are
-# gated. Build outputs under bin/ and the PR worktree are transient copies
-# that lag by design; failing on them would make this gate noisy and it would
-# get ignored -- which is how the original guard failed in the first place.
-_IGNORED_PARTS = ("bin", "Goethe.App-pr-worktree", "goethe-app-c7-snapshot")
+# 2026-08-11: this used to be a BLOCKLIST of directory names, which meant
+# every new deploy-staging dir, backup and build output was gated by default.
+# The machine currently carries 15 shims; the GUI launches from exactly one.
+# The test was therefore permanently red over 12 shims nobody will ever run,
+# and a permanently red gate is one people learn to ignore -- the failure mode
+# this file exists to prevent.
+#
+# Now an ALLOWLIST: the deploy directory the GUI actually launches from, plus
+# the canonical project source that propagates into future builds. Same env
+# var as scripts/pin-check.sh so the two cannot drift apart.
+#
+# The pins themselves belong to the operator (AGENTS.md sec2). This test
+# reports drift; it never suggests editing a shim.
+_DEPLOY_DIR = pathlib.Path(os.environ.get(
+    "GOETHE_GUI_DEPLOY_DIR",
+    "/mnt/c/Goethe3.0/.deploy-staging/Goethe.App-20260801-safe-03/win-x64",
+))
+_GATED_SHIMS = (
+    _DEPLOY_DIR / "Scripts" / "goethe_mcp.py",
+    GOETHE_ROOT / "Goethe.App" / "Scripts" / "goethe_mcp.py",
+)
 
 PIN_RE = re.compile(r"UPSTREAM_SHA256[^\"']*[\"']([0-9a-f]{64})[\"']", re.S)
 
 
 def _live_shims():
-    """Canonical project source + any active deploy-staging entrypoint."""
-    if not GOETHE_ROOT.is_dir():
-        return []
-    found = []
-    for path in GOETHE_ROOT.rglob("Scripts/goethe_mcp.py"):
-        rel = path.relative_to(GOETHE_ROOT)
-        if any(part in _IGNORED_PARTS for part in rel.parts):
-            continue
-        found.append(path)
-    return sorted(found)
+    """The shims that can actually reach a launch. Nothing else."""
+    return [p for p in _GATED_SHIMS if p.is_file()]
 
 
 def _expected_sha():
