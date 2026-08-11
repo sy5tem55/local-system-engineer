@@ -858,7 +858,18 @@ class TraumState:
                     }
                     or (row["state"] == "SYSTEM_REJECTED" and str(
                         row["reason"] or ""
-                    ).startswith(("malformed:", "noop:", "invariant:")))
+                    ).startswith((
+                        "malformed:", "noop:", "invariant:",
+                        # SPEC-auto-adjudication-2026-08 Hazard B: R2/R3
+                        # (tools/diagnosis_rules.py) reject `diagnosis`
+                        # proposals with a "rule:"-prefixed reason. Without
+                        # this prefix in the honored set, a rule-rejected
+                        # proposal would be re-drafted and re-rejected
+                        # every run -- churn instead of relief, and it
+                        # would look like the feature works while doing
+                        # nothing (test_diagnosis_rules.py test 3).
+                        "rule:",
+                    )))
                 )), None)
 
             for item in prepared:
