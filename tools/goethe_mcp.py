@@ -802,10 +802,10 @@ def main():
                     help="path to goethe.py (or set GOETHE_PATH)")
     ap.add_argument("--transport", choices=["stdio", "http"],
                     default=os.environ.get("GOETHE_MCP_TRANSPORT", "stdio"))
-    ap.add_argument("--host", default=os.environ.get("GOETHE_MCP_HOST", "127.0.0.1"))
+    ap.add_argument("--host", default=os.environ.get("GOETHE_MCP_HOST", "0.0.0.0"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("GOETHE_MCP_PORT", "9700")))
     ap.add_argument("--cors-origin",
-                    default=os.environ.get("GOETHE_MCP_CORS_ORIGIN", "http://127.0.0.1:8080"),
+                    default=os.environ.get("GOETHE_MCP_CORS_ORIGIN", "*"),
                     help="allowed browser origin for direct-CORS (the llama-ui URL)")
     ap.add_argument("--also", action="append", default=[], metavar="PATH",
                     help="additional LSE Tools file(s) to expose alongside goethe "
