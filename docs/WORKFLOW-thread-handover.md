@@ -4,6 +4,9 @@
 > receiving thread could not find `/home/sy5/...`, reported that it only had
 > an isolated sandbox, and stopped. The spec was fine. The prompt omitted the
 > single most important fact — **how to reach the machine.**
+>
+> Amended 2026-08-11: the tool names below drifted and reproduced the exact
+> failure this document exists to prevent. See §0a. Do not hardcode a prefix.
 
 ---
 
@@ -14,8 +17,8 @@ confuse:
 
 | Surface | Tool | What it can see |
 |---|---|---|
-| Cowork sandbox | `mcp__workspace__bash` | hostname `claude`; only `outputs/` and `uploads/`. **No LUCIFER, no `/home/sy5`, no repo.** |
-| Goethe MCP | `mcp__goethe__execute_command`, `read_file`, `write_file`, `ssh_run` | The real WSL host LUCIFER: the live repo, `/opt/local-se`, systemd, node3090 |
+| Cowork sandbox | `Bash` / `mcp__workspace__bash` (name varies) | hostname `claude`; only `outputs/` and `uploads/`. **No LUCIFER, no `/home/sy5`, no repo.** |
+| Goethe MCP | `…goethe__execute_command`, `…goethe__read_file`, `…goethe__write_file`, `…goethe__ssh_run` (prefix varies — see §0a) | The real WSL host LUCIFER: the live repo, `/opt/local-se`, systemd, node3090 |
 
 **All real work happens through the Goethe MCP tools.** They are *deferred* —
 they appear in the tool list by name only and are not callable until loaded:
@@ -32,14 +35,54 @@ instruction, before anything else.** Not in the middle, not implied by a path.
 
 ---
 
+## 0a. The prefix is not stable — do not hardcode it
+
+**Measured 2026-08-11**, in a review thread on `codex/fix-sudo-grants-live`:
+
+```
+ToolSearch: select:mcp__goethe__execute_command,mcp__goethe__read_file
+→ No matching deferred tools found
+```
+
+The server was mounted under `mcp__remote-devices__goethe__*` in that session.
+The `select:` line above — the one this document told every handover to paste
+verbatim — resolved nothing, and a thread that trusted it would have stopped
+on its first message with "the machine does not exist". That is the original
+2026-08-01 failure, re-created by the fix for it.
+
+**So: try the documented name, and fall back to keyword discovery.**
+
+```
+ToolSearch: select:mcp__goethe__execute_command,mcp__goethe__read_file,mcp__goethe__write_file
+# if that returns "No matching deferred tools found":
+ToolSearch: goethe execute_command read_file
+# → use whatever fully-qualified names come back, e.g.
+#   mcp__remote-devices__goethe__execute_command
+```
+
+Load everything you expect to need in **one** call — `select:` takes a
+comma-separated list. A name that fails to resolve means the wrong prefix, not
+a missing machine.
+
+---
+
 ## 1. Prompt template
 
 Copy this shape. The first block is not optional.
 
 ```
 FIRST: load the Goethe MCP tools before anything else. They are deferred and
-not callable until loaded:
+not callable until loaded. The server's tool PREFIX varies by session — try
+the documented name first:
   ToolSearch: select:mcp__goethe__execute_command,mcp__goethe__read_file,mcp__goethe__write_file
+
+If that returns "No matching deferred tools found", it is mounted under a
+different prefix. Discover it by keyword instead:
+  ToolSearch: goethe execute_command read_file
+and use the fully-qualified names that come back. On 2026-08-11 they were
+mcp__remote-devices__goethe__*. Load everything you need in ONE call.
+
+A name that does not resolve means the wrong prefix, NOT a missing machine.
 
 All filesystem and shell access to the target machine goes through those
 tools. Do NOT use the sandbox Bash/Read tools for this task — they run in an
@@ -47,7 +90,7 @@ isolated container that cannot see the repo. If a path like /home/sy5/... is
 not found, you loaded the wrong tool, not the wrong path.
 
 Verify access before starting:
-  mcp__goethe__execute_command("hostname; ls /home/sy5/projects/local-system-engineer")
+  <goethe>__execute_command("hostname; ls /home/sy5/projects/local-system-engineer")
   → expect: LUCIFER, and a repo listing.
 
 TASK: <one line>
@@ -68,8 +111,19 @@ Hard constraints:
     MCP error -32001. Run backgrounded and poll:
       nohup /home/sy5/owui/bin/python3 -m pytest tests/ -q > /tmp/pt.log 2>&1 & disown
     Baseline: <N> passed.
-  - Naming a branch containing "sudo" in a shell command trips the safety
-    gate's substring match. Use `git log '@{u}..HEAD'`.
+  - `pgrep -af pytest` SELF-MATCHES its own /bin/sh -c wrapper and will look
+    non-empty when nothing is running. Use `pgrep -af '[p]ytest'`, expect
+    exit 1.
+  - Type the branch name normally. An identifier such as
+    codex/fix-sudo-grants-live does NOT trip the privilege gate: the token
+    regex exempts any match whose adjacent character is one of -_./ (fixed
+    by 43f9052, pinned by tests/test_safety_gates_adversarial.py:380,
+    re-measured 2026-08-11). Earlier revisions of this file claimed the
+    opposite and were wrong for eleven days.
+  - Never `@{u}` — a remote branch can exist with no tracking configured,
+    and `@{u}` then raises a fatal that reads exactly like "nothing is
+    pushed" (AGENTS.md §5). Use `origin/$BR`, with
+    BR=$(git rev-parse --abbrev-ref HEAD).
   - <task-specific destructive-operation constraints>
 
 Finish with docs/reports/YYYY-MM-DD-<task>.md (committed, NOT /tmp),
@@ -219,6 +273,13 @@ These are the rules this project keeps re-learning:
 - **Prove a guard fails before trusting it to pass.** Delete the fix, watch the
   test go red, restore. A test that has never failed has not been shown to
   test anything.
+- **A test that cannot fail proves nothing.** Stronger than the above, and the
+  one this project keeps missing: a guard can be green, break-tested, and
+  still vacuous if it only ever exercises the passing path. Ask what the test
+  would do if the claim were false — if the answer is "pass", it needs a
+  negative control. (2026-08-11: `test_diagnosis_rules.py` test 3 asserted an
+  honored reason prefix worked, but never exercised an unhonored one, so it
+  would have passed whether or not the prefix was load-bearing.)
 - **Check the whole result, not the part you expected.** A `{"error":
   "unauthorized"}` body has no feature keys in it; reading that as "the feature
   is missing" cost four turns.

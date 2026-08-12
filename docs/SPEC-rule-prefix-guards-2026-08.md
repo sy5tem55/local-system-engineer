@@ -275,12 +275,12 @@ Read first, in order:
 
 Environment:
   - Live tree: /home/sy5/projects/local-system-engineer  (WSL, host LUCIFER)
-  - Branch: already checked out. Capture it rather than typing it:
-      BR=$(git rev-parse --abbrev-ref HEAD)
-    The name contains a substring that trips the privilege gate's match, so
-    never type it literally in a shell command. Use "origin/$BR", never "@{u}"
-    — a remote branch can exist with no tracking configured and @{u} then
-    raises a fatal that reads exactly like "nothing is pushed".
+  - Branch: already checked out. Type its name normally -- it does NOT trip
+    the privilege gate (the token regex exempts -_./ -adjacent matches;
+    43f9052, pinned by tests/test_safety_gates_adversarial.py:380).
+    Never "@{u}" — a remote branch can exist with no tracking configured and
+    @{u} then raises a fatal that reads exactly like "nothing is pushed".
+    Use "origin/$BR" with BR=$(git rev-parse --abbrev-ref HEAD).
   - Python: /home/sy5/owui/bin/python3
   - ruff: /home/sy5/miniforge3/bin/ruff   (NOT `python3 -m ruff`)
 
