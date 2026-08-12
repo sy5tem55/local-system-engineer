@@ -519,15 +519,7 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         gp = self._perms_mod()
         if not gp:
             return ""
-        rest = command[hit_end:].lstrip()
-        if rest.startswith("-n "):
-            rest = rest[3:].lstrip()
-        cut = len(rest)
-        for meta in (";", "|", "&", "`", "$(", "\n", ">", "<", ")"):
-            idx = rest.find(meta)
-            if idx != -1:
-                cut = min(cut, idx)
-        atom = rest[:cut].strip()
+        atom = self._shell_free_atom_after(command, hit_end)
         if not atom:
             return ""
         try:
@@ -551,6 +543,55 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
             f"goethe-perm approve {rid} (review first: goethe-perm pending). "
             "Do NOT retry until the user confirms approval."
         )
+
+    def _shell_free_atom_after(self, command: str, hit_end: int) -> str:
+        """Return the shell-free atom immediately following a privilege-token
+        match end -- the text from there up to the first entry in
+        _ATOM_METACHARS, with a leading sudo "-n" flag skipped.
+
+        Single source of truth for "what counts as one exact command after a
+        sudo/doas/su token", used by _perm_note_at_match (deciding what to
+        file as a pending grant request) and by the grant-honoring check in
+        _validate_command_safety (deciding whether an existing grant covers
+        the atom). Keeping this in one place means the atom a human approves
+        and the atom a later command is checked against can never drift.
+        """
+        rest = command[hit_end:].lstrip()
+        if rest.startswith("-n "):
+            rest = rest[3:].lstrip()
+        cut = len(rest)
+        for meta in self._ATOM_METACHARS:
+            idx = rest.find(meta)
+            if idx != -1:
+                cut = min(cut, idx)
+        return rest[:cut].strip()
+
+    def _priv_token_hits(self, cmd_lower: str) -> list:
+        """Return every _PRIVILEGED_TOKEN_RE match in cmd_lower that is a
+        real, reachable invocation, not embedded inside a longer identifier.
+
+        Extracted from the block-path scan (2026-08-12) so the grant-
+        honoring check below can locate a privilege token ANYWHERE in a
+        compound line the same way the filing path already does, instead of
+        only ever recognising one at column 0. Matches on cmd_lower (already
+        heredoc-stripped, whitespace-normalised, lowercased), same as the
+        block-path scan -- offsets are then used against the ORIGINAL
+        `command` string by callers, matching the existing
+        _perm_note_at_match(command, _priv_hit.end()) convention this
+        function replaces the inline version of.
+        """
+        import re as _re_hits  # noqa: PLC0415
+
+        hits = []
+        for _m in _re_hits.finditer(self._PRIVILEGED_TOKEN_RE, cmd_lower):
+            _before = cmd_lower[_m.start() - 1] if _m.start() > 0 else ""
+            _after = cmd_lower[_m.end()] if _m.end() < len(cmd_lower) else ""
+            if (_before and _before in self._IDENTIFIER_ADJACENT_BEFORE) or (
+                _after and _after in self._IDENTIFIER_ADJACENT_AFTER
+            ):
+                continue
+            hits.append(_m)
+        return hits
 
     # Shell/session config files that must never be written by the agent
     _BLOCKED_WRITE_FILENAMES = {
@@ -670,6 +711,24 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
     # indirection shapes are caught. \bsu\b does not match inside "sudo"
     # (no boundary between "su" and "d") nor inside words like "resume".
     _PRIVILEGED_TOKEN_RE = r"\b(?:sudo|doas|su)\b"
+
+    # 2026-08-12: promoted out of _validate_command_safety local scope so
+    # the grant-honoring check (below) and the block-path scan can share one
+    # definition of "is this privilege-token match a real, reachable
+    # invocation" instead of drifting apart. See the D5-FIX / 2026-08 FIX
+    # comments in _validate_command_safety for why the exempt sets are
+    # deliberately asymmetric (no "/" before, "/" allowed after).
+    _IDENTIFIER_ADJACENT_BEFORE = "-_."
+    _IDENTIFIER_ADJACENT_AFTER = "-_./"
+
+    # Shell metacharacters that end a "shell-free atom" -- the text from
+    # just after a privilege token up to the first one of these. Shared by
+    # _shell_free_atom_after, which both _perm_note_at_match (files a grant
+    # request) and the grant-honoring check in _validate_command_safety
+    # (decides whether an existing grant covers the atom) use to identify
+    # the exact same substring, so the two paths can never disagree about
+    # what "one command" means on a compound line.
+    _ATOM_METACHARS = (";", "|", "&", "`", "$(", "\n", ">", "<", ")")
 
     _HEREDOC_PATTERN = r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\2[ \t]*$"
 
@@ -799,26 +858,53 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
             _priv_rest = _stripped[5:].lstrip()
             if _priv_rest.startswith("-n "):
                 _priv_rest = _priv_rest[3:].lstrip()
-        if _priv_rest and not any(
-            t in _priv_rest for t in (";", "|", "&", "`", "$(", "\n", ">", "<")
-        ):
-            _gp = self._perms_mod()
-            _gid = _gp.check_sudo(_priv_rest) if _gp else None
-            if _gid:
-                if not self._is_allowed_read(cwd):
-                    return (
-                        f"BLOCKED: working_dir '{cwd}' is outside allowed read paths."
-                    )
-                self._log(f"PRIV-GRANTED grant#{_gid}: {command}")
-                return None
+        # 2026-08-12 FIX: honoring an approved grant used to require
+        # _priv_rest above (command.strip().startswith("sudo ") with no
+        # metacharacter anywhere in the rest of the line) -- so a grant was
+        # only ever honored for a bare `sudo <cmd>` line. The filing path
+        # above (_perm_note_at_match, fixed in d4d59ba) has located a
+        # privilege token ANYWHERE in a compound line since that commit, so
+        # an operator could approve a grant for a compound line's atom and
+        # the SAME compound line would still be blocked forever after --
+        # this check never looked past column 0. Widened to locate every
+        # privilege-token occurrence in the line (_priv_token_hits, shared
+        # with the block-path scan below) and require a grant for the
+        # shell-free atom after EACH one before honoring the whole line.
+        # One granted atom must never vouch for a second, ungranted sudo
+        # elsewhere on the same line -- see
+        # tests/test_safety_gates_adversarial.py for the case this guards.
+        # _priv_rest itself is still computed above and used further below,
+        # unchanged, to pick which BLOCKED message a still-unhonored
+        # privileged command gets.
+        _gp = self._perms_mod()
+        if _gp:
+            _priv_hits_honor = self._priv_token_hits(cmd_lower)
+            if _priv_hits_honor:
+                _grant_ids = []
+                for _hit in _priv_hits_honor:
+                    _atom = self._shell_free_atom_after(command, _hit.end())
+                    _gid = _gp.check_sudo(_atom) if _atom else None
+                    if not _gid:
+                        _grant_ids = None
+                        break
+                    _grant_ids.append(_gid)
+                if _grant_ids:
+                    if not self._is_allowed_read(cwd):
+                        return (
+                            f"BLOCKED: working_dir '{cwd}' is outside allowed read paths."
+                        )
+                    _grant_ids_str = ",".join(str(g) for g in _grant_ids)
+                    self._log(f"PRIV-GRANTED grant#{_grant_ids_str}: {command}")
+                    return None
 
         # ── Block privilege escalation anywhere in the command (v1.4.2 fix) ──
         # D5-FIX (2026-07-31): matched on word boundaries, not the old
         # "sudo "/"su "/"doas " substrings. The trailing space those required
         # meant sudo escaped detection whenever it was reconstructed or
         # terminal — "S=sudo; $S id", "$(echo sudo) id", "echo id | xargs sudo"
-        # all reached the shell with the gate none the wiser.
-        import re as _re_priv  # noqa: PLC0415
+        # all reached the shell with the gate none the wiser. Token
+        # location + identifier-adjacency exemption now live in
+        # _priv_token_hits (shared with the grant-honoring check above).
 
         # 2026-08 FIX (privtoken false positives): the word-boundary match
         # above is intentionally wide (see D5-FIX comment) and must stay
@@ -848,26 +934,11 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         # sudoers" stays exempt regardless, because \b never matches
         # between "sudo" and "ers" in "sudoers" in the first place (both
         # are word characters -- no boundary, no match, nothing to exempt).
-        _IDENTIFIER_ADJACENT_BEFORE = "-_."
-        _IDENTIFIER_ADJACENT_AFTER = "-_./"
-        _priv_hit = None
-        for _m in _re_priv.finditer(self._PRIVILEGED_TOKEN_RE, cmd_lower):
-            _before = cmd_lower[_m.start() - 1] if _m.start() > 0 else ""
-            _after = cmd_lower[_m.end()] if _m.end() < len(cmd_lower) else ""
-            # `_before`/`_after` are "" at start/end of string. Python's
-            # `"" in "-_."` is True (empty string is a substring of
-            # everything), so a naive `_before in _IDENTIFIER_ADJACENT_BEFORE`
-            # would treat start-of-string / end-of-string as exempt --
-            # exactly the shape of the D5 bypasses this gate exists to
-            # block (bare "sudo id" starts the string). Guard with a
-            # truthiness check first so only a REAL adjacent character
-            # can exempt the match.
-            if (_before and _before in _IDENTIFIER_ADJACENT_BEFORE) or (
-                _after and _after in _IDENTIFIER_ADJACENT_AFTER
-            ):
-                continue
-            _priv_hit = _m
-            break
+        # 2026-08-12: token-location + identifier-adjacency exemption moved
+        # to _priv_token_hits (shared with the grant-honoring check above) --
+        # this scan only ever wanted the first hit, same as before.
+        _priv_hits_block = self._priv_token_hits(cmd_lower)
+        _priv_hit = _priv_hits_block[0] if _priv_hits_block else None
         if _priv_hit:
             priv = _priv_hit.group(0)
             self._log(f"PRIV-BLOCKED: {command}")

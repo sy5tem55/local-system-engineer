@@ -256,6 +256,17 @@ def test_complex_privilege_block_never_files_an_approvable_request(
 
     class FakePerms:
         @staticmethod
+        def check_sudo(_atom):
+            # 2026-08-12: the grant-honoring path now looks up EVERY
+            # privilege-token atom on the line (Part 3 widening), so this
+            # fake -- representing "no matching grant exists" -- must
+            # answer that lookup too, not just file_request. Returning
+            # None here means the atom ("du -ah /mnt/nvme") is not
+            # granted, so honoring correctly falls through to the block
+            # path this test is actually about.
+            return None
+
+        @staticmethod
         def file_request(*args):
             calls.append(args)
             return 99
