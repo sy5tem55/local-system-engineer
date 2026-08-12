@@ -1,0 +1,47 @@
+[calibrate-qc-critic] loaded 16 labelled proposals from /tmp/traum-scratch/traum-state-copy.db
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+
+proposal_id                            human      rule                 critic     agrees?  reason
+prp_06c937864d6e4eec95f3542f67ae9eb3   REJECTED   -:PENDING            keep       NO       The interpretation correctly hedges about multiple possible causes (hung process
+prp_2a94912f70614b0c9c64999f3364e4bf   REJECTED   R1:SUPERSEDED        keep       NO       The interpretation correctly distinguishes an authentication failure from a netw
+prp_31b7db5c6c5849e58ce32318f2b45c7b   REJECTED   R1:SUPERSEDED        keep       NO       The proposal correctly interprets the CancelledError as a framework-level cancel
+prp_358ca782c4e049619c7615c4a8717492   REJECTED   R1:SUPERSEDED        keep       NO       The diagnosis correctly identifies the error as a session-layer cancellation and
+prp_4c17cf8ecb7741ea8402eb035810c078   REJECTED   R1:SUPERSEDED        keep       NO       The proposal correctly interprets the CancelledError as a session-level cancella
+prp_50f883fed87f4b3aad257475fd4cfd68   REJECTED   -:PENDING            keep       NO       The proposal correctly attributes the timeout to the tool runner's interaction w
+prp_52584a9ebb3b445990eefb99ea04fb01   REJECTED   -:PENDING            keep       NO       The proposal correctly interprets a timeout as a transient issue and provides a 
+prp_8a7560280d0f4280aaf4f7f47f7c5ed0   APPLIED    R1:SUPERSEDED        needs_work NO       Failure shape 3: The interpretation asserts the operation is stuck (hung/deadloc
+prp_9533c3c740dd4be58d38c6c53702de45   APPLIED    -:PENDING            needs_work NO       Failure shape 3: The interpretation asserts 'It is not a transient flake that mo
+prp_9ec21b7dc4244ae7b6e69d05b6cfdcba   APPLIED    R1:SUPERSEDED        needs_work NO       Failure shape 3: interpretation asserts a hung process/lock as the cause, but a 
+prp_b8c683001c33455a9d1a375f931d318c   APPLIED    R1:SUPERSEDED        needs_work NO       Failure shape 3: The interpretation asserts a hung process/lock as the likely ca
+prp_c1e66c9235a2423aa3e088d776328a40   REJECTED   R3:SYSTEM_REJECTED   keep       NO       The diagnosis correctly identifies the missing credential as the root cause base
+prp_c384e68723bc4e5488c69c477ca3419e   APPLIED    R2:SYSTEM_REJECTED   keep       YES      The proposal correctly focuses on the agent's handling of an external 403 error 
+prp_c6fbb0a811154e8083c8c67550d2064d   APPLIED    -:PENDING            keep       YES      The proposal correctly interprets the explicit SSH error message as an authentic
+prp_caecef6140474152ace4c3d31be1561b   REJECTED   R2:SYSTEM_REJECTED   keep       NO       The proposal correctly interprets the 404 error as an external documentation cha
+prp_eb3873ee5eea483aa85c81d0a66fc2f7   REJECTED   R1:SUPERSEDED        keep       NO       None of the four failure shapes apply: the proposal is about this system's handl
+
+[calibrate-qc-critic] critic agrees with human on 2/16
+[calibrate-qc-critic] verdict counts: {'keep': 12, 'needs_work': 4, 'reject': 0}
+
+--- rule mismatches (where the mechanical rule disagreed with the human) ---
+  prp_06c937864d6e4eec95f3542f67ae9eb3: rule=None:PENDING human=REJECTED critic=keep caught=NO — The interpretation correctly hedges about multiple possible causes (hung process, prompt, slow host)
+  prp_50f883fed87f4b3aad257475fd4cfd68: rule=None:PENDING human=REJECTED critic=keep caught=NO — The proposal correctly attributes the timeout to the tool runner's interaction with the process/file
+  prp_52584a9ebb3b445990eefb99ea04fb01: rule=None:PENDING human=REJECTED critic=keep caught=NO — The proposal correctly interprets a timeout as a transient issue and provides a clear, non-circular 
+  prp_8a7560280d0f4280aaf4f7f47f7c5ed0: rule=R1:SUPERSEDED human=APPLIED critic=needs_work caught=NO — Failure shape 3: The interpretation asserts the operation is stuck (hung/deadlock) rather than merel
+  prp_9ec21b7dc4244ae7b6e69d05b6cfdcba: rule=R1:SUPERSEDED human=APPLIED critic=needs_work caught=NO — Failure shape 3: interpretation asserts a hung process/lock as the cause, but a 30s SSH timeout coul
+  prp_b8c683001c33455a9d1a375f931d318c: rule=R1:SUPERSEDED human=APPLIED critic=needs_work caught=NO — Failure shape 3: The interpretation asserts a hung process/lock as the likely cause, but the evidenc
+  prp_c384e68723bc4e5488c69c477ca3419e: rule=R2:SYSTEM_REJECTED human=APPLIED critic=keep caught=YES — The proposal correctly focuses on the agent's handling of an external 403 error rather than the exte
