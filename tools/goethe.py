@@ -498,6 +498,60 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
             "pending). Do NOT retry until the user confirms approval."
         )
 
+    def _perm_note_at_match(self, command: str, hit_end: int) -> str:
+        """File a pending grant request for a privileged command found ANYWHERE
+        in the line, not only at its start.
+
+        Why this exists (2026-08-12): `_perm_note` above is only reached when
+        the command literally begins with the token and carries no shell
+        metacharacter (see the `_priv_rest` startswith check). Real commands
+        are compound -- `cd /x && <tok> systemctl restart y` -- so nothing was
+        ever filed and the Console's Pending Approvals panel sat permanently
+        empty while the approve path itself worked fine. A gate that blocks
+        correctly but offers no way to ask is what trains everyone into
+        workarounds.
+
+        SAFETY: only the shell-free ATOM is ever filed -- the text from the
+        matched token up to the first metacharacter -- and only after
+        goethe_perms' own validator accepts it. The compound line around it
+        never becomes a grant pattern, and nothing here approves anything.
+        """
+        gp = self._perms_mod()
+        if not gp:
+            return ""
+        rest = command[hit_end:].lstrip()
+        if rest.startswith("-n "):
+            rest = rest[3:].lstrip()
+        cut = len(rest)
+        for meta in (";", "|", "&", "`", "$(", "\n", ">", "<", ")"):
+            idx = rest.find(meta)
+            if idx != -1:
+                cut = min(cut, idx)
+        atom = rest[:cut].strip()
+        if not atom:
+            return ""
+        try:
+            err = gp.sudo_pattern_error(atom)
+        except Exception:  # noqa: BLE001 (validation must never crash the guard)
+            return ""
+        if err:
+            return (
+                " No grant request was filed: this could not be reduced to an "
+                f"exact, shell-free command ({err}). Re-issue the privileged "
+                "step on its own, as one plain command, to make it approvable."
+            )
+        rid = gp.file_request(
+            "sudo", atom, "agent requested privileged command (reduced from a compound line)"
+        )
+        if rid is None:
+            return ""
+        return (
+            f" Pending grant request #{rid} filed for the exact command "
+            f"'{atom}' - approve it in the Console's Permissions panel, or with: "
+            f"goethe-perm approve {rid} (review first: goethe-perm pending). "
+            "Do NOT retry until the user confirms approval."
+        )
+
     # Shell/session config files that must never be written by the agent
     _BLOCKED_WRITE_FILENAMES = {
         ".bashrc",
@@ -827,12 +881,17 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
                     f"BLOCKED: '{priv}' detected in command. "
                     "Use sudo_delegation_block instead." + _note
                 )
+            # 2026-08-12: a compound line still files a request for its
+            # shell-free atom, so the block is visible in Pending Approvals
+            # instead of being a dead end. The compound text itself is never
+            # filed and never becomes a grant pattern.
+            _note = self._perm_note_at_match(command, _priv_hit.end())
             return (
                 f"BLOCKED: '{priv}' detected in a chained or complex "
                 "command. Complex shell text cannot become a sudo grant. "
                 "Use sudo_delegation_block and split the privileged operation "
                 "into one exact command without pipes, redirects, chaining, "
-                "or shell expansion."
+                "or shell expansion." + _note
             )
 
         # ── Block writes to privileged system paths ───────────────────────────
