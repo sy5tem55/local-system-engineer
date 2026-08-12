@@ -166,7 +166,20 @@ def rule_r3_resolution_redundant(proposal: dict, *, embed_fn, threshold: float):
     over-fire if miscalibrated (resolution prose naturally echoes
     error_text vocabulary even when it adds real interpretation), so the
     caller must calibrate this threshold conservatively and prefer false
-    negatives (spec §4)."""
+    negatives (spec §4).
+
+    SPEC-rule-prefix-guards-2026-08 D-1: this rule judges `resolution`,
+    which is NOT part of the narrow `diagnosis` identity
+    (traum_state.py's `_NARROW_IDENTITY_ARG_KEYS = ("error_text",
+    "context")`). A SYSTEM_REJECTED verdict from this rule therefore binds
+    an identity computed from fields it never read — a later redraft that
+    changes only `resolution` (even to something genuinely non-redundant)
+    is fingerprint-identical to the rejected one, so repeat_prior()
+    supersedes it without R3 ever re-running on the new text. See
+    tests/test_diagnosis_rules.py T-11 (the resulting absorbing-state
+    behavior, end to end) and T-12 (the mismatch isolated to two calls:
+    identical fingerprint, different R3 verdict).
+    """
     if proposal.get("type") != "diagnosis":
         return None
     args = _args(proposal)

@@ -431,3 +431,159 @@ class TestDryRunWritesNothing:
         assert before == after, "dry-run script must never mutate the database"
         out = capsys.readouterr().out
         assert "wrote nothing" in out
+
+
+# ---------------------------------------------------------------------------
+# Test 9 -- the realistic re-fire path: apply_diagnosis_rules runs every run
+# ---------------------------------------------------------------------------
+# SPEC-rule-prefix-guards-2026-08 T-9: unlike test 3 (which deliberately
+# skips apply_diagnosis_rules on the redraft to isolate repeat_prior()'s
+# prefix-honoring in the abstract), this runs the rule every time -- proving
+# row churn is NOT closed (three runs still produce three rows) even though
+# the state never escapes to STAGED/PENDING.
+
+class TestRealisticRefirePath:
+
+    def test_9_three_reworded_reruns_stay_system_rejected_three_rows(self, tmp_path):
+        store = _store(tmp_path)
+        run = store.create_run("single-pass", ["error-cluster"], source="cli")
+        cfg = _cfg()
+        error_text = "403 Client Error: Forbidden for url: https://example.com/some/page"
+        context = "fetch_url tool call against a public website"
+        rows = [
+            _record_one(store, run["run_id"], cfg, _diagnosis(
+                error_text=error_text, context=context,
+                interpretation=f"reworded interpretation v{i}",
+                resolution=f"reworded resolution v{i}", why=f"reworded why v{i}",
+            ))
+            for i in range(1, 4)
+        ]
+        states = [r["state"] for r in rows]
+        assert states == ["SYSTEM_REJECTED", "SYSTEM_REJECTED", "SYSTEM_REJECTED"], states
+        assert all(s not in ("STAGED", "PENDING") for s in states), states
+        for r in rows:
+            assert r["reason"].startswith("rule:third_party_resource_error:"), r["reason"]
+        assert len(store.list_proposals(state="SYSTEM_REJECTED")) == 3
+
+
+# ---------------------------------------------------------------------------
+# Test 10 -- the negative control: an unhonored prefix is not honored
+# ---------------------------------------------------------------------------
+# SPEC-rule-prefix-guards-2026-08 T-10: same flow as test 3, but the prior's
+# reason is minted "rulex:..." -- one character off the honored
+# ("malformed:", "noop:", "invariant:", "rule:") set. This is the test that
+# makes test 3 mean something: it shows the PREFIX itself, not the
+# surrounding machinery, is what keeps a redrafted proposal out of the
+# inbox.
+
+class TestUnhonoredPrefixIsNotHonored:
+
+    def test_10_unhonored_prefix_lets_redraft_reach_pending(self, tmp_path):
+        store = _store(tmp_path)
+        run = store.create_run("single-pass", ["error-cluster"], source="cli")
+        proposal = _diagnosis(
+            error_text="403 Client Error: Forbidden for url: https://example.com/some/page",
+            context="fetch_url tool call against a public website",
+        )
+        # Mimic the R2 extension point directly -- do NOT call
+        # apply_diagnosis_rules, which would mint the real "rule:" prefix --
+        # with a reason one character off the honored set.
+        proposal["_initial_state"] = "SYSTEM_REJECTED"
+        proposal["_initial_reason"] = "rulex:third_party_resource_error:example.com"
+        first_attempt = store.start_attempt(run["run_id"], "error-cluster")
+        [first] = store.record_proposals(run["run_id"], first_attempt["attempt_id"], [proposal])
+        store.finish_attempt(first_attempt["attempt_id"], "SUCCEEDED")
+        first = store.get_proposal(first["proposal_id"])
+        assert first["state"] == "SYSTEM_REJECTED"
+        assert first["reason"] == "rulex:third_party_resource_error:example.com"
+
+        redraft = _diagnosis(
+            error_text=proposal["args"]["error_text"],
+            context=proposal["args"]["context"],
+            interpretation="reworded interpretation", why="reworded why",
+        )
+        second_attempt = store.start_attempt(run["run_id"], "error-cluster")
+        # Deliberately do NOT re-run apply_diagnosis_rules here -- same
+        # isolation test 3 uses, to isolate repeat_prior()'s prefix check
+        # from the rule logic itself.
+        [second] = store.record_proposals(run["run_id"], second_attempt["attempt_id"], [redraft])
+        store.finish_attempt(second_attempt["attempt_id"], "SUCCEEDED")
+        second = store.get_proposal(second["proposal_id"])
+        assert second["state"] == "PENDING", second
+
+
+# ---------------------------------------------------------------------------
+# Test 11 -- an R3 rejection is an absorbing state
+# ---------------------------------------------------------------------------
+# Hazard A: this characterizes behaviour that is arguably WRONG -- a fixed
+# diagnosis that never reaches a human once R3 has rejected an earlier,
+# genuinely-redundant version of it -- it does not endorse that behaviour.
+# What would justify changing it: excluding "rule:"-rejections from
+# repeat_prior()'s honored set, or adding `resolution` to the narrow
+# diagnosis fingerprint (_NARROW_IDENTITY_ARG_KEYS, traum_state.py) -- both
+# explicitly out of scope for SPEC-rule-prefix-guards-2026-08 (see its
+# anti-goals).
+
+class TestR3RejectionIsAbsorbing:
+
+    def test_11_r3_rejected_then_genuinely_improved_redraft_is_superseded(self, tmp_path):
+        store = _store(tmp_path)
+        run = store.create_run("single-pass", ["error-cluster"], source="cli")
+        cfg = _cfg()
+        error_text = "TypeError: 'NoneType' object is not subscriptable"
+        context = "dream-runner insights pass, patterns domain"
+        # Run 1: resolution byte-identical to error_text -- Hazard B: force
+        # determinism (cosine exactly 1.0) instead of tuning prose near the
+        # threshold.
+        first = _record_one(store, run["run_id"], cfg, _diagnosis(
+            error_text=error_text, context=context, resolution=error_text,
+        ))
+        assert first["state"] == "SYSTEM_REJECTED"
+        assert first["reason"] == "rule:resolution_redundant_with_error_text:1.0000"
+
+        # Run 2: same narrow identity (error_text/context), but a genuinely
+        # informative interpretation/resolution sharing none of error_text's
+        # vocabulary -- R3 stays silent on this one.
+        second = _record_one(store, run["run_id"], cfg, _diagnosis(
+            error_text=error_text, context=context,
+            interpretation="a background task held a reference past teardown",
+            resolution=(
+                "Cancel the background watcher before releasing the parent "
+                "context manager; see incident report INC-4471 for the full "
+                "traceback and the fix that landed in commit a1b2c3d"
+            ),
+            why="a genuinely new interpretation, not a restatement",
+        ))
+        assert second["state"] == "SUPERSEDED", second
+        assert second["state"] not in ("PENDING", "STAGED")
+        assert first["proposal_id"] in second["reason"]
+        assert "SYSTEM_REJECTED" in second["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Test 12 -- the field mismatch, isolated to two calls
+# ---------------------------------------------------------------------------
+# Hazard A: same characterization caveat as test 11 -- this documents that
+# the narrow diagnosis fingerprint and R3's judged field diverge; it does
+# not endorse that divergence. What would justify changing it: adding
+# `resolution` to _NARROW_IDENTITY_ARG_KEYS (traum_state.py) -- out of scope
+# here (SPEC-rule-prefix-guards-2026-08 anti-goals).
+
+class TestFingerprintIgnoresWhatR3Judges:
+
+    def test_12_same_fingerprint_different_r3_verdict(self):
+        p1 = _diagnosis(resolution="TypeError: 'NoneType' object is not subscriptable")
+        p2 = _diagnosis(resolution=(
+            "Cancel the background watcher before releasing the parent "
+            "context manager; see incident report INC-4471"
+        ))
+        assert ts.proposal_fingerprint(p1) == ts.proposal_fingerprint(p2)
+
+        verdict1 = dgr.rule_r3_resolution_redundant(
+            p1, embed_fn=_fake_embed, threshold=dgr.DIAGNOSIS_REDUNDANT_THRESHOLD_DEFAULT,
+        )
+        verdict2 = dgr.rule_r3_resolution_redundant(
+            p2, embed_fn=_fake_embed, threshold=dgr.DIAGNOSIS_REDUNDANT_THRESHOLD_DEFAULT,
+        )
+        assert verdict1 is not None
+        assert verdict2 is None

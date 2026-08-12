@@ -120,6 +120,16 @@ survives" framing since an APPLIED anchor already existed); `Permission
 denied` (`prp_c6fbb0a811`) and the `Connection timed out` variant
 (`prp_9533c3c740`) stay separate (✅, exactly as Hazard C required).
 
+**Correction (SPEC-rule-prefix-guards-2026-08 D-2, 2026-08-11):** spec §8's
+Hazard C pair is actually *Permission denied* vs **No route to host**, not
+*Permission denied* vs *Connection timed out* — the paragraph above cites the
+wrong prior as the evidence. The named pair's row exists
+(`prp_237da5f542`, `APPLIED`; R1 does use it as a prior) and its measured
+cosine against `prp_c6fbb0a811` is **0.6555** — comfortably below the R1=0.92
+threshold, so the target still holds. Only the evidence cited was
+substituted; the acceptance verdict itself (stays separate, not merged) is
+unaffected.
+
 **Gap against the "four or fewer" aggregate number:** 5 survivors, not 4 —
 see §6.
 
