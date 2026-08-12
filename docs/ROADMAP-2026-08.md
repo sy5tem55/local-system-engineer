@@ -49,7 +49,7 @@ one in this file.
 | # | Item | § | State |
 |---|---|---|---|
 | 1 | Gate toil: duplicate diagnoses + `sub_passes` on the blocked path | 3 | spec'd `81d9fb8`, ready for Sonnet |
-| 2 | The skill feedback loop has never fired | — | **re-measured 2026-08-12**: the query bug IS fixed (`95ca984`, term on `.keyword`). The loop is still dead for a different reason — **0 successes, 0 failures, 0 of 25 skills with any outcome, ever**. Nothing calls it. Fixing the caller, not the query, is the open work. |
+| 2 | The skill feedback loop has never fired | — | **fork resolved 2026-08-12** (`docs/reports/2026-08-12-skill-feedback-loop-fork.md`): the query bug IS fixed (`95ca984`) and independently verified against live ES. "Nothing calls it" was wrong — episode logs show 27 real `skill_outcome` calls, 2026-07-11 through 2026-08-09T21:22 (41min *after* `95ca984` landed), every one from 2026-07-14 on returning `not found` for ids that do exist, most likely a stale gateway process (AGENTS.md §7) that hadn't reloaded the fix. Open work: confirm a live call succeeds post-restart. Still 0 successes / 0 failures / 0 of 25 skills with any outcome as of this measurement. |
 | 3 | Repo-root agent brief (`AGENTS.md`) | 1 | absent; would have prevented the pin incident |
 | 4 | Profile-questions eval set | 1b | spec'd `8177714`; `eval/profile-questions-v1.jsonl` absent — gates the whole web-search block |
 | 5 | Hardware-aware profiles per node per workload | 1b | in flight — uncommitted `agent_profile` edit in `goethe_node.py` |
