@@ -1,0 +1,47 @@
+[calibrate-qc-critic] loaded 16 labelled proposals from /tmp/traum-scratch/traum-state-copy.db
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+[dream_runner] DREAM_LLM_URL healthy -> http://127.0.0.1:8080
+
+proposal_id                            human      rule                 critic     agrees?  reason
+prp_06c937864d6e4eec95f3542f67ae9eb3   REJECTED   -:PENDING            needs_work YES      The resolution recommends opening a separate SSH session to inspect the host, bu
+prp_2a94912f70614b0c9c64999f3364e4bf   REJECTED   R1:SUPERSEDED        needs_work YES      The resolution is underspecified for an automated system: it tells a human what 
+prp_31b7db5c6c5849e58ce32318f2b45c7b   REJECTED   R1:SUPERSEDED        needs_work YES      The evidence field contains only session identifiers and timestamps, not the act
+prp_358ca782c4e049619c7615c4a8717492   REJECTED   R1:SUPERSEDED        needs_work YES      The interpretation assumes the cancellation implies the tool call was never comp
+prp_4c17cf8ecb7741ea8402eb035810c078   REJECTED   R1:SUPERSEDED        needs_work YES      The resolution advises treating the call as non-delivered without partial effect
+prp_50f883fed87f4b3aad257475fd4cfd68   REJECTED   -:PENDING            needs_work YES      The interpretation conflates reading a static file with executing a blocking scr
+prp_52584a9ebb3b445990eefb99ea04fb01   REJECTED   -:PENDING            needs_work YES      The evidence consists only of session identifiers and timestamps, which do not v
+prp_8a7560280d0f4280aaf4f7f47f7c5ed0   APPLIED    R1:SUPERSEDED        needs_work NO       The interpretation assumes a stuck process but fails to rule out network connect
+prp_9533c3c740dd4be58d38c6c53702de45   APPLIED    -:PENDING            needs_work NO       The claim that this is 'not a transient flake that more retries will fix' is uns
+prp_9ec21b7dc4244ae7b6e69d05b6cfdcba   APPLIED    R1:SUPERSEDED        needs_work NO       The interpretation assumes a hung process on node3090 without ruling out network
+prp_b8c683001c33455a9d1a375f931d318c   APPLIED    R1:SUPERSEDED        needs_work NO       The interpretation speculatively links this timeout to a specific 'node3090' pat
+prp_c1e66c9235a2423aa3e088d776328a40   REJECTED   R3:SYSTEM_REJECTED   needs_work YES      The resolution is circular because it instructs the agent to perform the exact s
+prp_c384e68723bc4e5488c69c477ca3419e   APPLIED    R2:SYSTEM_REJECTED   needs_work NO       The resolution recommends 'browser-based tools' or 'different fetch configuratio
+prp_c6fbb0a811154e8083c8c67550d2064d   APPLIED    -:PENDING            needs_work NO       The resolution is underspecified: it tells the operator to verify keys or passwo
+prp_caecef6140474152ace4c3d31be1561b   REJECTED   R2:SYSTEM_REJECTED   needs_work YES      The interpretation assumes the URLs are permanently invalid without ruling out a
+prp_eb3873ee5eea483aa85c81d0a66fc2f7   REJECTED   R1:SUPERSEDED        needs_work YES      The resolution advises treating the call as 'non-delivered' and 'do not assume p
+
+[calibrate-qc-critic] critic agrees with human on 10/16
+[calibrate-qc-critic] verdict counts: {'keep': 0, 'needs_work': 16, 'reject': 0}
+
+--- rule mismatches (where the mechanical rule disagreed with the human) ---
+  prp_06c937864d6e4eec95f3542f67ae9eb3: rule=None:PENDING human=REJECTED critic=needs_work caught=YES — The resolution recommends opening a separate SSH session to inspect the host, but the error text ind
+  prp_50f883fed87f4b3aad257475fd4cfd68: rule=None:PENDING human=REJECTED critic=needs_work caught=YES — The interpretation conflates reading a static file with executing a blocking script; the error text 
+  prp_52584a9ebb3b445990eefb99ea04fb01: rule=None:PENDING human=REJECTED critic=needs_work caught=YES — The evidence consists only of session identifiers and timestamps, which do not verify the 'transient
+  prp_8a7560280d0f4280aaf4f7f47f7c5ed0: rule=R1:SUPERSEDED human=APPLIED critic=needs_work caught=NO — The interpretation assumes a stuck process but fails to rule out network connectivity issues or SSH 
+  prp_9ec21b7dc4244ae7b6e69d05b6cfdcba: rule=R1:SUPERSEDED human=APPLIED critic=needs_work caught=NO — The interpretation assumes a hung process on node3090 without ruling out network connectivity issues
+  prp_b8c683001c33455a9d1a375f931d318c: rule=R1:SUPERSEDED human=APPLIED critic=needs_work caught=NO — The interpretation speculatively links this timeout to a specific 'node3090' pattern and 'hung proce
+  prp_c384e68723bc4e5488c69c477ca3419e: rule=R2:SYSTEM_REJECTED human=APPLIED critic=needs_work caught=NO — The resolution recommends 'browser-based tools' or 'different fetch configurations' but does not spe
