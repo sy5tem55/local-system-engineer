@@ -49,7 +49,7 @@ one in this file.
 | # | Item | § | State |
 |---|---|---|---|
 | 1 | Gate toil: duplicate diagnoses + `sub_passes` on the blocked path | 3 | spec'd `81d9fb8`, ready for Sonnet |
-| 2 | `skill_outcome` cannot find its own documents | — | **feedback loop dead**; 4 verified runs unrecorded |
+| 2 | The skill feedback loop has never fired | — | **re-measured 2026-08-12**: the query bug IS fixed (`95ca984`, term on `.keyword`). The loop is still dead for a different reason — **0 successes, 0 failures, 0 of 25 skills with any outcome, ever**. Nothing calls it. Fixing the caller, not the query, is the open work. |
 | 3 | Repo-root agent brief (`AGENTS.md`) | 1 | absent; would have prevented the pin incident |
 | 4 | Profile-questions eval set | 1b | spec'd `8177714`; `eval/profile-questions-v1.jsonl` absent — gates the whole web-search block |
 | 5 | Hardware-aware profiles per node per workload | 1b | in flight — uncommitted `agent_profile` edit in `goethe_node.py` |
