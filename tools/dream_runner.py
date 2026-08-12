@@ -625,8 +625,17 @@ class DreamConfig:
     insights_max_sessions_in_prompt: int = 20
     # SPEC-auto-adjudication-2026-08: content rules for `diagnosis`
     # proposals, each individually switchable (Hazard A) and defaulted on.
+    # 2026-08-12: R2 DISABLED. Measured against the 12 operator
+    # adjudications of 2026-08-12 05:51-06:01, R2 scored 1/2 -- it would
+    # have destroyed prp_c384e68723 (raspberrypi.com 403), which the
+    # operator APPLIED. Not a threshold problem: R2 cannot tell "someone
+    # else's site is broken" from "our agent mishandles a third-party
+    # block", and the latter IS a diagnosis of this system. R1 (5/5) and
+    # R3 (1/1) stay on. Both construction paths are pinned False below --
+    # build_config() overwrites this dataclass default, so changing it
+    # alone is a no-op for any CLI-launched run.
     rule_r1_enabled: bool = True
-    rule_r2_enabled: bool = True
+    rule_r2_enabled: bool = False
     rule_r3_enabled: bool = True
     diagnosis_dup_threshold: float = diagnosis_rules.DIAGNOSIS_DUP_THRESHOLD_DEFAULT
     diagnosis_redundant_threshold: float = diagnosis_rules.DIAGNOSIS_REDUNDANT_THRESHOLD_DEFAULT
@@ -705,7 +714,7 @@ def build_config(args: argparse.Namespace) -> DreamConfig:
         dedup_threshold=args.dedup_threshold,
         error_cluster_threshold=args.error_cluster_threshold,
         rule_r1_enabled=not args.no_rule_r1,
-        rule_r2_enabled=not args.no_rule_r2,
+        rule_r2_enabled=False,
         rule_r3_enabled=not args.no_rule_r3,
         diagnosis_dup_threshold=args.diagnosis_dup_threshold,
         diagnosis_redundant_threshold=args.diagnosis_redundant_threshold,
