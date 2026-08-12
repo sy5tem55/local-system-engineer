@@ -553,3 +553,168 @@ def test_etc_sudoers_write_still_blocked_by_privileged_write_gate(tools):
         "sed -i s/a/b/ /etc/sudoers",
     ]:
         assert _blocked(tools, command), f"write to /etc/sudoers allowed: {command!r}"
+
+
+# ────────────── 2026-08-12 fix: grant-HONORING path widened ──────────────
+#
+# Part 3 of the 2026-08-12 TRAUM session. The grant-FILING path
+# (_perm_note_at_match, d4d59ba) has located a privilege token anywhere in
+# a compound line since that commit, so an operator could approve a grant
+# for a compound line's shell-free atom -- but the grant-HONORING check in
+# _validate_command_safety still required command.strip().startswith(
+# "sudo ") with no metacharacter anywhere in the rest of the line, so an
+# approved grant was still never honored for exactly the compound-line
+# shape the filing path was fixed to support: `cd /proj && sudo systemctl
+# restart x`. The block was correct, the filing was correct, and the
+# resulting approved grant was STILL a dead end -- the one gap the audit
+# log (Part 2B) and skill-feedback fork (Part 1) both incidentally pointed
+# at: an approval that changes nothing trains an operator to stop trusting
+# the approval flow.
+#
+# These tests exercise the real _validate_command_safety honoring path
+# with a fake grants backend (not the real goethe_perms.py -- its own
+# argv-equality contract is covered by test_goethe_perms.py and is
+# UNCHANGED by this fix; only tools/goethe.py was touched). The module-
+# scoped `tools` fixture above is grants-DISCONNECTED by design (see its
+# docstring), so these use a fresh, function-scoped instance instead.
+
+
+class _FakeGrantBackend:
+    """Minimal stand-in for goethe_perms honoring an exact allow-list of
+    shell-free atoms, mirroring check_sudo's real contract (exact argv
+    equality -- see goethe_perms.check_sudo / _sudo_argv) without touching
+    the on-disk grants DB. Records every atom it was asked about, so a test
+    can assert exactly what the gate extracted and offered up for lookup."""
+
+    def __init__(self, *granted_atoms: str) -> None:
+        self._granted = {
+            " ".join(a.split()): i + 1 for i, a in enumerate(granted_atoms)
+        }
+        self.calls: list[str] = []
+
+    def check_sudo(self, atom: str):
+        self.calls.append(atom)
+        return self._granted.get(" ".join(atom.split()))
+
+    def check_path(self, _kind: str, _path: str):
+        """No read/write path grants in this fake -- only sudo atoms.
+        _is_allowed_read() calls this when a cwd falls outside the
+        hardcoded allowlist; returning falsy keeps disallowed cwds
+        disallowed even with a truthy _perms_mod()."""
+        return None
+
+
+@pytest.fixture
+def fresh_tools():
+    """Function-scoped Tools() instance for grant-HONORING tests, which
+    monkeypatch `_perms_mod` per test with a fake backend -- these cannot
+    share the module-scoped `tools` fixture above (grants-disconnected by
+    design) or each other (each test needs its own grant set)."""
+    spec = importlib.util.spec_from_file_location("goethe_d5_honoring", _GOETHE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.Tools()
+
+
+def test_bare_granted_command_still_honored(fresh_tools, monkeypatch):
+    """Regression pin: the pre-fix behaviour (bare `sudo <cmd>` honored by
+    an exact grant) must survive this widening unchanged."""
+    backend = _FakeGrantBackend("systemctl restart caddy")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    assert not _blocked(fresh_tools, "sudo systemctl restart caddy")
+
+
+def test_compound_line_honors_a_granted_atom_anywhere_in_the_line(fresh_tools, monkeypatch):
+    """THE FIX. This exact shape (`cd /x && sudo <granted cmd>`) is the one
+    named in the 2026-08-12 report as still broken after d4d59ba: the grant
+    could be filed and approved, but the line that requested it stayed
+    blocked forever. Must now be honored."""
+    backend = _FakeGrantBackend("systemctl restart caddy")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    assert not _blocked(
+        fresh_tools, "cd /srv/app && sudo systemctl restart caddy"
+    ), "approved grant still not honored on a compound line"
+
+
+def test_ungranted_sibling_sudo_on_same_line_still_blocks_whole_line(fresh_tools, monkeypatch):
+    """THE ADVERSARIAL CASE. A grant for one atom must never vouch for a
+    second, UNGRANTED privileged command chained on the same line -- that
+    would let one narrow, human-approved grant smuggle through an arbitrary
+    second sudo call. Both atoms must be individually granted or the whole
+    line stays blocked."""
+    backend = _FakeGrantBackend("systemctl restart caddy")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    command = "sudo systemctl restart caddy && sudo systemctl restart nginx"
+    assert _blocked(fresh_tools, command), (
+        "one granted sudo atom incorrectly vouched for an ungranted sibling "
+        "sudo command on the same line"
+    )
+    # The ungranted atom was actually checked (fail-closed by evaluation,
+    # not by short-circuiting past it silently).
+    assert "systemctl restart nginx" in backend.calls
+
+
+def test_grant_for_different_atom_does_not_leak_to_compound_line(fresh_tools, monkeypatch):
+    """A grant is not a wildcard for "any sudo call in this general shape".
+    Granting `systemctl restart caddy` must not honor a compound line
+    whose only sudo atom is a different, ungranted service."""
+    backend = _FakeGrantBackend("systemctl restart caddy")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    assert _blocked(fresh_tools, "cd /srv && sudo systemctl restart nginx")
+
+
+def test_multiple_granted_sudo_atoms_on_one_line_all_honored(fresh_tools, monkeypatch):
+    """The mirror image of the sibling test: when EVERY privileged atom on
+    the line has its own grant, the line is honored, not just the first."""
+    backend = _FakeGrantBackend("systemctl restart caddy", "systemctl restart nginx")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    assert not _blocked(
+        fresh_tools, "sudo systemctl restart caddy && sudo systemctl restart nginx"
+    )
+
+
+def test_grant_honoring_atom_extraction_stops_at_metacharacter(fresh_tools, monkeypatch):
+    """Guard preserved: the atom offered to check_sudo is the shell-free
+    text up to the first metacharacter, never the tail of the line. A
+    trailing, non-privileged sibling command (no sudo/doas/su token of its
+    own) does not need its own grant -- only privilege-token occurrences
+    do -- but the atom checked for the granted one must be exactly the
+    granted text, nothing appended from across the ';'."""
+    backend = _FakeGrantBackend("systemctl restart caddy")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    command = "cd /srv/app && sudo systemctl restart caddy; echo done"
+    assert not _blocked(fresh_tools, command)
+    assert backend.calls == ["systemctl restart caddy"], (
+        f"atom extraction leaked past the metacharacter: {backend.calls!r}"
+    )
+
+
+def test_grant_honoring_still_requires_allowed_cwd(fresh_tools, monkeypatch):
+    """Guard preserved: an approved grant does not bypass the working_dir
+    allowlist. Same invariant as the pre-fix bare-sudo path, re-asserted
+    for the widened compound-line path."""
+    backend = _FakeGrantBackend("systemctl restart caddy")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    assert _blocked(
+        fresh_tools, "sudo systemctl restart caddy", cwd="/root"
+    ), "grant honored despite a disallowed working_dir"
+
+
+def test_grant_honoring_compound_line_fails_closed_without_backend(fresh_tools, monkeypatch):
+    """Compound-line variant of test_grant_lookup_failure_denies_rather_than_allows:
+    with no permissions backend available at all, the widened path must
+    still refuse rather than default-allow."""
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: None)
+    assert _blocked(fresh_tools, "cd /srv/app && sudo systemctl restart caddy")
+
+
+def test_grant_honoring_does_not_relax_argv_equality(fresh_tools, monkeypatch):
+    """Guard preserved: check_sudo's exact-argv-equality contract (extra or
+    missing arguments do not match) is untouched by this fix -- goethe.py
+    was the only file changed. A grant for the bare command must not honor
+    a call carrying an extra argument, compound or not."""
+    backend = _FakeGrantBackend("systemctl restart caddy")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    assert _blocked(
+        fresh_tools, "cd /srv/app && sudo systemctl restart caddy --now"
+    ), "grant for a narrower argv incorrectly honored a call with an extra argument"
