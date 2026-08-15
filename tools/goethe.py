@@ -878,7 +878,14 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         # privileged command gets.
         _gp = self._perms_mod()
         if _gp:
-            _priv_hits_honor = self._priv_token_hits(cmd_lower)
+            # 2026-08-12 atom-drift fix: locate atom tokens on a LENGTH-
+            # ALIGNED view (command.lower() is length-preserving) so the
+            # offsets used to slice `command` for atom extraction cannot
+            # drift when cmd_lower was whitespace-collapsed/stripped.
+            # Seeing a token inside a heredoc body here only ADDS a grant
+            # requirement (fail-closed); the block DECISION below stays on
+            # cmd_lower (heredoc-stripped), unchanged.
+            _priv_hits_honor = self._priv_token_hits(command.lower())
             if _priv_hits_honor:
                 _grant_ids = []
                 for _hit in _priv_hits_honor:
@@ -956,7 +963,13 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
             # shell-free atom, so the block is visible in Pending Approvals
             # instead of being a dead end. The compound text itself is never
             # filed and never becomes a grant pattern.
-            _note = self._perm_note_at_match(command, _priv_hit.end())
+            # 2026-08-12 atom-drift fix: file for the atom at the LENGTH-
+            # ALIGNED offset (command.lower()), not the possibly-drifted
+            # cmd_lower offset, so the atom an operator sees and approves
+            # is exactly the one the honoring check will later look up.
+            _atom_hits = self._priv_token_hits(command.lower())
+            _atom_end = _atom_hits[0].end() if _atom_hits else _priv_hit.end()
+            _note = self._perm_note_at_match(command, _atom_end)
             return (
                 f"BLOCKED: '{priv}' detected in a chained or complex "
                 "command. Complex shell text cannot become a sudo grant. "

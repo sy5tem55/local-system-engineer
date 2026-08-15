@@ -718,3 +718,49 @@ def test_grant_honoring_does_not_relax_argv_equality(fresh_tools, monkeypatch):
     assert _blocked(
         fresh_tools, "cd /srv/app && sudo systemctl restart caddy --now"
     ), "grant for a narrower argv incorrectly honored a call with an extra argument"
+
+
+# ---------------------------------------------------------------------------
+# Atom-offset drift (2026-08-12 review finding). Token match offsets were
+# computed on cmd_lower (whitespace-collapsed + heredoc-stripped + .strip()ed)
+# but the atom was sliced from the ORIGINAL command, so any length change
+# before the token -- a tab, a doubled space, leading whitespace -- shifted
+# the slice and produced a garbage atom, silently refusing to honor an
+# approved grant. It always failed CLOSED (a garbage atom never matches a
+# grant), so it was a correctness defect, not a bypass -- these pin the fix
+# (offsets now taken on the length-preserving command.lower()) AND re-assert
+# the fail-closed adversarial property is unaffected by it.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("command", [
+    "cd /srv/app &&  sudo systemctl restart caddy",   # doubled space before token
+    "  sudo systemctl restart caddy",                 # leading whitespace
+    "cd /srv/app &&\tsudo systemctl restart caddy",   # tab before token
+    "cd /srv/app  &&  sudo  systemctl restart caddy",  # collapsed runs both sides
+], ids=["doubled-space", "leading-ws", "tab", "multi-run"])
+def test_grant_honored_despite_whitespace_before_token(fresh_tools, monkeypatch, command):
+    """The atom a human approved must be honored regardless of insignificant
+    whitespace before the sudo token. Pre-fix, the offset drift extracted a
+    garbage atom (e.g. 'o systemctl restart caddy') and left the granted line
+    permanently blocked."""
+    backend = _FakeGrantBackend("systemctl restart caddy")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    assert not _blocked(fresh_tools, command), (
+        "atom-offset drift left an approved grant unhonored"
+    )
+    assert backend.calls == ["systemctl restart caddy"], (
+        f"wrong atom extracted under whitespace drift: {backend.calls!r}"
+    )
+
+
+def test_drift_fix_does_not_weaken_ungranted_sibling_block(fresh_tools, monkeypatch):
+    """The length-aligned offsets must not relax the adversarial guarantee:
+    a doubled space before the FIRST (granted) token must not let a second,
+    ungranted sudo atom through."""
+    backend = _FakeGrantBackend("systemctl restart caddy")
+    monkeypatch.setattr(fresh_tools, "_perms_mod", lambda: backend)
+    command = "cd /x &&  sudo systemctl restart caddy && sudo systemctl restart nginx"
+    assert _blocked(fresh_tools, command)
+    assert "systemctl restart nginx" in backend.calls, (
+        "ungranted sibling was not evaluated -- fail-closed-by-evaluation lost"
+    )
