@@ -102,8 +102,23 @@ class NodeLifecycleMixin:
             "agent_port": 8081,
             "agent_type": "lmstudio",
             "os": "windows",
-            "ssh_user": "sy5",
-            "_stale": "unmigrated from LM Studio; verify before use (2026-07-29)",
+            "ssh_user": "lse-admin",
+            "ssh_key": "~/.ssh/id_ed25519_node5090",
+            # 2026-08-15: ssh_user/key corrected and VERIFIED (lse-admin +
+            # id_ed25519_node5090 authenticates -> hostname=1BL15; KB
+            # 317298c5dbba1e57). Was ssh_user=sy5 (stale, LM Studio era).
+            "_stale": (
+                "2026-08-15: SSH access fixed & verified, but node_facts."
+                "collect_hardware('node5090') STILL cannot probe it -- (a) the "
+                "remote-probe code passes no -i for this non-default key, and "
+                "(b) its remote_cmd is Linux/';'-separated while node5090 is "
+                "Windows/cmd.exe (no lscpu/free/uname; ';' is not a separator). "
+                "Probe hardware via direct: ssh -i ~/.ssh/id_ed25519_node5090 "
+                "lse-admin@node5090.home.arpa nvidia-smi -- until node_facts "
+                "gains custom-key + Windows support (follow-up). Node powered "
+                "but NOT yet operational for inference (agent_type=lmstudio "
+                "decommissioned)."
+            ),
         },
     }
 
