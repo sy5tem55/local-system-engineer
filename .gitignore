@@ -83,6 +83,7 @@ eval/*
 !eval/eval-report-traum-1.md
 !eval/v35_harness.py
 !eval/retrieval-gold-v1.jsonl
+!eval/profile-questions-v1.jsonl
 !eval/test-suite-v3.5.md
 !eval/traum-eval-spec-v2.schema.json
 !eval/traum-isolation-attestation-v1.schema.json
