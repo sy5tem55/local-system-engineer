@@ -48,11 +48,11 @@ one in this file.
 
 | # | Item | § | State |
 |---|---|---|---|
-| 1 | Gate toil: duplicate diagnoses + `sub_passes` on the blocked path | 3 | spec'd `81d9fb8`, ready for Sonnet |
+| 1 | Gate toil: duplicate diagnoses + `sub_passes` on the blocked path | 3 | **DONE** — merged `92e31a4` (narrow diagnosis identity + sub_passes on the blocked path). Row was stale until 2026-08-15. |
 | 2 | The skill feedback loop has never fired | — | **CLOSED 2026-08-15 — proven end-to-end.** Root cause was a stale gateway process holding pre-`95ca984` code (fork report, 2026-08-12). After the operator restarted goethe (PID 1297476, started 14:02:05) a controlled live `skill_outcome` call — the exact op that returned `not found` before — succeeded and PERSISTED: ES `lse-skills-1024` doc showed `episode_successes 0→1`, `quality 0.4→0.5`, `evidence_log` written, `updated_at` advanced (independently re-read, not trusting the tool return). Self-test skill deleted afterwards; index back to 26, so the audit still reads 0 *real* outcomes — the mechanism works, real population now depends on sessions actually using skills. `scripts/traum-loop-audit.py` is the standing check. |
-| 3 | Repo-root agent brief (`AGENTS.md`) | 1 | absent; would have prevented the pin incident |
-| 4 | Profile-questions eval set | 1b | spec'd `8177714`; `eval/profile-questions-v1.jsonl` absent — gates the whole web-search block |
-| 5 | Hardware-aware profiles per node per workload | 1b | in flight — uncommitted `agent_profile` edit in `goethe_node.py` |
+| 3 | Repo-root agent brief (`AGENTS.md`) | 1 | **DONE** — `AGENTS.md` present (164 lines), landed `5f86ef7`. Row was stale until 2026-08-15. |
+| 4 | Profile-questions eval set | 1b | **Authoring DONE 2026-08-15** — `eval/profile-questions-v1.jsonl` committed `78c44d8` (10 rows, A/B/C split, invariants asserted, class-C probe confirmed live). Report states the milestone 'good enough' line. Remaining: LSE runs the class-A harness + class-B by-hand baseline. |
+| 5 | Hardware-aware profiles per node per workload | 1b | profiles committed (`91b9f72`, `2aa76e9`: node3090 Q5_K_M / 262144 ctx / q8_0 KV + tensor split); `goethe_node.py` clean. Remaining: confirm the matcher covers 4090/5090 workloads, not just node3090. |
 | 6 | Human Gate legibility — the edit action | 1 | half done (`22d3528` added apply-preview, which caught #1) |
 | 7 | `/etc` change automation | 2 | not started; motivated again by the mask-ordering error below |
 | 8 | Credential rotation skill | 1 | not started; `~/.git-credentials` is a third instance |
