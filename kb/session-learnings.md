@@ -1387,3 +1387,60 @@ valid "before" quality baseline, only "it errored."
   `git rev-list --count "origin/$(git rev-parse --abbrev-ref HEAD)..HEAD"`
 - `git push` printing "Everything up-to-date" is not evidence that the intended
   commits were transferred.
+
+## Session 2026-08-15 — stale caches, skill-loop gateway, safety-gate gotchas
+
+### What worked
+- Verifying a "dead" mechanism is actually live-broken before diagnosing: check the
+  running gateway's start time against the fix's commit time —
+  `ps -o pid=,lstart= -p $(pgrep -f goethe_mcp | head -1)` vs `git log -1 --format=%ci <fix>`.
+- Proving skill_outcome persistence end-to-end: skill_record a throwaway skill ->
+  read stats.episode_successes from ES -> skill_outcome(success=True) -> re-read ES
+  independently (not the tool's return) -> delete the test skill. Index count restored.
+- Exclusive pytest count: run `pgrep -af '[p]ytest'` as its OWN call (expect exit 1),
+  THEN launch. Baseline this session: 878 -> 925.
+
+### What failed and why
+- **Attempted:** trusted the TRAUM dream-digest banner ("pending-gate=10") and the
+  ROADMAP "Open" rows as current state.
+  **Failed because:** both are stale caches. The digest banner was dated 2026-08-13;
+  the live gate was empty (62 applied, 0 pending). Four roadmap "open" rows (1,3,4,5)
+  described work already done/committed. Cost repeated re-verification across threads.
+  **Fix:** treat digest banners and roadmap rows as POINTERS -- verify live before acting
+  (Console / `git log` / a probe). This is the session's #1 recurring failure.
+- **Attempted:** diagnosed skill_outcome returning "not found" as a query/code bug.
+  **Failed because:** the `.keyword` fix (95ca984) was already correct in source; the
+  RUNNING gateway held pre-fix code. It only worked after the operator restarted goethe.
+  **Fix:** after any goethe*.py fix, the change is NOT live until a gateway restart
+  (AGENTS.md section 7). Confirm the running PID postdates the commit before diagnosing further.
+- **Attempted:** taught (in docs) that a branch named `codex/fix-sudo-grants-live` trips
+  the privilege-token gate, so avoid typing it.
+  **Failed because:** false since 43f9052 -- the token regex exempts a match adjacent to
+  `-_./` (pinned by tests/test_safety_gates_adversarial.py:380). The doc claim was stale
+  11 days and was nearly re-committed.
+  **Fix:** type the branch name normally. Only a git commit whose MESSAGE quotes a
+  privileged command is refused -- use `git commit -F <file>` for that.
+- **Attempted:** grant honoring/filing sliced the shell-free atom out of the original
+  `command` using a token offset computed on `cmd_lower`.
+  **Failed because:** cmd_lower is whitespace-collapsed + heredoc-stripped + .strip()ed,
+  so a tab / doubled space / heredoc before the token drifts the offset and yields a
+  garbage atom (e.g. "o systemctl restart caddy"). Fails CLOSED (never honors), but
+  silently defeats an approved grant.
+  **Fix:** locate atom tokens on `command.lower()` (length-preserving) so offsets map to
+  `command`. Committed 715f074. Detecting tokens there is a superset -> still fail-closed.
+- **Attempted:** `git add eval/profile-questions-v1.jsonl`.
+  **Failed because:** `.gitignore` ignores `eval/*` as a class, re-including curated
+  files via `!eval/...` negations. A new gold set is invisible to git until allowlisted.
+  **Fix:** add `!eval/<file>` next to the existing `!eval/retrieval-gold-v1.jsonl`.
+
+### Key facts
+- `pgrep -af pytest` self-matches its own `/bin/sh -c` wrapper -- use `pgrep -af '[p]ytest'`,
+  as a standalone call, never chained with the pytest launch.
+- Privilege-token gate exempts matches adjacent to `-_./` (identifier context); a
+  `/`-prefixed token (`/usr/bin/sudo`) is NOT exempt. See test_safety_gates_adversarial.py.
+- goethe*.py edits go live only on gateway restart; goethe.py is mirror-watched
+  (`scripts/check_goethe_mirror_sync.sh`) -- the Windows-clone mirror can be AHEAD on some
+  files (e.g. goethe_planner.py); never blind-`cp` live->mirror.
+- Class C (probe, never recall): node4090 VRAM = 24564 MiB (live); node3090 = 40 GiB
+  (24 GiB 3090 + 16 GiB 5060 Ti), not 24.
+- `eval/` is gitignored as a class; curated files are re-added via `!eval/...` in .gitignore.
