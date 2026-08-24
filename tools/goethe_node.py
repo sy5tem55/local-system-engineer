@@ -60,8 +60,8 @@ class NodeLifecycleMixin:
             "os": "linux",
             "ssh_user": "lse-admin",
             "agent_profile": {
-                "model": "/home/lse-admin/Qwen3.6-27B-Q5_K_M.gguf",
-                "ctx_size": 262144,
+                "model": "/opt/models/unsloth/Qwen3.8-27B/Qwen3.8-27B-UD-Q6_K_XL.gguf",
+                "ctx_size": 196608,
                 "gpu_layers": 99,
                 # node3090 is DUAL-GPU: RTX 3090 (24GiB) + RTX 5060 Ti (16GiB).
                 # --tensor-split 3,1 is TENSOR parallelism, not pipeline: every
@@ -453,6 +453,31 @@ class NodeLifecycleMixin:
         )
         return "\n".join(lines)
 
+    def _agent_port_busy(self, node: str):
+        """(busy, error). True when the node's agent_port is bound locally.
+        `ss`-based (Linux nodes); on probe failure returns (False, err) and
+        callers decide (start_node_agent falls back to the process gate)."""
+        import subprocess as _sp  # noqa: PLC0415
+
+        reg = self._NODE_REGISTRY.get(node)
+        if not reg:
+            return False, f"Unknown node '{node}'"
+        port = reg["agent_port"]
+        try:
+            r = _sp.run(
+                ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+                 "-o", "BatchMode=yes", f"{reg['ssh_user']}@{reg['hostname']}",
+                 "ss -tln | awk '{print $4}' | grep -cE '[:.]%d$' || true" % port],
+                capture_output=True, text=True, timeout=20,
+            )
+        except _sp.SubprocessError as exc:
+            return False, f"SSH error: {exc}"
+        out = r.stdout.strip().splitlines()
+        n = out[-1].strip() if out else ""
+        if r.returncode != 0 or not n.isdigit() or r.stderr.strip():
+            return False, f"port probe failed (rc={r.returncode}): {(r.stderr.strip() or n)[:120]}"
+        return int(n) > 0, ""
+
     def start_node_agent(self, node: str, force: bool = False) -> str:
         """
         Start the llama-cpp inference server on a GPU node using its CANONICAL
@@ -501,15 +526,26 @@ class NodeLifecycleMixin:
 
         # Pre-flight: never relaunch over a running server. See the docstring
         # for why the old unconditional launch reported false success.
+        # 2026-08-23 (node3090 power-up): the gate is now PORT-BOUND, not
+        # process-name. lse-emb/lse-rerank sidecars run the SAME binary
+        # (bge-m3 / bge-reranker llama-server on 127.0.0.1:809x), so the old
+        # pgrep gate refused to launch the agent right after boot and the
+        # drift report pointed at the sidecar. Refuse only when the node's
+        # agent_port is actually bound locally; if the port probe fails
+        # (e.g. no `ss`), fall back to the old conservative gate.
         _live, _err = self._live_node_profile(node)
         if _live is not None and not force:
-            return (
-                f"{node} already has a llama-server running — NOT relaunching.\n\n"
-                + self.check_node_agent_drift(node)
-                + "\n\nIf you intend to restart it into the canonical profile, "
-                  "call stop_node_agent() first, or start_node_agent(node, "
-                  "force=True). Review the drift report above before doing so."
-            )
+            _busy, _perr = self._agent_port_busy(node)
+            if not _busy and _perr:
+                _busy = True  # probe failed -> keep old conservative gate
+            if _busy:
+                return (
+                    f"{node} already has a llama-server running — NOT relaunching.\n\n"
+                    + self.check_node_agent_drift(node)
+                    + "\n\nIf you intend to restart it into the canonical profile, "
+                      "call stop_node_agent() first, or start_node_agent(node, "
+                      "force=True). Review the drift report above before doing so."
+                )
 
         hostname = reg["hostname"]
         user = reg["ssh_user"]
@@ -545,6 +581,20 @@ class NodeLifecycleMixin:
             parts.append("--jinja")
         if profile.get("metrics"):
             parts.append("--metrics")
+
+        # Generic pass (2026-08-23): emit EVERY remaining profile key that has
+        # a _PROFILE_FLAGS mapping, so a profile can never silently lose a
+        # flag. The fixed list above pre-dated tensor_split/batch_size/
+        # ubatch_size, which were in node3090's registry but dropped at launch
+        # — tensor_split 3,1 is load-bearing on its dual-GPU setup.
+        _handled = {"model", "ctx_size", "gpu_layers", "flash_attn", "cache_type_k",
+                    "cache_type_v", "parallel", "threads", "threads_batch",
+                    "reasoning_format", "reasoning_budget", "n_predict"}
+        for _key, _flag in self._PROFILE_FLAGS.items():
+            if _key in _handled or _key not in profile:
+                continue
+            _val = profile[_key]
+            parts += [_flag, "on" if _val is True else "off" if _val is False else str(_val)]
 
         cmd_str = " ".join(parts)
         # Background via nohup; stdin from /dev/null so SSH exits cleanly

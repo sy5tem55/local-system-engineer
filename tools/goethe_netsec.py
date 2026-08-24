@@ -213,8 +213,8 @@ class NetSecMixin:
           Script files do NOT self-match pkill -f patterns (the remote cmdline is
           'bash /tmp/lse_script_<hash>.sh'), so kill-by-pattern is SAFE here —
           this is the correct home for process management, not ssh_run.
-          BUT: pkill exits 1 when NOTHING matched. Under set -e / bare exit-code
-          checks that reads as failure. Append '|| true' to every pkill/kill
+          BUT: pkill exits 1 when NOTHING matched. If the kill is the script's
+          LAST line, that exit 1 becomes the script exit code. Append '|| true' to every pkill/kill
           line whose target may already be dead:
           GOOD: pkill -9 -f 'llama[-]server' 2>/dev/null || true
           BAD:  pkill -9 -f 'llama-server'   ← exit 1 when already dead is a
@@ -264,7 +264,12 @@ tail -5 /tmp/goethe-node3090.log
             return line
 
         fixed_script = "\n".join(_fix_nohup(l) for l in script.splitlines())
-        full_script = f"#!/usr/bin/env {interpreter}\nset -euo pipefail\n{fixed_script}\n"
+        # 2026-08-23 (node3090 power-up post-mortem): dropped -e and -u.
+        # With set -e, one failing line (e.g. curl exit 7 on a not-yet-up
+        # service) silently aborted the REST of the script — output looked
+        # like a successful partial run. Keep pipefail so the final exit
+        # code still carries real pipeline failures.
+        full_script = f"#!/usr/bin/env {interpreter}\nset -o pipefail\n{fixed_script}\n"
 
         script_hash = _hl.md5(fixed_script.encode()).hexdigest()[:8]
         remote_path = f"/tmp/lse_script_{script_hash}.sh"
