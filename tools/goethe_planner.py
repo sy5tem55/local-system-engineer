@@ -69,6 +69,7 @@ import json
 import os
 import subprocess
 import urllib.error
+import threading
 import urllib.request
 from datetime import datetime
 from typing import Optional
@@ -187,8 +188,8 @@ class PlannerMixin:
                 "max_tokens": 8192,
                 "temperature": 0.3,
                 "response_format": {"type": "json_object"},
-                "thinking_budget_tokens": 0,
             }
+            payload_obj.update(self._planner_no_think_payload())
             fm = self.valves.PLANNER_FORCE_MODEL
             if fm:
                 payload_obj["model"] = fm
@@ -203,6 +204,43 @@ class PlannerMixin:
         else:
             self._log(f"NODE-PLAN: PLANNER_FORCE_URL down ({force_url}) — cascade")
         return None
+
+    def _planner_no_think_payload(self) -> dict:
+        """Per-request reasoning kill-switch for llama.cpp planner calls.
+
+        2026-08-24 (measured on node3090, llama.cpp build b10106): the field
+        this replaces — "thinking_budget_tokens": 0 — is NOT part of the
+        llama.cpp API. Unknown body keys are silently dropped, so every
+        planner call since v0.3.3 has run with reasoning FULLY ENABLED
+        despite the kill-switch appearing to be set. "reasoning_effort":
+        "none" is ignored the same way. Only chat_template_kwargs reaches the
+        Jinja chat template and actually suppresses the <think> block:
+            thinking_budget_tokens=0  -> 37 completion tokens, 112 reasoning chars
+            reasoning_effort="none"   -> 37 completion tokens, 112 reasoning chars
+            enable_thinking=False     ->  6 completion tokens,   0 reasoning chars
+
+        Why this was fatal, not merely wasteful: on a reasoning model the
+        <think> trace is billed against max_tokens, and llama.cpp routes it
+        to message.reasoning_content — NOT message.content, which is all
+        _post_chat_completion returns. A hard planner task therefore spent
+        the entire 8192-token budget thinking, came back
+        finish_reason="length" with content="", and surfaced downstream as
+        "JSON parse failed" / "PLANNER UNAVAILABLE". Raising the ceiling only
+        buys a longer, more expensive way to fail.
+
+        Measured with this fix (real contract, 24k-char context, 8 steps):
+        4822/8192 completion tokens, 211.5s, finish_reason="stop",
+        reasoning_chars=0, envelope parses clean.
+
+        SCOPE — this is deliberately a PER-REQUEST body parameter, not a
+        server flag. node3090's llama-server is shared (llama-ui, chat_bridge,
+        other consumers); nothing here changes server state or affects any
+        other client's reasoning behaviour. It is applied ONLY to the two
+        llama.cpp planner paths, never to _openai_style_call: the rest and
+        chatgpt backends talk to remote OpenAI-compatible APIs that reject
+        unrecognised body keys outright rather than ignoring them.
+        """
+        return {"chat_template_kwargs": {"enable_thinking": False}}
 
     def _post_chat_completion(
         self, base_url: str, payload: bytes, timeout: int
@@ -227,19 +265,55 @@ class PlannerMixin:
                 # envelope parser then reported it as "JSON parse failed",
                 # pointing at model formatting when the real cause was the
                 # token budget. Surface it explicitly instead.
+                msg = choice.get("message") or {}
+                content = msg.get("content") or ""
+                reasoning = msg.get("reasoning_content") or ""
                 if choice.get("finish_reason") == "length":
                     used = data.get("usage", {}).get("completion_tokens", "?")
                     self._log(
                         "NODE-PLAN: reply TRUNCATED at max_tokens "
-                        f"(completion_tokens={used}) — the JSON will not parse. "
-                        "This is a budget problem, not a model formatting problem."
+                        f"(completion_tokens={used}, reasoning_chars={len(reasoning)}) "
+                        "— the JSON will not parse. This is a budget problem, not a "
+                        "model formatting problem."
                     )
-                return choice["message"]["content"]
+                    # v0.4.6: was `return content`. A truncated reply is a
+                    # FAILURE and must be reported as one: returning the
+                    # partial string let it travel on as if it were a plan,
+                    # so the caller's `result.startswith("ERROR:")` guard saw
+                    # success, skipped the cascade fallback, and the real
+                    # cause resurfaced downstream as "JSON parse failed".
+                    return (
+                        f"ERROR: reply truncated at max_tokens "
+                        f"(completion_tokens={used}, reasoning_chars={len(reasoning)})"
+                    )
+                if not content.strip():
+                    # v0.4.6: empty content with a populated reasoning_content
+                    # is the reasoning-runaway signature — the model spent the
+                    # budget in <think> and never emitted the envelope.
+                    self._log(
+                        "NODE-PLAN: empty content "
+                        f"(reasoning_chars={len(reasoning)}, "
+                        f"finish_reason={choice.get('finish_reason')})"
+                    )
+                    return (
+                        "ERROR: model returned empty content "
+                        f"(reasoning_chars={len(reasoning)})"
+                    )
+                return content
         except _uerr.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:200]
             return f"ERROR: HTTP {exc.code} — {body}"
-        except (_uerr.URLError, json.JSONDecodeError, KeyError) as exc:
-            return f"ERROR: {exc}"
+        except (
+            _uerr.URLError, json.JSONDecodeError, KeyError, TimeoutError,
+        ) as exc:
+            # v0.4.6: TimeoutError (== socket.timeout) was MISSING here. It is
+            # a sibling of URLError under OSError, NOT a subclass, so a read
+            # timeout escaped this handler entirely instead of returning the
+            # "ERROR: ..." string this function's contract promises. That is
+            # the literal `worker crashed: timed out` seen on 2026-08-24 - and
+            # because no ERROR string was ever returned, the documented
+            # cascade fallback could not fire either.
+            return f"ERROR: {type(exc).__name__}: {exc}"
 
     def _call_node_planner(
         self, task: str, context: str = "", no_think: bool = False
@@ -277,13 +351,8 @@ class PlannerMixin:
                 "max_tokens": 8192,
                 "temperature": 0.3,
                 "response_format": {"type": "json_object"},
-                # v0.3.3: server-enforced thinking kill-switch (llama-server
-                # reasoning-budget layer; 0 = end thinking immediately, and a
-                # per-request 0 OVERRIDES any CLI --reasoning-budget). The
-                # /no_think prose hint alone does not hold reliably on Qwen3.6.
-                # Endpoints without think tags (Gemma) ignore this field.
-                "thinking_budget_tokens": 0,
             }
+            payload_obj.update(self._planner_no_think_payload())
             if model:
                 payload_obj["model"] = model
             payload = _json.dumps(payload_obj).encode()
@@ -333,7 +402,16 @@ class PlannerMixin:
             # complete 8-step plan = 5,231 tokens / 125.3s. 8192/42 ≈ 196s, so
             # 240s covers the full permitted envelope plus prompt and margin.
             # This is a ceiling, not a cost — short plans still return in ~20s.
-            result = _llm_call(llm_url, model="", timeout=240)
+            # 2026-08-24 E2E (task b2094f80): the 240s envelope math above
+            # is invalidated by the live node3090 model (Qwen3.8-27B UD
+            # Q4_K_XL 131K, measured 23.6 t/s - not 42) plus a 14.4k-token
+            # uncached planner prompt: generation ran ~400s and was
+            # cancelled at n_decoded=5530. Default raised to 600s; env
+            # PLANNER_LOCAL_TIMEOUT_S overrides. With detach-on-slow this
+            # ceiling no longer risks the MCP client (the call detaches at
+            # _PLANNER_INLINE_WAIT_S) - it only bounds GPU hold time.
+            _local_timeout = int(os.environ.get("PLANNER_LOCAL_TIMEOUT_S", "600"))
+            result = _llm_call(llm_url, model="", timeout=_local_timeout)
             if not result.startswith("ERROR:"):
                 return result
             self._log(f"NODE-PLAN: llama-server call failed ({result[:80]}), trying Ollama")
@@ -470,8 +548,13 @@ class PlannerMixin:
         except _uerr.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:200]
             return f"ERROR: HTTP {exc.code} — {body}"
-        except (_uerr.URLError, json.JSONDecodeError, KeyError) as exc:
-            return f"ERROR: {exc}"
+        except (
+            _uerr.URLError, json.JSONDecodeError, KeyError, TimeoutError,
+        ) as exc:
+            # v0.4.6: same missing-TimeoutError defect as
+            # _post_chat_completion - see the note there. Applies to the rest
+            # and chatgpt backends.
+            return f"ERROR: {type(exc).__name__}: {exc}"
 
     def _read_codex_oauth_token(self) -> Optional[str]:
         """Best-effort read of an existing Codex CLI (`codex login`) OAuth
@@ -857,6 +940,147 @@ class PlannerMixin:
             self._log("PLANNER-GEMMA: server stopped")
         except Exception:  # noqa: BLE001 (cleanup must not crash)
             pass
+
+    # ── v1.14.x detach-on-slow helpers (ff7dd9bc, 2026-08-24) ────────────────
+    # planner() runs its heavy half in a worker thread and returns immediately
+    # when it exceeds _PLANNER_INLINE_WAIT_S, leaving an in-progress ledger row
+    # that the worker finalizes in place. See planner() for the race notes.
+    _PLANNER_INLINE_WAIT_S = int(os.environ.get("PLANNER_INLINE_WAIT_S", "120"))
+
+    def _planner_inline_wait_s(self) -> int:
+        """Inline-wait threshold (seconds) before planner() detaches to a
+        background worker. 120s default: above historical 90-170s planning
+        times (most calls stay inline), below the 300s llama-ui MCP client
+        ceiling (operator-verified 2026-08-24). Env PLANNER_INLINE_WAIT_S
+        overrides for testing."""
+        return self._PLANNER_INLINE_WAIT_S
+
+    def _planner_write_in_progress(
+        self, tid, task, backend, prior_done_steps, corr
+    ) -> None:
+        """Ledger row for a detached planner run: status stays 'open' so
+        task_resume() finds it; the worker overwrites the SAME row in place
+        when the envelope lands (or _planner_mark_detached_failed lands the
+        failure)."""
+        goal = task.strip()[:300]
+        done_lines = "; ".join(
+            f"step {s['n']}: {s['what']}" for s in prior_done_steps
+        )
+        started = datetime.now().astimezone().isoformat()
+        self.task_checkpoint(
+            goal=goal,
+            plan=(
+                "PLANNING IN PROGRESS — background worker generating atomized "
+                f"steps (backend={backend or 'default'}, started {started})"
+            ),
+            done=done_lines,
+            findings=(
+                f"planner detached after {self._planner_inline_wait_s()}s inline "
+                f"wait; correlation_id={corr}"
+            ),
+            next_prompt=(
+                f"Planner worker still running for task {tid}. Call "
+                f"task_resume('{tid}') to check — this block updates in place "
+                "when the plan lands (status stays open). Do NOT call planner() "
+                "again for this task."
+            ),
+            unverified="",
+            status="open",
+            task_id=tid,
+        )
+
+    def _planner_mark_detached_failed(self, tid, error) -> None:
+        """Land a detached worker's failure in its in-progress row: stays
+        'open' (task_resume finds it) and points the next session at the
+        standard fallback."""
+        self.task_checkpoint(
+            goal=f"(detached planner failed) {tid}",
+            plan="(plan never materialized — background worker failed)",
+            done="",
+            findings=f"detached planner worker failed: {str(error)[:400]}",
+            next_prompt=(
+                f"PLANNER FAILED for task {tid} (detached worker): "
+                f"{str(error)[:400]} Proceed WITHOUT a plan — default budgets "
+                "apply, checkpoint early. Do NOT retry planner() for this task."
+            ),
+            unverified="",
+            status="open",
+            task_id=tid,
+        )
+
+    def _planner_finalize(
+        self, env, mode, prior_done_steps, effective_backend, tid, corr, task
+    ) -> tuple:
+        """Envelope -> ledger write -> return string. Extracted verbatim from
+        planner()'s former tail (v1.14.x detach-on-slow) so the fast path and
+        the detached worker share ONE finalizer. Returns (result, None) or
+        (None, error)."""
+        raw_steps = env.get("steps") or []
+        legacy_packaged = str(env.get("packaged_prompt", "")).strip()
+        goal = str(env.get("goal_summary") or task.strip()[:300])
+        # Normalize steps into ledger entries; per-step packaged_prompt is v2 —
+        # synthesize a defensive fallback when the model omitted it.
+        new_steps = self._normalize_plan_steps(raw_steps, goal, legacy_packaged)
+        if not new_steps:
+            return None, (
+                "PLANNER UNAVAILABLE — no usable steps in envelope. "
+                "Proceed with default budgets, checkpoint early."
+            )
+        # revise: keep completed history in front of the re-planned remainder
+        all_steps = prior_done_steps + new_steps
+        all_steps.sort(key=lambda s: s.get("n", 0))
+        plan_lines = "; ".join(
+            f"step {s['n']}: {s['what']} "
+            f"(web={s.get('web_calls', 0)}, tools={s.get('tool_calls', 0)}, "
+            f"verify: {s.get('verify') or 'NONE'})"
+            for s in new_steps
+        )
+        done_lines = "; ".join(
+            f"step {s['n']}: {s['what']}" for s in prior_done_steps
+        )
+        first = new_steps[0]
+        next_prompt = self._plan_step_prompt(goal, all_steps, first)
+        ck = self.task_checkpoint(
+            goal=goal,
+            plan=plan_lines,
+            done=done_lines,
+            findings="",
+            next_prompt=next_prompt,
+            unverified="all planner estimates (sessions, budgets) — plan, not fact",
+            status="open",
+            task_id=tid,
+        )
+        resolved_backend = self._resolve_backend_name(effective_backend)
+        try:
+            conn = self._tasks_db()
+            with conn:
+                conn.execute(
+                    "UPDATE task_blocks SET steps_json=?, backend=? WHERE task_id=?",
+                    (json.dumps(all_steps), resolved_backend, tid),
+                )
+            conn.close()
+        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
+            return None, f"planner: ledger steps write failed: {e}"
+        return (
+            (
+                f"PLAN ENVELOPE accepted ({mode}): task_id={tid} | correlation_id={corr} "
+                f"| backend={resolved_backend}\n"
+                f"sessions_estimate={env.get('sessions_estimate', '?')} | "
+                f"single_session={env.get('single_session', '?')} | "
+                f"confidence={env.get('confidence', '?')} | "
+                f"steps={len(new_steps)} atomized"
+                f"{f' (+{len(prior_done_steps)} already done)' if prior_done_steps else ''}\n"
+                f"STEPS: {plan_lines}\n"
+                f"ABORT CRITERIA: "
+                f"{env.get('abort_criteria', '(none given — budget gate is the only stop)')}\n"
+                f"{ck}\n"
+                "EXECUTE ONLY THE STEP BELOW, run its verify check, then call "
+                f"plan_step_done('{tid}', {first['n']}, evidence=<verify output>) "
+                "to strike it and receive the next step. Estimates are NOT facts (P2).\n"
+                f"---\n{next_prompt}"
+            ),
+            None,
+        )
 
     def _tasks_db(self):
         """SQLite handle for the task-block store (auto-creates schema).
@@ -1527,10 +1751,17 @@ class PlannerMixin:
         summarised. The window closes when you start CHANGING state or producing
         deliverables.
 
-        THIS CALL BLOCKS for 90-170s while the plan is generated. That is
-        expected — wait for it. Do NOT abandon the call, do NOT retry it, and
-        do NOT start writing a plan yourself while it runs. Calling planner()
-        a second time for the same task is a protocol violation.
+        THIS CALL USUALLY BLOCKS for 90-170s while the plan is generated;
+        wait for it, do NOT retry it, and do NOT start writing a plan
+        yourself while it runs. Calling planner() a second time for the same
+        task is a protocol violation.
+
+        SLOW-CALL BEHAVIOUR (detach-on-slow): if the plan has not landed
+        within the inline threshold (120s default, env PLANNER_INLINE_WAIT_S)
+        the call returns "PLAN IN PROGRESS: task_id=..." immediately and the
+        plan finishes in the background. Poll with task_resume('<task_id>') —
+        the block updates in place when the plan lands (status stays open).
+        Do NOT call planner() again for that task while the worker runs.
 
         DO NOT call for single-fact lookups, procedures under 3 steps (execute
         directly), or resuming carried-over work (that is task_resume).
@@ -1574,9 +1805,10 @@ class PlannerMixin:
         AUTO-KB: planner() runs its own search_kb on the task and appends top
         matches to whatever context you pass. You do not need to paste KB content
         you already found — but pasting live probe output is still essential.
+        DETACH-ON-SLOW: see SLOW-CALL BEHAVIOUR above — slow plans land in the
+        ledger via a background worker; task_resume() is the only follow-up.
         """
         import hashlib  # noqa: PLC0415
-        import json as _json  # noqa: PLC0415
 
         self._log(f"NODE-PLAN: mode={mode} {task[:80]}")
         corr = hashlib.sha256((task + datetime.now().isoformat()).encode()).hexdigest()[
@@ -1597,79 +1829,82 @@ class PlannerMixin:
         # falls through to the PLANNER_BACKEND valve inside
         # _resolve_backend_name/_call_planner_backend.
         effective_backend = backend or stored_backend or ""
-        # ── v0.3.3: two-attempt envelope loop — truncated/malformed envelopes
-        # (long thinking + tight completion budget) were the dominant
-        # "PLANNER UNAVAILABLE" cause; one corrective retry recovers most.
-        context = self._augment_context_with_kb(task, context)
-        env, error = self._request_plan_envelope(task, context, backend=effective_backend)
-        if error:
-            return error
-        raw_steps = env.get("steps") or []
-        legacy_packaged = str(env.get("packaged_prompt", "")).strip()
-        goal = str(env.get("goal_summary") or task.strip()[:300])
-        # Normalize steps into ledger entries; per-step packaged_prompt is v2 —
-        # synthesize a defensive fallback when the model omitted it.
-        new_steps = self._normalize_plan_steps(raw_steps, goal, legacy_packaged)
-        if not new_steps:
-            return (
-                "PLANNER UNAVAILABLE — no usable steps in envelope. "
-                "Proceed with default budgets, checkpoint early."
-            )
-        # revise: keep completed history in front of the re-planned remainder
-        all_steps = prior_done_steps + new_steps
-        all_steps.sort(key=lambda s: s.get("n", 0))
         # v0.3.3: NEVER trust a model-supplied task_id — live smoke showed the
         # model copying the schema example ("a1b2c3d4") verbatim, which would
         # collide every plan onto one ledger row. corr already hashes task+now.
+        # Computed here, before the worker starts, so the detach path's
+        # in-progress row uses the same id.
         tid = task_id.strip() if mode == "revise" else corr[:8]
-        plan_lines = "; ".join(
-            f"step {s['n']}: {s['what']} "
-            f"(web={s.get('web_calls', 0)}, tools={s.get('tool_calls', 0)}, "
-            f"verify: {s.get('verify') or 'NONE'})"
-            for s in new_steps
-        )
-        done_lines = "; ".join(
-            f"step {s['n']}: {s['what']}" for s in prior_done_steps
-        )
-        first = new_steps[0]
-        next_prompt = self._plan_step_prompt(goal, all_steps, first)
-        ck = self.task_checkpoint(
-            goal=goal,
-            plan=plan_lines,
-            done=done_lines,
-            findings="",
-            next_prompt=next_prompt,
-            unverified="all planner estimates (sessions, budgets) — plan, not fact",
-            status="open",
-            task_id=tid,
-        )
-        resolved_backend = self._resolve_backend_name(effective_backend)
-        try:
-            conn = self._tasks_db()
-            with conn:
-                conn.execute(
-                    "UPDATE task_blocks SET steps_json=?, backend=? WHERE task_id=?",
-                    (_json.dumps(all_steps), resolved_backend, tid),
+        # ── v1.14.x detach-on-slow (ff7dd9bc, 2026-08-24) ─────────────────────
+        # The heavy half (KB augmentation + two-attempt envelope loop) runs in
+        # a worker thread. Lands within _PLANNER_INLINE_WAIT_S -> returned
+        # inline, byte-identical to the pre-detach behaviour. Slower -> an
+        # in-progress ledger row is left behind and this call returns
+        # immediately; the worker finalizes the SAME row in place when the
+        # envelope lands (or records the failure). task_resume() finds the row
+        # in either state. This bounds the MCP tool call itself so a slow
+        # backend can no longer outlive the client ceiling (llama-ui MCP
+        # request timeout = 300s, operator-verified 2026-08-24) — the durable
+        # fix for bare "timed out" planner failures.
+        #
+        # Race note: `gate` makes the fast/slow hand-off atomic. The worker is
+        # the sole ledger finalizer on the slow path; on the fast path it has
+        # already finished when `ready` is observed and the main thread
+        # finalizes. Exactly one finalizer runs in every interleaving, so the
+        # row can never be stranded "PLANNING IN PROGRESS".
+        inline_wait = self._planner_inline_wait_s()
+        state = {"env": None, "error": None, "ready": False, "detached": False}
+        gate = threading.Lock()
+
+        def _finalize() -> tuple:
+            if state["error"]:
+                return None, state["error"]
+            return self._planner_finalize(
+                state["env"], mode, prior_done_steps, effective_backend, tid, corr, task
+            )
+
+        def _worker():
+            try:
+                ctx = self._augment_context_with_kb(task, context)
+                env, error = self._request_plan_envelope(
+                    task, ctx, backend=effective_backend
                 )
-            conn.close()
-        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
-            return f"planner: ledger steps write failed: {e}"
+            except Exception as e:  # noqa: BLE001 (worker must not die silently)
+                env, error = None, f"PLANNER UNAVAILABLE — worker crashed: {e}"
+            with gate:
+                state["env"], state["error"] = env, error
+                state["ready"] = True
+                if state["detached"]:
+                    # Slow path: land the outcome in the in-progress row.
+                    _, ferr = _finalize()
+                    if ferr:
+                        self._log(
+                            f"NODE-PLAN: detached worker FAILED task_id={tid}: "
+                            f"{ferr[:200]}"
+                        )
+                        self._planner_mark_detached_failed(tid, ferr)
+                    else:
+                        self._log(f"NODE-PLAN: detached worker landed task_id={tid}")
+
+        w = threading.Thread(target=_worker, name=f"planner-{tid}", daemon=True)
+        w.start()
+        w.join(inline_wait)
+        with gate:
+            if state["ready"]:
+                # Fast path: worker landed within the inline threshold.
+                out, ferr = _finalize()
+                return ferr if ferr else out
+            state["detached"] = True
+        self._log(f"NODE-PLAN: slow (>={inline_wait}s) — detaching task_id={tid}")
+        self._planner_write_in_progress(tid, task, effective_backend, prior_done_steps, corr)
         return (
-            f"PLAN ENVELOPE accepted ({mode}): task_id={tid} | correlation_id={corr} "
-            f"| backend={resolved_backend}\n"
-            f"sessions_estimate={env.get('sessions_estimate', '?')} | "
-            f"single_session={env.get('single_session', '?')} | "
-            f"confidence={env.get('confidence', '?')} | "
-            f"steps={len(new_steps)} atomized"
-            f"{f' (+{len(prior_done_steps)} already done)' if prior_done_steps else ''}\n"
-            f"STEPS: {plan_lines}\n"
-            f"ABORT CRITERIA: "
-            f"{env.get('abort_criteria', '(none given — budget gate is the only stop)')}\n"
-            f"{ck}\n"
-            "EXECUTE ONLY THE STEP BELOW, run its verify check, then call "
-            f"plan_step_done('{tid}', {first['n']}, evidence=<verify output>) "
-            "to strike it and receive the next step. Estimates are NOT facts (P2).\n"
-            f"---\n{next_prompt}"
+            f"PLAN IN PROGRESS: task_id={tid} | correlation_id={corr} | "
+            f"backend={effective_backend or 'default'}\n"
+            f"Plan generation exceeded the {inline_wait}s inline threshold and "
+            f"continues in the background. Call task_resume('{tid}') to check "
+            "— the block updates in place when the plan lands (status stays "
+            "open). Do NOT call planner() again for this task and do NOT retry "
+            "while the worker runs."
         )
 
     def _plan_step_prompt(self, goal: str, all_steps: list, step: dict) -> str:

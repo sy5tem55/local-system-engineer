@@ -354,6 +354,101 @@ class TestPlannerForceUrl:
         assert "PLAN ENVELOPE accepted" in r
         assert calls[0] == "http://fake-gemma:8085/health"
         assert calls[1].startswith("http://fake-gemma:8085/v1/chat/completions")
-        # v0.3.3 payload contract: envelope headroom + server-side think kill
+        # v0.4.6 payload contract: envelope headroom + a think kill-switch
+        # that llama.cpp ACTUALLY honours. The v0.3.3 assertion here was
+        # "thinking_budget_tokens" == 0, which is not a llama.cpp API field:
+        # the server silently dropped it, so this test passed while every
+        # real planner call ran with reasoning fully enabled and burned its
+        # whole token budget in <think>. Measured on build b10106,
+        # chat_template_kwargs is the only knob that reaches the template.
         assert bodies[0]["max_tokens"] == 8192
-        assert bodies[0]["thinking_budget_tokens"] == 0
+        assert bodies[0]["chat_template_kwargs"] == {"enable_thinking": False}
+        assert "thinking_budget_tokens" not in bodies[0]
+
+
+class TestDetachOnSlow:
+    """v1.14.x detach-on-slow (ff7dd9bc, 2026-08-24): a planner() call whose
+    backend lands AFTER the inline threshold must return "PLAN IN PROGRESS"
+    promptly, leave an in-progress ledger row, and let the background worker
+    finalize the SAME row in place. The fast path (all earlier tests in this
+    file, which return instantly) must remain byte-identical."""
+
+    def _arm_slow_backend(self, tools, monkeypatch, sleep_s, reply):
+        import time
+
+        monkeypatch.setattr(goethe.PlannerMixin, "_PLANNER_INLINE_WAIT_S", 1)
+
+        def fake(task, context="", no_think=False):
+            time.sleep(sleep_s)
+            return reply
+
+        monkeypatch.setattr(tools, "_call_node_planner", fake)
+
+    def test_slow_backend_detaches_and_lands_in_place(self, tools, monkeypatch):
+        import re
+        import time
+
+        self._arm_slow_backend(tools, monkeypatch, 3, json.dumps(ENV_NEW))
+        t0 = time.monotonic()
+        r = tools.planner("migrate DNS to pi-hole")
+        elapsed = time.monotonic() - t0
+        assert elapsed < 2.5, (
+            f"detach must return within the 1s threshold, took {elapsed:.1f}s"
+        )
+        assert "PLAN IN PROGRESS" in r
+        assert "task_resume(" in r
+        tid = re.search(r"task_id=([0-9a-f]{8})", r).group(1)
+        # in-progress row: open, marker plan text, no steps yet
+        conn = tools._tasks_db()
+        row = conn.execute(
+            "SELECT status, plan, steps_json FROM task_blocks WHERE task_id=?",
+            (tid,),
+        ).fetchone()
+        conn.close()
+        assert row[0] == "open"
+        assert "PLANNING IN PROGRESS" in row[1]
+        assert row[2] is None
+        # worker lands the final plan in the SAME row (poll up to 15s)
+        deadline = time.monotonic() + 15
+        landed = False
+        while time.monotonic() < deadline:
+            conn = tools._tasks_db()
+            row = conn.execute(
+                "SELECT steps_json FROM task_blocks WHERE task_id=?", (tid,)
+            ).fetchone()
+            conn.close()
+            if row[0] is not None:
+                landed = True
+                break
+            time.sleep(0.2)
+        assert landed, "worker never landed steps_json in the in-progress row"
+        b = read_block(tools, tid)
+        assert b["status"] == "open"
+        assert "PLANNING IN PROGRESS" not in b["plan"]
+        assert [s["status"] for s in b["steps"]] == ["pending", "pending"]
+        assert "STEP 1 ONLY" in b["next_prompt"]
+
+    def test_slow_backend_failure_lands_in_row(self, tools, monkeypatch):
+        import re
+        import time
+
+        self._arm_slow_backend(tools, monkeypatch, 2, '{"intent": "plan"}')
+        r = tools.planner("migrate DNS to pi-hole")
+        assert "PLAN IN PROGRESS" in r
+        tid = re.search(r"task_id=([0-9a-f]{8})", r).group(1)
+        # two-attempt retry loop (2 x 2s) -> poll up to 30s for the failure
+        deadline = time.monotonic() + 30
+        row = None
+        while time.monotonic() < deadline:
+            conn = tools._tasks_db()
+            row = conn.execute(
+                "SELECT findings, next_prompt FROM task_blocks WHERE task_id=?",
+                (tid,),
+            ).fetchone()
+            conn.close()
+            if row[0] and "detached planner worker failed" in row[0]:
+                break
+            time.sleep(0.3)
+        assert row[0] and "detached planner worker failed" in row[0]
+        assert "PLANNER FAILED" in row[1]
+        assert "default budgets" in row[1]
