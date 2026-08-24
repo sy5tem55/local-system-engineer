@@ -4,6 +4,39 @@
 
 ---
 
+## 2026-08-24 — node3090 system prompt v0.4.0 (drift fix)
+
+- Authored `tools/system-prompt-node3090-v0.4.0.md` from the v0.3.0 archive (captured verbatim
+  from the live node3090 llama-ui system-prompt config on 2026-08-24) with 7 live-verified
+  drift fixes:
+  1. MCP GW local-start block: `--host 127.0.0.1` + `--cors-origin 'http://127.0.0.1:8080'` →
+     `--host 0.0.0.0` + `--cors-origin '*'` (the exact NetworkError combo from KB
+     842595879f70576d); block now points at canonical `start-goethe-node3090.sh` (adds
+     GOETHE_OLLAMA_URL + GOETHE_TASKS_DB). New probe finding: `~/.lse/secrets` does NOT exist
+     on node3090 — the token lives in the start script; prompt no longer implies a local
+     secrets file.
+  2. GPU line: single RTX 3090 → dual-GPU 3090 (GPU0) + 5060 Ti (GPU1) with load-bearing
+     `--tensor-split 3,1`; Ollama CPU-only clause kept (verified: unit env `CUDA_VISIBLE_DEVICES=""`).
+  3. Ollama model list: nomic-embed-text + qwen2.5-coder:32b removed (gone live);
+     qwen3-embedding:0.6b added as the embeddings model.
+  4. KB (RAG): "Index: lse-kb" → live indices lse-kb-1024, lse-errors-1024,
+     lse-skills-1024, lse-web-idx; embeddings line follows fix 3.
+  5. Version line: goethe_mcp v1.11.2 / "35 tools" → v1.13.0 / 38 tools (live
+     `tools/list` against the running node3090 gateway, session handshake).
+  6. MULTI-BLOCK TASK RULE (mandated hand-written `active-task.md`) → PLANNED-TASK LOOP
+     (tasks.db ledger: planner → plan_step_done → task_resume, evidence gates, ≥70% context
+     handoff) — matches node4090 spec v0.6.2; NO AUTONOMOUS NOTE-WRITING wording aligned.
+  7. Planner/skill surface: `planner()` rewritten to the ledger design (`mode="revise",
+     one-retry cap); new tool docs `plan_step_done`, `task_resume`, `skill_search` (+
+     SKILLS-FIRST), `skill_record`, `skill_outcome`; `record_outcome` gained `evidence=`;
+     REQUEST-SHAPE MAPPINGS gained the resume row.
+- Deprecation headers ("SUPERSEDED by v0.4.0, 2026-08-24 — archive only") prepended to
+  `tools/system-prompt-node3090-v0.1.0.md` (which also contains the hardcoded gateway
+  token) and `-v0.3.0.md`; CURRENT-STATE.md + README.md pointers now reference v0.4.0.
+- Deploy: operator paste into the node3090 llama-ui system-prompt config (manual — the
+  llama-ui config is client-side and not observable from server-side probes). RAG pipeline
+  verified live post-deploy: qwen3-embedding:0.6b embeds (dims=1024) and a gateway
+  `search_kb` round-trip ran clean (nomic-embed-text breakage ruled out).
 ## 2026-07-27 (Codex): TRAUM GUI/control-plane redesign approved and documented
 
 - Approved a GUI-first TRAUM surface in the Goethe Console for canonical run
