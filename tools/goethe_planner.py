@@ -331,6 +331,7 @@ class PlannerMixin:
         Returns the model's raw reply string, or "ERROR: <reason>" on both paths failing.
         """
         import json as _json
+        import time as _time
         import urllib.request as _ureq
         import urllib.error as _uerr
 
@@ -367,12 +368,45 @@ class PlannerMixin:
 
         # ── Step 1: probe node3090 llama-server ──────────────────────────────
         llm_url = self.valves.NODE3090_LLM_URL.rstrip("/")
+        # v0.4.7: was a SINGLE urlopen with timeout=3 and a bare
+        # `except URLError: probe_ok = False` that logged NOTHING on failure.
+        # node3090 is the only working planner path (Ollama removed v0.4.5,
+        # Gemma is host-local and absent on LUCIFER), so that 3-second probe
+        # was the sole gate on the whole planner — and a transient blip
+        # silently routed the call into a fallback that cannot succeed.
+        # Observed 2026-08-24 20:16:03: no probe line at all in
+        # agent_commands.log, then PLANNER-GEMMA exactly 3s later; node3090
+        # answered /health in 4-17ms over six tries three minutes afterwards.
+        # Now: N attempts with linear backoff, every failure logged WITH the
+        # exception, and TimeoutError caught explicitly (it is a sibling of
+        # URLError under OSError, not a subclass — a read-phase timeout would
+        # otherwise escape this handler entirely, the same defect fixed in
+        # _post_chat_completion).
+        _probe_attempts = int(os.environ.get("PLANNER_PROBE_ATTEMPTS", "3"))
+        _probe_timeout = int(os.environ.get("PLANNER_PROBE_TIMEOUT_S", "5"))
         probe_ok = False
-        try:
-            with _ureq.urlopen(f"{llm_url}/health", timeout=3) as r:
-                probe_ok = r.status == 200
-        except _uerr.URLError:
-            probe_ok = False
+        _probe_err = ""
+        for _attempt in range(1, _probe_attempts + 1):
+            try:
+                with _ureq.urlopen(f"{llm_url}/health", timeout=_probe_timeout) as r:
+                    if r.status == 200:
+                        probe_ok = True
+                        break
+                    _probe_err = f"HTTP {r.status}"
+            except (_uerr.URLError, TimeoutError, OSError) as exc:
+                _probe_err = f"{type(exc).__name__}: {exc}"
+            if _attempt < _probe_attempts:
+                self._log(
+                    f"NODE-PLAN: probe attempt {_attempt}/{_probe_attempts} failed "
+                    f"({_probe_err}) — retrying"
+                )
+                _time.sleep(_attempt)
+        if not probe_ok:
+            self._log(
+                f"NODE-PLAN: llama-server probe FAILED after {_probe_attempts} "
+                f"attempt(s) → {llm_url} ({_probe_err or 'unknown'}) — node3090 is "
+                "the only working planner backend; check it is awake and serving"
+            )
 
         if probe_ok:
             # v0.4.5: /health is LIVENESS, not READINESS — llama-server answers
@@ -436,9 +470,24 @@ class PlannerMixin:
         )
         gguf, mmproj, model_key = self._planner_gemma_select(task, vision=vision)
         if gguf is None:
+            # v0.4.7: the old message named three paths as if each had been
+            # genuinely attempted and blamed VRAM/model files generically,
+            # which sent readers hunting for a VRAM problem when the real
+            # cause was a failed node3090 probe. Report what actually
+            # happened on each leg.
+            _md = self.valves.PLANNER_MODEL_DIR.rstrip("/")
+            _gemma_why = (
+                f"PLANNER_MODEL_DIR {_md!r} does not exist on this host"
+                if not os.path.isdir(_md)
+                else "no Gemma model fits free VRAM, or its files are missing"
+            )
             return (
-                "ERROR: all planner paths exhausted (llama-server, Ollama, Gemma) — "
-                "insufficient VRAM or model files not found under PLANNER_MODEL_DIR"
+                "ERROR: all planner paths exhausted. "
+                f"node3090 llama-server: {_probe_err or 'probe failed'}. "
+                "Ollama: removed in v0.4.5. "
+                f"Gemma local spawn: {_gemma_why}. "
+                "node3090 is the only working planner path — verify it is "
+                "awake and serving, then retry."
             )
         planner_port = self.valves.PLANNER_PORT
         proc = self._spawn_gemma_server(gguf, mmproj, planner_port)
@@ -851,9 +900,24 @@ class PlannerMixin:
         """
         import os as _os2  # noqa: PLC0415
 
+        model_dir = self.valves.PLANNER_MODEL_DIR.rstrip("/")
+        # v0.4.7: check the directory BEFORE probing VRAM. Path 3 spawns a
+        # server on THIS host, but PLANNER_MODEL_DIR's default
+        # (/opt/models/lmstudio-community) is documented "Verified on
+        # node3090" and does not exist on LUCIFER — recorded as broken in KB
+        # 3fba06e7639ce58d on 2026-07-30. Without this guard the pass logged
+        # three misleading "skip <size> — need N MB, have M" VRAM lines and
+        # blamed VRAM, when no amount of free VRAM could ever have helped.
+        if not _os2.path.isdir(model_dir):
+            self._log(
+                f"PLANNER-GEMMA: PLANNER_MODEL_DIR {model_dir!r} does not exist on "
+                "this host — local Gemma spawn is unavailable here "
+                "(KB 3fba06e7639ce58d). Skipping Path 3."
+            )
+            return None, None, None
+
         free = self._planner_free_vram_mb()
         self._log(f"PLANNER-GEMMA: free VRAM={free} MB")
-        model_dir = self.valves.PLANNER_MODEL_DIR.rstrip("/")
 
         tc = self._planner_task_class(task)
         order = (
