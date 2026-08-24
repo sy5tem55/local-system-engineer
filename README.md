@@ -49,7 +49,7 @@ A locally-hosted AI system administrator running on a private inference stack. O
 |---|---|---|
 | Tool | **Goethe v0.2.5** | `tools/goethe.py` |
 | MCP Gateway | **goethe_mcp v1.9.3** | `tools/goethe_mcp.py` |
-| System Prompt (LUCIFER) | **v0.5.18** | `tools/system-prompt-v0.5.18.md` |
+| System Prompt (LUCIFER) | **v0.6.3** | `prompts/v0.6.3.md` |
 | System Prompt (node3090) | **v0.4.0** | `tools/system-prompt-node3090-v0.4.0.md` |
 | Routing filter | v1.2.0 | `tools/lse-routing-filter-v1.2.0.py` |
 | Vaultwarden Tool | v1.3.0 | `tools/vaultwarden_tools_v1.3.0.py` |
@@ -197,7 +197,7 @@ local-system-engineer/
 │   ├── episode_index.py             ← episode manifest.db build + rotation
 │   ├── start-goethe.sh              ← LUCIFER MCP startup script
 │   ├── start-goethe-node3090.sh     ← node3090 MCP deploy + startup script
-│   ├── system-prompt-v0.5.18.md    ← current LUCIFER system prompt
+│   ├── system-prompt-v0.5.18.md    ← LUCIFER system prompt (v0.5.x era, archived; current: prompts/v0.6.3.md)
 │   ├── system-prompt-node3090-v0.4.0.md ← node3090 agent system prompt (v0.3.0 + v0.1.0 archived)
 │   ├── vaultwarden_tools_v1.3.0.py ← Vaultwarden MCP tool
 │   ├── lse-routing-filter-v1.2.0.py
@@ -205,6 +205,7 @@ local-system-engineer/
 │
 ├── prompts/
 │   ├── CHANGELOG.md
+│   ├── v0.6.3.md                ← current LUCIFER system prompt
 │   └── v0.5.15.md               ← last OWUI-era system prompt (archived)
 │
 ├── eval/
