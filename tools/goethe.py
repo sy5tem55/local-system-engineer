@@ -2337,6 +2337,10 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         i = 0
         while i < len(toks):
             t = toks[i]
+            if t == "-m":
+                out["model"] = toks[i + 1] if i + 1 < len(toks) else ""
+                i += 2
+                continue
             if not t.startswith("--"):
                 i += 1
                 continue
