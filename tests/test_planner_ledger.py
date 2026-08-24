@@ -337,7 +337,32 @@ class TestPlannerForceUrl:
             calls.append(url)
             if url.endswith("/health"):
                 return FakeResp(b"ok")
-            bodies.append(json.loads(req.data.decode()))
+            body = json.loads(req.data.decode())
+            bodies.append(body)
+            if body.get("stream"):
+                # v0.4.8: the llama.cpp planner paths stream. Emit the SSE
+                # frame shape llama-server actually produces so this test
+                # exercises _read_sse_stream rather than a shape we invented.
+                env = json.dumps(ENV_NEW)
+                frames = b"".join(
+                    b"data: "
+                    + json.dumps(
+                        {"choices": [{"delta": {"content": ch}, "finish_reason": None}]}
+                    ).encode()
+                    + b"\n\n"
+                    for ch in (env[:20], env[20:])
+                )
+                frames += (
+                    b"data: "
+                    + json.dumps(
+                        {
+                            "choices": [{"delta": {}, "finish_reason": "stop"}],
+                            "usage": {"completion_tokens": 123},
+                        }
+                    ).encode()
+                    + b"\n\ndata: [DONE]\n\n"
+                )
+                return FakeResp(frames)
             return FakeResp(
                 json.dumps(
                     {"choices": [{"message": {"content": json.dumps(ENV_NEW)}}]}
@@ -364,6 +389,9 @@ class TestPlannerForceUrl:
         assert bodies[0]["max_tokens"] == 8192
         assert bodies[0]["chat_template_kwargs"] == {"enable_thinking": False}
         assert "thinking_budget_tokens" not in bodies[0]
+        # v0.4.8: streaming is part of the llama.cpp payload contract - a
+        # non-streaming call idles the connection and gets reaped past ~4min
+        assert bodies[0]["stream"] is True
 
 
 class TestDetachOnSlow:
@@ -545,3 +573,79 @@ class TestNodeProbeResilience:
         # amount of free VRAM could ever have helped
         assert "free VRAM=" not in joined
         assert "skip 26B" not in joined
+
+
+class TestSseStreamReassembly:
+    """v0.4.8 — the llama.cpp planner paths stream, because a non-streaming
+    POST idles the TCP connection for the whole generation and gets reaped
+    past ~4 minutes on the LUCIFER -> pfSense -> node3090 path. Measured:
+    non-streaming at 248s delivered ZERO bytes to the client (server task
+    88240 completed cleanly, truncated=0); streaming at 270.5s delivered all
+    6579 chunks. These tests pin the reassembly contract."""
+
+    def _resp(self, frames: bytes):
+        import io
+        return io.BytesIO(frames)
+
+    def _frame(self, obj):
+        return b"data: " + json.dumps(obj).encode() + b"\n\n"
+
+    def test_reassembles_content_and_usage(self, tools):
+        frames = (
+            self._frame({"choices": [{"delta": {"content": "he"}}]})
+            + self._frame({"choices": [{"delta": {"content": "llo"}}]})
+            + self._frame({
+                "choices": [{"delta": {}, "finish_reason": "stop"}],
+                "usage": {"completion_tokens": 42},
+            })
+            + b"data: [DONE]\n\n"
+        )
+        content, reasoning, finish, used = tools._read_sse_stream(self._resp(frames))
+        assert content == "hello"
+        assert reasoning == ""
+        assert finish == "stop"
+        assert used == 42
+
+    def test_separates_reasoning_from_content(self, tools):
+        frames = (
+            self._frame({"choices": [{"delta": {"reasoning_content": "think"}}]})
+            + self._frame({"choices": [{"delta": {"content": "{}"}}]})
+            + b"data: [DONE]\n\n"
+        )
+        content, reasoning, _f, _u = tools._read_sse_stream(self._resp(frames))
+        # content must NOT absorb the think trace - that conflation is the
+        # v0.4.6 reasoning-runaway bug in a different costume
+        assert content == "{}"
+        assert reasoning == "think"
+
+    def test_truncation_mid_stream_is_reported(self, tools):
+        frames = (
+            self._frame({"choices": [{"delta": {"content": "partial"}}]})
+            + self._frame({
+                "choices": [{"delta": {}, "finish_reason": "length"}],
+                "usage": {"completion_tokens": 8192},
+            })
+            + b"data: [DONE]\n\n"
+        )
+        _c, _r, finish, used = tools._read_sse_stream(self._resp(frames))
+        assert finish == "length"
+        assert used == 8192
+
+    def test_malformed_frame_does_not_abort_the_stream(self, tools):
+        frames = (
+            self._frame({"choices": [{"delta": {"content": "a"}}]})
+            + b"data: {not json\n\n"
+            + b": keepalive comment\n\n"
+            + self._frame({"choices": [{"delta": {"content": "b"}}]})
+            + b"data: [DONE]\n\n"
+        )
+        content, _r, _f, _u = tools._read_sse_stream(self._resp(frames))
+        assert content == "ab", "a bad frame must not lose surrounding tokens"
+
+    def test_stream_cut_short_yields_what_arrived(self, tools):
+        # connection dies before [DONE]: no exception, partial content, and
+        # finish_reason stays None so the caller can tell it was incomplete
+        frames = self._frame({"choices": [{"delta": {"content": "half"}}]})
+        content, _r, finish, _u = tools._read_sse_stream(self._resp(frames))
+        assert content == "half"
+        assert finish is None
