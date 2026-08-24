@@ -452,3 +452,96 @@ class TestDetachOnSlow:
         assert row[0] and "detached planner worker failed" in row[0]
         assert "PLANNER FAILED" in row[1]
         assert "default budgets" in row[1]
+
+
+class TestNodeProbeResilience:
+    """v0.4.7 — the node3090 /health probe is the SOLE gate on the only
+    working planner backend (Ollama removed v0.4.5; Gemma Path 3 spawns
+    host-locally and its model dir does not exist on LUCIFER). Before this
+    fix the probe was a single urlopen(timeout=3) whose failure was caught
+    by a bare `except URLError: probe_ok = False` and logged NOTHING — so a
+    transient blip routed the call into a fallback that could not possibly
+    succeed, and agent_commands.log recorded no reason at all. Observed live
+    2026-08-24 20:16:03 (no probe line; PLANNER-GEMMA exactly 3s later,
+    while node3090 answered /health in 4-17ms three minutes afterwards).
+
+    These tests pin BEHAVIOUR — retry count, that failures are logged, and
+    that the error names the real cause — not merely that a value was sent.
+    """
+
+    def _cascade_tools(self, tools, monkeypatch):
+        monkeypatch.setattr(
+            tools, "_call_node_planner",
+            goethe.Tools._call_node_planner.__get__(tools),
+        )
+        tools.valves.PLANNER_FORCE_URL = ""
+        tools.valves.NODE3090_LLM_URL = "http://unreachable.invalid:8080"
+        return tools
+
+    def test_probe_retries_and_logs_every_failure(self, tools, monkeypatch):
+        import urllib.error as uerr
+        import urllib.request as ureq
+
+        attempts = []
+
+        def fake_urlopen(req, timeout=0):
+            url = req if isinstance(req, str) else req.full_url
+            attempts.append(url)
+            raise uerr.URLError("simulated blip")
+
+        logs = []
+        monkeypatch.setattr(ureq, "urlopen", fake_urlopen)
+        monkeypatch.setattr(tools, "_log", lambda m: logs.append(m))
+        monkeypatch.setattr("time.sleep", lambda *_: None)
+        t = self._cascade_tools(tools, monkeypatch)
+
+        res = t._call_node_planner("tiny task", "")
+
+        # three attempts, not one
+        assert len(attempts) == 3, f"expected 3 probe attempts, got {len(attempts)}"
+        assert all(u.endswith("/health") for u in attempts)
+        # the pre-fix code logged NOTHING here; that silence is the defect
+        joined = "\n".join(logs)
+        assert "probe attempt 1/3 failed" in joined
+        assert "probe attempt 2/3 failed" in joined
+        assert "probe FAILED after 3 attempt(s)" in joined
+        assert "simulated blip" in joined, "the exception must reach the log"
+        assert res.startswith("ERROR:")
+
+    def test_exhausted_error_names_real_cause_not_vram(self, tools, monkeypatch):
+        import urllib.error as uerr
+        import urllib.request as ureq
+
+        def fake_urlopen(req, timeout=0):
+            raise uerr.URLError("simulated blip")
+
+        monkeypatch.setattr(ureq, "urlopen", fake_urlopen)
+        monkeypatch.setattr(tools, "_log", lambda m: None)
+        monkeypatch.setattr("time.sleep", lambda *_: None)
+        t = self._cascade_tools(tools, monkeypatch)
+        t.valves.PLANNER_MODEL_DIR = "/nonexistent/planner/models"
+
+        res = t._call_node_planner("tiny task", "")
+
+        assert "node3090 llama-server:" in res
+        assert "simulated blip" in res, "probe failure must be surfaced to the caller"
+        assert "does not exist on this host" in res
+        # the pre-fix message blamed VRAM/model files generically, sending
+        # readers hunting for a VRAM problem that was never the cause
+        assert "insufficient VRAM" not in res
+
+    def test_gemma_short_circuits_when_model_dir_absent(self, tools, monkeypatch):
+        logs = []
+        monkeypatch.setattr(tools, "_log", lambda m: logs.append(m))
+        tools.valves.PLANNER_MODEL_DIR = "/nonexistent/planner/models"
+
+        gguf, mmproj, key = tools._planner_gemma_select("tiny task")
+
+        assert (gguf, mmproj, key) == (None, None, None)
+        joined = "\n".join(logs)
+        assert "does not exist on this host" in joined
+        # must not emit the misleading VRAM triage it used to: three
+        # "skip <size> - need N MB, have M" lines that blamed VRAM when no
+        # amount of free VRAM could ever have helped
+        assert "free VRAM=" not in joined
+        assert "skip 26B" not in joined
