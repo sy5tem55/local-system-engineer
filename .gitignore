@@ -106,3 +106,7 @@ archive/
 
 # Personal scratch prompts (e.g. model test prompts) — not project artifacts
 prompts/AnimalCrossinggamePrompt.md
+
+# Working backups from in-place patching (never re-commit)
+*.bak-*
+*.bak.*
