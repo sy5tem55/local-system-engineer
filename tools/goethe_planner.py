@@ -188,6 +188,10 @@ class PlannerMixin:
                 "max_tokens": 8192,
                 "temperature": 0.3,
                 "response_format": {"type": "json_object"},
+                # v0.4.8: STREAM. See _read_sse_stream for the measurement -
+                # a non-streaming call idles the TCP connection for the whole
+                # generation and gets reaped past ~4 minutes.
+                "stream": True,
             }
             payload_obj.update(self._planner_no_think_payload())
             fm = self.valves.PLANNER_FORCE_MODEL
@@ -242,6 +246,69 @@ class PlannerMixin:
         """
         return {"chat_template_kwargs": {"enable_thinking": False}}
 
+    def _read_sse_stream(self, resp) -> tuple:
+        """Reassemble an OpenAI-style SSE stream.
+
+        Returns (content, reasoning_content, finish_reason, completion_tokens).
+
+        v0.4.8: the planner's node3090 call is STREAMED, and this is why.
+        A non-streaming POST holds a TCP connection carrying ZERO bytes in
+        either direction for the entire generation. Measured 2026-08-24 on the
+        LUCIFER -> pfSense (192.168.1.50) -> node3090 path: requests whose
+        generation ran past roughly four minutes had their connection reaped
+        mid-flight. llama-server then wrote a complete, untruncated response
+        into a socket the client no longer owned, and the client blocked to its
+        full timeout receiving nothing.
+
+        Matched evidence, same server and model:
+            non-streaming, 248s generation -> client got 0 bytes, timed out
+                (server task 88240: eval 243756.95 ms / 5806 tokens,
+                 release n_tokens=13174, truncated=0 -- a CLEAN completion)
+            streaming,     270.5s generation -> 6579 chunks, complete
+        Successes were 79s / 126s / 154s / 211s; failures 248s / ~353s / ~353s.
+        The cliff tracks elapsed time, not truncation, not reasoning, not the
+        health probe -- which is why hard planner tasks failed reproducibly
+        while short ones always worked.
+
+        Streaming keeps bytes flowing continuously, so the connection is never
+        idle and nothing reaps it. It also makes PLANNER_LOCAL_TIMEOUT_S a
+        backstop rather than the thing standing between a finished plan and
+        the caller.
+        """
+        import json as _json  # noqa: PLC0415
+
+        content_parts: list = []
+        reasoning_parts: list = []
+        finish_reason = None
+        used = "?"
+        for raw in resp:
+            line = raw.decode("utf-8", "replace").strip()
+            if not line or not line.startswith("data:"):
+                continue
+            body = line[5:].strip()
+            if body == "[DONE]":
+                break
+            try:
+                event = _json.loads(body)
+            except ValueError:
+                # a partial/keepalive frame is not fatal - keep reading
+                continue
+            choices = event.get("choices") or [{}]
+            choice = choices[0] if choices else {}
+            delta = choice.get("delta") or {}
+            if delta.get("content"):
+                content_parts.append(delta["content"])
+            if delta.get("reasoning_content"):
+                reasoning_parts.append(delta["reasoning_content"])
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+            usage = event.get("usage") or {}
+            if usage.get("completion_tokens") is not None:
+                used = usage["completion_tokens"]
+        return (
+            "".join(content_parts), "".join(reasoning_parts), finish_reason, used,
+        )
+
     def _post_chat_completion(
         self, base_url: str, payload: bytes, timeout: int
     ) -> str:
@@ -257,19 +324,28 @@ class PlannerMixin:
             method="POST",
         )
         try:
+            _streaming = False
+            try:
+                _streaming = bool(_json.loads(payload.decode()).get("stream"))
+            except (ValueError, UnicodeDecodeError):
+                _streaming = False
             with _ureq.urlopen(req, timeout=timeout) as resp:
-                data = _json.loads(resp.read().decode())
-                choice = data["choices"][0]
+                if _streaming:
+                    content, reasoning, _finish, used = self._read_sse_stream(resp)
+                else:
+                    data = _json.loads(resp.read().decode())
+                    choice = data["choices"][0]
+                    msg = choice.get("message") or {}
+                    content = msg.get("content") or ""
+                    reasoning = msg.get("reasoning_content") or ""
+                    _finish = choice.get("finish_reason")
+                    used = data.get("usage", {}).get("completion_tokens", "?")
                 # v0.4.5: finish_reason was discarded, so a reply cut off at
                 # max_tokens was indistinguishable from a malformed one. The
                 # envelope parser then reported it as "JSON parse failed",
                 # pointing at model formatting when the real cause was the
                 # token budget. Surface it explicitly instead.
-                msg = choice.get("message") or {}
-                content = msg.get("content") or ""
-                reasoning = msg.get("reasoning_content") or ""
-                if choice.get("finish_reason") == "length":
-                    used = data.get("usage", {}).get("completion_tokens", "?")
+                if _finish == "length":
                     self._log(
                         "NODE-PLAN: reply TRUNCATED at max_tokens "
                         f"(completion_tokens={used}, reasoning_chars={len(reasoning)}) "
@@ -293,7 +369,7 @@ class PlannerMixin:
                     self._log(
                         "NODE-PLAN: empty content "
                         f"(reasoning_chars={len(reasoning)}, "
-                        f"finish_reason={choice.get('finish_reason')})"
+                        f"finish_reason={_finish})"
                     )
                     return (
                         "ERROR: model returned empty content "
@@ -352,6 +428,8 @@ class PlannerMixin:
                 "max_tokens": 8192,
                 "temperature": 0.3,
                 "response_format": {"type": "json_object"},
+                # v0.4.8: STREAM - see _read_sse_stream.
+                "stream": True,
             }
             payload_obj.update(self._planner_no_think_payload())
             if model:
