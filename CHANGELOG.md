@@ -4,6 +4,40 @@
 
 ---
 
+## 2026-08-24 — node4090 (LUCIFER) system prompt v0.6.3 (drift fix)
+
+- Authored `prompts/v0.6.3.md` from `prompts/v0.6.2.md` (verified on-disk == live
+  llama-ui system-prompt text: identical Version line + 10/10 dispersed anchors
+  verbatim) with live-verified drift fixes (audit 2026-08-24, task 2c887b5d):
+  1. Version line: goethe_mcp v1.12.0 → v1.13.0 (repo `tools/goethe_mcp.py`
+     `__version__`); Goethe v0.4.4 → v0.4.9 (live `goethe.py` header + MCP
+     serverInfo).
+  2. Model line: "(WSL2 host-level binding — visible at 0.0.0.0:8080 on the
+     host)" → bound to 127.0.0.1 inside WSL2 NAT, reachable from the Windows
+     host at localhost:8080 (live: llama-server `--host 127.0.0.1`; /etc/wsl.conf
+     has no networkingMode).
+  3. Frontend LAN URLs (node4090.home.arpa:8080 / 192.168.1.57:8080) downgraded
+     from asserted to UNVERIFIED — not confirmable from inside NAT-mode WSL
+     with a 127.0.0.1 bind.
+  4. MCP GW line: v1.12.0 → v1.13.0. (48-tool count re-verified correct
+     against live `tools/list`; search_rfc retirement note unchanged.)
+  5. SearxNG network: "lse-net" → docker_searxng_net (no lse-net exists);
+     "host-level :8080" → ":8080" (follows fix 2).
+  6. LibreChat block removed entirely — operator: optional, not production,
+     out of scope for the system prompt.
+  - NOT changed (deliberate): gateway bind 127.0.0.1 vs 0.0.0.0 is a GUI user
+    choice (single-user vs multi-tenant), not drift — resolved without a
+    prompt edit.
+- SUPERSEDED banners ("SUPERSEDED by v0.6.3, 2026-08-24 — archive only") prepended
+  to `prompts/node4090-v0.6.0.md` + `prompts/v0.6.0.md` (both contain the
+  hardcoded gateway token), `prompts/v0.6.1.md`, and `prompts/v0.6.2.md`.
+- README.md (version table + tree) and CURRENT-STATE.md pointers now reference
+  `prompts/v0.6.3.md`.
+- Deploy: operator paste into the node4090 llama-ui system-prompt config
+  (http://localhost:8080; client-side, not observable from server-side probes);
+  verify via fresh-thread verbatim recitation of the Version line, Model line,
+  and MCP GW line.
+
 ## 2026-08-24 — node3090 system prompt v0.4.0 (drift fix)
 
 - Authored `tools/system-prompt-node3090-v0.4.0.md` from the v0.3.0 archive (captured verbatim
