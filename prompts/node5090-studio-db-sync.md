@@ -1,7 +1,7 @@
-# node5090 studio.db sync — system prompt v0.1.0 (operator-run)
+# node5090 studio.db sync — system prompt v0.1.1 (operator-run)
 
 Task 892e0598 step 8 · 2026-08-30 · Precedent: node4090 v0.6.3 sync, KB doc a9f0d6e3103edf95
-Prompt source of truth: `\\n45.home.arpa\ARCHIVE\system-prompt-node5090.md` = v0.1.0 (382 lines, repo commit 843515b)
+Prompt source of truth: `\\n45.home.arpa\ARCHIVE\system-prompt-node5090.md` = v0.1.1 (393 lines, repo commit 8919c2c)
 
 ## Why this is operator-run
 
@@ -13,9 +13,9 @@ below **as SY5 on node5090**, in `cmd.exe`.
 
 | Layer | Table / key | Action |
 |---|---|---|
-| Global prompt | `chat_settings` key=`inferenceParams` → `.systemPrompt` | replace with v0.1.0 |
-| Per-model overrides | `chat_settings` key=`inferenceParamsByModel` → each sub-dict `.systemPrompt` | replace with v0.1.0 |
-| Custom presets | `chat_settings` key=`customPresets` → any `.systemPrompt` | replace with v0.1.0 (no-op if empty) |
+| Global prompt | `chat_settings` key=`inferenceParams` → `.systemPrompt` | replace with v0.1.1 |
+| Per-model overrides | `chat_settings` key=`inferenceParamsByModel` → each sub-dict `.systemPrompt` | replace with v0.1.1 |
+| Custom presets | `chat_settings` key=`customPresets` → any `.systemPrompt` | replace with v0.1.1 (no-op if empty) |
 | Stale thread snapshots | `chat_threads.settings_json` → `.systemPrompt` | set to `''` (inherit global) — old threads otherwise keep the OLD prompt forever |
 
 DB is in WAL mode: the script checkpoints the WAL before copying, so the backup is a
@@ -64,7 +64,7 @@ Close Studio, then in cmd:
 
 1. Close Studio; in Explorer copy `studio.db` → `studio.db.bkp_<date>` in the same folder.
 2. Open Studio. If Settings exposes a System Prompt field (global chat settings): paste the
-   FULL v0.1.0 text from `\\n45.home.arpa\ARCHIVE\system-prompt-node5090.md`. Do the same for
+   FULL v0.1.1 text from `\\n45.home.arpa\ARCHIVE\system-prompt-node5090.md`. Do the same for
    each model's per-model settings if exposed. Save.
 3. Old threads: delete or archive them via the UI (each keeps its own prompt snapshot; a new
    thread inherits the global). Skipping this leaves old threads on the OLD prompt.
@@ -74,7 +74,7 @@ Close Studio, then in cmd:
 
 ```python
 #!/usr/bin/env python3
-"""node5090 studio.db sync — apply system prompt v0.1.0 to all stale layers.
+"""node5090 studio.db sync — apply system prompt v0.1.1 to all stale layers.
 Run as SY5 on node5090 with Unsloth Studio fully closed.
 Usage: python sync_studio_db.py [path-to-prompt.md]
 Default prompt source: \\n45.home.arpa\\ARCHIVE\\system-prompt-node5090.md
@@ -96,7 +96,7 @@ try:
 except Exception as e:
     fail(f"cannot read prompt source {PROMPT_SRC}: {e}")
 if len(prompt) < 1000 or "TOOL HOST" not in prompt or "[VERIFY distro name + Linux user]" in prompt:
-    fail("prompt source does not look like v0.1.0 (too short, missing 'TOOL HOST', or stale WSL marker) — check path")
+    fail("prompt source does not look like v0.1.1 (too short, missing 'TOOL HOST', or stale WSL marker) — check path")
 print(f"prompt loaded: {len(prompt)} chars, {prompt.count(chr(10)) + 1} lines")
 
 con = sqlite3.connect(DB)
