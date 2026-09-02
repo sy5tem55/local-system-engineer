@@ -110,3 +110,7 @@ prompts/AnimalCrossinggamePrompt.md
 # Working backups from in-place patching (never re-commit)
 *.bak-*
 *.bak.*
+
+# Build artifacts — dist/ node5090 gateway package stays untracked (2026-09-02 decision)
+dist/**/*.tar.gz
+**/*.egg-info/
