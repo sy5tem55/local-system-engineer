@@ -3307,7 +3307,7 @@ def run_pass_patterns(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
 # _INSIGHT_DOMAIN_BUILDERS below, one pair per patterns.json section.
 
 INSIGHT_DOMAINS = ("command-frequency", "failure-retry", "tool-usage", "automation-candidates")
-INSIGHT_PROPOSED_CHANGES = {"kb-fact", "skill", "prompt-rule", "tool-change"}
+INSIGHT_PROPOSED_CHANGES = {"kb-fact", "skill", "prompt-rule", "tool-change", "diagnosis"}
 INSIGHT_OBSERVATION_MIN_LEN = 20  # no one-word "findings" -- same discipline as elsewhere in this file
 INSIGHT_MAX_ITEMS_PER_DOMAIN_PROMPT = 30  # cap raw data rows shown per call
 
@@ -3422,16 +3422,21 @@ _INSIGHT_SCHEMA_BLOCK = """Return ONLY this JSON object -- no prose, no thinking
   {"observation": "one or two sentences: the specific pattern you found and why it matters",
    "evidence_refs": ["<copy EXACTLY from the DATA block above -- a command string, tag name, week label, or sequence step, character-for-character>", "..."],
    "cost_estimate": "rough wasted-calls/wasted-time estimate grounded in the counts you were given (e.g. '12 wasted CMD retries, ~2 min agent time')",
-   "proposed_change": "one of: kb-fact | skill | prompt-rule | tool-change",
+   "proposed_change": "one of: kb-fact | skill | prompt-rule | tool-change | diagnosis",
    "confidence": <float 0.0-1.0>,
    "kb_fact": {"title": "...", "content": "...", "topic": "...", "volatility": "static|fast|slow"},
    "skill": {"task": "...", "procedure": "...", "verification": "...", "preconditions": "", "failure_modes": "", "occupation": "..."},
-   "prompt_rule": {"rule": "one short, imperative sentence -- exactly as it should read inside the system prompt", "rationale": "one sentence: what recurring problem this rule prevents", "section_hint": "which existing prompt section this would slot under, e.g. 'ground-truth-before-action' or 'time discipline' -- best guess, not binding"}
+   "prompt_rule": {"rule": "one short, imperative sentence -- exactly as it should read inside the system prompt", "rationale": "one sentence: what recurring problem this rule prevents", "section_hint": "which existing prompt section this would slot under, e.g. 'ground-truth-before-action' or 'time discipline' -- best guess, not binding"},
+   "diagnosis": {"error_text": "the exact command or failure this diagnosis is about, verbatim from the DATA block", "context": "what was being attempted when it happened", "interpretation": "what this actually means -- the diagnosis, not a restatement of the pattern", "resolution": "exactly what fixes it or what to do instead", "anti_response": "what NOT to do -- the intuitive-but-wrong move this tempts (may be empty)"}
   }
 ]}
 Include "kb_fact" ONLY when proposed_change is "kb-fact"; include "skill" ONLY when
 proposed_change is "skill"; include "prompt_rule" ONLY when proposed_change is
-"prompt-rule"; omit all three otherwise. A "prompt_rule" is NOT a new fact or a new
+"prompt-rule"; include "diagnosis" ONLY when proposed_change is "diagnosis";
+omit the others. A "diagnosis" is a reinterpretation -- its value is "it is not
+what it looks like" (e.g. a high-frequency command is a workaround for a missing
+tool, or a failure being silently retried), recorded via record_error; it is NOT
+a new fact and NOT a procedure. A "prompt_rule" is NOT a new fact or a new
 procedure -- it is a standing behavioral instruction worth adding to every future
 session's system prompt, proposed only when the SAME avoidable mistake or omission
 recurs across multiple sessions (never from one occurrence). evidence_refs that are not
@@ -3450,9 +3455,14 @@ the numbers) plus a list of recent session summaries for context.
 
 Look for exactly ONE kind of finding in THIS call: a command (or tight family of
 commands) run often enough, or repetitively enough for a narrow fixed purpose,
-that it represents a real recurring workflow worth systematizing -- via a new
-lse-kb fact documenting it, a reusable skill procedure, a prompt-rule change, or
-an actual tool/automation change. Do NOT analyze failures, retries, or
+that it reveals something about how this system actually works. The default
+output is a DIAGNOSIS of what the high-frequency usage means -- a missing tool,
+a workaround for a gap, a recurring failure being silently retried, a step that
+belongs in automation. A high-frequency command is not by itself a repeatable
+procedure: do NOT propose "skill" from this domain. Use "kb-fact" only when the
+pattern documents a verified fact worth retrieving later, "prompt-rule" only
+when the same avoidable behavior recurs across sessions, and "tool-change" when
+the fix is a real tool/automation change. Do NOT analyze failures, retries, or
 week-over-week usage trends here -- those are separate domains with their own
 calls.
 
@@ -3581,11 +3591,28 @@ def _validate_insight_item(item: dict, valid_refs: set) -> tuple:
                 "rationale": str(prompt_rule.get("rationale", "")).strip(),
                 "section_hint": str(prompt_rule.get("section_hint", "")).strip() or "(unspecified)",
             }
+    elif proposed_change == "diagnosis":
+        # Same structural floor as _draft_error_cluster_proposals():
+        # interpretation is load-bearing (a diagnosis without one is an
+        # incomplete draft); anti_response may legitimately be empty.
+        diag = item.get("diagnosis")
+        if (isinstance(diag, dict)
+                and str(diag.get("error_text", "")).strip()
+                and str(diag.get("context", "")).strip()
+                and str(diag.get("interpretation", "")).strip()
+                and str(diag.get("resolution", "")).strip()):
+            cleaned["diagnosis"] = {
+                "error_text": str(diag.get("error_text", "")).strip(),
+                "context": str(diag.get("context", "")).strip(),
+                "interpretation": str(diag.get("interpretation", "")).strip(),
+                "resolution": str(diag.get("resolution", "")).strip(),
+                "anti_response": str(diag.get("anti_response", "")).strip(),
+            }
     return cleaned, None
 
 
 def _insight_to_proposal(insight: dict, domain: str, today: str):
-    """kb-fact/skill/prompt-rule-shaped insights become a real proposal;
+    """kb-fact/skill/prompt-rule/diagnosis-shaped insights become a real proposal;
     tool-change still has no write path of any kind (no tool/script exists
     to dispatch a tool-change through) and stays report.md-only. Returns
     None if proposed_change isn't proposal-shaped, or its detail sub-object
@@ -3663,6 +3690,25 @@ def _insight_to_proposal(insight: dict, domain: str, today: str):
             "confidence": insight["confidence"],
             "why": insight["observation"][:300],
         }
+    if insight["proposed_change"] == "diagnosis" and "diagnosis" in insight:
+        # Same shape the error-cluster pass emits (type/call/args + evidence +
+        # why), so dream_apply.py's record_error dispatch needs no change.
+        dg = insight["diagnosis"]
+        return {
+            "type": "diagnosis",
+            "call": "record_error",
+            "args": {
+                "error_text": dg["error_text"],
+                "context": dg["context"],
+                "interpretation": dg["interpretation"],
+                "resolution": dg["resolution"],
+                "anti_response": dg["anti_response"],
+            },
+            "evidence": insight["evidence_refs"],
+            "insight_domain": domain,
+            "confidence": insight["confidence"],
+            "why": insight["observation"][:300],
+        }
     return None
 
 
@@ -3725,13 +3771,14 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
     (folded into this pass's own narrative string -- write_report emits
     narrative verbatim, so a "## Cross-session insights" heading inside it
     renders as its own top-level report section). proposed_change in
-    {"kb-fact", "skill", "prompt-rule"} is proposal-shaped: kb-fact/skill
-    dispatch through dream_apply.py's existing Tools calls
+    {"kb-fact", "skill", "prompt-rule", "diagnosis"} is proposal-shaped:
+    kb-fact/skill dispatch through dream_apply.py's existing Tools calls
     (index_to_kb/skill_record); prompt-rule (Prompt 3.6) dispatches through
     append_learned_rule, which dream_apply.py applies by appending to
-    prompts/learned-rules.md instead of calling a Tools method -- see
-    _insight_to_proposal. "tool-change" still maps to no write path at all
-    and is never converted to a proposals.jsonl entry. All three
+    prompts/learned-rules.md instead of calling a Tools method; diagnosis
+    dispatches through record_error in the same shape the error-cluster pass
+    emits -- see _insight_to_proposal. "tool-change" still maps to no write
+    path at all and is never converted to a proposals.jsonl entry. All four
     proposal-shaped kinds flow into the SAME `proposals` list every other
     pass returns, validated by the SAME validate_proposal_shape() gate in
     main().
@@ -3793,7 +3840,7 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
         f"insights pass: {len(session_summaries)} session summary(ies) considered "
         f"across {len(INSIGHT_DOMAINS)} domain(s); {len(all_insights)} insight(s) "
         f"accepted total, {len(all_proposals)} converted to a proposal "
-        "(kb-fact/skill/prompt-rule — tool-change stays report.md-only).",
+        "(kb-fact/skill/prompt-rule/diagnosis — tool-change stays report.md-only).",
         "",
     ] + notes + [""]
 
@@ -3814,9 +3861,20 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
         )
     else:
         for i, ins in enumerate(all_insights, 1):
-            became_proposal = ins["proposed_change"] in ("kb-fact", "skill") and (
-                "kb_fact" in ins or "skill" in ins
-            )
+            # command-frequency no longer proposes skills (its prompt reframes
+            # high-frequency findings as diagnoses, 2026-09-02); every other
+            # domain keeps skill. Diagnosis flows into proposals.jsonl like
+            # kb-fact (record_error dispatch, see _insight_to_proposal).
+            if ins["domain"] == "command-frequency":
+                became_proposal = (
+                    ins["proposed_change"] in ("kb-fact", "diagnosis")
+                    and ("kb_fact" in ins or "diagnosis" in ins)
+                )
+            else:
+                became_proposal = (
+                    ins["proposed_change"] in ("kb-fact", "skill", "diagnosis")
+                    and ("kb_fact" in ins or "skill" in ins or "diagnosis" in ins)
+                )
             narrative_lines.append(
                 f"{i}. **[{ins['domain']}/{ins['proposed_change']}]** "
                 f"(confidence={ins['confidence']:.2f}) — {ins['observation']}"
