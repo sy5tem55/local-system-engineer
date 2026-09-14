@@ -800,7 +800,7 @@ node4090, node5090, or internal Ray actors as public agents.
 
 ## Status Update — 2026-09-14
 
-**State:** Phases 1–3 implemented and verified · Phase 4 cross-VLAN cluster verified (capacity reservations, scheduler policy tuning, Grafana panels, failure injection pending) · Phase 5 (Redis Streams event log) not deployed · A2A deferred to Phase 6+, discussion opened.
+**State:** Phases 1–3 implemented and verified · Phase 4 cross-VLAN cluster verified (capacity reservations, scheduler policy tuning, Grafana panels, failure injection pending) · Phase 5 (Redis Streams event log) not deployed · A2A deferred to Phase 6+, discussion opened · JWT minting verified 2026-09-14.
 
 ### Implementation
 
@@ -830,6 +830,10 @@ deployment. Done 2026-09-14:
   lives in the Goethe GUI (WinUI 3/.NET, Goethe.App) — scoped 2026-09-14 as a
   SEPARATE project (A2A and Ray control plane); the LSE stack, including the
   A2A service, stays in Python.
+- JWT minting verified 2026-09-14: HS256 token minted and delivered
+  (sub=node4090, aud=node3090, 1h validity window) — first instance of the
+  shared :9700/:9701 SSO credential; Vaultwarden storage under
+  `goethe-a2a-token` pending operator confirmation.
 
 ### Canonical location
 

@@ -247,6 +247,191 @@ def make_instance(Tools):
     return inst
 
 
+# --- ADR-ORCH-001 Phase 3 — distributed task orchestrator surface -----------
+# Valve-gated (rollback valve): GOETHE_ORCHESTRATOR_ENABLED=on|1|true|yes
+# exposes the orch_* tools; unset or any other value reverts the surface to
+# plain Goethe on restart. Fail-safe: an init failure prints a WARNING and
+# leaves the MCP surface untouched (same pattern as the GOETHE_UI mount).
+# Related env: GOETHE_EXECUTION_BACKEND (local|ray, default local),
+#              GOETHE_RAY_ADDRESS (ray head address; empty → local fallback).
+# tasks.db (ledger) remains the task-of-record; this surface is the dispatch
+# layer over it. The goethe_orchestrator package lives at the repo root, which
+# is NOT on sys.path when the gateway runs from tools/ — _orch_bootstrap()
+# adds it lazily so the valve-off path never imports it.
+
+
+def _orch_enabled() -> bool:
+    return os.environ.get("GOETHE_ORCHESTRATOR_ENABLED", "").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+# --- ADR-ORCH-001 Phase 6+ — A2A 1.0 external client boundary --------------
+# Valve-gated (rollback valve): GOETHE_A2A_ENABLED=on|1|true|yes enables the
+# standalone A2A service on :9701 (tools/goethe_a2a.py); unset or any other
+# value keeps the current MCP-only surface. Default: OFF.
+# Auth (D3): one shared JWT for :9700+:9701 — token in Vaultwarden item
+# goethe-a2a-token, Ed25519 signing key in goethe-a2a-jwt-key (gateway signs,
+# both services verify, public key in the AgentCard auth section).
+# See docs/A2A-ORCH-001-discussion-kickoff.md (Decision Log, 2026-09-14).
+
+
+def _a2a_enabled() -> bool:
+    return os.environ.get("GOETHE_A2A_ENABLED", "").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+def _orch_bootstrap():
+    """Add the repo root to sys.path and import the orchestrator contracts."""
+    import sys as _sys
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if repo_root not in _sys.path:
+        _sys.path.insert(0, repo_root)
+    from goethe_orchestrator.contracts import TaskEnvelope, WorkerRegistration
+    from goethe_orchestrator.orchestrator import (
+        LocalOrchestrator, NoEligibleWorkerError,
+    )
+    return TaskEnvelope, WorkerRegistration, LocalOrchestrator, NoEligibleWorkerError
+
+
+class OrchestratorTools:
+    """MCP tool surface over the ADR-ORCH-001 LocalOrchestrator (valve-gated).
+
+    In-memory state (workers, envelopes, dispatches) — process-scoped.
+    All results are JSON strings so the MCP client sees one schema shape
+    regardless of backend.
+    """
+
+    def __init__(self):
+        (self._TaskEnvelope, self._WorkerRegistration,
+         self._LocalOrchestrator, self._NoEligibleWorkerError) = _orch_bootstrap()
+        backend = os.environ.get("GOETHE_EXECUTION_BACKEND", "local").strip().lower()
+        ray_address = os.environ.get("GOETHE_RAY_ADDRESS", "").strip() or None
+        from goethe_orchestrator.event_log import EventLog
+        self._event_log = EventLog()
+        self._orch = self._LocalOrchestrator(backend=backend,
+                                             ray_address=ray_address,
+                                             event_log=self._event_log)
+        self._dispatches = {}
+        # Built-in smoke handler (Phase-4 ships real handler bundles via the
+        # Ray runtime env; until then echo is the only executable handler).
+        self._orch.register_handler("echo", lambda **kw: "echo:" + str(kw.get("msg", "")))
+
+    def orch_dispatch(self, handler: str, args_json: str = "{}",
+                      requires_json: str = "", priority: int = 0,
+                      ttl_seconds: int = 3600) -> str:
+        """Dispatch one task envelope to the best eligible worker (weighted-v1).
+
+        Args:
+            handler:       handler name on the worker tool surface ("echo" is
+                           built in; Phase-4 adds real handlers).
+            args_json:     JSON object of handler kwargs, e.g. '{"msg":"hi"}'.
+            requires_json: optional JSON object of hard requirements, e.g.
+                           '{"vram_gb":12,"tools":["read_file"]}' — workers
+                           missing a requirement are excluded by the scheduler.
+            priority:      >= 0, higher = more urgent (default 0).
+            ttl_seconds:   envelope time-to-live in seconds, > 0 (default 3600).
+
+        Returns JSON: {envelope_id, worker_id, backend, status}. Call
+        orch_collect(envelope_id) afterwards for the result. When no registered
+        worker matches, returns {error, envelope_id, status: PENDING} — the
+        envelope stays PENDING for a later retry.
+        """
+        import json as _json
+        payload = {"handler": handler,
+                   "args": _json.loads(args_json or "{}")}
+        if requires_json.strip():
+            payload["requires"] = _json.loads(requires_json)
+        env = self._TaskEnvelope(payload=payload, priority=priority,
+                                 ttl=ttl_seconds)
+        try:
+            res = self._orch.dispatch(env)
+        except self._NoEligibleWorkerError as e:
+            return _json.dumps({"error": str(e), "envelope_id": env.id,
+                                "status": "PENDING"})
+        self._dispatches[res.envelope_id] = res
+        return _json.dumps({"envelope_id": res.envelope_id,
+                            "worker_id": res.worker_id,
+                            "backend": res.backend,
+                            "status": res.status})
+
+    def orch_collect(self, envelope_id: str, timeout: float = 30.0) -> str:
+        """Wait for a dispatched envelope's result and report status.
+
+        Args:
+            envelope_id: the id returned by orch_dispatch.
+            timeout:     max seconds to block (default 30).
+
+        Returns JSON: {envelope_id, worker_id, backend, status} plus "result"
+        on COMPLETED or "error" on FAILED.
+        """
+        import json as _json
+        res = self._dispatches.get(envelope_id)
+        if res is None:
+            return _json.dumps({"error": f"unknown envelope {envelope_id!r} "
+                                         "(orch_dispatch it first)"})
+        if res.backend == "local":
+            res = self._orch.collect(res, timeout=timeout)
+        elif res.backend == "ray" and res.status == "DISPATCHED":
+            import ray
+            try:
+                res.result = ray.get(res.ref, timeout=timeout)
+                res.status = "COMPLETED"
+            except Exception as exc:
+                res.status = "FAILED"
+                res.error = f"{type(exc).__name__}: {exc}"
+        out = {"envelope_id": res.envelope_id, "worker_id": res.worker_id,
+               "backend": res.backend, "status": res.status}
+        if res.status == "COMPLETED":
+            out["result"] = res.result
+        if res.error:
+            out["error"] = res.error
+        return _json.dumps(out, default=str)
+
+    def orch_register_worker(self, worker_id: str, capabilities_json: str = "{}",
+                             heartbeat_ttl: int = 30) -> str:
+        """Register a worker with the scheduler (v1: in-memory, per process).
+
+        Args:
+            worker_id:         unique id, e.g. "node3090:llama".
+            capabilities_json: JSON object of capabilities, e.g.
+                               '{"vram_gb":24,"tools":["read_file"]}'.
+            heartbeat_ttl:     seconds before an un-heartbeated worker expires
+                               (default 30).
+
+        Returns JSON: {worker_id, status, capabilities, heartbeat_ttl}.
+        """
+        import json as _json
+        caps = _json.loads(capabilities_json or "{}")
+        w = self._WorkerRegistration(worker_id=worker_id, capabilities=caps,
+                                     heartbeat_ttl=heartbeat_ttl)
+        self._orch.register_worker(w)
+        return _json.dumps({"worker_id": w.worker_id, "status": w.status,
+                            "capabilities": caps, "heartbeat_ttl": w.heartbeat_ttl})
+
+    def orch_heartbeat(self, worker_id: str) -> str:
+        """Refresh a worker's heartbeat (keeps it ACTIVE past its ttl).
+
+        Returns JSON: {worker_id, ok} — ok=false means the id is unknown.
+        """
+        import json as _json
+        ok = self._orch.heartbeat(worker_id)
+        return _json.dumps({"worker_id": worker_id, "ok": ok})
+
+    def orch_workers(self) -> str:
+        """Tick the scheduler (expire stale workers) and report the roster.
+
+        Returns JSON: {active: [{worker_id, capabilities, heartbeat_ttl,
+        last_heartbeat}], just_expired: [worker_id, ...]}.
+        """
+        import json as _json
+        flipped = self._orch.tick()
+        active = [{"worker_id": w.worker_id, "capabilities": w.capabilities,
+                   "heartbeat_ttl": w.heartbeat_ttl,
+                   "last_heartbeat": w.last_heartbeat}
+                  for w in self._orch.active_workers()]
+        return _json.dumps({"active": active, "just_expired": flipped})
+
+
 def _annotation(p: inspect.Parameter):
     ann = p.annotation if p.annotation is not inspect.Parameter.empty else str
     # Do NOT wrap in Optional[X] even when default=None.
@@ -840,6 +1025,20 @@ def main():
         print(f"[goethe_mcp] +{len(ex)} from {os.path.basename(extra)}: "
               f"{', '.join(ex)}", file=sys.stderr)
     print(f"[goethe_mcp] exposed {len(names)} tools total (v{__version__})", file=sys.stderr)
+
+    # ADR-ORCH-001 Phase 3 — orchestrator surface (valve-gated; off by default).
+    if _orch_enabled():
+        try:
+            ex = register(mcp, make_instance(OrchestratorTools), seen)
+            names += ex
+            print(f"[goethe_mcp] orchestrator ENABLED (backend="
+                  f"{os.environ.get('GOETHE_EXECUTION_BACKEND', 'local')}): "
+                  f"+{len(ex)} orch_* tools", file=sys.stderr)
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[goethe_mcp] WARNING: orchestrator disabled ({e}) — "
+                  "MCP surface unaffected", file=sys.stderr)
 
     if args.list:
         for n in names:
