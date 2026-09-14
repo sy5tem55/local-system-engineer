@@ -56,33 +56,46 @@ class NodeLifecycleMixin:
             "hostname": "node3090.home.arpa",
             "interface": "opt1",
             "agent_port": 8080,
-            "agent_type": "llama-cpp",
+            # 2026-09-08: node3090 migrated to Unsloth Studio. Studio
+            # launches and manages its own llama-server engine (binary
+            # /home/lse-admin/.unsloth/llama.cpp/llama-server) on an
+            # ephemeral 127.0.0.1 port; the OpenAI API + web UI are
+            # served on agent_port 8080. start_node_agent() launches
+            # studio_cmd below and does NOT reconstruct engine flags
+            # from agent_profile — the profile is descriptive only
+            # (feeds check_node_agent_drift) and mirrors the live
+            # engine verified 2026-09-08. Studio-managed flags it
+            # cannot express (spec-type, mmproj, fit, slot-save-path,
+            # load-mode, no-context-shift, alias, chat-template-kwargs)
+            # show as UNMODELLED in drift reports — expected, not an
+            # error.
+            "agent_type": "unsloth-studio",
+            "studio_cmd": "~/.local/bin/unsloth studio -H 0.0.0.0 -p 8080",
             "os": "linux",
             "ssh_user": "lse-admin",
             "agent_profile": {
-                "model": "/opt/models/unsloth/Qwen3.8-27B/Qwen3.8-27B-UD-Q6_K_XL.gguf",
-                "ctx_size": 196608,
-                "gpu_layers": 99,
+                "model": ("/opt/models/unsloth/hub/models--unsloth--Qwen3.8-27B-GGUF/"
+                          "snapshots/4ca720788d1e01f1bff70c033e0d0028fd02e502/"
+                          "Qwen3.8-27B-UD-Q6_K_XL.gguf"),
+                "ctx_size": 145576,
+                "gpu_layers": -1,
                 # node3090 is DUAL-GPU: RTX 3090 (24GiB) + RTX 5060 Ti (16GiB).
-                # --tensor-split 3,1 is TENSOR parallelism, not pipeline: every
-                # layer's weight matrices are split horizontally ~75/25 and both
-                # GPUs compute each layer, then all-reduce. All 65 layers are
-                # offloaded; nothing on CPU. Live 2026-08-09: 3090 at 22.1/24.6
-                # GiB, 5060 Ti at 9.3/16.3 GiB.
+                # --tensor-split 20858,13039 is TENSOR parallelism, not
+                # pipeline: Studio computes the split from live VRAM
+                # (≈ 61/39 of the 24/16 GiB cards, i.e. ~75/25) and every
+                # layer's weight matrices are split horizontally, both GPUs
+                # compute each layer, then all-reduce. All layers are
+                # offloaded (--n-gpu-layers -1); nothing on CPU.
                 #
-                # Load-bearing: without this the engine spreads evenly and a
-                # 262144 ctx at Q5_K_M will not fit the smaller card. A profile
-                # that cannot reproduce the running process is not a profile.
-                "tensor_split": "3,1",
-                "batch_size": 2048,
-                "ubatch_size": 512,
+                # Load-bearing: without a VRAM-proportional split the engine
+                # spreads evenly and the model will not fit the smaller card.
+                # A profile that cannot reproduce the running process is not
+                # a profile.
+                "tensor_split": "20858,13039",
                 "flash_attn": True,
                 "cache_type_k": "q8_0",
                 "cache_type_v": "q8_0",
                 "parallel": 1,
-                "threads": 15,
-                "threads_batch": 15,
-                "reasoning_format": "deepseek",
                 "jinja": True,
                 "metrics": True,
             },
@@ -597,8 +610,20 @@ class NodeLifecycleMixin:
             parts += [_flag, "on" if _val is True else "off" if _val is False else str(_val)]
 
         cmd_str = " ".join(parts)
-        # Background via nohup; stdin from /dev/null so SSH exits cleanly
-        remote_cmd = f"nohup {cmd_str} </dev/null >{log_path} 2>&1 & echo PID:$!"
+        # Background via nohup; stdin from /dev/null so SSH exits cleanly.
+        # 2026-09-08: unsloth-studio nodes (node3090) launch the studio
+        # binary instead — Studio manages its own engine on an ephemeral
+        # port; the profile above is descriptive only for them.
+        if reg.get("agent_type") == "unsloth-studio":
+            log_path = "/tmp/unsloth-studio.log"
+            studio_cmd = reg.get(
+                "studio_cmd", f"~/.local/bin/unsloth studio -H 0.0.0.0 -p {port}")
+            remote_cmd = f"nohup {studio_cmd} </dev/null >{log_path} 2>&1 & echo PID:$!"
+            # Studio's UI is an SPA: /health 404s; /v1/models is readiness.
+            ready_url = f"http://{hostname}:{port}/v1/models"
+        else:
+            remote_cmd = f"nohup {cmd_str} </dev/null >{log_path} 2>&1 & echo PID:$!"
+            ready_url = f"http://{hostname}:{port}/health"
 
         ssh_cmd = [
             "ssh",
@@ -621,8 +646,8 @@ class NodeLifecycleMixin:
         except subprocess.SubprocessError as exc:
             return f"start_node_agent SSH error: {exc}"
 
-        # Poll /health — model load takes 30-90s
-        health_url = f"http://{hostname}:{port}/health"
+        # Poll readiness — model load takes 30-90s (studio: engine boot)
+        health_url = ready_url
         self._log(f"START-NODE-AGENT: polling {health_url}")
         deadline = _time.time() + 120
         while _time.time() < deadline:
@@ -641,7 +666,7 @@ class NodeLifecycleMixin:
                 pass
 
         return (
-            f"Timeout: llama-server started ({pid_line}) but /health not responding after 120s. "
+            f"Timeout: agent started ({pid_line}) but {ready_url} not responding after 120s. "
             f"Check: ssh {user}@{hostname} tail {log_path}"
         )
 
@@ -678,10 +703,20 @@ class NodeLifecycleMixin:
             "-o",
             "BatchMode=yes",
             f"{user}@{hostname}",
-            "pkill -f llama-server && echo stopped || echo no_process",
+            # 2026-09-08: on unsloth-studio nodes the engine is a CHILD of
+            # the 'unsloth studio' process — kill the engine by parent PID
+            # first (precise: sidecars on this node run the same llama.cpp
+            # binary and must survive), then the studio parent. Bracket
+            # char keeps the remote shell from self-matching the pattern.
+            ("SPID=$(pgrep -f 'unsloth[ ]studio' | head -1); "
+             "[ -n \"$SPID\" ] && pkill -TERM -P \"$SPID\" || true; "
+             "pkill -f 'unsloth[ ]studio' || true; "
+             "sleep 2; pgrep -af 'unsloth|llama' || true")
+            if reg.get("agent_type") == "unsloth-studio"
+            else "pkill -f llama-server && echo stopped || echo no_process",
         ]
 
-        self._log(f"STOP-NODE-AGENT: pkill llama-server on {node}")
+        self._log(f"STOP-NODE-AGENT: stop agent on {node}")
         try:
             r = _sp.run(ssh_cmd, capture_output=True, text=True, timeout=15)
             output = r.stdout.strip() or r.stderr.strip()
