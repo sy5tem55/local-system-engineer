@@ -222,6 +222,29 @@
     </div>
   </div>
 
+  <div class="panel span4" id="p-skills">
+    <h2>Skills <span class="ms" id="skills-ms"></span></h2>
+    <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+      <input type="text" id="skills-filter" placeholder="filter id / occupation / task…"
+             style="flex:1;min-width:0;font-size:12px;padding:4px 8px;background:transparent;border:1px solid var(--dim);border-radius:6px;color:inherit" oninput="renderSkills()">
+      <span class="chip" id="skills-count"></span>
+    </div>
+    <div id="skills-body" style="max-height:430px;overflow-y:auto">Loading…</div>
+    <style>
+      .skill-row{border:1px solid var(--dim);border-radius:6px;margin-bottom:6px;cursor:pointer;overflow:hidden}
+      .skill-hd{display:flex;align-items:center;gap:6px;padding:6px 8px;font-size:12px;flex-wrap:wrap}
+      .skill-id{font-size:10px;color:var(--dim);white-space:nowrap}
+      .skill-task{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)}
+      .skill-uses{font-size:10px;color:var(--dim);white-space:nowrap}
+      .skill-dt{display:none;padding:4px 10px 8px;border-top:1px solid var(--dim);font-size:11px}
+      .skill-row.open .skill-dt{display:block}
+      .sk-sec{margin-top:6px}
+      .sk-sec b{font-size:10px;text-transform:uppercase;color:var(--dim);letter-spacing:.04em}
+      .sk-sec ol,.sk-sec ul{margin:3px 0 0 16px;padding:0}
+      .skills-empty{color:var(--dim);font-size:12px;padding:12px 4px}
+    </style>
+  </div>
+
   <div class="panel span8" id="p-kb">
     <h2>Knowledge Base — Trust Lifecycle <span class="ms" id="kb-ms"></span></h2>
     <div class="bignums" id="kb-nums"></div>
@@ -416,6 +439,59 @@ function qcls(q){ return q >= 0.7 ? "hi" : q >= 0.4 ? "md" : "lo"; }
 function tierBadge(t){
   const k = (t||"(untagged)").replace("ground_truth","gt").replace("(untagged)","untagged");
   return '<span class="badge '+esc(k)+'">'+esc(t||"—")+'</span>';
+}
+
+// ---- skills (read-only — lse-skills index) ----
+let _skills = [];
+async function loadSkills(){
+  try{
+    const d = await api("/api/ui/skills");
+    _skills = d.skills || [];
+    if (d._elapsed_ms != null) $("skills-ms").textContent = d._elapsed_ms + "ms";
+    $("skills-count").textContent = _skills.length + " skills";
+    if (d.error && !_skills.length)
+      $("skills-body").innerHTML = '<div class="skills-empty">' + esc(d.error) + '</div>';
+    renderSkills();
+  }catch(e){
+    $("skills-body").innerHTML = '<div class="skills-empty">skills offline</div>';
+  }
+}
+function renderSkills(){
+  const f = ($("skills-filter").value || "").trim().toLowerCase();
+  const rows = _skills.filter(s => !f
+    || (s.skill_id||"").toLowerCase().includes(f)
+    || (s.occupation||"").toLowerCase().includes(f)
+    || (s.task||"").toLowerCase().includes(f));
+  if (!rows.length){
+    $("skills-body").innerHTML = '<div class="skills-empty">No skills'
+      + (f ? ' matching "' + esc(f) + '"' : " in lse-skills") + '</div>';
+    return;
+  }
+  $("skills-body").innerHTML = rows.map(s => {
+    const st = s.stats || {};
+    const q = s.quality != null
+      ? '<span class="badge '+qcls(s.quality)+'" title="quality">' + s.quality.toFixed(2) + '</span>' : "";
+    const tier = s.source_tier ? tierBadge(s.source_tier) : "";
+    const flag = s.archived ? '<span class="badge stale" title="archived">archived</span>'
+      : (s.pinned ? '<span class="badge" title="pinned">pinned</span>' : "");
+    const uses = (st.uses||0) + '·' + (st.episode_successes||0) + '·' + (st.episode_failures||0);
+    const list = (label, arr) => arr && arr.length
+      ? '<div class="sk-sec"><b>' + label + '</b><ul>' + arr.map(x => '<li>' + esc(x) + '</li>').join("") + '</ul></div>' : "";
+    return '<div class="skill-row" onclick="this.classList.toggle(\'open\')">'
+      + '<div class="skill-hd">'
+      + '<span class="skill-id">' + esc(s.skill_id||"—") + '</span>'
+      + '<span class="badge kind-' + esc(s.occupation||"") + '" title="occupation">' + esc(s.occupation||"—") + '</span>'
+      + q + tier + flag
+      + '<span class="skill-task" title="' + esc(s.task||"") + '">' + esc(s.task||"") + '</span>'
+      + '<span class="skill-uses" title="uses · successes · failures">' + uses + '</span></div>'
+      + '<div class="skill-dt">'
+      + list("procedure", s.procedure)
+      + (s.verification ? '<div class="sk-sec"><b>verification</b><div>' + esc(s.verification) + '</div></div>' : "")
+      + list("preconditions", s.preconditions)
+      + list("failure modes", s.failure_modes)
+      + (s.provenance ? '<div class="sk-sec"><b>provenance</b><div>' + esc(s.provenance) + '</div></div>' : "")
+      + '</div></div>';
+  }).join("");
 }
 
 // ---- overview / header chips ----
@@ -1229,7 +1305,7 @@ async function episodePurgeRun(){
 function refreshAll(){
   loadOverview(); loadPerms(); loadBackends(); loadKB(); loadDream();
   loadTraumStatus(); loadTraumRuns(); loadTraumProposals();
-  loadLedger(); loadEpisodes();
+  loadLedger(); loadEpisodes(); loadSkills();
 }
 refreshAll();
 setInterval(refreshAll, 60000);

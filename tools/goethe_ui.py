@@ -967,6 +967,32 @@ def perms_overview() -> dict:
         return {"error": f"{type(e).__name__}: {e}", "pending": [], "grants": []}
 
 
+def skills_panel() -> dict:
+    """Read-only listing of the lse-skills index for the console Skills panel.
+
+    Returns every skill doc (procedure/verification/preconditions/failure_modes/
+    provenance included for click-to-expand). No write surface — the panel is
+    strictly read-only, same contract as the other _PANELS entries.
+    """
+    body = {
+        "size": 200,
+        "query": {"match_all": {}},
+        "_source": ["skill_id", "occupation", "task", "quality", "source_tier",
+                    "stats", "pinned", "archived", "procedure", "verification",
+                    "preconditions", "failure_modes", "provenance"],
+        "sort": [{"quality": {"order": "desc", "missing": "_last"}},
+                 {"skill_id.keyword": "asc"}],
+    }
+    try:
+        r = _es_search("lse-skills", body)
+    except Exception as e:
+        return {"error": f"lse-skills: {type(e).__name__}: {e}", "skills": []}
+    hits = r.get("hits", {}).get("hits", [])
+    skills = [h.get("_source", {}) for h in hits]
+    return {"skills": skills, "total": len(skills),
+            "archived": sum(1 for s in skills if s.get("archived"))}
+
+
 _PANELS = {
     "/api/ui/overview": overview,
     "/api/ui/kb": kb_stats,
@@ -974,6 +1000,7 @@ _PANELS = {
     "/api/ui/ledger": ledger_stats,
     "/api/ui/episodes": episode_stats,
     "/api/ui/perms": perms_overview,
+    "/api/ui/skills": skills_panel,
     "/api/ui/backends": backend_status,
 }
 
