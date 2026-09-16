@@ -211,6 +211,29 @@ class LocalOrchestrator:
 
         return self._pool.submit(_run)
 
+    _RAY_SHIP_DIR = "/tmp/lse-ray-ship"
+
+    def _ray_runtime_env(self) -> Dict[str, str]:
+        """Stage the goethe_orchestrator package for the worker side.
+
+        Ray's working_dir is content-hash cached, so the ~150KB package is
+        uploaded once per content change, then reused. A staging dir is
+        used (not the repo root) so the 25MB repo is never uploaded.
+        Rebuilt on every dispatch: the copy is trivial and guarantees the
+        worker side runs the code that is on disk right now.
+        """
+        import os
+        import shutil
+
+        pkg_src = os.path.dirname(os.path.abspath(__file__))
+        ship_pkg = os.path.join(self._RAY_SHIP_DIR, "goethe_orchestrator")
+        if os.path.isdir(ship_pkg):
+            shutil.rmtree(ship_pkg)
+        os.makedirs(self._RAY_SHIP_DIR, exist_ok=True)
+        shutil.copytree(pkg_src, ship_pkg,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        return {"working_dir": self._RAY_SHIP_DIR}
+
     def _dispatch_ray(self, envelope: TaskEnvelope, worker: WorkerRegistration):
         import ray  # lazy: ray is a 78MB install; do not import at module load
 
@@ -221,23 +244,54 @@ class LocalOrchestrator:
 
         @ray.remote
         def _remote_handler(handler_name, args, envelope_id):
-            # Worker-side dispatch: on the Ray side the handler registry
-            # is per-node; Phase 4 (cluster) ships handler bundles via the
-            # runtime env. v1: the remote task executes the payload
-            # through the registered Goethe worker entrypoint.
+            # Worker-side dispatch: the handler registry is per-node;
+            # handler bundles are shipped via the runtime env (see
+            # _ray_runtime_env). The remote task executes the payload
+            # through the Goethe worker entrypoint.
             from goethe_orchestrator.worker_entry import run_envelope
             return run_envelope(handler_name, args, envelope_id)
 
         args = dict(envelope.payload.get("args", {}))
-        ref = _remote_handler.remote(
+        args["__envelope_id__"] = envelope.id
+        # Ray 2.58 rejects local paths in task-level runtime_env — the
+        # staging dir must be uploaded to GCS first (content-hash cached:
+        # re-upload only happens when the package content changes).
+        from ray._private.runtime_env.working_dir import (
+            upload_working_dir_if_needed,
+        )
+        options: Dict[str, object] = {
+            "runtime_env": upload_working_dir_if_needed(
+                self._ray_runtime_env(), include_gitignore=False)
+        }
+        if getattr(worker, "ray_node_id", None):
+            # Pin to the scheduler's pick (ADR-ORCH-001 deterministic
+            # scheduling). soft=True: if the node disappears in the race
+            # window between registration and dispatch, the task falls
+            # back to any node instead of hanging pending forever.
+            from ray.util import scheduling_strategies as _ss
+            options["scheduling_strategy"] = _ss.NodeAffinitySchedulingStrategy(
+                node_id=worker.ray_node_id, soft=True)
+        ref = _remote_handler.options(**options).remote(
             envelope.payload.get("handler", ""), args, envelope.id
         )
         return ref
 
     # ── result collection (local backend) ─────────────────────────────────
     def collect(self, dispatch: DispatchResult, timeout: Optional[float] = None) -> DispatchResult:
-        """Block on a local-backend dispatch and update its status."""
-        if dispatch.backend != "local" or dispatch.ref is None:
+        """Block on a dispatch and update its status (local or ray)."""
+        if dispatch.ref is None:
+            return dispatch
+        if dispatch.backend == "ray":
+            import ray  # lazy
+            value = ray.get(dispatch.ref, timeout=timeout)
+            if isinstance(value, dict) and value.get("status") == "ok":
+                dispatch.status = "COMPLETED"
+                dispatch.result = value.get("result")
+            else:
+                dispatch.status = "FAILED"
+                dispatch.error = (value or {}).get("error", "no worker response")
+            return dispatch
+        if dispatch.backend != "local":
             return dispatch
         kind, value = dispatch.ref.result(timeout=timeout)
         if kind == "ok":

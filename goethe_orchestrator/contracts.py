@@ -166,6 +166,10 @@ class WorkerRegistration:
                          EXPIRED and drained from scheduling
       last_heartbeat   — ISO-8601 UTC of the most recent heartbeat
       status           — one of WORKER_STATUSES; ACTIVE on registration
+      ray_node_id      — optional Ray node id (hex) for the ray backend:
+                         when set, LocalOrchestrator pins the dispatch to
+                         that node (NodeAffinity). None = no pin (local
+                         backend / unmanaged workers).
     """
 
     worker_id: str
@@ -174,6 +178,7 @@ class WorkerRegistration:
     last_heartbeat: str = field(default_factory=_utcnow_iso)
     status: str = "ACTIVE"
     contract: str = WORKER_REGISTRATION_V1
+    ray_node_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.contract != WORKER_REGISTRATION_V1:
@@ -187,6 +192,9 @@ class WorkerRegistration:
             raise ValueError("capabilities must be a dict")
         if self.heartbeat_ttl <= 0:
             raise ValueError(f"heartbeat_ttl must be > 0 seconds, got {self.heartbeat_ttl}")
+        if self.ray_node_id is not None and (
+                not isinstance(self.ray_node_id, str) or not self.ray_node_id):
+            raise ValueError("ray_node_id must be a non-empty string or None")
         if self.status not in WORKER_STATUSES:
             raise ValueError(f"invalid status {self.status!r}; expected one of {WORKER_STATUSES}")
         _parse_iso(self.last_heartbeat, "last_heartbeat")
