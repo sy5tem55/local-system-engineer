@@ -315,6 +315,52 @@ class OrchestratorTools:
         # Built-in smoke handler (Phase-4 ships real handler bundles via the
         # Ray runtime env; until then echo is the only executable handler).
         self._orch.register_handler("echo", lambda **kw: "echo:" + str(kw.get("msg", "")))
+        # Phase 4 (live cluster, 2026-09-15): with the ray backend, register
+        # the running cluster's nodes as orchestrator workers so the
+        # scheduler has a roster without manual orch_register_worker calls.
+        if backend == "ray":
+            self._register_ray_nodes(ray_address)
+
+    def _register_ray_nodes(self, ray_address):
+        """Register live Ray cluster nodes as orchestrator workers.
+
+        Fail-safe: any failure leaves the roster empty and the surface
+        keeps working (dispatch returns NoEligibleWorker) — same pattern
+        as the valve-off path. Ray nodes are Tier-1 (read-only surface
+        per ADR-ORCH-001 ToolBroker tiering); their Ray node id is stored
+        in capabilities and ray_node_id so dispatch pins NodeAffinity.
+        """
+        try:
+            import ray
+            ray.init(address=ray_address, ignore_reinit_error=True,
+                     logging_level="error")
+            registered = []
+            for node in ray.nodes():
+                if not node.get("Alive"):
+                    continue
+                node_id = node.get("NodeID", "")
+                res = node.get("Resources", {})
+                wr = self._WorkerRegistration(
+                    worker_id=f"ray-{node_id[:12]}",
+                    capabilities={
+                        "node_ip": node.get("NodeManagerAddress", ""),
+                        "cpu": int(res.get("CPU", 0)),
+                        "gpu": int(res.get("GPU", 0)),
+                        "is_head": bool(res.get("node:__internal_head__", 0)),
+                        "ray_node_id": node_id,
+                        "tier": 1,
+                    },
+                    heartbeat_ttl=3600,
+                    ray_node_id=node_id,
+                )
+                self._orch.register_worker(wr)
+                registered.append(wr.worker_id)
+            print(f"[orchestrator] ray backend: registered {len(registered)} "
+                  f"node(s): {registered}", flush=True)
+        except Exception as exc:  # noqa: BLE001 — fail-safe by design
+            print(f"[orchestrator] WARNING: ray node registration failed "
+                  f"({type(exc).__name__}: {exc}); continuing with empty "
+                  f"roster", flush=True)
 
     def orch_dispatch(self, handler: str, args_json: str = "{}",
                       requires_json: str = "", priority: int = 0,
@@ -420,10 +466,17 @@ class OrchestratorTools:
     def orch_workers(self) -> str:
         """Tick the scheduler (expire stale workers) and report the roster.
 
+        With the ray backend, re-syncs the cluster roster first (a
+        re-registration refreshes each node's heartbeat).
+
         Returns JSON: {active: [{worker_id, capabilities, heartbeat_ttl,
         last_heartbeat}], just_expired: [worker_id, ...]}.
         """
         import json as _json
+        backend = os.environ.get("GOETHE_EXECUTION_BACKEND", "local").strip().lower()
+        ray_address = os.environ.get("GOETHE_RAY_ADDRESS", "").strip() or None
+        if backend == "ray" and ray_address:
+            self._register_ray_nodes(ray_address)
         flipped = self._orch.tick()
         active = [{"worker_id": w.worker_id, "capabilities": w.capabilities,
                    "heartbeat_ttl": w.heartbeat_ttl,
