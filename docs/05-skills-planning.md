@@ -209,3 +209,63 @@ Not applicable — solo project.
 | 5 | `lse:session-debrief` | Prevents repeating non-obvious mistakes across sessions |
 | 6 | `lse:version-manager` | Nice to have; lower ROI than 1–5 |
 | 7 | `engineering:documentation` | Use when writing the operations runbook |
+
+
+---
+
+## 4. Progressive tool loading (Phase 2 — DONE 2026-09-17)
+
+Roadmap: `docs/ROADMAP-mechanisms-2026-09.md` (Phase 2 section).
+Design: `/tmp/lse_phase2/05_tiering_design.md`. Tests: `tests/test_tiering_bridges.py`.
+
+### What it does
+
+The gateway no longer binds all 48 tools into every request envelope. With
+`EAGER_TOOLS=0` (default), only the CORE catalog is bound; the long tail lives
+in a cold registry reachable through two bridge tools:
+
+| Tier | Contents | Bound? |
+|---|---|---|
+| CORE (17) | execute_command, read_file, write_file, ssh_run, ssh_script, sudo_delegation_block, search_kb, search_web, fetch_url, index_to_kb, record_error, check_error_kb, planner, plan_step_done, task_resume, assert_state, get_context_status | yes |
+| ALWAYS_CORE (6) | sudo_delegation_block, record_outcome, plan_step_done, mentor_demote, tool_search, tool_invoke — safety gates + the bridges themselves; NEVER cold, not env-overridable | yes |
+| COLD (29) | vault_*, pfsense_*, net_discovery_*, node lifecycle, kb_verify, mentor_correct, skill_*, time_check, run_tests, get_github_release, … | no — via bridges |
+
+### Bridge contract
+
+- `tool_search(query)` — keyword-scores cold tool names + full docstrings;
+  returns the top-3 FULL schemas (name, complete untruncated docstring,
+  parameters). No match → lists all cold names for a retry. The docstring IS
+  the tool's contract, so it is never truncated in the bridge result.
+- `tool_invoke(name, args_json)` — validates args_json against the cold
+  tool's signature (unknown/missing required args rejected with the valid
+  parameter list before anything runs), then dispatches through the
+  tool's ORIGINAL wrapper — so every docstring gate (evidence,
+  confirmation, KB-first), the ctx-gate refusal, and the episode journal
+  apply exactly as for a directly bound tool.
+
+### Fallback valve
+
+`EAGER_TOOLS=1` restores pre-Phase-2 behaviour (all 48 bound, no bridges)
+for one-line rollback. `CORE_TOOLS=a,b,c` env var overrides the default
+catalog.
+
+### Verification (2026-09-17)
+
+- Envelope: 48 tools / 105,382 B / 26,345 tok → 21 tools / 48,511 B /
+  12,127 tok = **54.0% reduction** (gate: ≥50%). Artifacts:
+  `/tmp/lse_phase2/04_baseline_envelope.json`, `12_after_envelope.json`,
+  `12_envelope_diff.txt`.
+- Unit: `pytest tests/test_tiering_bridges.py -q` → 11 passed (tiering,
+  EAGER fallback, docstring cap asymmetry, bridge search/invoke/gate/journal).
+- Regression: full suite 986 passed (only the two known pre-existing failure
+  sites deselected: test_gateway_pin, test_a2a_adapter::test_jwt_missing_token_401).
+- E2E in-process (real module set, no gateway): `E2E_OK` —
+  `tool_search('vault')` returns full policy text; `tool_invoke` on
+  time_check/get_github_release matches direct cold calls (verbatim for the
+  deterministic one). Transcript: `/tmp/lse_phase2/13_e2e_transcript.txt`.
+
+### Next: Phase 3 — Scoped child delegation
+
+See `docs/ROADMAP-mechanisms-2026-09.md` L166. Phase 2 is its
+prerequisite: with a 54% smaller envelope, delegated child sessions start
+with more headroom.
