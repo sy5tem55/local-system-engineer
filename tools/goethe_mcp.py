@@ -171,6 +171,40 @@ INJECTED = {
 # (1490 chunks) is deliberately left in place, dormant.
 SKIP_TOOLS = {"compact_context"}
 
+# ── Phase 2 PROGRESSIVE TOOL LOADING (docs/ROADMAP-mechanisms-2026-09.md) ──
+# Baseline (2026-09-17): 48 bound tools = 105,286 bytes ≈ 26,345 tokens in every
+# request (sha256 7a5d2792d9bf). CORE-only envelope = 47,026 bytes (55.3% reduction).
+#
+# Tiering: tools named in CORE_TOOLS (∪ ALWAYS_CORE, ∪ bridges) are bound via
+# mcp.add_tool; every other exposed tool is built as a wrapper but stored in the
+# cold registry (inst._cold_registry) and reachable only through tool_search /
+# tool_invoke. EAGER_TOOLS=1 restores the pre-Phase-2 behaviour (all bound) for
+# evals (run_tests scope=rules comparisons). Design: /tmp/lse_phase2/05_tiering_design.md
+# (task 76dfa2e6). compact_context stays in SKIP_TOOLS deliberately (D1: the tool
+# targets the dead OpenWebUI store — probe 2026-09-17).
+_EAGER_TOOLS_DEFAULT = "0"
+EAGER_TOOLS = os.environ.get("EAGER_TOOLS", _EAGER_TOOLS_DEFAULT) == "1"
+
+# Default CORE catalog (17). Env override: CORE_TOOLS=tool_a,tool_b,...
+CORE_TOOLS = frozenset(
+    (os.environ.get("CORE_TOOLS") or ",".join([
+        "execute_command", "read_file", "write_file", "ssh_run", "ssh_script",
+        "sudo_delegation_block", "search_kb", "search_web", "fetch_url",
+        "index_to_kb", "record_error", "check_error_kb", "planner",
+        "plan_step_done", "task_resume", "assert_state", "get_context_status",
+    ])).split(",")
+)
+
+# Safety-critical gates + bridges. NEVER cold — not env-overridable. A tool the
+# model cannot see cannot be invoked: record_outcome (KB-DECAY-1 demotion path),
+# mentor_demote (human gate), sudo_delegation_block (privilege gate) and
+# plan_step_done (ledger loop) must be visible whenever the user's words
+# trigger them. tool_search/tool_invoke are the bridges themselves.
+ALWAYS_CORE = frozenset({
+    "sudo_delegation_block", "record_outcome", "plan_step_done",
+    "mentor_demote", "tool_search", "tool_invoke",
+})
+
 # Upper bound on the tool description handed to the MCP client. A docstring IS
 # the tool's contract here (see docs and the lse-docstring-optimizer skill), so
 # a cap that cuts one mid-sentence removes a rule the model is still judged by.
@@ -838,13 +872,155 @@ def _safe_journal(tool_name: str, kwargs: dict, result, exc, secret_values: set)
         print(f"[goethe_mcp] episode journal failed (tool={tool_name}): {e}", file=sys.stderr)
 
 
+# ── P1 EXACT CONTEXT ACCOUNTING — DESIGN ((2026-09)) ─────────
+# Roadmap: docs/ROADMAP-mechanisms-2026-09.md · full design: docs/03 §7.
+# Mechanism: "complete next-input count" + fixed-envelope preflight.
+#  1. ENVELOPE: after all register() calls, serialize every bound tool schema
+#     (name+description+inputSchema) once; envelope_tokens = bytes * CTX_ENVELOPE_RATIO
+#     (0.25). Cached per process; sha256+byte size logged at startup. The envelope
+#     is FIXED for the session — compaction can never shrink it; only Phase 2
+#     (progressive tool loading) can.
+#  2. LIVE FILL: /slots n_prompt_tokens (v1.5.4 field; NOT n_past on build >=9307)
+#     from the dynamically discovered llama-server URL (valve GOETHE_LLAMA_SERVER_URL
+#     wins; else pgrep -a llama-server → --port; cached CTX_URL_CACHE_S=300).
+#     Fixes the dead-:8080 valve default (probe 2026-09-17: gateway env had no
+#     GOETHE_LLAMA_SERVER_URL → get_context_status polled a dead port).
+#  3. PROJECTED NEXT INPUT = n_prompt_tokens + envelope_tokens + CTX_RESERVE_TOKENS
+#     (default 2000 = one tool round-trip).
+#  4. HARD STOP (valve CTX_HARD_STOP, default OFF until verified): in THIS
+#     register() wrapper — the single choke point for every tool call — a
+#     CTX_GATE_CACHE_S=10s-cached fill check refuses with an exact capacity
+#     message + ledger handoff prompt when projected >= CTX_HARD_PCT (0.85) of
+#     n_ctx. Monitoring failure → allow (never block on a monitoring fault).
+#     Pattern: search-budget in-code refusal (v1.7.1).
+#  5. COMPACT_AT 70%: under Unsloth Studio the gateway cannot rewrite history
+#     (compact_context targets the dead OpenWebUI store — probe 2026-09-17), so
+#     actuation = escalation in get_context_status + the hard-stop refusal; the
+#     ledger (tasks.db) persists across the fresh-session handoff.
+# ──────────────────────────────────────────────────────────
+
+class BridgeTools:
+    """Phase 2 bridges (roadmap item 2) — on-demand access to COLD tools.
+
+    Bound only when EAGER_TOOLS=0 and at least one tool is cold. The merged
+    cold registry (name -> wrapper) is passed in; wrappers keep the FULL
+    docstring, so tool_search returns complete policy text and tool_invoke
+    dispatches through the original wrapper — _ctx_gate refusal and
+    _safe_journal apply exactly as for a bound tool."""
+
+    def __init__(self, cold_registry: dict):
+        self._cold_registry = cold_registry
+
+    @staticmethod
+    def _schema(name: str, wrapper) -> dict:
+        params = []
+        for pname, p in wrapper.__signature__.parameters.items():
+            params.append({
+                "name": pname,
+                "type": getattr(p.annotation, "__name__", str(p.annotation)),
+                "required": p.default is inspect.Parameter.empty,
+            })
+        return {"name": name, "description": wrapper.__doc__, "parameters": params}
+
+    async def tool_search(self, query: str) -> str:
+        """Search COLD (on-demand) tools by keyword — call this BEFORE assuming a
+        capability is unavailable. Matches names (exact +200, substring +50) and
+        full docstrings (+1 per term); returns the top-3 FULL schemas (name,
+        complete docstring, parameters). No truncation: the docstring IS the
+        tool's contract. If nothing matches, the reply lists all cold tool names
+        so you can retry with better keywords."""
+        q = (query or "").lower().strip()
+        terms = [t for t in q.split() if t]
+        scored = []
+        for name, wrapper in self._cold_registry.items():
+            doc = (wrapper.__doc__ or "").lower()
+            score = 0
+            for t in terms:
+                if t == name:
+                    score += 200
+                elif t in name:
+                    score += 50
+                elif t in doc:
+                    score += 1
+            if q and q in name:
+                score += 30
+            if q and q in doc:
+                score += 10
+            if score > 0:
+                scored.append((score, name))
+        if not scored:
+            return (
+                f"No cold tool matches '{query}'. All cold tools "
+                f"({len(self._cold_registry)}): {', '.join(sorted(self._cold_registry))}. "
+                "Retry with different keywords, or the capability is a directly "
+                "visible (CORE) tool."
+            )
+        scored.sort(key=lambda pair: (-pair[0], pair[1]))
+        top = [n for _, n in scored[:3]]
+        blocks = [json.dumps(self._schema(n, self._cold_registry[n]), indent=2)
+                  for n in top]
+        return ("Top cold-tool matches — FULL schemas. Invoke via "
+                "tool_invoke(name, args_json) with args_json a JSON object of the "
+                "parameters above.\n\n" + "\n\n---\n\n".join(blocks))
+
+    async def tool_invoke(self, name: str, args_json: str) -> str:
+        """Invoke a COLD tool found via tool_search. args_json must be a JSON
+        object matching the tool's parameters (validated here — unknown or
+        missing required args are rejected with the valid parameter list before
+        anything runs). Dispatch goes through the tool's original wrapper, so
+        every docstring gate (evidence, confirmation, KB-first) and the
+        episode journal apply exactly as for a directly bound tool. Never call
+        for a tool that is directly visible (CORE) — call that one directly."""
+        wrapper = self._cold_registry.get(name)
+        if wrapper is None:
+            near = sorted(n for n in self._cold_registry if n.startswith(name[:4]))
+            return (f"tool_invoke: unknown cold tool '{name}'. Call tool_search "
+                    f"first." + (f" Close names: {', '.join(near)}." if near else ""))
+        try:
+            args = json.loads(args_json) if (args_json or "").strip() else {}
+        except json.JSONDecodeError as e:
+            return f"tool_invoke: args_json is not valid JSON: {e}"
+        if not isinstance(args, dict):
+            return (f"tool_invoke: args_json must decode to a JSON object, "
+                    f"got {type(args).__name__}.")
+        params = wrapper.__signature__.parameters
+        unknown = [k for k in args if k not in params]
+        if unknown:
+            return (f"tool_invoke: unknown args for {name}: {', '.join(sorted(unknown))}. "
+                    f"Valid parameters: {', '.join(params) or '(none)'}")
+        missing = [p for p, spec in params.items()
+                   if spec.default is inspect.Parameter.empty and p not in args]
+        if missing:
+            return f"tool_invoke: missing required args for {name}: {', '.join(missing)}"
+        try:
+            result = await wrapper(**args)
+        except Exception as e:  # noqa: BLE001 — surface, don't crash the session
+            return f"tool_invoke: {name} raised {type(e).__name__}: {e}"
+        if isinstance(result, str):
+            return result
+        try:
+            return json.dumps(result, indent=2, default=str)
+        except Exception:
+            return str(result)
+
+
 def register(mcp, inst, seen=None) -> list:
-    """Wrap each model-callable Tools method as an MCP tool. Returns names exposed.
+    """Wrap each model-callable Tools method as an MCP tool. Returns names bound.
     `seen` (a set) dedupes across multiple modules — a name already registered by an
-    earlier module is skipped so the first module wins on a collision."""
+    earlier module is skipped so the first module wins on a collision.
+
+    Phase 2 tiering: with EAGER_TOOLS=0, only names in CORE_TOOLS ∪ ALWAYS_CORE
+    are bound via mcp.add_tool; every other wrapper is stored in
+    inst._cold_registry (full docstring, signature, annotations) and reachable
+    only through tool_search/tool_invoke. EAGER_TOOLS=1 binds everything
+    (pre-Phase-2 behaviour)."""
     if seen is None:
         seen = set()
     exposed_names = []
+    cold = getattr(inst, "_cold_registry", None)
+    if cold is None:
+        cold = {}
+        inst._cold_registry = cold
     secret_values = _secret_values(inst)  # for episode-journal redaction, computed once
     for name in sorted(dir(inst)):
         if name.startswith("_") or name in SKIP_TOOLS or name in seen:
@@ -867,9 +1043,14 @@ def register(mcp, inst, seen=None) -> list:
 
         is_async = inspect.iscoroutinefunction(member)
         if is_async:
-            async def wrapper(__m=member, __tool_name=name, **kwargs):
+            async def wrapper(__m=member, __tool_name=name, __inst=inst, **kwargs):
                 result, exc = None, None
                 try:
+                    _refusal = None
+                    if hasattr(__inst, "_ctx_gate"):
+                        _refusal = __inst._ctx_gate(__tool_name)
+                    if _refusal is not None:
+                        return _refusal
                     result = await __m(**kwargs)
                     return result
                 except BaseException as e:
@@ -881,10 +1062,15 @@ def register(mcp, inst, seen=None) -> list:
             # Run sync tools in a thread so they don't block the uvicorn event loop.
             # Without this, a slow execute_command stalls ALL pending requests and
             # prevents SSE keepalives from being sent, causing clients to see hangs.
-            async def wrapper(__m=member, __tool_name=name, **kwargs):
+            async def wrapper(__m=member, __tool_name=name, __inst=inst, **kwargs):
                 import asyncio
                 result, exc = None, None
                 try:
+                    _refusal = None
+                    if hasattr(__inst, "_ctx_gate"):
+                        _refusal = __inst._ctx_gate(__tool_name)
+                    if _refusal is not None:
+                        return _refusal
                     result = await asyncio.to_thread(__m, **kwargs)
                     return result
                 except BaseException as e:
@@ -900,18 +1086,24 @@ def register(mcp, inst, seen=None) -> list:
         wrapper.__annotations__["return"] = str
 
         _doc = wrapper.__doc__
-        if len(_doc) > _TOOL_DESC_MAX:
-            # Loud, always. The v0.4.7 incident was expensive precisely because
-            # the drop was silent: the model violated a rule it had never been
-            # shown, and nothing in the logs said so.
-            print(f"[goethe_mcp] WARNING: {name} description truncated "
-                  f"{len(_doc)} -> {_TOOL_DESC_MAX} chars "
-                  f"({len(_doc) - _TOOL_DESC_MAX} dropped). Front-load its "
-                  f"contract or raise GOETHE_MCP_TOOL_DESC_MAX.",
-                  file=sys.stderr)
-        mcp.add_tool(wrapper, name=name, description=_doc[:_TOOL_DESC_MAX])
+        if EAGER_TOOLS or name in CORE_TOOLS or name in ALWAYS_CORE:
+            if len(_doc) > _TOOL_DESC_MAX:
+                # Loud, always. The v0.4.7 incident was expensive precisely because
+                # the drop was silent: the model violated a rule it had never been
+                # shown, and nothing in the logs said so.
+                print(f"[goethe_mcp] WARNING: {name} description truncated "
+                      f"{len(_doc)} -> {_TOOL_DESC_MAX} chars "
+                      f"({len(_doc) - _TOOL_DESC_MAX} dropped). Front-load its "
+                      f"contract or raise GOETHE_MCP_TOOL_DESC_MAX.",
+                      file=sys.stderr)
+            mcp.add_tool(wrapper, name=name, description=_doc[:_TOOL_DESC_MAX])
+            exposed_names.append(name)
+        else:
+            # COLD (Phase 2): not bound. The wrapper keeps its FULL docstring —
+            # the _TOOL_DESC_MAX cap only applies to what is actually bound — so
+            # tool_search can return complete policy text (roadmap risk item 2).
+            cold[name] = wrapper
         seen.add(name)
-        exposed_names.append(name)
     return exposed_names
 
 
@@ -1063,12 +1255,16 @@ def main():
     mcp = FastMCP("LSE Goethe", host=args.host, port=args.port)
     mcp._mcp_server.version = goethe_ver  # version lives on the low-level Server
     seen: set = set()
-    names = register(mcp, make_instance(load_goethe(args.goethe)), seen)
+    inst = make_instance(load_goethe(args.goethe))
+    instances = [inst]
+    names = register(mcp, inst, seen)
     print(f"[goethe_mcp] {len(names)} from {os.path.basename(args.goethe)}: "
           f"{', '.join(names)}", file=sys.stderr)
     for extra in args.also:
         try:
-            ex = register(mcp, make_instance(load_goethe(extra)), seen)
+            extra_inst = make_instance(load_goethe(extra))
+            instances.append(extra_inst)
+            ex = register(mcp, extra_inst, seen)
         except SystemExit:
             raise
         except Exception as e:
@@ -1082,7 +1278,9 @@ def main():
     # ADR-ORCH-001 Phase 3 — orchestrator surface (valve-gated; off by default).
     if _orch_enabled():
         try:
-            ex = register(mcp, make_instance(OrchestratorTools), seen)
+            orch_inst = make_instance(OrchestratorTools)
+            instances.append(orch_inst)
+            ex = register(mcp, orch_inst, seen)
             names += ex
             print(f"[goethe_mcp] orchestrator ENABLED (backend="
                   f"{os.environ.get('GOETHE_EXECUTION_BACKEND', 'local')}): "
@@ -1092,6 +1290,45 @@ def main():
         except Exception as e:
             print(f"[goethe_mcp] WARNING: orchestrator disabled ({e}) — "
                   "MCP surface unaffected", file=sys.stderr)
+
+    # Phase 2 bridges (roadmap item 2): bound after every module so they see
+    # the MERGED cold registry (goethe.py + --also + orchestrator). In EAGER
+    # mode the registry is empty — the bridges add no value and stay unbound.
+    if not EAGER_TOOLS:
+        cold_all: dict = {}
+        for _i in instances:
+            cold_all.update(getattr(_i, "_cold_registry", {}))
+        if cold_all:
+            bridge_names = register(mcp, BridgeTools(cold_all), seen)
+            names += bridge_names
+            print(f"[goethe_mcp] Phase 2: {len(bridge_names)} bridges bound "
+                  f"({', '.join(bridge_names)}), {len(cold_all)} cold tools behind "
+                  f"tool_search/tool_invoke", file=sys.stderr)
+        else:
+            print("[goethe_mcp] Phase 2: no cold tools — bridges not bound",
+                  file=sys.stderr)
+
+    # P1 exact context accounting (docs/03 §7): serialize every bound tool
+    # schema once; the envelope is FIXED for the session — compaction can never
+    # shrink it (only progressive tool loading, Phase 2).
+    try:
+        import hashlib as _hashlib
+        _tm = getattr(mcp, "tool_manager", None) or getattr(mcp, "_tool_manager", None)
+        _tools = _tm.list_tools()
+        _payload = json.dumps([
+            {"name": t.name, "description": t.description, "inputSchema": t.parameters}
+            for t in _tools
+        ])
+        _raw = _payload.encode()
+        _ratio = float(os.environ.get("GOETHE_CTX_ENVELOPE_RATIO", "0.25"))
+        inst._ctx_envelope = (
+            int(len(_raw) * _ratio), len(_tools), _hashlib.sha256(_raw).hexdigest()[:12])
+        print(f"[goethe_mcp] P1 envelope: {len(_tools)} tools, {len(_raw):,} bytes "
+              f"≈ {inst._ctx_envelope[0]:,} tokens (sha256 {inst._ctx_envelope[2]})",
+              file=sys.stderr)
+    except Exception as e:
+        print(f"[goethe_mcp] WARNING: P1 envelope computation failed ({e}) — "
+              "accounting degrades to live /slots only", file=sys.stderr)
 
     if args.list:
         for n in names:
