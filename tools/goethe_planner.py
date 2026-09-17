@@ -652,7 +652,13 @@ class PlannerMixin:
 
         payload_obj: dict = {
             "messages": messages,
-            "max_tokens": 8192,
+            # v1.15.x: 8192 -> 32768. Reasoning models (deepseek-v4-pro) spend
+            # their completion budget on reasoning_content BEFORE content is
+            # emitted. 8192 was exhausted by thinking on a large plan prompt
+            # -> empty content -> "PLANNER UNAVAILABLE (no reply)" (2026-09-16,
+            # task e40fa49c). Thinking stays ON (it is the point of a
+            # reasoning planner); the ceiling just has to fit thinking+plan.
+            "max_tokens": 32768,
             "temperature": 0.3,
             "response_format": {"type": "json_object"},
         }
@@ -671,7 +677,24 @@ class PlannerMixin:
         try:
             with _ureq.urlopen(req, timeout=timeout) as resp:
                 data = _json.loads(resp.read().decode())
-                return data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                msg = choice.get("message") or {}
+                content = msg.get("content")
+                # v1.15.x: mirror the node-path guards. A reply cut off at
+                # max_tokens or an empty content (reasoning-runaway) used to
+                # surface downstream as "no reply" / "JSON parse failed" with
+                # the real cause invisible.
+                if choice.get("finish_reason") == "length":
+                    return (
+                        f"ERROR: reply truncated at max_tokens "
+                        f"(completion_tokens={data.get('usage', {}).get('completion_tokens', '?')})"
+                    )
+                if not content or not content.strip():
+                    return (
+                        "ERROR: model returned empty content "
+                        f"(reasoning_chars={len(msg.get('reasoning_content') or '')})"
+                    )
+                return content
         except _uerr.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:200]
             return f"ERROR: HTTP {exc.code} — {body}"
@@ -748,7 +771,11 @@ class PlannerMixin:
             return "ERROR: backend='rest' requires the PLANNER_REST_URL valve to be set"
         return self._openai_style_call(
             url, self.valves.PLANNER_REST_MODEL, self.valves.PLANNER_REST_API_KEY,
-            task, context, no_think, timeout=120,
+            task, context, no_think,
+            # v1.15.x: 120s -> 300s. Measured 2026-09-16: deepseek-v4-pro with
+            # thinking ON took 70.6s for a medium plan prompt; the comprehensive
+            # A2A prompt (task + KB attachments) needs headroom.
+            timeout=300,
         )
 
     def _call_chatgpt_planner(self, task: str, context: str = "", no_think: bool = False) -> str:
@@ -1881,6 +1908,25 @@ class PlannerMixin:
         SPEC: Get an ATOMIZED execution plan for a multi-step task. Writes to the
         tasks.db ledger; you execute ONE step, then call plan_step_done().
 
+        Args:
+            task:    The user's task, verbatim or lightly cleaned.
+            context: Source material — VERBATIM, never a summary. Paste actual
+                     text: KB bodies, command output, config contents. Do NOT
+                     compress into a précis. THIS IS THE #1 CAUSE OF BAD PLANS.
+                     Length is not a concern. When in doubt, paste more.
+                     planner() also auto-attaches top KB matches for the task.
+            mode:    "new" (default) or "revise". Revise loads the ledger for
+                     task_id and replaces only the remaining steps.
+            task_id: Required for mode="revise".
+            backend: '' (default) uses the valve; or 'local'|'chatgpt'|'claude'|'rest'.
+
+        NOTES:
+        AUTO-KB: planner() runs its own search_kb on the task and appends top
+        matches to whatever context you pass. You do not need to paste KB content
+        you already found — but pasting live probe output is still essential.
+        DETACH-ON-SLOW: see SLOW-CALL BEHAVIOUR above — slow plans land in the
+        ledger via a background worker; task_resume() is the only follow-up.
+
         MANDATORY TRIGGER — the user asked for a plan:
         If the request contains "plan", "get a plan", "how should we approach",
         or assigns a multi-phase audit/migration/overhaul, calling planner() is
@@ -1931,25 +1977,7 @@ class PlannerMixin:
           'claude'  Anthropic, via Claude Code OAuth or PLANNER_ANTHROPIC_API_KEY.
           'rest'    Any OpenAI-compatible /v1/chat/completions server.
 
-        Args:
-            task:    The user's task, verbatim or lightly cleaned.
-            context: Source material — VERBATIM, never a summary. Paste actual
-                     text: KB bodies, command output, config contents. Do NOT
-                     compress into a précis. THIS IS THE #1 CAUSE OF BAD PLANS.
-                     Length is not a concern. When in doubt, paste more.
-                     planner() also auto-attaches top KB matches for the task.
-            mode:    "new" (default) or "revise". Revise loads the ledger for
-                     task_id and replaces only the remaining steps.
-            task_id: Required for mode="revise".
-            backend: '' (default) uses the valve; or 'local'|'chatgpt'|'claude'|'rest'.
-
-        NOTES:
-        AUTO-KB: planner() runs its own search_kb on the task and appends top
-        matches to whatever context you pass. You do not need to paste KB content
-        you already found — but pasting live probe output is still essential.
-        DETACH-ON-SLOW: see SLOW-CALL BEHAVIOUR above — slow plans land in the
-        ledger via a background worker; task_resume() is the only follow-up.
-        """
+"""
         import hashlib  # noqa: PLC0415
 
         self._log(f"NODE-PLAN: mode={mode} {task[:80]}")
