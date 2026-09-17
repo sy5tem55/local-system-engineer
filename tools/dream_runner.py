@@ -2864,21 +2864,29 @@ def redact_log_text(text: str) -> str:
     return text
 
 
+# The colon after the tag is OPTIONAL: goethe.py's writer emits
+# 'DONE rc=<n> len=<n>' WITHOUT a colon (since 42cbd04, goethe v0.2.1) --
+# the live corpus's dominant DONE form (152,756 no-colon lines vs 1
+# colon-form). Requiring it made every DONE line unparseable and
+# total_failures structurally 0 (audit D3, 2026-09-17). The colon form is
+# kept for the one historical line and the test fixtures.
 _LOG_LINE_RE = re.compile(
-    r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<tag>[A-Z][A-Z0-9]*): (?P<detail>.*)$"
+    r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<tag>[A-Z][A-Z0-9]*):? (?P<detail>.*)$"
 )
 _CWD_SUFFIX_RE = re.compile(r"\s*\(cwd=(?P<cwd>[^)]*)\)\s*$")
 _DONE_RC_RE = re.compile(r"^rc=(?P<rc>-?\d+)\s+len=(?P<len>\d+)")
 
 
 def parse_agent_log_lines(lines: list) -> list[dict]:
-    """Parse compact tag-line events: '[ts] TAG: detail'.
+    """Parse compact tag-line events: '[ts] TAG: detail' or '[ts] TAG detail'
+    (colon optional -- the writer's DONE line has never had one).
 
     corpus-audit.md (a): 99.998% of agent_commands.log is this one-line-per-
     event format; the 2-line 'bootstrap era' block (2026-05-23 22:12:51-57,
     exactly 2 lines, ever) is '[ts] ▶ COMMAND' / '  cmd : ...' / '  cwd : ...'
-    / a divider line — none of which match `_LOG_LINE_RE` (no bare-word tag
-    followed by ': ') — so it is silently, structurally skipped, exactly as
+    / a divider line — none of which match `_LOG_LINE_RE` (no bare-word
+    uppercase tag after the timestamp) — so it is silently, structurally
+    skipped, exactly as
     corpus-audit.md calls out is safe ("trivially skippable").
 
     Returns one dict per matched line, in file order:

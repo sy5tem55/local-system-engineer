@@ -139,6 +139,40 @@ class TestParseAgentLogLines:
         events = dr.parse_agent_log_lines(["[2026-06-01 10:00:01] DONE: something odd"])
         assert events[0]["rc"] is None
 
+    def test_done_line_production_no_colon_parses_rc(self):
+        # goethe.py emits 'DONE rc=N len=M' WITHOUT a colon (since 42cbd04,
+        # goethe v0.2.1) -- the live corpus's dominant DONE form. Both forms
+        # must parse (audit D3, 2026-09-17).
+        events = dr.parse_agent_log_lines(
+            ["[2026-06-01 10:00:01] DONE rc=1 len=5"])
+        assert len(events) == 1
+        assert events[0]["tag"] == "DONE"
+        assert events[0]["rc"] == 1
+
+    def test_production_no_colon_failure_counts_in_mine_patterns(self):
+        # D3 acceptance: a synthetic log with a no-colon DONE line must
+        # yield total_failures >= 1 (structurally 0 before the fix).
+        events = dr.parse_agent_log_lines([
+            _cmd("2026-06-01 10:00:00", "false"),
+            "[2026-06-01 10:00:01] DONE rc=1 len=5",
+        ])
+        cfg = _make_cfg()
+        summary = dr.mine_patterns(events, cfg)["failure_retry_summary"]
+        assert summary["total_failures"] == 1
+
+    def test_production_no_colon_done_pairs_with_retry(self):
+        # The failure->retry sub-pass was structurally dead for the same
+        # reason; it must pair a no-colon failing DONE with its retry.
+        events = dr.parse_agent_log_lines([
+            _cmd("2026-06-01 10:00:00", "false"),
+            "[2026-06-01 10:00:01] DONE rc=1 len=5",
+            _cmd("2026-06-01 10:00:02", "false"),
+            "[2026-06-01 10:00:03] DONE rc=0 len=5",
+        ])
+        retries = dr.find_failure_retries(events, 10)
+        assert len(retries) == 1
+        assert retries[0]["rc"] == 1
+
     def test_unrecognized_lines_are_skipped_not_raised(self):
         lines = ["not a log line at all", "", "   "]
         assert dr.parse_agent_log_lines(lines) == []
