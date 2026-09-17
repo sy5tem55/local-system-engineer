@@ -93,6 +93,11 @@ ALLOWED_EXACT: frozenset[str] = frozenset({
     '127.0.0.1',
     'http://',       # bare scheme prefix used in URL assembly, not a full URL
     'https://',     # bare scheme prefix used in URL assembly
+    '/opt/local-se/a2a',       # _A2A_BASE_DIR (A2A client install dir)
+    'localhost',               # loopback name (A2A no-delegate set)
+    'node4090.home.arpa',      # this node's own hostname (A2A no-delegate set)
+    'http://localhost:8080',   # LLAMA_URL_DEAD_DEFAULT (P1, docs/03 §7)
+    'http://127.0.0.1:',       # LLAMA_URL_LOOPBACK_PREFIX (P1, docs/03 §7)
 })
 
 

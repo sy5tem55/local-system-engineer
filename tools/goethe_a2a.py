@@ -117,12 +117,22 @@ from goethe_orchestrator.orchestrator import (  # noqa: E402
     NoEligibleWorkerError,
 )
 
+# ADR D-B/D-H: shared Ed25519 JWT module (per-node keypairs) + node3090
+# peer public key for cross-node verification.
+_A2A_DIR = os.environ.get("A2A_MODULE_DIR", "/opt/local-se/a2a")
+if _A2A_DIR not in sys.path:
+    sys.path.insert(0, _A2A_DIR)
+import jwt_auth  # noqa: E402
+
 logger = logging.getLogger("goethe_a2a")
 
 A2A_VERSION = "0.1.0"
 AGENT_NAME = "goethe"
 SKILL_ID = "goethe-researcher-v1"
 JSONRPC_URL = "/rpc"
+# D-H: TLS is served on :9701; the card must advertise https (overridable
+# for local testing via GOETHE_A2A_SCHEME).
+CARD_SCHEME = os.environ.get("GOETHE_A2A_SCHEME", "https").strip() or "https"
 
 DEFAULT_MCP_URL = "http://127.0.0.1:9700/mcp"
 DEFAULT_SEARXNG_URL = "http://localhost:8088"
@@ -188,19 +198,54 @@ def a2a_enabled() -> bool:
 # --- JWT auth (D3) -----------------------------------------------------------
 
 class JwtAuthMiddleware(BaseHTTPMiddleware):
-    """Bearer JWT (Ed25519/EdDSA) verification.
+    """Bearer JWT (Ed25519/EdDSA) verification (ADR D-H).
 
-    /health is public; every other path requires a token whose Ed25519
-    signature verifies against the gateway public key (GOETHE_A2A_JWT_PUBKEY).
-    Fail-closed: with no public key configured, authenticated paths return
-    503 — the service never opens itself by misconfiguration.
+    Public (no auth): /health, /.well-known/agent-card.json, OPTIONS
+    (preflight). The "browser 401" symptom is resolved by the public
+    agent-card path, not by opening auth — no CORSMiddleware is added;
+    the card is consumed by A2A client libraries, not browser pages.
+
+    Two accepted verifiers, tried in order:
+      A) GOETHE_A2A_JWT_PUBKEY (D3, minted by the node4090 gateway) —
+         existing behavior, EdDSA signature check.
+      B) node3090.pub via jwt_auth.verify_ed25519_jwt (cross-node calls):
+         iss=lse-node3090, aud=lse-node4090, enforced claims (exp, nbf with
+         30s skew, iss, aud, jti); failures carry the R8 classification.
+    Fail-closed: with no verification key configured at all, authenticated
+    paths return 503 — the service never opens itself by misconfiguration.
     """
 
-    PUBLIC_PATHS = {"/health"}
+    PUBLIC_PATHS = {"/health", "/.well-known/agent-card.json"}
+    PEER = "node3090"
+    PEER_PUB = os.path.join(
+        os.environ.get("A2A_JWT_PUB_DIR", "/opt/local-se/a2a/agent-cards"),
+        f"{PEER}.pub")
+    EXPECTED_ISS = "lse-node3090"
+    EXPECTED_AUD = "lse-node4090"
 
     def __init__(self, app, public_key_pem=None):
         super().__init__(app)
         self._pub_pem = public_key_pem.encode() if public_key_pem else None
+
+    def _verify_d3(self, token: str) -> bool:
+        """Verifier A: D3 shared key, EdDSA signature check."""
+        if self._pub_pem is None:
+            return False
+        try:
+            jwt.decode(token, self._pub_pem, algorithms=["EdDSA"])
+            return True
+        except jwt.PyJWTError:
+            return False
+
+    def _verify_peer(self, token: str) -> bool:
+        """Verifier B: node3090 cross-node JWT with enforced claims."""
+        try:
+            jwt_auth.verify_ed25519_jwt(
+                token, expected_iss=self.EXPECTED_ISS,
+                expected_aud=self.EXPECTED_AUD, peer=self.PEER)
+            return True
+        except jwt_auth.A2AAuthError:
+            return False
 
     async def dispatch(self, request, call_next):
         if request.url.path in self.PUBLIC_PATHS or request.method == "OPTIONS":
@@ -209,17 +254,17 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
         if not auth.lower().startswith("bearer "):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         token = auth[7:].strip()
-        if self._pub_pem is None:
-            logger.error("GOETHE_A2A_JWT_PUBKEY not set — failing closed")
+        if self._verify_d3(token):
+            return await call_next(request)
+        if self._verify_peer(token):
+            return await call_next(request)
+        if self._pub_pem is None and not os.path.isfile(self.PEER_PUB):
+            logger.error("no A2A verification key configured — failing closed")
             return JSONResponse(
                 {"error": "server misconfigured: no verification key"},
                 status_code=503)
-        try:
-            jwt.decode(token, self._pub_pem, algorithms=["EdDSA"])
-        except jwt.PyJWTError as e:
-            logger.warning("JWT verification failed: %s", e)
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return await call_next(request)
+        logger.warning("JWT verification failed (no verifier accepted)")
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
 
 
 # --- Tier-1 research pipeline (the executor's work unit) ---------------------
@@ -634,7 +679,7 @@ def generate_agent_card(tool_policy_ref: ToolPolicyRef, jwt_pubkey_pem,
             f"ToolPolicyRef — the card never promises what the policy denies."),
         version=f"{A2A_VERSION}+policy.{policy_hash[:12]}",
         supported_interfaces=[AgentInterface(
-            url=f"http://{host}:{port}{JSONRPC_URL}",
+            url=f"{CARD_SCHEME}://{host}:{port}{JSONRPC_URL}",
             protocol_binding="JSONRPC",
             protocol_version="1.0",
         )],
@@ -730,4 +775,11 @@ if __name__ == "__main__":
     import uvicorn
     host = os.environ.get("GOETHE_A2A_HOST", "0.0.0.0")
     port = int(os.environ.get("GOETHE_A2A_PORT", "9701"))
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    cert = os.environ.get("GOETHE_A2A_CERT",
+                          "/opt/local-se/a2a/certs/node4090.crt")
+    key = os.environ.get("GOETHE_A2A_KEY",
+                         "/opt/local-se/a2a/certs/node4090.key")
+    if not (os.path.isfile(cert) and os.path.isfile(key)):
+        raise SystemExit(f"TLS cert/key missing: {cert} / {key}")
+    uvicorn.run(app, host=host, port=port,
+                ssl_certfile=cert, ssl_keyfile=key, log_level="info")
