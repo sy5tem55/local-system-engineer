@@ -90,6 +90,22 @@ class WebMixin:
     are declared on this class, all resolve through the host Tools instance.
     """
 
+    # ── A2A web-research delegation (task 58fffd80, step 13) ─────────────
+    # node3090 runs a JWT-protected A2A 1.0 web-research agent
+    # (web_research_server.py, a2a-sdk 1.1.2, TLS pinned to LSE-A2A-CA,
+    # Ed25519 JWT via /opt/local-se/a2a/a2a_client.py).
+    # search_reddit: A2A is PRIMARY (structured posts, no truncation).
+    # fetch_url: A2A is the FALLBACK for URLs the local fetch cannot serve
+    #   (blocked/empty) — the server returns only EXCERPT_CHARS (2000) per
+    #   source, so making it primary would regress full-page fetches.
+    # Every outbound fetch is audit-logged to _A2A_AUDIT_PATH (append-only).
+    _A2A_BASE_DIR = "/opt/local-se/a2a"
+    _A2A_AUDIT_PATH = _A2A_BASE_DIR + "/logs/fetch-audit.jsonl"
+    _A2A_NO_DELEGATE_HOSTS = frozenset({
+        "localhost", "127.0.0.1", "0.0.0.0", "::1",
+        "node4090.home.arpa", "lucifer", "192.168.1.57",
+    })
+
     # ── Anti-spiral budget gate (v1.7.1) ─────────────────────────────────────
 
     def _budget_gate(self) -> str:
@@ -375,6 +391,111 @@ class WebMixin:
         return posts
 
 
+    # ── A2A delegation helpers (task 58fffd80, step 13) ────────────────────
+
+    def _a2a_audit(self, target: str, routing: str, tool: str,
+                   status: str, latency_ms: int, nbytes: int = 0) -> None:
+        """Append one JSON line to the append-only fetch audit log.
+        Never raises — an audit failure must not break the fetch path."""
+        import os as _os  # noqa: PLC0415
+        import time as _time  # noqa: PLC0415
+
+        try:
+            _os.makedirs(_os.path.dirname(self._A2A_AUDIT_PATH), exist_ok=True)
+            with open(self._A2A_AUDIT_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "ts": _time.time(), "node": "node4090",
+                    "target": target[:500], "routing": routing, "tool": tool,
+                    "status": status, "latency_ms": latency_ms, "bytes": nbytes,
+                }) + "\n")
+        except OSError:
+            pass
+
+    def _a2a_delegate(self, text: str, deadline_s: float = 90.0):
+        """Delegate one research request to the node3090 A2A agent.
+
+        Message conventions (server parse_targets, verified live 2026-09-16):
+          '<url>'  one bare URL per line — fetch each URL (no 'fetch' verb)
+          'reddit:<query>'  / 'reddit:<sub>:<query>' — reddit search
+
+        Returns (result_dict, state, latency_ms) on a terminal task;
+        (None, None, latency_ms) when delegation is unavailable/failed —
+        the caller then falls back to the local path. result_dict shape:
+          {"sources": [{url, tool, timestamp, excerpt}],
+           "posts":   [{title, url, votes, comments, time}],
+           "failures": [...]}"""
+        import sys as _sys  # noqa: PLC0415
+        import time as _time  # noqa: PLC0415
+
+        t0 = _time.monotonic()
+
+        def _lat() -> int:
+            return int((_time.monotonic() - t0) * 1000)
+
+        try:
+            if self._A2A_BASE_DIR not in _sys.path:
+                _sys.path.insert(0, self._A2A_BASE_DIR)
+            import a2a_client  # noqa: PLC0415
+        except Exception as e:  # noqa: BLE001 (client import is best-effort)
+            self._log(f"A2A-DELEGATE: client unavailable ({e}) — local path")
+            self._a2a_audit(text, "a2a-unavailable", "a2a",
+                            f"error:{type(e).__name__}", _lat())
+            return None, None, _lat()
+        try:
+            if not a2a_client.node3090_reachable():
+                self._log("A2A-DELEGATE: node3090 unreachable — local path")
+                self._a2a_audit(text, "a2a-unavailable", "a2a",
+                                "node3090-down", _lat())
+                return None, None, _lat()
+            task = a2a_client.send_message(text)
+            task_id = task.get("id") or task.get("taskId")
+            terminal = task
+            for snap in a2a_client.stream_task(task_id, deadline=deadline_s):
+                terminal = snap
+            state = ((terminal.get("status") or {}).get("state") or "")
+            result = a2a_client.extract_result(terminal)
+            lat = _lat()
+            ok = state in ("TASK_STATE_COMPLETED", "completed")
+            self._a2a_audit(
+                text, "a2a", "a2a",
+                "completed" if ok else f"failed:{state}", lat,
+                nbytes=len(json.dumps(result)) if result else 0)
+            self._log(f"A2A-DELEGATE: {state} in {lat}ms")
+            if ok and result:
+                return result, state, lat
+            return None, state, lat
+        except Exception as e:  # noqa: BLE001 (any client error = fallback)
+            lat = _lat()
+            classification = getattr(e, "classification", type(e).__name__)
+            self._a2a_audit(text, "a2a", "a2a", f"error:{classification}", lat)
+            self._log(f"A2A-DELEGATE: {e} in {lat}ms — local path")
+            return None, None, lat
+
+    def _a2a_fetch_fallback(self, url: str, max_chars: int) -> str:
+        """A2A fetch for a URL the local path could not serve (blocked/empty).
+        node3090 renders via firecrawl (JS) or camoufox (reddit). Returns up
+        to the server's EXCERPT_CHARS (2000) or '' when delegation is
+        unavailable/failed — the caller continues its own fallback chain."""
+        if not url.lower().startswith(("http://", "https://")):
+            return ""
+        try:
+            from urllib.parse import urlparse as _up  # noqa: PLC0415
+            host = (_up(url).hostname or "").lower()
+        except Exception:  # noqa: BLE001 (unparseable URL — no delegation)
+            return ""
+        if host in self._A2A_NO_DELEGATE_HOSTS:
+            return ""
+        result, _state, _lat = self._a2a_delegate(url)
+        if not result:
+            return ""
+        for src in (result.get("sources") or []):
+            if (src.get("url") or "") == url:
+                return (src.get("excerpt") or "")[:max_chars]
+        srcs = result.get("sources") or []
+        if srcs:
+            return (srcs[0].get("excerpt") or "")[:max_chars]
+        return ""
+
     def search_reddit(
         self,
         query: str,
@@ -410,6 +531,32 @@ class WebMixin:
         """
         self._log(f"SEARCH-REDDIT: subreddit={subreddit!r} query={query!r}")
 
+        # ── PRIMARY (task 58fffd80): A2A delegation to node3090 ────────────
+        # Structured posts from the web-research agent (camoufox on node3090,
+        # JWT-authed, audited). Any failure falls through to the legacy
+        # camoufox-scrape path below, then SearxNG.
+        a2a_text = (f"reddit:{subreddit}:{query}" if subreddit
+                    else f"reddit:{query}")
+        result, _state, _lat = self._a2a_delegate(a2a_text)
+        if result:
+            posts = (result.get("posts") or [])[:max_results]
+            if posts:
+                lines = []
+                for p in posts:
+                    title = p.get("title", "Untitled")
+                    url = p.get("url", "")
+                    votes = p.get("votes", "")
+                    comments = p.get("comments", "")
+                    time_ = p.get("time", "")
+                    snippet = f"{votes} • {comments}" if votes and comments else ""
+                    if time_:
+                        snippet += f" • {time_}"
+                    snippet = snippet.lstrip(" • ")
+                    lines.append(f"**{title}**\n{url}\n{snippet}")
+                self._log("SEARCH-REDDIT: A2A delegation succeeded")
+                return "\n---\n".join(lines) if lines else "No posts found."
+            self._log("SEARCH-REDDIT: A2A returned no posts — local path")
+
         # ── PRIMARY: Camoufox on node3090 ──────────────────────────────────
         try:
             url = f"https://www.reddit.com/r/{subreddit}/search/?q={query}&sort=hot" if subreddit else f"https://www.reddit.com/search/?q={query}&sort=hot"
@@ -432,6 +579,7 @@ class WebMixin:
                             snippet += f" • {time_}"
                         snippet = snippet.lstrip(" • ")
                         lines.append(f"**{title}**\n{url}\n{snippet}")
+                    self._a2a_audit(a2a_text, "local", "camoufox", "ok", 0)
                     return "\n---\n".join(lines) if lines else "No posts found."
         except Exception as e:  # noqa: BLE001 (camoufox complex chain)
             self._log(f"CAMOUFOX-FAIL: {e}")
@@ -440,6 +588,7 @@ class WebMixin:
         self._log("SEARCH-REDDIT: falling back to SearxNG")
         site = f"site:reddit.com/r/{subreddit}" if subreddit else "site:reddit.com"
         full_query = f"{site} {query}"
+        self._a2a_audit(a2a_text, "local-fallback", "searxng", "fallback-used", 0)
         return self.search_web(full_query, max_results=max_results)
 
 
@@ -637,7 +786,13 @@ class WebMixin:
             self._log(f"FETCH BLOCKED (budget): {url}")
             return _gate
         import requests  # noqa: PLC0415
+        import time as _time  # noqa: PLC0415
         self._log(f"FETCH: {url}")
+        _t_fetch = _time.monotonic()
+
+        def _fetch_lat() -> int:
+            return int((_time.monotonic() - _t_fetch) * 1000)
+
         try:
             resp = requests.get(
                 url,
@@ -689,6 +844,8 @@ class WebMixin:
 
             text = self._extract_text_from_html(resp.text, max_chars)
             if text:
+                self._a2a_audit(url, "local", "requests", "ok", _fetch_lat(),
+                                nbytes=len(resp.content))
                 self._fetch_cache[url] = {
                     "text": text,
                     "ts": datetime.now().timestamp(),
@@ -699,7 +856,22 @@ class WebMixin:
                     "date, or specific value from this source. NOT_FOUND = report as UNVERIFIED."
                 )
                 return (text + mandate) + _gate
-            # Empty extract — try browser rendering for reddit URLs (v1.5.29)
+            # Empty extract — A2A delegation (task 58fffd80), then browser
+            # rendering for reddit URLs (v1.5.29)
+            self._a2a_audit(url, "local", "requests", "empty", _fetch_lat(),
+                            nbytes=len(resp.content))
+            _a2a_text = self._a2a_fetch_fallback(url, max_chars)
+            if _a2a_text:
+                self._fetch_cache[url] = {
+                    "text": _a2a_text,
+                    "ts": datetime.now().timestamp(),
+                }
+                _a2a_mandate = (
+                    f'\n\n[SOURCE-VERIFY MANDATE] Call verify_source_claims(url="{url}", '
+                    'claims="<fact1>, <fact2>") before asserting any version number, '
+                    "date, or specific value from this source. NOT_FOUND = report as UNVERIFIED."
+                )
+                return ("[a2a-rendered] " + _a2a_text + _a2a_mandate) + _gate
             if "reddit.com" in url.lower():
                 self._log("FETCH: empty for reddit URL — trying browser fallback")
                 _br = self._reddit_browser_fallback(url, max_chars)
@@ -716,7 +888,22 @@ class WebMixin:
                     return ("[browser-rendered] " + _br + _br_mandate) + _gate
             return "No text content extracted." + _gate
         except requests.RequestException as e:
-            # HTTP error (e.g. 403/429) — also try browser fallback for reddit (v1.5.29)
+            # HTTP error (e.g. 403/429) — A2A delegation (task 58fffd80),
+            # then browser fallback for reddit (v1.5.29)
+            self._a2a_audit(url, "local", "requests", f"error:{type(e).__name__}",
+                            _fetch_lat())
+            _a2a_text = self._a2a_fetch_fallback(url, max_chars)
+            if _a2a_text:
+                self._fetch_cache[url] = {
+                    "text": _a2a_text,
+                    "ts": datetime.now().timestamp(),
+                }
+                _a2a_mandate = (
+                    f'\n\n[SOURCE-VERIFY MANDATE] Call verify_source_claims(url="{url}", '
+                    'claims="<fact1>, <fact2>") before asserting any version number, '
+                    "date, or specific value from this source. NOT_FOUND = report as UNVERIFIED."
+                )
+                return ("[a2a-rendered] " + _a2a_text + _a2a_mandate) + _gate
             if "reddit.com" in url.lower():
                 self._log(f"FETCH: exception for reddit URL ({e}) — trying browser fallback")
                 _br = self._reddit_browser_fallback(url, max_chars)
