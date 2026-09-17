@@ -231,3 +231,71 @@ referenced as the Linux path for the remainder of the session.
 ```
 
 This prevents repeated path translation reasoning from bloating context.
+
+
+## 7. P1 — Exact Context Accounting + Rolling Compaction ((2026-09))
+
+Roadmap: `docs/ROADMAP-mechanisms-2026-09.md` (Phase 1). Mechanism: complete-next-input counting (prompt + history +
+exact tool schemas), fixed-envelope preflight, auto-compaction at a hard
+threshold with validated rebuild.
+
+### 7.1 2026-09-17 probe results (design inputs)
+- Engine is now Unsloth Studio's llama-server: **ephemeral** 127.0.0.1 port,
+  `-c 131072`, `--no-context-shift` (slot dies when full — no shift),
+  `--ctx-checkpoints 16`, `--metrics`.
+- `/slots` live field: `n_prompt_tokens` (NOT `n_past` on build ≥9307 — the
+  v1.5.4 fix in `get_context_status` remains valid).
+- **`compact_context` rewrites the OpenWebUI SQLite store** (`OWUI_DB_PATH`
+  valve) — that frontend is dead. Under Unsloth Studio the history lives in
+  Studio's own store; the gateway cannot rewrite it. The KV-erase path
+  (`POST /slots/0?action=erase`) is frontend-agnostic but only re-prefills
+  the same history = no savings. ⇒ `compact_context` is DORMANT under Studio;
+  kept as fallback for a frontend with a writable store.
+- **Live bug found:** gateway env (13 `GOETHE_*` vars) has no
+  `GOETHE_LLAMA_SERVER_URL` → valve default `http://localhost:8080` in effect
+  → nothing listens on :8080 → `get_context_status` and `context_monitor.py`
+  were polling a dead port.
+
+### 7.2 Design
+1. **Envelope** (goethe_mcp.py): after all `register()` calls, serialize every
+   bound tool schema (name + description + inputSchema).
+   `envelope_tokens = bytes × CTX_ENVELOPE_RATIO` (default 0.25). Computed
+   ONCE per process; sha256 + byte size logged at startup. The envelope is
+   FIXED for the session — compaction can never shrink it; only Phase 2
+   (progressive tool loading) can.
+2. **Dynamic server URL** (goethe.py `_llama_server_url()`): valve
+   `GOETHE_LLAMA_SERVER_URL` wins if explicitly set; otherwise
+   `pgrep -a llama-server` → parse `--port` → `http://127.0.0.1:<port>`;
+   cached `CTX_URL_CACHE_S` (default 300).
+3. **Projected next input** = `n_prompt_tokens + envelope_tokens + reserve`
+   (valve `CTX_RESERVE_TOKENS`, default 2000 = one tool round-trip).
+4. **`get_context_status`** returns exact numbers, not just a ratio:
+   `n_prompt | envelope (tool count + sha256) | projected | compact-at (70%)
+   | hard-stop (85%)` — plus the existing ratio status line.
+5. **Hard stop** (valve `CTX_HARD_STOP`, default OFF until verified): in the
+   `register()` wrapper — the single choke point for every tool call — a
+   10-second-cached fill check (valve `CTX_GATE_CACHE_S`). When projected ≥
+   `CTX_HARD_PCT` (default 0.85) of `n_ctx`: refuse with an exact capacity
+   message + handoff prompt (ledger persists → fresh session → `task_resume`
+   continues). Monitoring failure → allow (never block on a monitoring fault).
+   Pattern: search-budget in-code refusal (v1.7.1).
+6. **COMPACT_AT (70%)** under Studio: actuation = escalation in
+   `get_context_status` + the hard-stop refusal. No history rewrite.
+
+### 7.3 Valves
+| Valve | Default | Purpose |
+|---|---|---|
+| `CTX_ENVELOPE_RATIO` | 0.25 | bytes→tokens for the tool envelope |
+| `CTX_RESERVE_TOKENS` | 2000 | reserve for one tool round-trip |
+| `CTX_URL_CACHE_S` | 300 | dynamic server-URL cache |
+| `CTX_GATE_CACHE_S` | 10 | hard-stop fill-check cache |
+| `CTX_HARD_STOP` | 0 (off) | enable the hard-stop refusal |
+| `CTX_COMPACT_AT` | 0.70 | escalation threshold |
+| `CTX_HARD_PCT` | 0.85 | hard-stop threshold |
+
+### 7.4 Verification (roadmap §Phase 1)
+- Unit: accounting math against mocked `/slots` (envelope + n_prompt + reserve
+  → projected; threshold crossings).
+- Live: long session (planner task, 5+ steps) — `/slots` before/after +
+  session continuity, no user intervention.
+- Refusal: force the threshold → exact capacity message, tool NOT executed.
