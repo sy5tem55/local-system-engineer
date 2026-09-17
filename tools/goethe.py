@@ -48,6 +48,11 @@ from goethe_node import NodeLifecycleMixin  # noqa: E402
 # (2026-07-31) so mixins can share it without importing goethe.py itself.
 from goethe_constants import _LSE_BASE_PATH  # noqa: E402
 from goethe_planner import PlannerMixin  # noqa: E402
+
+# P1: dead-default llama-server URL — Unsloth Studio binds an ephemeral
+# loopback port, so the old :8080 default is free (docs/03 §7, roadmap P1).
+LLAMA_URL_DEAD_DEFAULT = "http://localhost:8080"
+LLAMA_URL_LOOPBACK_PREFIX = "http://127.0.0.1:"
 from goethe_web import WebMixin  # noqa: E402
 
 
@@ -111,6 +116,35 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
             description="Absolute path to the OpenWebUI SQLite database (webui.db). "
             "Used by compact_context to write chat history directly, "
             "bypassing the HTTP deadlock caused by single-worker uvicorn.",
+        )
+        # P1 exact context accounting (docs/03 §7, 2026-09).
+        CTX_ENVELOPE_RATIO: str = Field(
+            default="0.25",
+            description="bytes->tokens ratio for the tool-envelope estimate (P1).",
+        )
+        CTX_RESERVE_TOKENS: str = Field(
+            default="2000",
+            description="Reserved tokens for one tool round-trip in projected input (P1).",
+        )
+        CTX_URL_CACHE_S: str = Field(
+            default="300",
+            description="Cache seconds for dynamic llama-server URL discovery (P1).",
+        )
+        CTX_GATE_CACHE_S: str = Field(
+            default="10",
+            description="Cache seconds for the hard-stop fill check (P1).",
+        )
+        CTX_HARD_STOP: str = Field(
+            default="0",
+            description="1=refuse tool calls when projected input >= CTX_HARD_PCT of n_ctx (P1; off until verified).",
+        )
+        CTX_COMPACT_AT: str = Field(
+            default="0.70",
+            description="Fill fraction where get_context_status escalates to compact/handoff (P1).",
+        )
+        CTX_HARD_PCT: str = Field(
+            default="0.85",
+            description="Fill fraction where the hard stop refuses (P1).",
         )
         ES_URL: str = Field(
             default="http://127.0.0.1:9200",
@@ -442,6 +476,10 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         self._fetch_cache: dict = {}  # url -> {"text": str, "ts": float} (v1.7.10)
         self._device_cache: dict = {}  # host -> {"platform": str, "raw": str} (v1.7.12)
         self._time_banner_emitted = False  # CHRONOS-2 (v0.3.1): [TIME] banner once/session
+        # P1 exact context accounting (docs/03 §7): (ts, value) caches + envelope.
+        self._ctx_url_cache = None    # (ts, url)
+        self._ctx_gate_cache = None   # (ts, refusal_str|None)
+        self._ctx_envelope = None     # (tokens, tool_count, sha256_12) set by goethe_mcp
     # PlannerMixin: planner/ledger execution loop (29 methods, 5 class
     # attrs incl. _PLANNER_CONTRACT, _GEMMA_MODELS, _PLANNER_KB_*)
     # EXTRACTED to goethe_planner.py (D7, 2026-07-31). Membership computed
@@ -2085,6 +2123,102 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
             f"(exit {r.returncode})\n--- {check_command} ---\n{out_cap}"
         )
 
+    # ── P1 EXACT CONTEXT ACCOUNTING — DESIGN (2026-09, goethe.py side) ─────────
+    # Full design: docs/03-context-management.md §7 · roadmap: docs/ROADMAP-mechanisms-2026-09.md
+    # get_context_status returns EXACT numbers, not just a ratio:
+    #   n_prompt (live /slots) | envelope (tool count + sha256, from goethe_mcp register)
+    #   | projected = n_prompt + envelope + CTX_RESERVE_TOKENS (2000)
+    #   | compact-at (CTX_COMPACT_AT 0.70) | hard-stop (CTX_HARD_PCT 0.85).
+    # _llama_server_url(): env GOETHE_LLAMA_SERVER_URL -> valve value; if still
+    #   the dead default (localhost:8080) try pgrep discovery (cached CTX_URL_CACHE_S=300).
+    #   The valve default http://localhost:8080 is DEAD under Unsloth Studio
+    #   (ephemeral port) — probe 2026-09-17: get_context_status polled a dead port.
+    # _ctx_gate(tool_name): the hard-stop check called from the goethe_mcp
+    #   register() wrapper (valve CTX_HARD_STOP, default OFF until verified).
+    # compact_context: DORMANT under Unsloth Studio — it rewrites the OpenWebUI
+    #   SQLite store (OWUI_DB_PATH), a dead frontend (probe 2026-09-17). Kept as
+    #   fallback for a frontend with a writable store; KV-erase path is
+    #   frontend-agnostic but only re-prefills the same history (no savings).
+    # ──────────────────────────────────────────────────────────
+
+    def _llama_server_url(self) -> str:
+        """P1: resolve the live llama-server base URL.
+
+        Precedence: env GOETHE_LLAMA_SERVER_URL -> valve value. If the result
+        is still the dead default (LLAMA_URL_DEAD_DEFAULT - Unsloth Studio
+        binds an ephemeral loopback port), try dynamic pgrep discovery.
+        Discovery failure falls back to the valve value so error messages
+        stay meaningful. Cached CTX_URL_CACHE_S seconds."""
+        import time as _time
+        now = _time.time()
+        if (self._ctx_url_cache and
+                now - self._ctx_url_cache[0] < float(self.valves.CTX_URL_CACHE_S)):
+            return self._ctx_url_cache[1]
+        url = os.environ.get("GOETHE_LLAMA_SERVER_URL") or \
+            self.valves.LLAMA_SERVER_URL
+        if url.rstrip("/").lower() == LLAMA_URL_DEAD_DEFAULT:
+            discovered = self._discover_llama_server_url()
+            if discovered:
+                url = discovered
+        self._ctx_url_cache = (now, url)
+        return url
+
+    def _discover_llama_server_url(self):
+        """P1: pgrep -a llama-server -> parse --port. None on any failure."""
+        try:
+            out = subprocess.run(
+                ["pgrep", "-a", "llama-server"],
+                capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            return None
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        for line in (out or "").splitlines():
+            parts = line.split()
+            if "--port" in parts:
+                port = parts[parts.index("--port") + 1]
+                return (LLAMA_URL_LOOPBACK_PREFIX + port) if port.isdigit() else None
+        return None
+
+    def _ctx_gate(self, tool_name: str):
+        """P1 hard-stop check (valve CTX_HARD_STOP, default OFF).
+
+        Returns a refusal string when projected next input
+        (n_prompt + envelope + reserve) >= CTX_HARD_PCT of n_ctx, else None.
+        Fill check cached CTX_GATE_CACHE_S. Monitoring failure -> None: the
+        gate never blocks a tool call on its own faults."""
+        if str(self.valves.CTX_HARD_STOP).strip().lower() not in ("1", "true", "on"):
+            return None
+        import time as _time
+        now = _time.time()
+        if (self._ctx_gate_cache and
+                now - self._ctx_gate_cache[0] < float(self.valves.CTX_GATE_CACHE_S)):
+            return self._ctx_gate_cache[1]
+        refusal = None
+        try:
+            import requests  # noqa: PLC0415
+            resp = requests.get(f"{self._llama_server_url()}/slots", timeout=2)
+            slots = resp.json()
+            if slots:
+                s = slots[0]
+                n_prompt = s.get("n_prompt_tokens", 0)
+                n_ctx = s.get("n_ctx", 0)
+                env_tokens = self._ctx_envelope[0] if self._ctx_envelope else 0
+                projected = n_prompt + env_tokens + int(self.valves.CTX_RESERVE_TOKENS)
+                limit = int(n_ctx * float(self.valves.CTX_HARD_PCT))
+                if n_ctx and projected >= limit:
+                    refusal = (
+                        f"CTX HARD STOP: projected next input {projected:,} tokens >= "
+                        f"{limit:,} ({float(self.valves.CTX_HARD_PCT)*100:.0f}% of "
+                        f"n_ctx={n_ctx:,}). Tool '{tool_name}' NOT executed. The "
+                        f"ledger persists — start a fresh session and say "
+                        f"'resume' (task_resume continues the plan)."
+                    )
+        except Exception:
+            refusal = None
+        self._ctx_gate_cache = (now, refusal)
+        return refusal
+
     def get_context_status(self) -> str:
         """
         Query the llama.cpp server to get the current token usage and context fill percentage.
@@ -2096,7 +2230,7 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
 
         self._log("CTX-STATUS: querying /slots")
         try:
-            resp = requests.get(f"{self.valves.LLAMA_SERVER_URL}/slots", timeout=5)
+            resp = requests.get(f"{self._llama_server_url()}/slots", timeout=5)
             slots = resp.json()
             if not slots:
                 return "No active slots found on llama.cpp server."
@@ -2133,8 +2267,25 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
                     f"(hit max_tokens={n_predict} cap — raise in OpenWebUI model settings).\n"
                 )
 
+            # P1 exact accounting (docs/03 §7): envelope + projected + thresholds.
+            env = self._ctx_envelope
+            env_tokens = env[0] if env else 0
+            reserve = int(self.valves.CTX_RESERVE_TOKENS)
+            projected = n_prompt + env_tokens + reserve
+            compact_at = int(n_ctx * float(self.valves.CTX_COMPACT_AT))
+            hard_stop = int(n_ctx * float(self.valves.CTX_HARD_PCT))
+            envelope_line = (
+                f"Tool envelope: {env_tokens:,} tokens ({env[1]} tools, "
+                f"sha256 {env[2]})\n" if env else
+                f"Tool envelope: unknown (gateway not reporting)\n"
+            )
             return (
                 f"Context: {n_prompt:,} / {n_ctx:,} tokens ({pct}%)\n"
+                f"{envelope_line}"
+                f"Projected next input: {projected:,} / {n_ctx:,} "
+                f"({round(projected / n_ctx * 100, 1)}%)\n"
+                f"compact-at: {compact_at:,} ({float(self.valves.CTX_COMPACT_AT)*100:.0f}%) | "
+                f"HARD-STOP: {hard_stop:,} ({float(self.valves.CTX_HARD_PCT)*100:.0f}%)\n"
                 f"Prefix cache: {n_cache:,} cached / {n_proc:,} processed "
                 f"({cache_pct}% hit rate)\n"
                 f"Last generation: {n_decoded:,} tokens\n"
