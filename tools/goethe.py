@@ -1679,7 +1679,10 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         )
         for u in urls:
             try:
-                req = urllib.request.Request(u, method="HEAD")
+                req = urllib.request.Request(
+                    u, method="HEAD",
+                    headers={"User-Agent": "Goethe-LSE/1.0 (clock-probe)"},
+                )
                 t0 = _t.time()
                 with urllib.request.urlopen(req, timeout=4) as r:
                     date_hdr = r.headers.get("Date")
@@ -1687,7 +1690,7 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
                 if date_hdr:
                     server = email.utils.parsedate_to_datetime(date_hdr).timestamp()
                     return server - (t0 + t3) / 2
-            except (ValueError, IndexError):
+            except (ValueError, IndexError, OSError):  # HTTPError/URLError/timeout → try next endpoint
                 continue
         return None
 
