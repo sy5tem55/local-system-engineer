@@ -344,3 +344,47 @@ class TestMainQueueWiring:
         da.main(["--queue", "--dream-dir", str(tmp_path)])
         out = capsys.readouterr()
         assert "through main()" in out.out
+
+
+# --- graph orphan guard (2026-09-18 queue pollution incident) -----------------
+
+class _MissingES:
+    """Every lse-kb doc lookup 404s (KeyError -> fetch_kb_doc returns None)."""
+    def get(self, index, id):
+        raise KeyError(id)
+
+
+class _PresentES:
+    """Every lse-kb doc lookup hits."""
+    def get(self, index, id):
+        return {"_source": {"doc_id": id, "title": "doc"}}
+
+
+def _graph_proposal(doc_id="doc_missing_1"):
+    return {
+        "type": "graph",
+        "call": "none",
+        "args": {
+            "doc_title": "some doc",
+            "evidence_doc_id": doc_id,
+            "entities": [{"kind": "entity", "name": "pfsense", "type": "node"}],
+            "edges": [{"src": "pfsense", "rel": "documented_by", "dst": doc_id,
+                       "evidence_doc_id": doc_id, "kind": "edge"}],
+        },
+        "why": "graph extraction for " + doc_id + ": 1 entities, 1 edges",
+    }
+
+
+class TestGraphOrphanGuard:
+    """validate_proposal_for_apply must reject graph proposals whose
+    evidence docs no longer exist in lse-kb, and let graph proposals
+    with live evidence through."""
+
+    def test_orphan_evidence_is_rejected(self):
+        reason = da.validate_proposal_for_apply(_graph_proposal(), _MissingES())
+        assert reason is not None
+        assert reason.startswith("orphan graph evidence:")
+        assert "doc_missing_1" in reason
+
+    def test_live_evidence_passes(self):
+        assert da.validate_proposal_for_apply(_graph_proposal(), _PresentES()) is None

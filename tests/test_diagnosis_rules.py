@@ -587,3 +587,66 @@ class TestFingerprintIgnoresWhatR3Judges:
         )
         assert verdict1 is not None
         assert verdict2 is None
+
+
+# --- R4: duplicate graph proposal auto-supersede (2026-09-18 queue pollution) ---
+
+def _graph_proposal(doc_id, name="pfsense", proposal_id=None):
+    p = {
+        "type": "graph",
+        "call": "none",
+        "args": {
+            "doc_title": "t",
+            "evidence_doc_id": doc_id,
+            "entities": [{"kind": "entity", "name": name, "type": "node"}],
+            "edges": [{"src": name, "rel": "documented_by", "dst": doc_id,
+                       "evidence_doc_id": doc_id, "kind": "edge"}],
+        },
+        "why": "graph extraction for " + doc_id,
+    }
+    if proposal_id:
+        p["proposal_id"] = proposal_id
+    return p
+
+
+class TestR4GraphDuplicate:
+    def test_same_content_new_evidence_doc_is_superseded(self):
+        verdict = dgr.rule_r4_graph_duplicate(
+            _graph_proposal("doc_b"),
+            [{"proposal_id": "prp_a", "state": "PENDING",
+              "proposal": _graph_proposal("doc_a")}])
+        assert verdict == ("SUPERSEDED",
+                           dgr.RULE_REASON_PREFIX + "r4:"
+                           + dgr.R4_REASON_DUPLICATE_GRAPH)
+
+    def test_distinct_content_stays(self):
+        assert dgr.rule_r4_graph_duplicate(
+            _graph_proposal("doc_b", name="comfyui"),
+            [{"proposal_id": "prp_a", "state": "PENDING",
+              "proposal": _graph_proposal("doc_a")}]) is None
+
+    def test_non_graph_and_self_are_ignored(self):
+        cand = _graph_proposal("doc_a", proposal_id="prp_a")
+        priors = [
+            {"proposal_id": "prp_a", "state": "PENDING", "proposal": cand},
+            {"proposal_id": "prp_x", "state": "PENDING",
+             "proposal": {"type": "diagnosis", "args": {}}},
+        ]
+        assert dgr.rule_r4_graph_duplicate(cand, priors) is None
+
+    def test_insert_graph_proposals_supersedes_duplicate_at_record_time(self, tmp_path):
+        import goethe_graph as gg
+        import sqlite3
+        db = str(tmp_path / "traum-state.db")
+        first = gg.insert_graph_proposals(
+            [dict(_graph_proposal("doc_a", proposal_id="prp_a"),
+                  _initial_state="PENDING")], state_db=db)
+        assert len(first) == 1 and first[0]["state"] == "PENDING"
+        second = gg.insert_graph_proposals(
+            [_graph_proposal("doc_b")], state_db=db)
+        assert second == []
+        rows = sqlite3.connect(db).execute(
+            "select state, reason from proposals "
+            "where proposal_type='graph' order by rowid").fetchall()
+        assert [r[0] for r in rows] == ["PENDING", "SUPERSEDED"]
+        assert "r4:duplicate-graph-proposal" in (rows[1][1] or "")

@@ -15,6 +15,8 @@ ES has no client library to drift.
 ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
   GET  /ui                → dashboard HTML (goethe_dashboard.html, same dir).
                             No token: static page, contains no data.
+  GET  /kbgraph           → Phase 5 graph renderer (goethe_kbgraph.html, same dir).
+                            No token: static page; fetches /api/ui/kbgraph with the token.
   GET  /api/ui/overview   → gateway/stack health summary          (token-gated)
   GET  /api/ui/kb         → KB trust: aggs + worst/newest docs    (token-gated)
   GET  /api/ui/dream      → TRAUM digest + legacy day-dir map     (token-gated)
@@ -178,6 +180,105 @@ _MAX_DIGEST_BYTES = 64 * 1024
 _ES_TIMEOUT = 6
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,200}$")
 _PURGE_PREVIEW_CAP = 500
+
+
+# --------------------------------------------------------------------------
+# Friction-signal observability (2026-09-18, task b37bc23a). Consumes the
+# SAME classifier table as tools/friction_report.py (single source of truth)
+# and adds two signal families the report CLI does not surface in the UI:
+#   * guard denials  - per-guard-type breakdown of BLOCKED results
+#   * truncation     - model-visible (MAX_OUTPUT_CHARS) vs log-level
+#                      (EPISODE_MAX_RESULT_CHARS) clipped results
+# All helpers are pure/read-only; the only I/O is the one-shot classifier
+# file load below. episode_stats() appends an additive "friction" object --
+# every pre-existing field is untouched (see /opt/local-se/
+# friction-ui-one-line-assessment.md, verdict: feasible).
+# --------------------------------------------------------------------------
+
+FRICTION_CLASSIFIERS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "friction_classifiers.json")
+
+
+def _load_friction_classifiers() -> list:
+    """Load tools/friction_classifiers.json once; [] on any failure.
+    A missing/corrupt table must never take the episodes route down --
+    categories then simply report as 'unclassified'."""
+    try:
+        with open(FRICTION_CLASSIFIERS_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, list):
+            return [c for c in data
+                    if isinstance(c, dict) and c.get("name")
+                    and isinstance(c.get("patterns"), list)]
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    return []
+
+
+_FRICTION_CLASSIFIERS = _load_friction_classifiers()
+
+
+def _classify_guard_type(result_text: str) -> str:
+    """Map a guard denial result to a stable guard_type string.
+    Returns '' when the text is not a guard denial. Requires the denial
+    marker at the START of the text: docstrings and code snippets that
+    merely QUOTE 'BLOCKED:' inside a successful result must not count
+    (observed artifact in the 2026-09-12..18 corpus)."""
+    t = (result_text or "").lstrip()
+    if t.startswith("Blocked command(s) for safety:"):
+        return "blocked_commands_safety"
+    if not t.startswith("BLOCKED:"):
+        return ""
+    # first single-quoted token, e.g. 'sudo' in "BLOCKED: 'sudo' detected ..."
+    m = re.search(r"'([^']{1,60})'", t)
+    quoted = m.group(1) if m else ""
+    if "is permanently forbidden" in t:
+        return "permanently_forbidden"
+    if "is a protected credential file" in t:
+        return "credential_file_protected"
+    if "working_dir" in t and "outside allowed read paths" in t:
+        return "working_dir_outside"
+    if "outside allowed write paths" in t:
+        return "write_path_outside"
+    if "outside allowed read paths" in t:
+        return "read_path_outside"
+    if "write targeting a privileged path" in t:
+        return "privileged_path_write"
+    if "SIZE-CHECK" in t:
+        return "size_check"
+    if "could not create a recovery snapshot" in t:
+        return "snapshot_failed"
+    if "a download is already running" in t:
+        return "download_running"
+    if "detected in a chained or complex command" in t:
+        return f"chained_complex_{quoted}" if quoted else "chained_complex_other"
+    if "detected in command" in t:
+        return "command_priv_verb"
+    return "blocked_other"
+
+
+def _is_model_truncated(result_text: str) -> bool:
+    """Model-visible truncation: execute_command's MAX_OUTPUT_CHARS cap
+    appends '... [TRUNCATED -- N chars total...' to the text the MODEL sees."""
+    return "TRUNCATED —" in (result_text or "")
+
+
+def _is_log_truncated(result_text: str) -> bool:
+    """Log-level truncation: the episode logger caps result_truncated at
+    EPISODE_MAX_RESULT_CHARS (goethe_mcp.py) and appends '…[truncated]'."""
+    return (result_text or "").endswith("…[truncated]")
+
+
+def _classify_friction_category(result_text: str, classifiers: list) -> str:
+    """First category whose literal substring patterns match wins
+    (same semantics as tools/friction_report.py.classify). 'unclassified'
+    when nothing matches -- the UI must show that bucket, not hide it."""
+    t = result_text or ""
+    for cat in classifiers:
+        for pat in cat["patterns"]:
+            if pat and pat in t:
+                return cat["name"]
+    return "unclassified"
 
 
 def _env(name: str, default: str) -> str:
@@ -385,19 +486,23 @@ def ledger_stats() -> dict:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(task_blocks)")]
         has_steps = "steps_json" in cols
         has_backend = "backend" in cols  # goethe.py v1.13.0 migration
+        has_prov = "provenance" in cols  # node provenance (A2A stamp)
         extra_cols = (", steps_json" if has_steps else "") + (", backend" if has_backend else "")
+        extra_cols += (", provenance" if has_prov else "")
         sel = "task_id, goal, status, checkpoints, created_at, updated_at" + extra_cols
         rows = conn.execute(
             f"SELECT {sel} FROM task_blocks "
             "ORDER BY updated_at DESC").fetchall()
         steps_idx = 6 if has_steps else None
         backend_idx = 6 + (1 if has_steps else 0) if has_backend else None
+        prov_idx = 6 + (1 if has_steps else 0) + (1 if has_backend else 0) if has_prov else None
         for r in rows:
             task = {"task_id": r[0], "goal": r[1], "status": r[2],
                     "checkpoints": r[3], "created_at": r[4],
                     "updated_at": r[5], "steps_total": None,
                     "steps_done": None,
-                    "backend": (r[backend_idx] if backend_idx is not None else None) or "local"}
+                    "backend": (r[backend_idx] if backend_idx is not None else None) or "local",
+                    "provenance": (r[prov_idx] if prov_idx is not None else None) or "node4090"}
             if steps_idx is not None and r[steps_idx]:
                 try:
                     steps = json.loads(r[steps_idx])
@@ -592,6 +697,18 @@ def episode_stats() -> dict:
     except OSError:
         entries = []
     tool_totals: dict = {}
+    # friction-signal accumulators (task b37bc23a) -- pure counters, no I/O
+    fr_total = 0
+    fr_non_ok = 0
+    fr_exit: dict = {}
+    fr_guards_total = 0
+    fr_by_type: dict = {}
+    fr_samples: dict = {}
+    fr_model_total = 0
+    fr_model_by_tool: dict = {}
+    fr_log_total = 0
+    fr_log_by_tool: dict = {}
+    fr_categories: dict = {}
     for e in sorted(entries, key=lambda x: x.name, reverse=True)[:7]:
         day = {"date": e.name, "total": 0,
                "exit": {"ok": 0, "error": 0, "denied": 0, "timeout": 0},
@@ -625,6 +742,36 @@ def episode_stats() -> dict:
                         tool = rec.get("tool")
                         if tool:
                             tool_totals[tool] = tool_totals.get(tool, 0) + 1
+                        # friction signals (read-only; classifier table is
+                        # module-level, loaded once -- no per-line I/O)
+                        rt = rec.get("result_truncated") or ""
+                        fr_total += 1
+                        if ec != "ok":
+                            fr_non_ok += 1
+                            fr_exit[ec] = fr_exit.get(ec, 0) + 1
+                            fr_cat = _classify_friction_category(
+                                rt, _FRICTION_CLASSIFIERS)
+                            fr_categories[fr_cat] = fr_categories.get(fr_cat, 0) + 1
+                        gtype = _classify_guard_type(rt)
+                        if gtype:
+                            fr_guards_total += 1
+                            fr_by_type[gtype] = fr_by_type.get(gtype, 0) + 1
+                            rts = rec.get("ts") or ""
+                            prev = fr_samples.get(gtype)
+                            if prev is None or rts >= prev["ts"]:
+                                fr_samples[gtype] = {
+                                    "type": gtype,
+                                    "tool": tool,
+                                    "date": rts[:10],
+                                    "ts": rts,
+                                    "head": rt[:90],
+                                }
+                        if _is_model_truncated(rt):
+                            fr_model_total += 1
+                            fr_model_by_tool[tool] = fr_model_by_tool.get(tool, 0) + 1
+                        if _is_log_truncated(rt):
+                            fr_log_total += 1
+                            fr_log_by_tool[tool] = fr_log_by_tool.get(tool, 0) + 1
             except OSError:
                 continue
         out["days"].append(day)
@@ -632,6 +779,34 @@ def episode_stats() -> dict:
     out["top_tools"] = sorted(
         ({"tool": t, "count": n} for t, n in tool_totals.items()),
         key=lambda x: -x["count"])[:10]
+    # Additive friction aggregate (task b37bc23a) -- days/top_tools/
+    # episode_dir above are byte-identical to the pre-change shape.
+    out["friction"] = {
+        "window": {
+            "total": fr_total,
+            "non_ok": fr_non_ok,
+            "rate_pct": round(100.0 * fr_non_ok / fr_total, 1)
+                        if fr_total else 0.0,
+            "error": fr_exit.get("error", 0),
+            "denied": fr_exit.get("denied", 0),
+            "timeout": fr_exit.get("timeout", 0),
+        },
+        "guards": {
+            "total": fr_guards_total,
+            "by_type": dict(sorted(fr_by_type.items(), key=lambda x: -x[1])),
+            "samples": sorted(fr_samples.values(),
+                              key=lambda x: x["ts"], reverse=True),
+        },
+        "truncation": {
+            "model_total": fr_model_total,
+            "log_total": fr_log_total,
+            "model_by_tool": dict(sorted(fr_model_by_tool.items(),
+                                         key=lambda x: -x[1])),
+            "log_by_tool": dict(sorted(fr_log_by_tool.items(),
+                                       key=lambda x: -x[1])),
+        },
+        "categories": dict(sorted(fr_categories.items(), key=lambda x: -x[1])),
+    }
     return out
 
 
@@ -993,6 +1168,53 @@ def skills_panel() -> dict:
             "archived": sum(1 for s in skills if s.get("archived"))}
 
 
+KBGRAPH_MAX_ENTITIES = 500
+KBGRAPH_MAX_EDGES = 2000
+
+def kbgraph_panel() -> dict:
+    """Phase 5 knowledge-graph data for the /kbgraph renderer (read-only).
+
+    Returns entities + edges from the lse-graph ES index, bounded to
+    KBGRAPH_MAX_ENTITIES / KBGRAPH_MAX_EDGES so a large materialized graph
+    cannot blow the response. Empty/dormant state (index missing or empty)
+    is a clean 200 with dormant=true, never an error.
+    """
+    index = "lse-graph"
+    try:
+        with urllib.request.urlopen(f"{_es_url()}/{index}", timeout=_ES_TIMEOUT) as r:
+            present = r.status < 300
+    except Exception:
+        present = False
+    if not present:
+        return {"entities": [], "edges": [], "counts": {"entities": 0, "edges": 0},
+                "dormant": True, "index_present": False, "truncated": False}
+    ent_body = {"size": KBGRAPH_MAX_ENTITIES,
+                "query": {"term": {"kind": "entity"}},
+                "_source": ["name", "type"]}
+    edge_body = {"size": KBGRAPH_MAX_EDGES,
+                 "query": {"term": {"kind": "edge"}},
+                 "_source": ["src", "rel", "dst", "evidence_doc_id"]}
+    try:
+        r_ent = _es_search(index, ent_body)
+        r_edge = _es_search(index, edge_body)
+    except Exception as e:
+        return {"error": f"lse-graph: {type(e).__name__}: {e}",
+                "entities": [], "edges": [], "counts": {"entities": 0, "edges": 0},
+                "dormant": True, "index_present": True, "truncated": False}
+    total_ent = r_ent.get("hits", {}).get("total", {}).get("value", 0)
+    total_edge = r_edge.get("hits", {}).get("total", {}).get("value", 0)
+    entities = [{"id": h["_id"], "name": s.get("name") or h["_id"][:8],
+                 "type": s.get("type") or "unknown"}
+                for h in r_ent.get("hits", {}).get("hits", []) for s in [h.get("_source", {})]]
+    edges = [{"src": s.get("src"), "rel": s.get("rel"), "dst": s.get("dst"),
+              "evidence": s.get("evidence_doc_id")}
+             for h in r_edge.get("hits", {}).get("hits", []) for s in [h.get("_source", {})]]
+    return {"entities": entities, "edges": edges,
+            "counts": {"entities": total_ent, "edges": total_edge},
+            "dormant": total_ent == 0,
+            "index_present": True,
+            "truncated": total_ent > len(entities) or total_edge > len(edges)}
+
 _PANELS = {
     "/api/ui/overview": overview,
     "/api/ui/kb": kb_stats,
@@ -1002,6 +1224,7 @@ _PANELS = {
     "/api/ui/perms": perms_overview,
     "/api/ui/skills": skills_panel,
     "/api/ui/backends": backend_status,
+    "/api/ui/kbgraph": kbgraph_panel,
 }
 
 
@@ -1479,6 +1702,25 @@ class UIRouter:
                 await self._respond(
                     send, 500,
                     f"goethe_dashboard.html not found: {e}".encode(),
+                    "text/plain")
+            return
+
+        if path in ("/kbgraph", "/kbgraph/") and method == "GET":
+            # Phase 5 graph renderer: same posture as /ui — static page with
+            # no data of its own; data comes from the token-gated
+            # /api/ui/kbgraph panel that the page fetches with the token
+            # (shared localStorage key "goethe_token").
+            kb_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "goethe_kbgraph.html")
+            try:
+                with open(kb_path, "rb") as f:
+                    html = f.read()
+                await self._respond(send, 200, html, "text/html; charset=utf-8")
+            except OSError as e:
+                await self._respond(
+                    send, 500,
+                    f"goethe_kbgraph.html not found: {e}".encode(),
                     "text/plain")
             return
 

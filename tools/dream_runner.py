@@ -290,6 +290,34 @@ def _agent_log_default() -> str:
     return os.environ.get("GOETHE_AGENT_COMMANDS_LOG", "/opt/local-se/agent_commands.log")
 
 
+def _local_llama_server_url() -> str:
+    """Auto-discover the local llama-server (Unsloth Studio engine) URL.
+
+    The engine binds 127.0.0.1 on an EPHEMERAL port that changes per session,
+    so no hardcoded port is durable. ``pgrep -a llama-server`` exposes
+    ``--port N``; we health-probe the candidate before trusting it. Returns ''
+    when no local llama-server is running, so callers fall through to the
+    node3090 cascade exactly as before.
+    """
+    import subprocess  # noqa: PLC0415
+
+    try:
+        out = subprocess.run(
+            ["pgrep", "-a", "llama-server"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+    except Exception:
+        return ""
+    for line in out.splitlines():
+        m = re.search(r"--port\s+(\d+)", line)
+        if not m:
+            continue
+        url = f"http://127.0.0.1:{m.group(1)}"
+        if _health_probe(url):
+            return url
+    return ""
+
+
 def _dream_llm_url_default() -> str:
     """Cascade leg 0 -- the PRIMARY dreamer.
 
@@ -318,7 +346,19 @@ def _dream_llm_url_default() -> str:
     A --host of 0.0.0.0 also accepts loopback, so this works under either
     binding the Goethe GUI offers.
     """
-    return os.environ.get("GOETHE_DREAM_LLM_URL", "http://127.0.0.1:8080")
+    forced = os.environ.get("GOETHE_DREAM_LLM_URL", "")
+    if forced:
+        return forced
+    # Auto-discover the local Unsloth llama-server (strong local model on an
+    # ephemeral 127.0.0.1 port). The hardcoded :8080 default is stale by
+    # design -- the engine port changes every session, so a fixed URL is dead
+    # in production and the cascade burned every call on the weak node3090
+    # Ollama qwen3:4b fallback (2026-09-17: insights/digest/error-cluster all
+    # BLOCKED on "DREAMER UNAVAILABLE -- timed out", cycles stuck at 3/6).
+    local = _local_llama_server_url()
+    if local:
+        return local
+    return "http://127.0.0.1:8080"
 
 
 def _node3090_llm_url_default() -> str:
@@ -1668,7 +1708,7 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
 # --- proposal shape guard (structural only — NOT the hard-invariant validator) -
 
 REQUIRED_PROPOSAL_KEYS = {"type", "call", "args", "why"}
-KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact", "prompt-rule", "diagnosis"}
+KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact", "prompt-rule", "diagnosis", "graph"}
 
 # Prompt 3.6: the ONLY file a prompt-rule proposal may ever target. Fixed
 # here as a constant (not read from a proposal's own args at generation
@@ -3896,12 +3936,77 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
     return all_proposals, "\n".join(narrative_lines), null_record, sub_passes
 
 
+# --- Phase 5 (roadmap 2026-09): seventh pass — graph backfill -------------
+
+def run_pass_graph_backfill(cfg: DreamConfig, sessions, episodes_by_session,
+                            kb_docs, error_docs) -> tuple:
+    """Phase 5 — the seventh pass: backfill graph extraction over lse-kb.
+
+    Runs the deterministic, fixed-vocabulary extractor
+    (tools/goethe_graph.py) over EVERY lse-kb doc and returns "graph"
+    proposals. The main flow persists them through the canonical
+    state.record_proposals path — same Human Gate as every other
+    proposal type; the graph never self-writes. No LLM calls: this pass
+    is cheap and budget-neutral.
+    """
+    import goethe_graph  # noqa: PLC0415 (sibling module in tools/)
+
+    if not kb_docs:
+        narrative = (
+            "graph-backfill pass (seventh pass, Phase 5): lse-kb returned "
+            "zero docs (empty index or ES unreachable this run) — nothing "
+            "to extract. Null result (PH3-2)."
+        )
+        return [], narrative, _null_record(
+            "graph-backfill", "empty_kb", looked=True,
+            corpus_size={"kb_docs": 0, "docs_with_entities": 0,
+                         "graph_proposals": 0},
+            thresholds={"entity_types": len(goethe_graph.ENTITY_TYPES),
+                        "relations": len(goethe_graph.RELATIONS)},
+        )
+
+    proposals = []
+    docs_with_entities = 0
+    for doc in kb_docs:
+        doc_id = doc.get("_id") or ""
+        content = doc.get("content") or ""
+        title = doc.get("title") or ""
+        if not doc_id or not content:
+            continue
+        got = goethe_graph.extract_graph_proposals(content, doc_id, title)
+        if got:
+            docs_with_entities += 1
+            proposals.extend(got)
+
+    narrative = (
+        f"graph-backfill pass (seventh pass, Phase 5): scanned "
+        f"{len(kb_docs)} lse-kb docs; {docs_with_entities} had extractable "
+        f"entities; {len(proposals)} graph proposals staged through the "
+        f"Human Gate (fixed vocabulary: "
+        f"{len(goethe_graph.ENTITY_TYPES)} entity types, "
+        f"{len(goethe_graph.RELATIONS)} relations; deterministic, no LLM "
+        f"calls)."
+    )
+    null_record = None
+    if not proposals:
+        null_record = _null_record(
+            "graph-backfill", "no_entities", looked=True,
+            corpus_size={"kb_docs": len(kb_docs),
+                         "docs_with_entities": 0,
+                         "graph_proposals": 0},
+            thresholds={"entity_types": len(goethe_graph.ENTITY_TYPES),
+                        "relations": len(goethe_graph.RELATIONS)},
+        )
+    return proposals, narrative, null_record
+
+
 PASS_FUNCS = {
     "dedup": run_pass_dedup,
     "stale-contradiction": run_pass_stale_contradiction,
     "error-cluster": run_pass_error_cluster,
     "patterns": run_pass_patterns,
     "insights": run_pass_insights,
+    "graph-backfill": run_pass_graph_backfill,  # Phase 5 (seventh pass)
 }
 
 # --- output: report.md + proposals.jsonl ------------------------------------
@@ -4994,7 +5099,7 @@ def main(argv=None) -> int:
             kb_docs: list = []
             error_docs: list = []
             try:
-                if cfg.pass_name in ("dedup", "stale-contradiction"):
+                if cfg.pass_name in ("dedup", "stale-contradiction", "graph-backfill"):
                     kb_docs = search_index(
                         cfg, "lse-kb", {"query": {"match_all": {}}, "size": 500,
                                         "_source": KB_SOURCE_FIELDS},

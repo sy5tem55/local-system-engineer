@@ -47,6 +47,7 @@ Design notes:
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 from urllib.parse import urlparse
 
@@ -256,4 +257,69 @@ def rule_r1_semantic_duplicate(proposal: dict, priors: list, *, embed_fn,
             f"{RULE_REASON_PREFIX}{R1_REASON_SEMANTIC_DUPLICATE}:"
             f"{best_prior_id}:{best_prior_state}",
         )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# R4 — duplicate graph proposal (2026-09-18 queue pollution incident)
+# ---------------------------------------------------------------------------
+
+R4_REASON_DUPLICATE_GRAPH = "duplicate-graph-proposal"
+
+
+def _graph_signature(proposal: dict):
+    """Canonical signature of a graph proposal's asserted content.
+
+    Two proposals are duplicates for the operator when they would add the
+    same entities and the same non-provenance edges to lse-graph, no
+    matter which evidence doc produced them: a re-indexed doc gets a new
+    evidence_doc_id and new documented_by backlinks but asserts the same
+    facts. Entities normalize to sorted (type, name) pairs; edges to
+    sorted (src, rel, dst) triples with documented_by provenance backlinks
+    excluded. Returns None when there is no assertable content.
+    """
+    if proposal.get("type") != "graph":
+        return None
+    args = _args(proposal)
+    entities = sorted(
+        (str(e.get("type") or ""), str(e.get("name") or ""))
+        for e in args.get("entities", []) if isinstance(e, dict)
+    )
+    edges = sorted(
+        (str(e.get("src") or ""), str(e.get("rel") or ""), str(e.get("dst") or ""))
+        for e in args.get("edges", [])
+        if isinstance(e, dict) and e.get("rel") != "documented_by"
+    )
+    if not entities and not edges:
+        return None
+    return json.dumps([entities, edges], sort_keys=True, ensure_ascii=False)
+
+
+def rule_r4_graph_duplicate(proposal: dict, priors: list):
+    """R4. Same asserted graph content as an existing graph proposal ->
+    SUPERSEDED. `priors` is an iterable of dicts shaped like
+    TraumState.list_proposals()'s output (proposal_id, state, proposal) —
+    the caller filters to the states it wants compared (PENDING at
+    minimum) and excludes `proposal` itself; this function re-checks the
+    type defensively. Exact content comparison, no embedding and no
+    threshold to miscalibrate (Hazard C does not apply).
+    """
+    if proposal.get("type") != "graph":
+        return None
+    candidate_sig = _graph_signature(proposal)
+    if candidate_sig is None:
+        return None
+    candidate_id = proposal.get("proposal_id")
+    for prior in priors:
+        prior_payload = prior.get("proposal") or prior
+        if prior_payload.get("type") != "graph":
+            continue
+        prior_id = prior.get("proposal_id") or prior_payload.get("proposal_id")
+        if candidate_id and prior_id == candidate_id:
+            continue
+        if _graph_signature(prior_payload) == candidate_sig:
+            return (
+                "SUPERSEDED",
+                f"{RULE_REASON_PREFIX}r4:{R4_REASON_DUPLICATE_GRAPH}",
+            )
     return None

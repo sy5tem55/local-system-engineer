@@ -1,0 +1,86 @@
+[
+  {
+    "name": "command_timeout",
+    "exit_class": "timeout",
+    "description": "Local shell command exceeded its wall-clock budget (execute_command 200s cap) or a timed-out remote call surfaced TimeoutError locally.",
+    "patterns": [
+      "Command timed out after",
+      "TimeoutError timed out"
+    ]
+  },
+  {
+    "name": "ssh_unreachable",
+    "exit_class": "error",
+    "description": "ssh_run could not establish a session to the target host (exit 255 even after mux auto-clear + retry) \u2014 host offline or sshd down.",
+    "patterns": [
+      "[SSH FAILURE] exit 255",
+      "SSH could not reach"
+    ]
+  },
+  {
+    "name": "kb_backend_timeout",
+    "exit_class": "timeout",
+    "description": "KB search or engine health probe stalled on the backend (Elasticsearch/llama.cpp connection timeout, connection-pool exhaustion).",
+    "patterns": [
+      "KB search error",
+      "Connection timed out",
+      "Max retries exceeded"
+    ]
+  },
+  {
+    "name": "ssh_remote_timeout",
+    "exit_class": "timeout",
+    "description": "Remote script or remote python one-liner timed out on the other node (FAIL: TimeoutError inside ssh_script, remote traceback in ssh_run stderr).",
+    "patterns": [
+      "FAIL: TimeoutError",
+      "Traceback (most recent call last)"
+    ]
+  },
+  {
+    "name": "web_fetch_error",
+    "exit_class": "error",
+    "description": "fetch_url failed with an HTTP client error \u2014 403 Forbidden (bot-blocking) or 404 Not Found (dead URL).",
+    "patterns": [
+      "ERROR fetching",
+      "403 Client Error: Forbidden",
+      "404 Client Error: Not Found"
+    ]
+  },
+  {
+    "name": "file_not_found",
+    "exit_class": "error",
+    "description": "read_file targeted a path that does not exist (stale path from memory, deleted artifact, or wrong working directory).",
+    "patterns": [
+      "ERROR: File not found"
+    ]
+  },
+  {
+    "name": "python_runtime_error",
+    "exit_class": "error",
+    "description": "Python runtime exceptions in local commands: UnicodeDecodeError on binary output, missing module, or asyncio CancelledError.",
+    "patterns": [
+      "UnicodeDecodeError",
+      "No module named",
+      "CancelledError"
+    ]
+  },
+  {
+    "name": "credential_missing",
+    "exit_class": "error",
+    "description": "Tool refused to run because a required credential was not provided (vault secret not unlocked/passed as api_key).",
+    "patterns": [
+      "No pfSense API key"
+    ]
+  },
+  {
+    "name": "permission_denied",
+    "exit_class": "denied",
+    "description": "Guard blocked the call: privileged command in chained/complex shell text, write outside allowed paths, or permanently forbidden command.",
+    "patterns": [
+      "BLOCKED:",
+      "is outside allowed write paths",
+      "is permanently forbidden",
+      "detected in a chained or complex command"
+    ]
+  }
+]

@@ -163,6 +163,38 @@ class KBMixin:
 
     # ── RAG tool functions ───────────────────────────────────────────────────
 
+    def _graph_inline_extract(self, doc_id: str, title: str, content: str):
+        """Phase 5 inline graph extraction (best-effort).
+
+        Runs after a successful lse-kb write. Extracts entities/edges in
+        the fixed vocabulary (tools/goethe_graph.py) and stages them as
+        TRAUM proposals through the Human Gate — never writes to
+        lse-graph directly. Any failure is swallowed: the index write
+        already succeeded and must not be turned into a reported error
+        (roadmap Phase 5: extraction is best-effort, never blocks the
+        index write).
+        """
+        try:
+            import os as _os  # noqa: PLC0415
+            import sys as _sys  # noqa: PLC0415
+            try:
+                import goethe_graph  # noqa: PLC0415
+            except ImportError:
+                _sys.path.insert(0, _os.path.dirname(
+                    _os.path.abspath(__file__)))
+                import goethe_graph  # noqa: PLC0415
+            proposals = goethe_graph.extract_graph_proposals(
+                content, doc_id, title)
+            if proposals:
+                stored = goethe_graph.insert_graph_proposals(
+                    proposals, source="graph-inline")
+                self._log(
+                    f"GRAPH-INLINE: {len(stored)} proposal(s) staged "
+                    f"for {doc_id}"
+                )
+        except Exception as e:  # noqa: BLE001 (best-effort by contract)
+            self._log(f"GRAPH-INLINE: skipped for {doc_id} ({e})")
+
     def search_kb(
         self,
         query: str,
@@ -375,10 +407,190 @@ class KBMixin:
                     f"    (pass doc_id above to record_outcome/mentor_correct)\n"
                     f"    {_body(s['content'], i)}\n"
                 )
+            # Phase 5 (roadmap 2026-09): bounded one-hop graph recall.
+            # Valve GRAPH_RECALL (default 0 = off). Additive only — the
+            # ranked results above are never altered; any graph failure
+            # degrades silently to today's behaviour.
+            if getattr(self.valves, "GRAPH_RECALL", 0):
+                try:
+                    lines.extend(self._graph_recall_lines(hits))
+                except Exception:  # noqa: BLE001 (additive by design)
+                    pass
             return _tb + "\n".join(lines)
         except Exception as e:
             self._log(f"SEARCH-KB ERROR: {e}")
             return f"KB search error: {e}\nFall through to search_web()."
+
+    def _graph_recall_lines(self, hits: list) -> list:
+        """Phase 5 one-hop graph expansion for search_kb (valve-gated).
+
+        top-k docs -> their documented_by/runs_on entities in lse-graph
+        -> other docs that document those entities. Deduped against the
+        ranked hits, capped at +5, each labelled 'related via: <entity>'.
+        Returns [] on any condition where expansion is not possible
+        (valve off is checked by the caller; index missing; no entities).
+        """
+        import os as _os  # noqa: PLC0415
+        import sys as _sys  # noqa: PLC0415
+        try:
+            import goethe_graph  # noqa: PLC0415
+        except ImportError:
+            _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+            import goethe_graph  # noqa: PLC0415
+        if not hits:
+            return []
+        es = self._es()
+        if not es.indices.exists(index=goethe_graph.GRAPH_INDEX):
+            return []
+        top_ids = [h["_id"] for h in hits]
+        # Hop 1: entity ids referenced by documented_by/runs_on edges
+        # whose evidence is one of the top-k docs.
+        resp = es.search(
+            index=goethe_graph.GRAPH_INDEX,
+            body={"query": {"bool": {"filter": [
+                {"terms": {"evidence_doc_id": top_ids}},
+                {"term": {"kind": "edge"}},
+                {"terms": {"rel": ["documented_by", "runs_on"]}},
+            ]}}, "size": 200},
+        )
+        entity_ids = set()
+        for h in resp["hits"]["hits"]:
+            s = h["_source"]
+            if s.get("src"):
+                entity_ids.add(s["src"])
+        if not entity_ids:
+            return []
+        # Resolve entity ids -> names for the labels (best-effort).
+        names = {}
+        for eid in entity_ids:
+            try:
+                item = es.get(index=goethe_graph.GRAPH_INDEX, id=eid)
+                names[eid] = item.get("_source", {}).get("name", eid)
+            except Exception:  # noqa: BLE001 (entity doc missing)
+                names[eid] = eid
+        # Hop 2: other docs whose evidence documents any of those entities.
+        resp2 = es.search(
+            index=goethe_graph.GRAPH_INDEX,
+            body={"query": {"bool": {"filter": [
+                {"term": {"kind": "edge"}},
+                {"terms": {"src": sorted(entity_ids)}},
+            ]}}, "size": 500},
+        )
+        linked = {}  # linked doc_id -> first entity id that linked it
+        for h in resp2["hits"]["hits"]:
+            s = h["_source"]
+            d = s.get("evidence_doc_id")
+            if d and d not in top_ids and d not in linked:
+                linked[d] = s.get("src")
+        if not linked:
+            return []
+        lines = []
+        for d, eid in list(linked.items())[:5]:
+            try:
+                item = es.get(index="lse-kb", id=d)
+                s = item.get("_source", {})
+            except Exception:  # noqa: BLE001 (doc may be gone)
+                continue
+            ent = names.get(eid, eid)
+            lines.append(
+                f"[graph] doc_id={d} | {s.get('title', '?')} | "
+                f"topic={s.get('topic', '?')} | "
+                f"quality={float(s.get('quality_score', 0) or 0):.2f} | "
+                f"related via: {ent}\n"
+                f"    (Phase 5 graph recall — additive, outside the ranked "
+                "results above)\n"
+            )
+        return lines
+
+    def graph_query(self, entity: str, rel: str = "") -> str:
+        """
+        SPEC: Read-only query against the Phase 5 knowledge graph (lse-graph).
+
+        Answers "what runs on node3090" style questions: given an entity
+        name, return the entity doc plus every edge that touches it
+        (src or dst). Pass rel= to restrict to one relation type from the
+        fixed vocabulary (e.g. rel="runs_on").
+
+        READ-ONLY: this issues an ES search against lse-graph and nothing
+        else — there is no write path here. The graph is populated only by
+        materialize_accepted_graph() from operator-APPLIED TRAUM proposals.
+
+        Args:
+            entity: Entity name to look up (node/service/model/port/...).
+            rel:    Optional relation filter; must be one of the fixed
+                    RELATIONS. Empty = all edges touching the entity.
+
+        Returns:
+            A human-readable listing of the entity (if present) and its
+            edges, each edge showing src -[rel]-> dst and the evidence
+            doc_id. "no graph data" when lse-graph is empty/missing.
+        """
+        import os as _os  # noqa: PLC0415
+        import sys as _sys  # noqa: PLC0415
+        try:
+            import goethe_graph  # noqa: PLC0415
+        except ImportError:
+            _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+            import goethe_graph  # noqa: PLC0415
+
+        entity = (entity or "").strip()
+        rel = (rel or "").strip().lower()
+        if not entity:
+            return "graph_query: entity must be a non-empty string."
+        if rel and rel not in goethe_graph.RELATIONS_SET:
+            return (
+                f"graph_query: relation {rel!r} not in fixed vocabulary "
+                f"{goethe_graph.RELATIONS}."
+            )
+        self._log(f"GRAPH-QUERY: entity={entity} rel={rel or '*'}")
+        try:
+            es = self._es()
+            if not es.indices.exists(index=goethe_graph.GRAPH_INDEX):
+                return (
+                    f"graph_query: no graph data — lse-graph index does not "
+                    "exist yet (proposals are pending in the Human Gate)."
+                )
+            should = [
+                {"term": {"name": entity}},
+                {"term": {"src": entity}},
+                {"term": {"dst": entity}},
+            ]
+            query = {"bool": {"should": should, "minimum_should_match": 1}}
+            if rel:
+                # Restrict to edges of this relation type.
+                query = {
+                    "bool": {
+                        "should": [
+                            {"term": {"src": entity}},
+                            {"term": {"dst": entity}},
+                        ],
+                        "filter": [{"term": {"rel": rel}}],
+                        "minimum_should_match": 1,
+                    }
+                }
+            resp = es.search(
+                index=goethe_graph.GRAPH_INDEX,
+                body={"query": query, "size": 200},
+            )
+            hits = resp["hits"]["hits"]
+            if not hits:
+                return f"graph_query: no graph data for '{entity}'."
+            ents = [h["_source"] for h in hits if h["_source"].get("kind") == "entity"]
+            edges = [h["_source"] for h in hits if h["_source"].get("kind") == "edge"]
+            lines = [f"graph_query: '{entity}' ({len(ents)} entity, {len(edges)} edge(s)):\n"]
+            for e in ents:
+                attrs = e.get("attrs") or {}
+                attr_s = f" attrs={attrs}" if attrs else ""
+                lines.append(f"  ENTITY {e.get('type')} '{e.get('name')}'{attr_s}")
+            for g in edges:
+                lines.append(
+                    f"  EDGE {g.get('src')} -[{g.get('rel')}]-> {g.get('dst')}  "
+                    f"(evidence: {g.get('evidence_doc_id')})"
+                )
+            return "\n".join(lines)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"GRAPH-QUERY ERROR: {e}")
+            return f"graph_query error: {e}"
 
     def _wf_version_claim(self, text: str) -> bool:
         """WATERFALL (v1.7.18): True if text makes an external-software
@@ -617,6 +829,7 @@ class KBMixin:
                     es.indices.refresh(index="lse-kb")
                 except Exception:
                     pass
+                self._graph_inline_extract(existing["_id"], title, content)
                 return (
                     f"KB updated (refined): doc_id={existing['_id']} | "
                     f"quality {existing['_source']['quality_score']:.2f} → {new_q:.2f} | "
@@ -649,6 +862,7 @@ class KBMixin:
                 es.indices.refresh(index="lse-kb")
             except Exception:
                 pass
+            self._graph_inline_extract(doc_hash, title, content)
             return (
                 f"KB created: doc_id={doc_hash} | title='{title}' | "
                 f"topic={topic} | tier={tier} | quality={quality_score:.2f}{tier_warn}{wf_warn}"

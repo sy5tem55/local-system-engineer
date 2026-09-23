@@ -182,3 +182,63 @@ cd /opt/local-se && git init && git add . && git commit -m "Initial KB state"
 ```
 
 **Keeping the inline KB small**: The inline KB is a fixed cost on every turn. Every 100 tokens of KB adds ~3 % to context fill per turn. Audit it quarterly; move anything that isn't consulted every session to the Knowledge doc.
+
+
+---
+
+## 5. Phase 5 — Knowledge Graph Layer (implemented, DORMANT)
+
+The Phase 5 graph layer adds an optional one-hop knowledge graph over the KB. It is
+fully implemented in-tree but **dormant by operator decision**: the operator rejected
+every graph proposal on 2026-09-18, so the graph index is empty and recall expansion
+is off by default.
+
+### 5.1 Components
+
+| Component | Location | Role |
+|---|---|---|
+| `goethe_graph.py` | `tools/goethe_graph.py` | Fixed `ENTITY_TYPES` / `RELATIONS` vocabulary, `ensure_lse_graph_index()` (ES mapping), `extract_graph_proposals()` / `insert_graph_proposals()` (best-effort extraction), `materialize_accepted_graph()` (writes only APPLIED proposals) |
+| Inline extraction | `tools/goethe_kb.py` → `index_to_kb` | Best-effort, non-blocking: extracts graph proposals while indexing a doc. A failure here never blocks the KB write. |
+| Seventh dream pass | `tools/dream_runner.py` → `graph-backfill` | Backfills proposals from all `lse-kb` docs in one pass. |
+| `graph_query` tool | `tools/goethe_kb.py` | Read-only lookup: entity + every edge touching it. No write path. |
+| `GRAPH_RECALL` valve | `tools/goethe_kb.py` → `search_kb` | Bounded one-hop expansion appended to ranked results. **Default 0 = off.** Additive only; any graph failure degrades silently to baseline. |
+
+### 5.2 Dormant state (2026-09-18)
+
+- **`GRAPH_RECALL` valve defaults to 0** — `search_kb` one-hop expansion is off.
+- **`lse-graph` index exists but is EMPTY** (count = 0) by operator decision.
+- All 369 graph proposals were rejected on 2026-09-18: **172 REJECTED** (operator,
+  via the Human Gate / bulk decision API) + **197 SYSTEM_REJECTED** (an older
+  validation pass that predated the `graph` type registration). **0 APPLIED.**
+- `materialize_accepted_graph()` writes **only APPLIED** proposals into `lse-graph`.
+  None exist, so it is a no-op until the operator applies proposals.
+
+**Do NOT re-run the `graph-backfill` dream pass or re-propose graph proposals without
+explicit operator approval** — the operator has already rejected the full corpus once
+(recorded in KB doc `db03979d6730c84e`).
+
+### 5.3 Dormant-state behaviour (proven)
+
+`/tmp/p5_node3090_diff.txt` proves the fail-safe: with `GRAPH_RECALL=1` and an empty
+`lse-graph`, `search_kb('node3090')` returns an **identical top-5** to `GRAPH_RECALL=0`
+and raises no error. The valve-on + empty-graph path degrades silently to baseline —
+the additive-only guarantee holds. No `related via:` expansion lines appear because
+there are no materialized edges to traverse.
+
+### 5.4 Known UI bug at decision time
+
+The Goethe Console **DUPLICATE badge** fired on every graph row. Root cause:
+`proposalDupKey()` in `tools/goethe_dashboard.html` builds its dedup key from
+`args.task || args.title || args.doc_id`, but graph payloads contain **none** of those
+fields, so all rows hash to the identical key `none|` and every row is badged
+DUPLICATE. This was a **false positive** — the 153 PENDING proposals covered 153
+distinct `evidence_doc_id` / edge-sets. Fix (optional): fall back to
+`args.evidence_doc_id` in the key. Recorded in lse-errors (hash `8eb77596ff7d6351`).
+
+### 5.5 Re-activating (if the operator ever reverses the decision)
+
+1. The `graph` type **is** registered in `dream_runner.py` `KNOWN_PROPOSAL_TYPES`.
+2. Re-run the `graph-backfill` pass (or let inline extraction accumulate proposals).
+3. Adjudicate in the Human Gate — **APPLY** the proposals you want.
+4. Run `materialize_accepted_graph()` to write APPLIED proposals into `lse-graph`.
+5. Set `GRAPH_RECALL=1` (env `GOETHE_GRAPH_RECALL=1`) to enable one-hop recall.

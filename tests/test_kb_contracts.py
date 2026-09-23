@@ -327,6 +327,13 @@ def es(raw_es):
 
 @pytest.fixture()
 def tools(es, monkeypatch, tmp_path):
+    # Isolate the live TRAUM state DB: index_to_kb runs inline graph
+    # extraction (goethe_kb._graph_inline_extract ->
+    # goethe_graph.insert_graph_proposals), which reads GOETHE_DREAM_DIR at
+    # call time. Without this, every test stages graph proposals into the
+    # live /opt/local-se/dreams/traum-state.db (the 2026-09-18 queue
+    # pollution incident).
+    monkeypatch.setenv("GOETHE_DREAM_DIR", str(tmp_path / "dreams"))
     t = goethe.Tools()
     t.valves.LOG_FILE = str(tmp_path / "test-audit.log")
     monkeypatch.setattr(t, "_es", lambda: es)
@@ -1514,3 +1521,15 @@ class TestRecordErrorDiagnosisFields:
         assert doc["anti_response"] == "do not chmod 777 the socket"
         assert doc["resolution"] == "chown the socket to the service user (confirmed again)"
         assert doc["occurrence_count"] == 2
+
+
+# == test-suite isolation (2026-09-18 queue pollution incident) ===============
+class TestDreamDirIsolation:
+    """The tools fixture must redirect GOETHE_DREAM_DIR to tmp_path.
+    Without it, index_to_kb -> goethe_graph.insert_graph_proposals reads
+    GOETHE_DREAM_DIR at call time (default /opt/local-se/dreams) and writes
+    graph proposals into the LIVE traum-state.db."""
+
+    def test_goethe_dream_dir_points_at_tmp_path(self, tools, tmp_path):
+        import os
+        assert os.environ.get("GOETHE_DREAM_DIR") == str(tmp_path / "dreams")

@@ -1271,7 +1271,508 @@ class PlannerMixin:
             conn.execute("ALTER TABLE task_blocks ADD COLUMN steps_json TEXT")
         if "backend" not in cols:
             conn.execute("ALTER TABLE task_blocks ADD COLUMN backend TEXT")
+        self._ensure_child_runs_table(conn)
         return conn
+
+    def _ensure_child_runs_table(self, conn):
+        """Ensure the child_runs table exists (Phase 3 scoped child delegation).
+
+        Same inline-migration convention as task_blocks: no version table,
+        CREATE TABLE IF NOT EXISTS on every _tasks_db() open. Child runs are
+        ledger-scoped work units delegated by delegate_child() to a remote
+        node (query_node_agent) or the local planner backend, tracked in
+        child_runs and re-joined into the parent plan loop via
+        plan_step_done() when kind='required'."""
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS child_runs ("
+            "child_id TEXT PRIMARY KEY, parent_task_id TEXT, scope TEXT, "
+            "node TEXT, "
+            "kind TEXT CHECK(kind IN ('required','detached')), "
+            "status TEXT CHECK(status IN ('queued','running','done','failed','cancelled')), "
+            "result TEXT, depends_on TEXT, writer_lock TEXT, "
+            "created TEXT, finished TEXT)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_child_runs_parent_status "
+            "ON child_runs(parent_task_id, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_child_runs_scope ON child_runs(scope)"
+        )
+        conn.commit()
+
+    def _child_budget_ok(self, parent_task_id: str, kind: str = "detached"):
+        """Check per-parent Phase 3 child budgets against the CHILD_CAP valves.
+
+        Returns (ok: bool, detail: str). ok=False with detail explaining why:
+          - CHILD_CAP == 0 or CHILD_TOTAL_CAP == 0 → delegation off-state
+          - concurrent (queued+running) >= CHILD_CAP → at concurrent cap
+          - total (any status) >= CHILD_TOTAL_CAP → at total cap
+        kind is recorded for the refusal detail but does not change the math:
+        required children count against both caps identically to detached.
+        """
+        child_cap = int(getattr(self.valves, "CHILD_CAP", 4))
+        total_cap = int(getattr(self.valves, "CHILD_TOTAL_CAP", 8))
+        if child_cap <= 0 or total_cap <= 0:
+            return False, (
+                f"child delegation is OFF (CHILD_CAP={child_cap}, "
+                f"CHILD_TOTAL_CAP={total_cap}) — set both > 0 to enable"
+            )
+        conn = self._tasks_db()
+        try:
+            concurrent = conn.execute(
+                "SELECT COUNT(*) FROM child_runs "
+                "WHERE parent_task_id=? AND status IN ('queued','running')",
+                (parent_task_id,),
+            ).fetchone()[0]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM child_runs WHERE parent_task_id=?",
+                (parent_task_id,),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        if concurrent >= child_cap:
+            return False, (
+                f"concurrent child cap reached for {parent_task_id} "
+                f"({concurrent}/{child_cap} queued+running; kind={kind})"
+            )
+        if total >= total_cap:
+            return False, (
+                f"total child cap reached for {parent_task_id} "
+                f"({total}/{total_cap} all-status; kind={kind})"
+            )
+        return True, (
+            f"budget ok for {parent_task_id}: concurrent {concurrent}/{child_cap}, "
+            f"total {total}/{total_cap}"
+        )
+
+    def _acquire_writer_lock(self, parent_task_id: str, scope: str, kind: str):
+        """Writer-lock policy for a child scope (read-only check — inserts rows elsewhere).
+
+        An active writer lock = a child_runs row with the EXACT scope whose
+        status is 'queued' or 'running' and writer_lock is non-NULL.
+        Returns one of:
+          'acquired' — no active lock on this exact scope
+          'refused'  — active lock present and incoming kind is 'required'
+                       (required children never queue behind a writer)
+          'queued'   — active lock present and incoming kind is 'detached'
+                       (detached children wait for the lock to free)
+        """
+        if not scope:
+            return "acquired"
+        conn = self._tasks_db()
+        try:
+            row = conn.execute(
+                "SELECT status FROM child_runs "
+                "WHERE scope=? AND status IN ('queued','running') "
+                "AND writer_lock IS NOT NULL AND writer_lock != '' "
+                "LIMIT 1",
+                (scope,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return "acquired"
+        if kind == "required":
+            return "refused"
+        return "queued"
+
+    def _exec_child(self, child_id: str) -> str:
+        """Execute one Phase 3 child run (Phase 3 scoped child delegation).
+
+        Loads the child_runs row, marks it running, runs the child prompt:
+          - node non-empty → self.query_node_agent(node, prompt) (no-tools
+            node model; the prompt must be self-contained)
+          - node empty     → local llama-server (valve LLAMA_SERVER_URL)
+        Stores the outcome in result and marks done/failed.
+
+        SCHEMA NOTE: the child_runs table has no separate prompt column —
+        `result` carries the child prompt from delegate_child() insertion
+        until execution replaces it with the output. Do not read `result`
+        as a result while status is queued/running.
+        """
+        import json as _json  # noqa: PLC0415
+        import urllib.error as _uerr  # noqa: PLC0415
+        import urllib.request as _ureq  # noqa: PLC0415
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        def _now():
+            return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        conn = self._tasks_db()
+        try:
+            row = conn.execute(
+                "SELECT parent_task_id, scope, node, kind, result, writer_lock "
+                "FROM child_runs WHERE child_id=?",
+                (child_id,),
+            ).fetchone()
+            if row is None:
+                return f"ERROR: unknown child_id {child_id!r}"
+            parent_task_id, scope, node, kind, prompt, writer_lock = row
+            if not prompt or not prompt.strip():
+                conn.execute(
+                    "UPDATE child_runs SET status='failed', result=?, finished=? "
+                    "WHERE child_id=?",
+                    ("ERROR: empty child prompt", _now(), child_id),
+                )
+                conn.commit()
+                return f"ERROR: child {child_id} has an empty prompt"
+            conn.execute(
+                "UPDATE child_runs SET status='running', writer_lock=? "
+                "WHERE child_id=?",
+                (writer_lock or scope, child_id),
+            )
+            conn.commit()
+        except Exception:  # noqa: BLE001 (DB via _tasks_db helper)
+            conn.close()
+            raise
+
+        node = (node or "").strip()
+        if node:
+            out = self.query_node_agent(node, prompt)
+        else:
+            out = self._local_child_completion(prompt)
+
+        ok = not (out.startswith("ERROR") or out.startswith("Cannot reach"))
+        status = "done" if ok else "failed"
+        conn.execute(
+            "UPDATE child_runs SET status=?, result=?, writer_lock=NULL, finished=? "
+            "WHERE child_id=?",
+            (status, out, _now(), child_id),
+        )
+        conn.commit()
+        conn.close()
+        self._log(
+            f"CHILD-RUN {child_id} parent={parent_task_id} scope={scope!r} "
+            f"node={node or 'local'} kind={kind} -> {status}"
+        )
+        return (
+            f"child {child_id} {status} "
+            f"(parent={parent_task_id}, scope={scope}, node={node or 'local'})"
+        )
+
+    def _local_child_completion(self, prompt: str, timeout: int = 600) -> str:
+        """Plain (non-JSON) chat completion against the local llama-server.
+
+        Used by _exec_child when a child has no node. Valve LLAMA_SERVER_URL
+        is the canonical endpoint (ephemeral-port engines: the valve is set
+        at gateway start). Returns content or 'ERROR: ...'.
+        """
+        import json as _json  # noqa: PLC0415
+        import urllib.error as _uerr  # noqa: PLC0415
+        import urllib.request as _ureq  # noqa: PLC0415
+
+        base_url = (getattr(self.valves, "LLAMA_SERVER_URL", "") or "").strip()
+        if not base_url:
+            return "ERROR: LLAMA_SERVER_URL valve is empty — cannot run local child"
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a scoped child worker. Answer the task directly and "
+                    "self-contained. You have no tools and cannot run commands. "
+                    "Do not produce JSON unless the task asks for it."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+        payload = _json.dumps(
+            {"messages": messages, "max_tokens": 4096, "temperature": 0.3}
+        ).encode()
+        req = _ureq.Request(
+            f"{base_url.rstrip('/')}/v1/chat/completions",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with _ureq.urlopen(req, timeout=timeout) as resp:
+                data = _json.loads(resp.read().decode())
+                content = data["choices"][0].get("message", {}).get("content")
+                if not content or not content.strip():
+                    return "ERROR: local child completion returned empty content"
+                return content
+        except _uerr.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:200]
+            return f"ERROR: HTTP {exc.code} — {body}"
+        except Exception as exc:  # noqa: BLE001 (timeout/conn refused)
+            return f"ERROR: local child completion failed: {exc}"
+
+    def _promote_queued_children(self, parent_task_id: str) -> list:
+        """Promote queued DETACHED children of a parent when their writer lock frees.
+
+        Fetches queued detached rows ordered by created; for each, retries
+        _acquire_writer_lock() — if 'acquired', sets the writer_lock column
+        and dispatches _exec_child(). Required children are never promoted
+        here (they are refused, not queued). Returns the list of promoted
+        child_ids.
+        """
+        conn = self._tasks_db()
+        try:
+            rows = conn.execute(
+                "SELECT child_id, scope FROM child_runs "
+                "WHERE parent_task_id=? AND status='queued' AND kind='detached' "
+                "ORDER BY created, child_id",
+                (parent_task_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        promoted = []
+        for child_id, scope in rows:
+            lock = self._acquire_writer_lock(parent_task_id, scope, "detached")
+            if lock != "acquired":
+                continue
+            conn = self._tasks_db()
+            conn.execute(
+                "UPDATE child_runs SET writer_lock=? WHERE child_id=?",
+                (scope, child_id),
+            )
+            conn.commit()
+            conn.close()
+            self._exec_child(child_id)
+            promoted.append(child_id)
+        if promoted:
+            self._log(
+                f"CHILD-PROMOTE parent={parent_task_id}: {promoted}"
+            )
+        return promoted
+
+    def delegate_child(
+        self,
+        task_id: str,
+        scope: str,
+        prompt: str,
+        node: str = "",
+        kind: str = "detached",
+    ) -> str:
+        """
+        Delegate a scoped child run under a parent plan task (Phase 3).
+
+        A child run is a self-contained sub-task tracked in child_runs
+        against the parent task_id:
+          kind='required'  — the parent's plan_step_done blocks until it is
+                             done; its result is re-joined verbatim into the
+                             next packaged prompt.
+          kind='detached'  — runs independently; results are inspectable via
+                             child_status(task_id) but do not gate the parent.
+          node='node3090'  — runs on that node's model via query_node_agent
+                             (no tools on the node; prompt must be
+                             self-contained). node='' runs against the local
+                             llama-server.
+
+        GATES (in order):
+          1. parent task exists in task_blocks
+          2. scope non-empty, kind in {required, detached}, prompt non-empty
+          3. CHILD_CAP valve — 0 = delegation OFF, all requests refused
+          4. per-parent budget (_child_budget_ok): concurrent + total caps
+          5. writer lock (exact scope): required conflict → refused;
+             detached conflict → inserted queued, promoted when the lock frees
+
+        Writes: inserts one child_runs row (result column carries the prompt
+        until _exec_child replaces it with the output).
+
+        Args:
+            task_id: Parent plan task id (must exist in task_blocks).
+            scope:   Exact scope string; writer-lock granularity.
+            prompt:  Self-contained child prompt (the child has no tools).
+            node:    '' (local) or a node registry key.
+            kind:    'detached' (default) or 'required'.
+
+        Returns:
+            "child <id> <status> (...)" on dispatch; a refusal message
+            explaining the failing gate otherwise.
+        """
+        import uuid as _uuid  # noqa: PLC0415
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        def _now():
+            return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        if not task_id or not task_id.strip():
+            return "ERROR: task_id is required (parent plan task id)"
+        task_id = task_id.strip()
+        if not scope or not scope.strip():
+            return "ERROR: scope is required (exact-scope writer-lock granularity)"
+        scope = scope.strip()
+        if kind not in ("required", "detached"):
+            return (
+                f"ERROR: kind must be 'required' or 'detached', got {kind!r}"
+            )
+        if not prompt or not prompt.strip():
+            return "ERROR: prompt must be non-empty (child has no tools — "
+            "it must be self-contained)"
+        node = (node or "").strip()
+
+        conn = self._tasks_db()
+        parent = conn.execute(
+            "SELECT status FROM task_blocks WHERE task_id=?", (task_id,)
+        ).fetchone()
+        if parent is None:
+            conn.close()
+            return f"ERROR: parent task {task_id!r} not found in task_blocks"
+        conn.close()
+
+        child_cap = int(getattr(self.valves, "CHILD_CAP", 4))
+        if child_cap <= 0:
+            return (
+                "REFUSED: child delegation is OFF (CHILD_CAP=0). Set the "
+                "CHILD_CAP valve > 0 to enable Phase 3 delegation."
+            )
+
+        ok, detail = self._child_budget_ok(task_id, kind)
+        if not ok:
+            return f"REFUSED: {detail}"
+
+        lock = self._acquire_writer_lock(task_id, scope, kind)
+        child_id = _uuid.uuid4().hex[:12]
+        conn = self._tasks_db()
+        conn.execute(
+            "INSERT INTO child_runs (child_id, parent_task_id, scope, node, "
+            "kind, status, result, writer_lock, created) "
+            "VALUES (?,?,?,?,?, 'queued', ?, ?, ?)",
+            (
+                child_id,
+                task_id,
+                scope,
+                node,
+                kind,
+                prompt,
+                scope if lock == "acquired" else None,
+                _now(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+        self._log(
+            f"DELEGATE-CHILD {child_id} parent={task_id} scope={scope!r} "
+            f"node={node or 'local'} kind={kind} lock={lock}"
+        )
+
+        if lock == "refused":
+            # required conflict: the row stays for forensics; cancel it so it
+            # does not hold budget
+            conn = self._tasks_db()
+            conn.execute(
+                "UPDATE child_runs SET status='cancelled', finished=? "
+                "WHERE child_id=?",
+                (_now(), child_id),
+            )
+            conn.commit()
+            conn.close()
+            return (
+                f"REFUSED: scope {scope!r} is writer-locked by an active "
+                f"child and kind='required' never queues. Child "
+                f"{child_id} was recorded and cancelled."
+            )
+        if lock == "queued":
+            return (
+                f"child {child_id} queued (parent={task_id}, scope={scope}, "
+                f"node={node or 'local'}, kind={kind}) — waiting for the "
+                f"writer lock on scope {scope!r}; promoted automatically "
+                f"when it frees."
+            )
+        # lock == 'acquired': dispatch now (runs to done/failed inline)
+        outcome = self._exec_child(child_id)
+        return outcome
+
+    def child_status(self, task_id: str) -> str:
+        """
+        Compact table of all child_runs for a parent plan task (Phase 3).
+
+        Read-only. Returns one line per child: child_id, scope, node, kind,
+        status, writer_lock, created, finished, and a truncated result
+        (result carries the PROMPT while status is queued/running — marked
+        as <prompt: ...> in the table so it is not mistaken for output).
+
+        Args:
+            task_id: Parent plan task id.
+
+        Returns:
+            Table text, or "no child runs for <task_id>" / an error string.
+        """
+        if not task_id or not task_id.strip():
+            return "ERROR: task_id is required"
+        task_id = task_id.strip()
+        conn = self._tasks_db()
+        try:
+            rows = conn.execute(
+                "SELECT child_id, scope, node, kind, status, writer_lock, "
+                "created, finished, result FROM child_runs "
+                "WHERE parent_task_id=? ORDER BY created, child_id",
+                (task_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            return f"no child runs for {task_id}"
+        lines = [
+            f"CHILD RUNS for {task_id} ({len(rows)}):",
+            f"{'child_id':<14} {'scope':<24} {'node':<10} {'kind':<9} "
+            f"{'status':<10} {'lock':<24} {'finished':<21} result",
+        ]
+        for (
+            child_id, scope, node, kind, status,
+            writer_lock, created, finished, result,
+        ) in rows:
+            result = result or ""
+            if status in ("queued", "running"):
+                shown = f"<prompt: {result[:60]}{'…' if len(result) > 60 else ''}>"
+            else:
+                shown = result[:120] + ("…" if len(result) > 120 else "")
+            lines.append(
+                f"{child_id:<14} {scope[:24]:<24} {(node or 'local')[:10]:<10} "
+                f"{kind:<9} {status:<10} {(writer_lock or '-')[:24]:<24} "
+                f"{(finished or '-')[:21]:<21} {shown}"
+            )
+        return "\n".join(lines)
+
+    def _required_children_gate(self, parent_task_id: str, step_no: int):
+        """Phase 3 required-child gate for plan_step_done.
+
+        Finds child_runs rows with kind='required' and depends_on ==
+        str(step_no) for this parent. Returns (blocked: bool, text):
+          - any pending (queued/running)  → (True,  blocked indicator
+            listing the pending children)
+          - any failed/cancelled          → (True,  blocked indicator
+            listing them — the step must not complete on a dead child)
+          - all done                      → (False, verbatim result block:
+            each result prefixed with its child_id marker so plan_step_done
+            can inject it verbatim into the next packaged prompt)
+        No required children for the step → (False, "") (gate passes).
+        """
+        conn = self._tasks_db()
+        try:
+            rows = conn.execute(
+                "SELECT child_id, scope, status, result FROM child_runs "
+                "WHERE parent_task_id=? AND kind='required' AND depends_on=? "
+                "ORDER BY created, child_id",
+                (parent_task_id, str(step_no)),
+            ).fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            return False, ""
+        pending = [r for r in rows if r[2] in ("queued", "running")]
+        dead = [r for r in rows if r[2] in ("failed", "cancelled")]
+        if pending or dead:
+            parts = []
+            for child_id, scope, status, _r in pending:
+                parts.append(f"{child_id} (scope={scope}) is {status}")
+            for child_id, scope, status, _r in dead:
+                parts.append(f"{child_id} (scope={scope}) is {status} — "
+                             "re-delegate or fix before completing this step")
+            return True, (
+                f"BLOCKED: step {step_no} has required children not yet done: "
+                + "; ".join(parts)
+            )
+        lines = [
+            f"REQUIRED CHILD RESULTS for step {step_no} (verbatim, "
+            f"{len(rows)} child(ren)) — these are ground-truth outputs; cite "
+            f"them, do not paraphrase:"
+        ]
+        for child_id, scope, _status, result in rows:
+            lines.append(f"[child {child_id} scope={scope}]\n{result or '(empty)'}")
+        return False, "\n".join(lines)
 
     def task_checkpoint(
         self,
@@ -1374,6 +1875,201 @@ class PlannerMixin:
             self._log(f"TASK-CHECKPOINT ERROR: {e}")
             return f"CHECKPOINT error: {e}"
 
+    def _set_step_in_progress(self, task_id: str, step_id: int) -> bool:
+        """Phase 4 restart recovery: stamp a step in-flight in steps_json.
+
+        Called when a step's packaged prompt is ISSUED (task_resume echo,
+        plan_step_done next-prompt). Sets in_progress_at to the current UTC
+        ISO string and removes interrupted_at if present (re-issue clears
+        the interruption stamp). Never changes task_blocks.status or the
+        step's 'status' field — in-flight is a stamp, not a status value.
+
+        Returns True if the step was stamped; False when the task block or
+        step is missing, or the block has no step ledger.
+        """
+        import json as _json
+        from datetime import timezone
+
+        task_id = task_id.strip()
+        conn = self._tasks_db()
+        try:
+            row = conn.execute(
+                "SELECT steps_json FROM task_blocks WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if not row or not row[0]:
+                return False
+            steps = _json.loads(row[0])
+            target = next(
+                (
+                    s
+                    for s in steps
+                    if isinstance(s, dict) and s.get("n") == int(step_id)
+                ),
+                None,
+            )
+            if target is None:
+                return False
+            target["in_progress_at"] = datetime.now(timezone.utc).isoformat()
+            target.pop("interrupted_at", None)
+            with conn:
+                conn.execute(
+                    "UPDATE task_blocks SET steps_json=? WHERE task_id=?",
+                    (_json.dumps(steps), task_id),
+                )
+            return True
+        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
+            self._log(f"STEP-IN-PROGRESS ERROR: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def mark_interrupted_on_startup(self, reference_ts: str) -> int:
+        """Phase 4 restart recovery: startup sweep of in-flight step stamps.
+
+        Called once from Tools.__init__ with the process start timestamp
+        (UTC ISO). Any step whose in_progress_at is OLDER than reference_ts
+        was in-flight when the previous process died (kill -9 / crash /
+        reboot): it gets interrupted_at stamped (UTC ISO, now) while
+        in_progress_at is PRESERVED for forensics. Fresh stamps
+        (in_progress_at >= reference_ts) are untouched — the live process
+        owns that step. task_resume then surfaces the exact interrupted
+        banner for such steps instead of silently re-issuing them.
+
+        Timestamp comparison follows spec \u00a74: both values are UTC-offset
+        ISO, compared aware-vs-aware via datetime.fromisoformat. Only
+        in_progress_at vs reference_ts is compared (never done_at).
+
+        child_runs are NOT handled here — requeue_interrupted_children
+        (Phase 4 step 9) owns that table.
+
+        Returns the number of steps stamped. Returns -1 on error (logged);
+        startup must not die on a sweep failure.
+        """
+        from datetime import timezone
+
+        try:
+            ref = datetime.fromisoformat(reference_ts)
+        except (TypeError, ValueError) as e:
+            self._log(f"STARTUP-SWEEP ERROR: bad reference_ts {reference_ts!r}: {e}")
+            return -1
+        conn = self._tasks_db()
+        stamped = 0
+        try:
+            rows = conn.execute(
+                "SELECT task_id, steps_json FROM task_blocks "
+                "WHERE steps_json IS NOT NULL AND steps_json != ''"
+            ).fetchall()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            for row in rows:
+                tid, raw = row[0], row[1]
+                try:
+                    steps = json.loads(raw)
+                except (ValueError, TypeError):
+                    continue
+                changed = False
+                for s in steps:
+                    if not isinstance(s, dict):
+                        continue
+                    ipa = s.get("in_progress_at")
+                    if not ipa:
+                        continue
+                    try:
+                        ts = datetime.fromisoformat(ipa)
+                    except (ValueError, TypeError):
+                        continue
+                    if ts < ref:
+                        s["interrupted_at"] = now_iso  # in_progress_at preserved
+                        changed = True
+                        stamped += 1
+                if changed:
+                    with conn:
+                        conn.execute(
+                            "UPDATE task_blocks SET steps_json=? WHERE task_id=?",
+                            (json.dumps(steps), tid),
+                        )
+            return stamped
+        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
+            self._log(f"STARTUP-SWEEP ERROR: {e}")
+            return -1
+        finally:
+            conn.close()
+
+    def requeue_interrupted_children(self, reference_ts: str) -> int:
+        """Phase 4 restart recovery: requeue child_runs orphaned by a dead process.
+
+        Called once from Tools.__init__ with the process start timestamp
+        (UTC ISO). A child whose status is 'running'/'in_progress', has NO
+        result, and whose created timestamp is OLDER than reference_ts was
+        executing when the previous process died: it is reset to 'queued'
+        and its writer_lock is CLEARED (a dead process must not keep
+        holding the scope lock). created is PRESERVED (forensics).
+        Children WITH a result are NEVER touched — their work is complete;
+        replaying them would double-execute.
+
+        Bounded and replay-safe: each pass selects at most 100 candidate
+        rows. A candidate is either requeued (reset rows no longer match
+        the status filter) or added to a skip set (fresh or unparseable
+        timestamps, excluded from all later passes). The loop ends only
+        when the SELECT returns nothing, so termination is guaranteed
+        (finite candidate set, monotonic shrink) and it cannot spin on
+        unparseable timestamps nor stop early while requeueable rows
+        remain beyond the LIMIT window.
+
+        Returns the total rows requeued. Returns -1 on error (logged);
+        startup must not die on a requeue failure.
+        """
+        from datetime import timezone
+
+        try:
+            ref = datetime.fromisoformat(reference_ts)
+        except (TypeError, ValueError) as e:
+            self._log(f"CHILD-REQUEUE ERROR: bad reference_ts {reference_ts!r}: {e}")
+            return -1
+        conn = self._tasks_db()
+        total = 0
+        skipped = []
+        try:
+            while True:
+                q = (
+                    "SELECT child_id, created FROM child_runs "
+                    "WHERE status IN ('running','in_progress') "
+                    "AND (result IS NULL OR result = '')"
+                )
+                if skipped:
+                    q += " AND child_id NOT IN (%s)" % ",".join("?" * len(skipped))
+                    rows = conn.execute(q + " LIMIT 100", tuple(skipped)).fetchall()
+                else:
+                    rows = conn.execute(q + " LIMIT 100").fetchall()
+                if not rows:
+                    break
+                for r in rows:
+                    cid, created = r[0], r[1]
+                    if not created:
+                        skipped.append(cid)
+                        continue
+                    try:
+                        ts = datetime.fromisoformat(created)
+                    except (ValueError, TypeError):
+                        skipped.append(cid)
+                        continue
+                    if ts >= ref:
+                        skipped.append(cid)
+                        continue  # fresh — the live process owns this child
+                    with conn:
+                        conn.execute(
+                            "UPDATE child_runs SET status='queued', "
+                            "writer_lock=NULL WHERE child_id=?",
+                            (cid,),
+                        )
+                    total += 1
+            return total
+        except Exception as e:  # noqa: BLE001 (DB via _tasks_db helper)
+            self._log(f"CHILD-REQUEUE ERROR: {e}")
+            return -1
+        finally:
+            conn.close()
+
     def task_resume(self, task_id: str = "") -> str:
         """
         Load the task block to continue work from a previous session.
@@ -1398,7 +2094,7 @@ class PlannerMixin:
             # blocks. Columns are pinned here; new columns never leak in.
             _COLS = (
                 "task_id, goal, status, plan, done_steps, findings, unverified, "
-                "next_prompt, checkpoints, created_at, updated_at"
+                "next_prompt, checkpoints, created_at, updated_at, steps_json"
             )
             conn = self._tasks_db()
             if task_id.strip():
@@ -1432,8 +2128,36 @@ class PlannerMixin:
                 n,
                 created,
                 updated,
+                steps_raw,
             ) = row
-            return (
+            # Phase 4 restart recovery: stamp the next pending step in-flight
+            # now that its packaged prompt is being issued to a fresh session
+            # (spec: /tmp/phase4_steps_json_spec.md). Interrupted steps are NOT
+            # re-stamped — they get the interrupted banner instead (step 7).
+            _resume_banner = ""
+            if status == "open" and steps_raw:
+                _steps = json.loads(steps_raw)
+                _pend = next(
+                    (
+                        s
+                        for s in _steps
+                        if isinstance(s, dict) and s.get("status") == "pending"
+                    ),
+                    None,
+                )
+                if _pend is not None:
+                    if _pend.get("interrupted_at"):
+                        _resume_banner = (
+                            f"Step {_pend.get('n')} was interrupted after its "
+                            "prompt was issued. Re-verify current state before "
+                            "re-executing. READ-ONLY steps: resume directly. "
+                            "MUTATING steps: verify side effect first via "
+                            "assert_state, then either plan_step_done with "
+                            "existing evidence or re-execute.\n"
+                        )
+                    else:
+                        self._set_step_in_progress(tid, _pend.get("n"))
+            return _resume_banner + (
                 f"TASK BLOCK {tid} [{status}] — checkpoint #{n}, updated {updated}\n"
                 f"GOAL: {goal}\n"
                 f"DONE: {done or '(none)'}\n"
@@ -1534,6 +2258,21 @@ class PlannerMixin:
             if target.get("status") == "done":
                 conn.close()
                 return f"plan_step_done: step {step_n} is already struck. No change."
+
+            # Phase 3 required-child gate: a step cannot be struck while its
+            # required children are pending or dead.
+            gate_blocked, gate_text = self._required_children_gate(
+                task_id.strip(), int(step_n)
+            )
+            if gate_blocked:
+                conn.close()
+                return (
+                    f"plan_step_done REFUSED: step {step_n} cannot be struck — "
+                    f"{gate_text}\n"
+                    "Check child_status('" + task_id.strip() + "') and call "
+                    f"plan_step_done('{task_id.strip()}', {step_n}) again once "
+                    "the required children are done."
+                )
             target["status"] = "failed" if failed else "done"
             target["evidence"] = evidence
             target["done_at"] = now
@@ -1554,6 +2293,10 @@ class PlannerMixin:
             else:
                 next_prompt = "(all steps complete)"
                 status = "done"
+            if gate_text:
+                # verbatim re-join: required-child results travel in the next
+                # packaged prompt exactly as the children produced them
+                next_prompt = f"{next_prompt}\n\n{gate_text}"
             with conn:
                 conn.execute(
                     "UPDATE task_blocks SET steps_json=?, done_steps=?, plan=?, "

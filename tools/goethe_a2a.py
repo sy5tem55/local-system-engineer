@@ -64,13 +64,17 @@ Remaining: step 9 (end-to-end JWT + JSON-RPC lifecycle).
 """
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
 import os
+import re
+import sqlite3
 import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import jwt
@@ -126,6 +130,41 @@ import jwt_auth  # noqa: E402
 
 logger = logging.getLogger("goethe_a2a")
 
+# Provenance channel (task 6fed38ed): the verified JWT issuer, set by
+# JwtAuthMiddleware.dispatch before call_next and read by the A2A task
+# handlers (planner / plan_step_done / task_status) to stamp tasks.db
+# provenance. asyncio.to_thread copies the current context into the
+# executor worker thread, so the value set in the middleware's task is
+# visible inside the handler. Default "unknown" = no verified issuer
+# (public path or misconfiguration) — handlers must surface it visibly.
+AUTH_ISS = contextvars.ContextVar("a2a_auth_iss", default="unknown")
+
+# The orchestrator's local backend runs handlers on a ThreadPoolExecutor,
+# and its threads do NOT inherit contextvars — AUTH_ISS set in the
+# middleware's task is invisible there (2026-09-22 E2E: provenance stayed
+# at the 'node4090' default for a node3090 request). Bridge per envelope:
+# _run (to_thread context copy, value valid) records the verified issuer
+# here; _with_envelope_iss restores it around the handler call.
+ISS_BY_ENVELOPE = {}
+
+
+def _with_envelope_iss(fn):
+    """Run fn with AUTH_ISS restored from ISS_BY_ENVELOPE (every local
+    handler receives the envelope id as __envelope_id__). No-op-safe: if
+    the issuer is missing, the handler sees the contextvar default."""
+    def wrapper(*a, **kw):
+        env_id = kw.get("__envelope_id__")
+        iss = ISS_BY_ENVELOPE.get(env_id) if env_id else None
+        token = AUTH_ISS.set(iss) if iss else None
+        try:
+            return fn(*a, **kw)
+        finally:
+            if token is not None:
+                AUTH_ISS.reset(token)
+            if env_id:
+                ISS_BY_ENVELOPE.pop(env_id, None)
+    return wrapper
+
 A2A_VERSION = "0.1.0"
 AGENT_NAME = "goethe"
 SKILL_ID = "goethe-researcher-v1"
@@ -138,6 +177,13 @@ DEFAULT_MCP_URL = "http://127.0.0.1:9700/mcp"
 DEFAULT_SEARXNG_URL = "http://localhost:8088"
 LOCAL_WORKER_ID = "node4090:a2a-local"
 RESEARCH_TOOLS = ["search_kb", "research_web"]
+# Planner delegation (2026-09-21, task 6fed38ed): the A2A surface may also
+# create/strike plans in the shared tasks.db ledger. These are read-write
+# ledger operations (planner creates a task block; plan_step_done strikes a
+# step; task_resume loads a task block) — provenance is stamped from the
+# verified JWT issuer (see AUTH_ISS contextvar, JwtAuthMiddleware).
+PLANNER_TOOLS = ["planner", "plan_step_done", "task_resume"]
+A2A_TOOLS = RESEARCH_TOOLS + PLANNER_TOOLS
 
 
 # --- D4 ToolBroker audit gate ------------------------------------------------
@@ -205,47 +251,82 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
     agent-card path, not by opening auth — no CORSMiddleware is added;
     the card is consumed by A2A client libraries, not browser pages.
 
-    Two accepted verifiers, tried in order:
+    Three accepted verifiers, tried in order:
       A) GOETHE_A2A_JWT_PUBKEY (D3, minted by the node4090 gateway) —
-         existing behavior, EdDSA signature check.
+         EdDSA signature check, no iss pinning; attributed to the gateway
+         issuer lse-node4090 by verifier identity.
       B) node3090.pub via jwt_auth.verify_ed25519_jwt (cross-node calls):
          iss=lse-node3090, aud=lse-node4090, enforced claims (exp, nbf with
          30s skew, iss, aud, jti); failures carry the R8 classification.
+      C) node4090.pub via jwt_auth.verify_ed25519_jwt (local per-node
+         clients, added 2026-09-21 task 6fed38ed): iss=lse-node4090,
+         aud=lse-node4090, same enforced claims as B. Without C, a
+         node4090 client holding the per-node key could not authenticate
+         (the D3 path only matches the vault key).
+
+    Provenance: on success the verified issuer is exposed to the handler
+    layer via BOTH request.state.auth_iss (per-request) and the module
+    contextvar AUTH_ISS (inherited by the executor worker thread through
+    asyncio.to_thread's context copy). Default "unknown" when no verifier
+    ran (public paths) — handlers must surface "unknown" visibly.
+
     Fail-closed: with no verification key configured at all, authenticated
     paths return 503 — the service never opens itself by misconfiguration.
     """
 
     PUBLIC_PATHS = {"/health", "/.well-known/agent-card.json"}
     PEER = "node3090"
-    PEER_PUB = os.path.join(
-        os.environ.get("A2A_JWT_PUB_DIR", "/opt/local-se/a2a/agent-cards"),
-        f"{PEER}.pub")
+    SELF = "node4090"
+    PUB_DIR = os.environ.get("A2A_JWT_PUB_DIR", "/opt/local-se/a2a/agent-cards")
+    PEER_PUB = os.path.join(PUB_DIR, f"{PEER}.pub")
+    SELF_PUB = os.path.join(PUB_DIR, f"{SELF}.pub")
     EXPECTED_ISS = "lse-node3090"
     EXPECTED_AUD = "lse-node4090"
+    EXPECTED_ISS_SELF = "lse-node4090"
+    EXPECTED_AUD_SELF = "lse-node4090"
 
     def __init__(self, app, public_key_pem=None):
         super().__init__(app)
         self._pub_pem = public_key_pem.encode() if public_key_pem else None
 
-    def _verify_d3(self, token: str) -> bool:
-        """Verifier A: D3 shared key, EdDSA signature check."""
+    def _verify_d3(self, token: str):
+        """Verifier A: D3 shared key, EdDSA signature check. Returns the
+        decoded claims dict on success, None on failure. The D3 path does
+        not pin iss — attribution is by verifier identity (gateway)."""
         if self._pub_pem is None:
-            return False
+            return None
         try:
-            jwt.decode(token, self._pub_pem, algorithms=["EdDSA"])
-            return True
+            return jwt.decode(token, self._pub_pem, algorithms=["EdDSA"])
         except jwt.PyJWTError:
-            return False
+            return None
 
-    def _verify_peer(self, token: str) -> bool:
-        """Verifier B: node3090 cross-node JWT with enforced claims."""
+    def _verify_peer(self, token: str):
+        """Verifier B: node3090 cross-node JWT with enforced claims.
+        Returns the decoded claims dict on success, None on failure."""
         try:
-            jwt_auth.verify_ed25519_jwt(
+            return jwt_auth.verify_ed25519_jwt(
                 token, expected_iss=self.EXPECTED_ISS,
                 expected_aud=self.EXPECTED_AUD, peer=self.PEER)
-            return True
+        except jwt_auth.A2AAuthError as e:  # TEMP step-21 debug
+            logger.warning("peer verify failed: %s: %s", e.classification, e)
+            return None
+
+    def _verify_self(self, token: str):
+        """Verifier C: node4090 local per-node JWT with enforced claims
+        (same contract as B, self-pinned). Returns claims dict or None."""
+        try:
+            return jwt_auth.verify_ed25519_jwt(
+                token, expected_iss=self.EXPECTED_ISS_SELF,
+                expected_aud=self.EXPECTED_AUD_SELF, peer=self.SELF)
         except jwt_auth.A2AAuthError:
-            return False
+            return None
+
+    @staticmethod
+    def _expose(iss: str, request) -> None:
+        """Record the verified issuer for the handler layer: per-request
+        state AND the contextvar the executor worker thread inherits."""
+        request.state.auth_iss = iss
+        AUTH_ISS.set(iss)
 
     async def dispatch(self, request, call_next):
         if request.url.path in self.PUBLIC_PATHS or request.method == "OPTIONS":
@@ -254,11 +335,30 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
         if not auth.lower().startswith("bearer "):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         token = auth[7:].strip()
-        if self._verify_d3(token):
+        try:  # TEMP step-21 debug: log the received token's time claims
+            import base64 as _b64, json as _json
+            _p = token.split(".")[1]
+            _p += "=" * (-len(_p) % 4)
+            _c = _json.loads(_b64.urlsafe_b64decode(_p))
+            logger.warning("RX token claims: %s server_now=%d",
+                           {k: _c.get(k) for k in ("iss", "iat", "nbf", "exp")},
+                           int(time.time()))
+        except Exception:
+            pass
+        claims = self._verify_d3(token)
+        if claims is not None:
+            self._expose("lse-node4090", request)
             return await call_next(request)
-        if self._verify_peer(token):
+        claims = self._verify_peer(token)
+        if claims is not None:
+            self._expose(claims.get("iss", self.EXPECTED_ISS), request)
             return await call_next(request)
-        if self._pub_pem is None and not os.path.isfile(self.PEER_PUB):
+        claims = self._verify_self(token)
+        if claims is not None:
+            self._expose(claims.get("iss", self.EXPECTED_ISS_SELF), request)
+            return await call_next(request)
+        if (self._pub_pem is None and not os.path.isfile(self.PEER_PUB)
+                and not os.path.isfile(self.SELF_PUB)):
             logger.error("no A2A verification key configured — failing closed")
             return JSONResponse(
                 {"error": "server misconfigured: no verification key"},
@@ -293,7 +393,21 @@ def _mcp_tools_call(tool, arguments, url=None, token=None, timeout=30):
         if session_id:
             headers["Mcp-Session-Id"] = session_id
         r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        try:  # TEMP step-21 debug: per-POST trace for the empty-body diagnosis
+            with open("/tmp/a2a_mcp_debug.log", "a") as _df:
+                _df.write("%s method=%s id=%s status=%s ct=%s len=%d head=%r\n" % (
+                    time.strftime("%H:%M:%S"), payload.get("method"),
+                    payload.get("id"), r.status_code,
+                    r.headers.get("content-type"), len(r.content),
+                    r.text[:160]))
+        except OSError:
+            pass
         r.raise_for_status()
+        if not r.content:
+            # MCP streamable-HTTP: notifications (no response id) get
+            # 202 Accepted with an EMPTY body — r.json() on "" raises
+            # JSONDecodeError (2026-09-22 E2E: failed[handler-error]).
+            return None, r.headers
         ct = r.headers.get("content-type", "")
         if "text/event-stream" in ct:
             for line in r.text.splitlines():
@@ -373,6 +487,137 @@ def _research(query, max_results=3, task_id=None, **_):
     return {"source": "web", "query": query, "results": web}
 
 
+# --- Tier-1 ledger handlers (tasks.db via the :9700 gateway) -----------------
+#
+# Step 5 policy change (read_only=False, A2A_TOOLS): the A2A surface can now
+# drive the shared tasks.db ledger. All three handlers delegate to the
+# :9700 gateway's MCP surface (the sanctioned tool surface, D3) — the A2A
+# service never re-implements planner logic. _planner additionally stamps
+# the created block's provenance with the verified JWT issuer (AUTH_ISS
+# contextvar set by JwtAuthMiddleware, step 7) via a direct sqlite3 UPDATE.
+# The provenance column is added to the schema in a later step — the stamp
+# is defensive: a missing column or row is a no-op, never an error, because
+# the planner result itself is authoritative. These handlers do NOT go
+# through TOOL_GATE (the D4 gate is research_web-only).
+
+TASKS_DB_PATH = os.environ.get("GOETHE_TASKS_DB", "/opt/local-se/tasks.db")
+
+
+def _ledger_text(result):
+    """Flatten an MCP tools/call result object to its text payload."""
+    parts = [item.get("text", "") for item in result.get("content", [])
+             if isinstance(item, dict) and item.get("type") == "text"]
+    return "\n".join(parts)
+
+
+def _extract_task_id(text):
+    """Pull the ledger task_id out of planner/task output: matches the
+    'task_id=<hex>', 'task_id: <hex>' and 'TASK BLOCK <hex>' forms."""
+    m = re.search(r"task[_\s]*id[=:\s]+([0-9a-f]{6,})", text, re.I)
+    if m:
+        return m.group(1)
+    m = re.search(r"TASK BLOCK ([0-9a-f]{6,})", text)
+    return m.group(1) if m else None
+
+
+def _stamp_provenance(task_id, iss):
+    """Stamp task_blocks.provenance for task_id with the node name derived
+    from the verified JWT issuer ('lse-node3090' -> 'node3090', matching
+    the column's 'node4090' default convention). Returns True when the row
+    was stamped; False (no error) when the column or row is missing."""
+    if not task_id or iss in ("", "unknown"):
+        return False
+    node = iss[4:] if iss.startswith("lse-") else iss
+    try:
+        conn = sqlite3.connect(TASKS_DB_PATH, timeout=10)
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(task_blocks)")}
+            if "provenance" not in cols:
+                return False
+            cur = conn.execute(
+                "UPDATE task_blocks SET provenance = ? WHERE task_id = ?",
+                (node, task_id))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        logger.warning("provenance stamp failed for %s: %s", task_id, exc)
+        return False
+
+
+def _planner(task, context="", **_):
+    """Create an atomized plan in the shared tasks.db ledger via the :9700
+    gateway planner tool, then stamp the created block's provenance with
+    the verified JWT issuer (AUTH_ISS). Returns the gateway text verbatim
+    plus the extracted task_id."""
+    args = {"task": task}
+    if context:
+        args["context"] = context
+    result = _mcp_tools_call("planner", args, timeout=240)
+    text = _ledger_text(result)
+    task_id = _extract_task_id(text)
+    if task_id:
+        _stamp_provenance(task_id, AUTH_ISS.get())
+    return {"tool": "planner", "task_id": task_id, "text": text}
+
+
+def _plan_step_done(task_id, step_n, evidence, failed=False, **_):
+    """Strike a completed plan step via the :9700 gateway. The block's
+    provenance is preserved (the gateway does not re-stamp it)."""
+    result = _mcp_tools_call("plan_step_done", {
+        "task_id": task_id, "step_n": int(step_n),
+        "evidence": evidence, "failed": bool(failed),
+    }, timeout=120)
+    return {"tool": "plan_step_done", "task_id": task_id,
+            "step_n": int(step_n), "text": _ledger_text(result)}
+
+
+def _task_status(task_id="", **_):
+    """Read the current state of a tasks.db ledger task via the :9700
+    gateway (task_resume). Empty task_id = most recently updated open
+    block."""
+    args = {"task_id": task_id} if task_id else {}
+    result = _mcp_tools_call("task_resume", args, timeout=60)
+    return {"tool": "task_status", "task_id": task_id,
+            "text": _ledger_text(result)}
+
+# --- Step 9 routing -----------------------------------------------------------
+#
+# An A2A text part carrying JSON {"handler": "planner" | "plan_step_done" |
+# "task_status", ...} routes to the matching ledger handler registered in
+# create_app; anything that is not such a JSON object (plain text, unknown
+# handler, malformed JSON) keeps the existing research behavior. args are
+# the JSON fields minus 'handler' and reach the handler as kwargs (the
+# local backend calls handler(**args)).
+
+_HANDLER_TOOLS = {
+    "planner": ["planner"],
+    "plan_step_done": ["plan_step_done"],
+    "task_status": ["task_resume"],
+}
+
+
+def _parse_routing(query):
+    """Return (handler, args) when the A2A message is a JSON object whose
+    'handler' field names a ledger handler; otherwise (None, None)."""
+    if not isinstance(query, str):
+        return None, None
+    stripped = query.strip()
+    if not stripped.startswith("{"):
+        return None, None
+    try:
+        payload = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    handler = payload.get("handler")
+    if handler not in _HANDLER_TOOLS:
+        return None, None
+    args = {k: v for k, v in payload.items() if k != "handler"}
+    return handler, args
+
 # --- D5 state mapping --------------------------------------------------------
 # A2A state        orchestrator record (A2A task = Run; envelope = Task;
 #                  one dispatch = Attempt; journal = orch-event-log.db)
@@ -420,7 +665,7 @@ class GoetheResearcherExecutor(AgentExecutor):
         self._lock = threading.Lock()
 
     # -- runs in a worker thread (via asyncio.to_thread) --
-    def _run(self, task_id, query):
+    def _run(self, task_id, query, handler=None, args=None):
         last_error, classification = "", "unknown"
         attempts = 0
         # D5a: the task deadline is fixed at start and outranks the attempt
@@ -449,11 +694,22 @@ class GoetheResearcherExecutor(AgentExecutor):
                         "idempotency_key":
                             f"task/{task_id}/attempt/{attempt - 1}"}
             attempts = attempt
-            env = TaskEnvelope(
-                payload={"handler": "research",
-                         "args": {"query": query, "task_id": task_id},
-                         "requires": {"tools": RESEARCH_TOOLS}},
-                ttl=self.attempt_ttl)
+            if handler is None:
+                env_payload = {"handler": "research",
+                               "args": {"query": query,
+                                        "task_id": task_id},
+                               "requires": {"tools": RESEARCH_TOOLS}}
+            else:
+                # Step 9 routing: JSON {"handler": ...} A2A message -> the
+                # matching ledger handler; requires.tools is the gateway
+                # tool the handler delegates to (subset of A2A_TOOLS, so
+                # the local worker stays eligible).
+                env_payload = {"handler": handler,
+                               "args": args,
+                               "requires": {"tools":
+                                             _HANDLER_TOOLS[handler]}}
+            env = TaskEnvelope(payload=env_payload, ttl=self.attempt_ttl)
+            ISS_BY_ENVELOPE[env.id] = AUTH_ISS.get()
             with self._lock:
                 self._inflight[task_id]["envelope_id"] = env.id
             try:
@@ -484,6 +740,8 @@ class GoetheResearcherExecutor(AgentExecutor):
                 # orchestrator error (TimeoutError carries no message).
                 if "timeout" in type(exc).__name__.lower():
                     classification = "deadline"
+            finally:
+                ISS_BY_ENVELOPE.pop(env.id, None)
         return {"status": "FAILED", "error": last_error,
                 "classification": classification, "attempts": attempts,
                 "idempotency_key": f"task/{task_id}/attempt/{attempts}"}
@@ -524,7 +782,9 @@ class GoetheResearcherExecutor(AgentExecutor):
         await event_queue.enqueue_event(TaskStatusUpdateEvent(
             task_id=task_id, context_id=context_id,
             status={"state": "TASK_STATE_WORKING"}))
-        outcome = await asyncio.to_thread(self._run, task_id, query)
+        handler, args = _parse_routing(query)
+        outcome = await asyncio.to_thread(self._run, task_id, query,
+                                          handler=handler, args=args)
         with self._lock:
             self._inflight[task_id]["terminal"] = True
             canceled = self._inflight[task_id]["canceled"]
@@ -639,8 +899,8 @@ def live_tool_policy() -> ToolPolicyRef:
     return ToolPolicyRef(
         ref_id="toolpolicy-goethe-a2a-v1",
         tier=1,
-        tools=tuple(RESEARCH_TOOLS),
-        read_only=True,
+        tools=tuple(A2A_TOOLS),
+        read_only=False,
         audit_gate="kb-first",
     )
 
@@ -712,6 +972,46 @@ def generate_agent_card(tool_policy_ref: ToolPolicyRef, jwt_pubkey_pem,
             tags=["research"],
             input_modes=["text"],
             output_modes=["text"],
+        ), AgentSkill(
+            id="goethe-planner-v1",
+            name="Goethe Planner",
+            description=(
+                "Create an atomized execution plan in the shared tasks.db "
+                "ledger. Input: a text part carrying JSON "
+                '{"handler": "planner", "task": "<task>", '
+                '"context": "<verbatim findings>"}. Returns the ledger '
+                "task_id plus step 1's packaged prompt. The created task "
+                "block is stamped with the authenticated node's provenance "
+                "(verified JWT iss)."),
+            tags=["planning", "ledger"],
+            input_modes=["text"],
+            output_modes=["text"],
+        ), AgentSkill(
+            id="goethe-plan-step-done-v1",
+            name="Goethe Plan Step Done",
+            description=(
+                "Strike a completed plan step in the tasks.db ledger. Input: "
+                "a text part carrying JSON {\"handler\": \"plan_step_done\", "
+                "\"task_id\": \"<id>\", \"step_n\": <N>, \"evidence\": "
+                "\"<verify output>\", \"failed\": false}. Returns the "
+                "packaged prompt for the next step, or closes the ledger "
+                "when all steps are done. Provenance of the block is "
+                "preserved (not re-stamped)."),
+            tags=["planning", "ledger"],
+            input_modes=["text"],
+            output_modes=["text"],
+        ), AgentSkill(
+            id="goethe-task-status-v1",
+            name="Goethe Task Status",
+            description=(
+                "Read the current state of a tasks.db ledger task. Input: "
+                'a text part carrying JSON {"handler": "task_status", '
+                '"task_id": "<id>"} (empty task_id = most recently updated '
+                "open block). Returns goal, status, done/remaining steps, "
+                "and the node provenance stamped on the block."),
+            tags=["planning", "ledger"],
+            input_modes=["text"],
+            output_modes=["text"],
         )],
     )
 
@@ -731,9 +1031,12 @@ def create_app() -> FastAPI:
     orchestrator = LocalOrchestrator(backend=backend, event_log=event_log)
     orchestrator.register_worker(WorkerRegistration(
         worker_id=LOCAL_WORKER_ID,
-        capabilities={"tier": 1, "tools": RESEARCH_TOOLS},
+        capabilities={"tier": 1, "tools": A2A_TOOLS},
         heartbeat_ttl=30))
-    orchestrator.register_handler("research", _research)
+    orchestrator.register_handler("research", _with_envelope_iss(_research))
+    orchestrator.register_handler("planner", _with_envelope_iss(_planner))
+    orchestrator.register_handler("plan_step_done", _with_envelope_iss(_plan_step_done))
+    orchestrator.register_handler("task_status", _with_envelope_iss(_task_status))
     executor = GoetheResearcherExecutor(
         orchestrator,
         max_attempts=int(os.environ.get("GOETHE_A2A_MAX_ATTEMPTS", "2")),
@@ -748,7 +1051,24 @@ def create_app() -> FastAPI:
         agent_card=card,
         queue_manager=InMemoryQueueManager(),
     )
-    app = FastAPI(title="Goethe A2A", version=A2A_VERSION)
+    async def _heartbeat_loop():
+        # Step 21 fix (see /opt/local-se/a2a/a2a_e2e_failure_diagnosis.txt):
+        # the scheduler only assigns work to workers whose last_heartbeat is
+        # within heartbeat_ttl=30; refresh every 10s (3x margin) so the local
+        # worker stays ACTIVE for the whole server lifetime.
+        while True:
+            await asyncio.sleep(10)
+            orchestrator.heartbeat(LOCAL_WORKER_ID)
+
+    @asynccontextmanager
+    async def _lifespan(_app):
+        hb = asyncio.create_task(_heartbeat_loop())
+        try:
+            yield
+        finally:
+            hb.cancel()
+
+    app = FastAPI(title="Goethe A2A", version=A2A_VERSION, lifespan=_lifespan)
     app.add_middleware(JwtAuthMiddleware, public_key_pem=pub_pem)
     add_a2a_routes_to_fastapi(
         app,
