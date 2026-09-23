@@ -850,9 +850,15 @@ function proposalDupKey(body){
   // Two proposals that would perform the same write are duplicates for the
   // operator even if their rationales differ. error-cluster emits these in
   // pairs (2026-08-03: two CancelledError, two SSH-triage in one run).
+  // record_error carries its subject in args.error_text (2026-09-23 fix:
+  // without this fallback every record_error card collapsed onto the empty
+  // key "record_error|" and the DUPLICATE badge fired on all of them).
   const a = body.args || {};
-  const subj = (a.task||a.title||a.doc_id||a.evidence_doc_id||"").toLowerCase().replace(/[^a-z0-9]+/g,"").slice(0,40);
-  return (body.call||"")+"|"+subj;
+  const subj = (a.task||a.title||a.error_text||a.doc_id||a.evidence_doc_id||"").toLowerCase().replace(/[^a-z0-9]+/g,"").slice(0,40);
+  if(subj) return (body.call||"")+"|"+subj;
+  // Unknown shape, no known subject field: fall back to the stable proposal
+  // id so a card can never be badged as a duplicate of itself.
+  return (body.call||"")+"|self|"+(body.proposal_id||body.id||"unknown");
 }
 function proposalDetail(body){
   // The why line is a machine rationale -- a deliberable card needs the

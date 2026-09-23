@@ -388,3 +388,60 @@ class TestGraphOrphanGuard:
 
     def test_live_evidence_passes(self):
         assert da.validate_proposal_for_apply(_graph_proposal(), _PresentES()) is None
+
+
+# --- Option A: staging-time auto-projection for graph proposals (2026-09-23) ---
+
+class TestGraphAutoApply:
+    """Regression for Option A (operator "A + D + port filter"): graph
+    proposals staged by the graph-backfill pass are auto-projected at
+    staging time through the canonical decide_proposal path — no PENDING
+    graph row may remain, non-graph rows must never be touched, and a
+    failed projection must leave the row where it was (fail closed).
+    Entirely offline: decide_proposal is mocked (no live DB/ES)."""
+
+    def test_graph_autoapply(self, monkeypatch):
+        import dream_runner as dr
+        calls = []
+
+        def fake_decide(state, proposal_id, decision, *, actor=None,
+                        reason=None, **kw):
+            calls.append((proposal_id, decision, actor, reason))
+            return {"decision": decision, "state": "APPLIED",
+                    "graph_projection": {"entities": 2, "edges": 1}}
+
+        monkeypatch.setattr("dream_apply.decide_proposal", fake_decide)
+        stored = [
+            {"proposal_id": "prp_graph1", "state": "PENDING",
+             "proposal": {"type": "graph", "call": "none",
+                          "args": {"doc_id": "doc_a"}}},
+            {"proposal_id": "prp_kb1", "state": "PENDING",
+             "proposal": {"type": "kb_update", "call": "none",
+                          "args": {"doc_id": "doc_b"}}},
+        ]
+        n = dr.auto_project_graph_proposals(object(), stored)
+        assert n == 1
+        assert len(calls) == 1
+        pid, decision, actor, reason = calls[0]
+        assert pid == "prp_graph1"
+        assert decision == "approve"
+        assert actor == "system:graph-backfill-auto"
+        assert "human-approved" in reason
+        # graph row flipped to APPLIED in place -> excluded from inbox filter
+        assert stored[0]["state"] == "APPLIED"
+        # non-graph row untouched: still gated, never auto-applied
+        assert stored[1]["state"] == "PENDING"
+
+    def test_graph_autoapply_failure_stays_pending(self, monkeypatch):
+        import dream_runner as dr
+
+        def boom(*a, **kw):
+            raise RuntimeError("ES down")
+
+        monkeypatch.setattr("dream_apply.decide_proposal", boom)
+        stored = [{"proposal_id": "prp_graph2", "state": "STAGED",
+                   "proposal": {"type": "graph", "call": "none",
+                                "args": {"doc_id": "doc_c"}}}]
+        n = dr.auto_project_graph_proposals(object(), stored)
+        assert n == 0
+        assert stored[0]["state"] == "STAGED"

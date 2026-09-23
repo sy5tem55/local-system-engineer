@@ -3938,6 +3938,66 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
 
 # --- Phase 5 (roadmap 2026-09): seventh pass — graph backfill -------------
 
+def auto_project_graph_proposals(state, stored_rows: list[dict]) -> int:
+    """Option A (2026-09-23, operator "A + D + port filter"): auto-projection
+    for graph proposals, run right after the attempt's publication point
+    (finish_attempt) — proposals are not reviewable before it.
+
+    Graph proposals' source docs are human-approved lse-kb docs and the
+    extractor is deterministic with a fixed vocabulary, so per-card Human
+    Gate review was pure noise (the 2026-09-18 reject-all-graph stance is
+    explicitly overturned). Each graph row still goes through the CANONICAL
+    dream_apply.decide_proposal path — the same one the GUI decision
+    endpoint uses: live validation, atomic claim, finalize, then the
+    idempotent lse-graph projection via
+    goethe_graph.materialize_accepted_graph.
+
+    Fail closed: a row whose decision raises is left exactly where it was
+    (STAGED/PENDING) so it still reaches the gate; nothing is lost.
+    Non-graph types are untouched — they still gate as before.
+
+    Args:
+        state: the traum_state.TraumState for this run.
+        stored_rows: rows as returned by state.record_proposals().
+
+    Returns:
+        Number of graph proposals auto-applied. Applied rows are updated
+        in place (row["state"] = "APPLIED") so callers' inbox filters
+        (state in {"STAGED", "PENDING"}) skip them automatically.
+    """
+    import dream_apply  # noqa: PLC0415 (sibling module in tools/)
+
+    count = 0
+    for row in stored_rows:
+        _p = row["proposal"]
+        if (_p.get("type") == "graph"
+                and row["state"] in {"STAGED", "PENDING"}):
+            try:
+                _res = dream_apply.decide_proposal(
+                    state, row["proposal_id"], "approve",
+                    actor="system:graph-backfill-auto",
+                    reason=("auto-projected at staging: source "
+                            "is a human-approved lse-kb doc; "
+                            "deterministic fixed-vocabulary "
+                            "extraction, no LLM"),
+                )
+                row["state"] = _res.get("state") or row["state"]
+                _proj = _res.get("graph_projection") or {}
+                count += 1
+                print(f"[dream_runner] Option A: auto-projected "
+                      f"{row['proposal_id']} (projection: {_proj})",
+                      file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[dream_runner] graph auto-projection left "
+                      f"{row['proposal_id']} at {row['state']}: {exc}",
+                      file=sys.stderr)
+    if count:
+        print(f"[dream_runner] Option A: {count} graph proposal(s) "
+              f"auto-projected at staging "
+              f"(actor=system:graph-backfill-auto)", file=sys.stderr)
+    return count
+
+
 def run_pass_graph_backfill(cfg: DreamConfig, sessions, episodes_by_session,
                             kb_docs, error_docs) -> tuple:
     """Phase 5 — the seventh pass: backfill graph extraction over lse-kb.
@@ -5177,6 +5237,9 @@ def main(argv=None) -> int:
                 stored = state.record_proposals(
                     cfg.run_id, cfg.attempt_id, proposals_for_state
                 )
+                # (Option A graph auto-projection happens after the
+                # finish_attempt publication point — the state machine does
+                # not make proposals reviewable until the attempt completes.)
                 # Exact repeats/malformed entries are resolved automatically
                 # and never enter either the human inbox or legacy queue files.
                 proposals = [
@@ -5250,6 +5313,11 @@ def main(argv=None) -> int:
                     exit_code=3 if cfg.budget.truncated else 0,
                     consumed_session_ids=consume_ids,
                 )
+                # Option A (2026-09-23, operator "A + D + port filter"):
+                # auto-project graph proposals now that the attempt is
+                # published and its proposals are reviewable. Rationale and
+                # fail-closed semantics in auto_project_graph_proposals().
+                auto_project_graph_proposals(state, stored)
             print(f"[dream_runner] {mode}done. run={cfg.run_id or '(preview)'} "
                   f"attempt={cfg.attempt_id or '(preview)'} report={report_path} "
                   f"proposals={proposals_path} n_proposals={len(proposals)}{null_suffix}",
