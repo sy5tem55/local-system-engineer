@@ -11,9 +11,9 @@ the code-driven runtime machinery.
 |---|-------|--------|
 | 1 | Exact context accounting + rolling compaction | DONE 2026-09-17 (accounting live; compaction DORMANT under Studio — docs/03 §7) |
 | 2 | Progressive tool loading | DONE 2026-09-17 (54.0% envelope reduction; CORE/COLD tiering + tool_search/tool_invoke bridges, EAGER_TOOLS=1 fallback — docs/05-skills-planning.md §4) |
-| 3 | Scoped child delegation | OPEN |
-| 4 | Restart recovery semantics | OPEN |
-| 5 | Graph layer over the KB | OPEN |
+| 3 | Scoped child delegation | DONE 2026-09-17 (local E2E verified; node3090 HTTP boundary 401; node5090 blocked; two-node re-verification gated on infra — docs/05-skills-planning.md Phase 3) |
+| 4 | Restart recovery semantics | DONE 2026-09-17 (per-step in_progress/interrupted stamps in steps_json; startup sweep + exact interrupted banner; child_runs requeue bounded/replay-safe — docs/05-skills-planning.md Phase 4) |
+| 5 | Graph layer over the KB | DONE 2026-09-18 — implemented, **operator-rejected, DORMANT** behind GRAPH_RECALL=0 (all 369 proposals rejected: 172 REJECTED + 197 SYSTEM_REJECTED, 0 APPLIED; lse-graph empty; do NOT re-run graph-backfill without operator approval — KB doc db03979d6730c84e, docs/04-knowledge-base.md §5). Full suite: 1049 passed / 3 pre-existing failures documented (a2a JWT 401, dream-guard leg0 stale :8080 expectation vs auto-discovery WIP, gateway shim pin stale since Phase 2 tiering aa16ac9). |
 
 Order is intentional: 1 and 2 shrink the fixed prompt envelope and make long
 sessions survivable; 3 and 4 need 2 (children get the core tier) and 1
@@ -212,6 +212,8 @@ behaviour everyone else depends on.
 ---
 
 ## Phase 4 — Restart recovery semantics
+
+> **Implemented 2026-09-17** — full description: docs/05-skills-planning.md §Phase 4. The "Goethe today" subsection below describes the pre-implementation state.
 
 ### The mechanism (adapted)
 - On restart: **closes unanswered tool calls without replaying them**;

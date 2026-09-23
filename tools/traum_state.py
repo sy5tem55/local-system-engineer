@@ -1290,7 +1290,18 @@ class TraumState:
             for pid in ids:
                 row = by_id[pid]
                 if row["state"] not in {"PENDING", "DEFERRED"}:
-                    raise ConflictError(f"proposal {pid} cannot be claimed from {row['state']}")
+                    # APPLY_FAILED graph proposals are safe to re-claim:
+                    # their apply step performs no external write
+                    # (call='none' — materialization is an idempotent
+                    # projection), so the failure was a dispatch error, not
+                    # a partial write, and retry cannot double-apply. All
+                    # other types keep the strict gate: a failed apply may
+                    # have partially written, and only a human reconcile
+                    # decides what to do.
+                    if not (row["state"] == "APPLY_FAILED"
+                            and row["proposal_type"] == "graph"):
+                        raise ConflictError(
+                            f"proposal {pid} cannot be claimed from {row['state']}")
                 expected = (expected_revisions or {}).get(pid)
                 if expected is None and expected_revision is not None and pid == ids[0]:
                     expected = expected_revision

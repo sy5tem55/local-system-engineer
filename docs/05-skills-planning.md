@@ -269,3 +269,155 @@ catalog.
 See `docs/ROADMAP-mechanisms-2026-09.md` L166. Phase 2 is its
 prerequisite: with a 54% smaller envelope, delegated child sessions start
 with more headroom.
+
+
+---
+
+## Phase 3 — Scoped child delegation (implemented 2026-09-17)
+
+Phase 3 lets the planner delegate a bounded, scoped sub-task to a child
+run — either a local planner-backend completion or a remote node agent —
+and re-join the child's result into the parent step loop.
+
+### Design
+
+**child_runs table** (auto-migrated in `goethe_planner.py::_ensure_child_runs_table`):
+
+| column | type | notes |
+|---|---|---|
+| child_id | TEXT PK | |
+| parent_task_id | TEXT | indexes: (parent_task_id, status), (scope) |
+| scope | TEXT | exact-scope string, compared byte-for-byte for lock policy |
+| node | TEXT | empty = local planner backend |
+| kind | TEXT | `required` (gate) or `detached` (free-running) |
+| status | TEXT | queued / running / done / failed / cancelled |
+| result | TEXT | verbatim child output (or error text) |
+| depends_on | TEXT | reserved |
+| writer_lock | TEXT | exact-scope lock holder (child_id) |
+| created / finished | TEXT | ISO-8601 |
+
+**Kinds and budget.** `required` children gate the parent: `plan_step_done`
+calls `_required_children_gate(parent_task_id, step_no)` before marking the
+step done; pending required children BLOCK the step and their verbatim
+results are injected into the next packaged prompt on rejoin. `detached`
+children run free. Per-parent budgets: at most `CHILD_CAP` concurrent
+children and `CHILD_TOTAL_CAP` total children per parent task
+(`_child_budget_ok`).
+
+**Exact-scope writer locks.** Two children with the *same* `scope` string
+cannot both hold the writer lock: a `required` child requesting an
+already-locked scope is **refused** (hard error); a `detached` child is
+**queued** and promoted by `_promote_queued_children` when the lock frees.
+Different scopes never contend.
+
+**Execution.** `_exec_child(child_id)` dispatches: node set →
+`query_node_agent(node, prompt)`; node empty → local planner backend.
+Result (or error text) is stored verbatim in `child_runs.result`; status
+transitions to `done`/`failed` with a `finished` timestamp.
+
+### Tools
+
+- `delegate_child(task_id, scope, prompt, node="", kind="detached")` —
+  validates args, enforces the `CHILD_CAP=0` off-state, budget check,
+  writer-lock policy; inserts the child_runs row and dispatches
+  (synchronous for required, background for detached).
+- `child_status(task_id)` — compact table of the parent's child_runs rows.
+
+### Valves (defaults)
+
+- `CHILD_CAP = 4` — max concurrent children per parent task.
+- `CHILD_TOTAL_CAP = 8` — max total children per parent task.
+- `CHILD_CAP = 0` disables delegation entirely (off-state).
+
+### Verification (2026-09-17)
+
+- **Unit/contract:** `test_phase3_child_runs.py` 13 passed;
+  `test_phase3_child_runs_locks.py` 8 passed. Full suite: 3 failed /
+  1007 passed / 3 skipped — all 3 failures pre-existing and environmental
+  (A2A agent-card auth, dead `:8080` default vs ephemeral engine port,
+  stale `goethe_mcp.py` hash pin). No Phase 3 regressions.
+- **Local branch (node='') — VERIFIED END-TO-END:** child `7baa2da4e3b1`
+  (scope-local-math, required) answered "17 × 6" → **result 102** against
+  the live node4090 engine (127.0.0.1:46439); status=done. Full
+  insert → dispatch → result store → gate rejoin cycle exercised.
+- **node3090 branch — VERIFIED TO HTTP BOUNDARY:** child `65f83c050964`
+  dispatched via `query_node_agent` to `http://node3090.home.arpa:8080/v1/
+  chat/completions` → **401 Unauthorized** (Studio auth-gated proxy; real
+  engine is loopback-only on an ephemeral port; no registry auth support).
+  Ledger mechanics all executed; the 401 text was stored and re-joined
+  verbatim.
+- **node5090 — BLOCKED:** ICMP unreachable, `:8081` timeout, lse-admin key
+  denied; SY5 key shows host up with **no llama process**. Registry entry
+  stale (agent_type=lmstudio, decommissioned; agent_profile=None).
+- **Two-node re-verification is GATED ON INFRA:** (1) node3090 registry
+  needs auth support for the Studio proxy or a direct engine bind;
+  (2) node5090 needs a provisioned llama-server + canonical agent_profile.
+  Full verification record: `/tmp/phase3_verification.md`.
+
+
+## Phase 4 — Restart recovery (implemented 2026-09-17)
+
+### Problem
+A gateway that dies mid-step (SIGKILL, crash, reboot) leaves the in-flight
+step and any running child run silently lost: the next task_resume re-issues
+the step prompt as if nothing happened, and the child row stays running
+forever. Phase 4 makes in-flight state visible and recoverable.
+
+### Per-step stamps (task_blocks.steps_json)
+Step state remains a JSON array inside task_blocks.steps_json — no new
+tables, no new columns. Two optional string stamps (both UTC ISO 8601) were
+added to step objects:
+- in_progress_at — set when the step's packaged prompt is ISSUED
+  (task_resume echo path, via _set_step_in_progress()). Re-issuing clears
+  interrupted_at.
+- interrupted_at — set ONLY by the startup sweep. in_progress_at is
+  preserved for forensics.
+The step status vocabulary is unchanged (pending/done/failed) — in-flight
+is a stamp, not a status. plan_step_done pops both stamps when it strikes a
+step.
+
+### Startup sweep
+goethe.py captures _PROCESS_START_TS (UTC ISO) at import. Tools.__init__
+(after the self.valves assignment) runs two failure-safe sweeps — both log
+and return -1 on error and never block startup:
+1. mark_interrupted_on_startup(_PROCESS_START_TS) — steps whose
+   in_progress_at is OLDER than the process start were in-flight when the
+   previous process died → interrupted_at is stamped. Fresh stamps are
+   untouched (the live process owns them).
+2. requeue_interrupted_children(_PROCESS_START_TS) — see below.
+
+### task_resume interrupted banner
+When the next pending step carries interrupted_at, task_resume does NOT
+re-stamp it and prepends this exact banner to the normal block (N = step
+number):
+
+> Step N was interrupted after its prompt was issued. Re-verify current
+> state before re-executing. READ-ONLY steps: resume directly. MUTATING
+> steps: verify side effect first via assert_state, then either
+> plan_step_done with existing evidence or re-execute.
+
+Recovery is agent-driven — there is NO auto-replay.
+
+### child_runs requeue
+child_runs persistence EXISTS (Phase 3). At startup,
+requeue_interrupted_children() resets child rows that are
+running/in_progress, have NO result, and were created before the process
+started to queued, and clears the stale writer_lock (a dead process must
+not hold the scope lock). created and result are never modified.
+Children WITH a result are never re-queued — replaying them would be a
+double execution. The sweep is bounded (SELECT LIMIT 100 per pass; each
+pass either requeues a row or permanently excludes it via a skip-set, so
+termination is guaranteed) and replay-safe (re-queued rows no longer match
+the status filter). Re-queued children are picked up by the normal dispatch
+path; there is no auto-replay.
+
+### Verification (2026-09-17)
+- Unit-level: all four mechanisms exercised against temp sqlite DBs during
+  implementation (exact banner text, stamp preservation, sweep idempotence,
+  bounded requeue across 150+ rows) — green. Dedicated pytest file:
+  tests/test_phase4_inflight.py.
+- Full suite: /tmp/phase4_pytest_all.log.
+- Live SIGKILL verification: deliberately gated — /tmp/phase4_kill9_verify.sh
+  is run by the OPERATOR from the WSL console during an explicitly approved
+  restart window (checklist: /tmp/phase4_kill9_checklist.md); evidence in
+  /tmp/phase4_kill9_evidence.log, verdict in /tmp/phase4_kill9_verification.md.

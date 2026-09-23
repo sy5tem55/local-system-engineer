@@ -31,7 +31,7 @@ import os
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timezone
 
 from typing import Optional
 
@@ -55,6 +55,12 @@ LLAMA_URL_DEAD_DEFAULT = "http://localhost:8080"
 LLAMA_URL_LOOPBACK_PREFIX = "http://127.0.0.1:"
 from goethe_web import WebMixin  # noqa: E402
 
+# Phase 4 restart recovery: this process's start timestamp (UTC ISO).
+# Step stamps / child runs in-flight OLDER than this were orphaned by
+# the previous (dead) process; Tools.__init__ sweeps them (see
+# goethe_planner.mark_interrupted_on_startup / requeue_interrupted_children).
+_PROCESS_START_TS = datetime.now(timezone.utc).isoformat()
+
 
 
 class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
@@ -73,6 +79,27 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
         MAX_OUTPUT_CHARS: int = Field(
             default=4000,
             description="Maximum characters returned by execute_command before truncation.",
+        )
+
+        CHILD_CAP: int = Field(
+            default=4,
+            description="Phase 3 scoped child delegation: max CONCURRENT child runs "
+            "per parent task (queued/running). 0 = delegation off — "
+            "delegate_child() refuses all requests.",
+        )
+        CHILD_TOTAL_CAP: int = Field(
+            default=8,
+            description="Phase 3 scoped child delegation: max TOTAL child runs "
+            "per parent task (any status). 0 = delegation off.",
+        )
+        GRAPH_RECALL: int = Field(
+            default=0,
+            description="Phase 5 graph recall valve: bounded one-hop expansion "
+            "appended to search_kb results from the lse-graph index. "
+            "0 = off (default, old behaviour until verification passes). "
+            "1 = on — top-k docs' documented_by/runs_on entities are expanded "
+            "one hop, deduped, max +5 results, labelled 'related via: <entity>'. "
+            "Override via env GOETHE_GRAPH_RECALL.",
         )
         COMMAND_TIMEOUT: int = Field(
             default=200,
@@ -473,6 +500,12 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
 
     def __init__(self):
         self.valves = self.Valves()
+        # Phase 4 restart recovery: sweep orphaned in-flight state from the
+        # previous (dead) process — stamp old in_progress steps interrupted,
+        # requeue result-less child runs. Failure-safe: both log and return
+        # -1 on error, never block startup.
+        self.mark_interrupted_on_startup(_PROCESS_START_TS)
+        self.requeue_interrupted_children(_PROCESS_START_TS)
         self._fetch_cache: dict = {}  # url -> {"text": str, "ts": float} (v1.7.10)
         self._device_cache: dict = {}  # host -> {"platform": str, "raw": str} (v1.7.12)
         self._time_banner_emitted = False  # CHRONOS-2 (v0.3.1): [TIME] banner once/session

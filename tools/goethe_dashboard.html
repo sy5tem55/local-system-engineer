@@ -158,6 +158,8 @@
   .badge.backend-chatgpt{color:var(--good);border-color:rgba(158,206,106,.4)}
   .badge.backend-claude{color:var(--purple);border-color:rgba(187,154,247,.4)}
   .badge.backend-rest{color:var(--cyan);border-color:rgba(125,207,255,.4)}
+  .badge.prov-node4090{color:var(--dim)}
+  .badge.prov-node3090{color:var(--warn);border-color:rgba(224,175,104,.5);font-weight:600}
 </style>
 </head>
 <body>
@@ -385,6 +387,30 @@
                autocomplete="off" spellcheck="false" style="flex:1">
         <button class="abtn deny" id="purge-btn" onclick="episodePurgeRun()" disabled
                 title="Moves only the previewed 'entire' matches to a timestamped quarantine directory. Never deletes.">Purge</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel span6" id="p-friction">
+    <h2>Friction — Guard denials &amp; truncation (7 days) <span class="ms" id="fric-ms"></span></h2>
+    <div id="fric-pending" style="display:none;color:var(--warn);font-size:12px;line-height:1.5">
+      &#9203; Friction aggregate pending gateway restart — the backend
+      <code>friction</code> object is additive; it appears in
+      <code>/api/ui/episodes</code> after the next Goethe GUI restart.
+    </div>
+    <div class="bignums" id="fric-nums" style="display:none"></div>
+    <div id="fric-body" style="display:none">
+      <div style="margin-top:12px">
+        <div style="font-size:11px;color:var(--dim);margin-bottom:6px">GUARD DENIALS — overzealous-guard watch (per-type, latest sample)</div>
+        <div id="fric-guards"></div>
+      </div>
+      <div style="margin-top:14px">
+        <div style="font-size:11px;color:var(--dim);margin-bottom:6px">TRUNCATED OUTPUTS — model-visible vs log-level (by tool)</div>
+        <div id="fric-trunc"></div>
+      </div>
+      <div style="margin-top:14px">
+        <div style="font-size:11px;color:var(--dim);margin-bottom:6px">FRICTION CATEGORIES — non-ok records, classifier table (unclassified shown, not hidden)</div>
+        <div class="hbars" id="fric-cats"></div>
       </div>
     </div>
   </div>
@@ -739,6 +765,10 @@ function backendBadge(b){
   const k = b || "local";
   return '<span class="badge backend-'+esc(k)+'">'+esc(k)+'</span>';
 }
+function provBadge(p){
+  const k = p || "node4090";
+  return '<span class="badge prov-'+esc(k)+'">'+esc(k)+'</span>';
+}
 
 // ---- KB panel ----
 async function loadKB(){
@@ -813,15 +843,35 @@ function proposalAction(body){
   if(call==="record_outcome")      return [(a.success===false?"Demote KB doc":"Record outcome"), a.doc_id||"?"];
   if(call==="append_learned_rule") return ["Append rule to", a.target_file||"?"];
   if(call==="skill_outcome")       return ["Record skill outcome", a.skill_id||"?"];
+  if(body.type==="graph")          return ["Add graph entities/edges", a.doc_title||a.evidence_doc_id||"?"];
   return [call||body.type||"unknown action", a.title||a.task||a.doc_id||""];
 }
 function proposalDupKey(body){
   // Two proposals that would perform the same write are duplicates for the
   // operator even if their rationales differ. error-cluster emits these in
   // pairs (2026-08-03: two CancelledError, two SSH-triage in one run).
+  // record_error carries its subject in args.error_text (2026-09-23 fix:
+  // without this fallback every record_error card collapsed onto the empty
+  // key "record_error|" and the DUPLICATE badge fired on all of them).
   const a = body.args || {};
-  const subj = (a.task||a.title||a.doc_id||"").toLowerCase().replace(/[^a-z0-9]+/g,"").slice(0,40);
-  return (body.call||"")+"|"+subj;
+  const subj = (a.task||a.title||a.error_text||a.doc_id||a.evidence_doc_id||"").toLowerCase().replace(/[^a-z0-9]+/g,"").slice(0,40);
+  if(subj) return (body.call||"")+"|"+subj;
+  // Unknown shape, no known subject field: fall back to the stable proposal
+  // id so a card can never be badged as a duplicate of itself.
+  return (body.call||"")+"|self|"+(body.proposal_id||body.id||"unknown");
+}
+function proposalDetail(body){
+  // The why line is a machine rationale -- a deliberable card needs the
+  // SUBJECT of the write: which entities and edges would actually be inserted.
+  // Graph proposals carry them in args; every other type falls back to the
+  // original why text.
+  const a = body.args || {};
+  if(body.type==="graph"){
+    const ents=(a.entities||[]).map(e=>e.name+"("+e.type+")").join(", ")||"(none)";
+    const edges=(a.edges||[]).map(e=>e.src+" --"+e.rel+"--> "+e.dst).join("; ")||"(none)";
+    return "entities: "+ents+" | edges: "+edges;
+  }
+  return body.why||"";
 }
 function renderTraumHealth(health){
   // R3.2 (docs/TRAUM-R1-R3-PLAN.md): one line, front and centre, so the
@@ -1041,17 +1091,23 @@ async function loadTraumProposals(){
     });
     const rows=(d.proposals||[]).map(p=>{
       const body=p.proposal||{};
-      const why=body.why||"";
       const act=proposalAction(body);
       const isDup=dupCounts[proposalDupKey(body)]>1;
       const pid=esc(p.proposal_id), rev=Number(p.revision)||0;
       let actions='<div class="actions">'+
         '<button class="abtn" data-proposal-action="preview" data-proposal="'+pid+'" data-revision="'+rev+'">Preview</button>';
+      const graphRetry=p.state==="APPLY_FAILED"&&p.proposal_type==="graph";
       if(p.state!=="APPLY_FAILED"){
         actions+='<button class="abtn always" data-proposal-action="approve" data-proposal="'+pid+'" data-revision="'+rev+'">Approve</button>'+
           '<button class="abtn" data-proposal-action="defer" data-proposal="'+pid+'" data-revision="'+rev+'">Defer</button>';
-      }else{
-        actions+='<span class="badge state-APPLY_FAILED">RECONCILE BEFORE RETRY</span>';
+      }
+      if(p.state==="APPLY_FAILED"){
+        if(graphRetry){
+          actions+='<button class="abtn always" data-proposal-action="approve" data-proposal="'+pid+'" data-revision="'+rev+'">Approve (retry)</button>'+
+            '<span class="badge state-APPLY_FAILED" title="Graph apply performs no external write \u2014 the failure was a dispatch error, so retry is safe. Use Preview to re-validate the payload first.">APPLY_FAILED \u00b7 RETRY SAFE</span>';
+        }else{
+          actions+='<span class="badge state-APPLY_FAILED">RECONCILE BEFORE RETRY</span>';
+        }
       }
       actions+='<button class="abtn deny" data-proposal-action="reject" data-proposal="'+pid+'" data-revision="'+rev+'">Reject</button></div>';
       const dupTag=isDup
@@ -1061,7 +1117,7 @@ async function loadTraumProposals(){
           "<br><span style='color:var(--dim)'>"+esc(String(act[1]).slice(0,90))+"</span>"+
           "<br><span style='color:var(--faint);font-size:10px' title='"+esc(p.proposal_id)+"'>"+
           esc(p.proposal_id.slice(0,18))+" · "+esc(p.proposal_type||body.type||"?")+"</span></td>"+
-        "<td>"+esc(why.slice(0,180))+"</td><td>"+stateBadge(p.state)+" r"+esc(p.revision)+"</td><td>"+actions+"</td></tr>";
+        "<td>"+esc(proposalDetail(body).slice(0,180))+"</td><td>"+stateBadge(p.state)+" r"+esc(p.revision)+"</td><td>"+actions+"</td></tr>";
     }).join("");
     const incomplete=!exact||d.inventory_truncated;
     const emptyText=incomplete
@@ -1077,7 +1133,7 @@ async function loadTraumProposals(){
         )+'</td></tr>'
       : "";
     $("traum-proposals").innerHTML=rows
-      ? "<tr><th>what approving would do</th><th>why</th><th>state</th><th>decision</th></tr>"+rows+truncation
+      ? "<tr><th>what approving would do</th><th>detail</th><th>state</th><th>decision</th></tr>"+rows+truncation
       : '<tr><td class="empty">'+esc(emptyText)+'</td></tr>';
     wireTraumProposalButtons();
   }catch(e){showErr($("traum-proposals"),e);}
@@ -1166,13 +1222,14 @@ async function loadLedger(){
         "<td><span class='badge "+(t.status==="done"?"gt":t.status==="open"?"primary":"")+"'>"+esc(t.status)+"</span></td>"+
         "<td style='display:flex;gap:8px;align-items:center'>"+prog+"</td>"+
         "<td>"+backendBadge(t.backend)+"</td>"+
+        "<td>"+provBadge(t.provenance)+"</td>"+
         "<td style='color:var(--faint);font-size:11px;font-family:var(--mono)'>"+esc((t.updated_at||"").slice(0,16))+"</td>"+
         "<td class='ledger-delete'><button class='abtn delete' title='Archive and delete this task' "+
           "data-task-id=\""+esc(t.task_id||"")+"\" data-task-goal=\""+esc(t.goal||"")+"\" "+
           "data-task-status=\""+esc(t.status||"")+"\" onclick='deleteLedgerTask(this)'>Delete</button></td></tr>";
     }).join("");
     $("ledger-table").innerHTML = rows
-      ? "<tr><th>id</th><th>goal</th><th>status</th><th>steps</th><th>backend</th><th>updated</th><th class='ledger-delete'>delete</th></tr>"+rows
+      ? "<tr><th>id</th><th>goal</th><th>status</th><th>steps</th><th>backend</th><th>provenance</th><th>updated</th><th class='ledger-delete'>delete</th></tr>"+rows
       : '<tr><td class="empty">no task blocks yet — planner() writes them</td></tr>';
   }catch(e){ showErr($("ledger-table"), e); }
 }
@@ -1225,6 +1282,56 @@ async function loadEpisodes(){
     $("ep-daylbl").innerHTML = days.map(x=>"<div>"+x.date.slice(5)+"</div>").join("");
     $("ep-tools").innerHTML = hbar(d.top_tools,"var(--purple)");
   }catch(e){ showErr($("ep-days"), e); }
+}
+
+// ---- Friction panel (task b37bc23a) ----
+// Renders the additive d.friction aggregate from /api/ui/episodes.
+// Pre-restart the field is absent -> #fric-pending note, nothing else.
+async function loadFriction(){
+  try{
+    const d = await api("/api/ui/episodes");
+    $("fric-ms").textContent = d._elapsed_ms + "ms";
+    const f = d.friction;
+    if(!f){
+      $("fric-pending").style.display = "";
+      $("fric-nums").style.display = "none";
+      $("fric-body").style.display = "none";
+      return;
+    }
+    $("fric-pending").style.display = "none";
+    $("fric-nums").style.display = "";
+    $("fric-body").style.display = "";
+    const w = f.window || {};
+    $("fric-nums").innerHTML =
+      bn(w.non_ok ?? 0, "non-ok / "+(w.total ?? 0), (w.non_ok>0)?"bad":"good") +
+      bn((w.rate_pct ?? 0)+"%", "friction rate", (w.rate_pct ?? 0) >= 10 ? "bad" : "warn") +
+      bn(w.denied ?? 0, "denied", "warn") +
+      bn(w.timeout ?? 0, "timeouts", "warn");
+    // guard denials: per-type bars + latest sample line under each
+    const g = f.guards || {};
+    const types = Object.entries(g.by_type || {});
+    const samples = {};
+    (g.samples || []).forEach(s => { samples[s.type] = s; });
+    const maxG = types.length ? types[0][1] : 1;
+    $("fric-guards").innerHTML = types.length ? types.map(([type, n]) => {
+      const s = samples[type] || {};
+      const tip = ((s.head || "").replace(/\n/g, " ")) + "  —  " + (s.tool || "?") + " · " + (s.date || "");
+      return '<div class="hb"><div class="k" title="'+esc(tip)+'">'+esc(type)+
+        '</div><div class="track"><div class="fill" style="width:'+(100*n/maxG)+'%;background:var(--purple)"></div></div>'+
+        '<div class="n">'+n+'</div></div>'+
+        '<div style="font-size:10px;color:var(--dim);margin:-2px 0 6px 8px" title="'+esc(tip)+'">'+esc(tip)+'</div>';
+    }).join("") : '<div class="empty">no guard denials in window</div>';
+    // truncation: model-visible vs log-level, by tool
+    const t = f.truncation || {};
+    $("fric-trunc").innerHTML =
+      '<div style="font-size:11px;color:var(--dim);margin-bottom:4px">model-visible (MAX_OUTPUT_CHARS): <b>'+(t.model_total ?? 0)+'</b> · log-level (EPISODE_MAX_RESULT_CHARS): <b>'+(t.log_total ?? 0)+'</b></div>'+
+      hbar(Object.entries(t.model_by_tool || {}).map(([k,v])=>({key:k,count:v})), "var(--warn)") +
+      '<div style="font-size:11px;color:var(--dim);margin:6px 0 4px">log-level by tool</div>'+
+      hbar(Object.entries(t.log_by_tool || {}).map(([k,v])=>({key:k,count:v})), "var(--dim)");
+    // categories (classifier table; unclassified bucket shown, not hidden)
+    const cats = Object.entries(f.categories || {}).map(([k,v])=>({key:k,count:v}));
+    $("fric-cats").innerHTML = hbar(cats, "var(--bad)");
+  }catch(e){ showErr($("fric-guards"), e); }
 }
 
 // ---- Episode corpus hygiene (quarantine-only purge) ----
@@ -1305,7 +1412,7 @@ async function episodePurgeRun(){
 function refreshAll(){
   loadOverview(); loadPerms(); loadBackends(); loadKB(); loadDream();
   loadTraumStatus(); loadTraumRuns(); loadTraumProposals();
-  loadLedger(); loadEpisodes(); loadSkills();
+  loadLedger(); loadEpisodes(); loadSkills(); loadFriction();
 }
 refreshAll();
 setInterval(refreshAll, 60000);

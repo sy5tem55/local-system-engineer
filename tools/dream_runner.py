@@ -290,6 +290,34 @@ def _agent_log_default() -> str:
     return os.environ.get("GOETHE_AGENT_COMMANDS_LOG", "/opt/local-se/agent_commands.log")
 
 
+def _local_llama_server_url() -> str:
+    """Auto-discover the local llama-server (Unsloth Studio engine) URL.
+
+    The engine binds 127.0.0.1 on an EPHEMERAL port that changes per session,
+    so no hardcoded port is durable. ``pgrep -a llama-server`` exposes
+    ``--port N``; we health-probe the candidate before trusting it. Returns ''
+    when no local llama-server is running, so callers fall through to the
+    node3090 cascade exactly as before.
+    """
+    import subprocess  # noqa: PLC0415
+
+    try:
+        out = subprocess.run(
+            ["pgrep", "-a", "llama-server"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+    except Exception:
+        return ""
+    for line in out.splitlines():
+        m = re.search(r"--port\s+(\d+)", line)
+        if not m:
+            continue
+        url = f"http://127.0.0.1:{m.group(1)}"
+        if _health_probe(url):
+            return url
+    return ""
+
+
 def _dream_llm_url_default() -> str:
     """Cascade leg 0 -- the PRIMARY dreamer.
 
@@ -318,7 +346,19 @@ def _dream_llm_url_default() -> str:
     A --host of 0.0.0.0 also accepts loopback, so this works under either
     binding the Goethe GUI offers.
     """
-    return os.environ.get("GOETHE_DREAM_LLM_URL", "http://127.0.0.1:8080")
+    forced = os.environ.get("GOETHE_DREAM_LLM_URL", "")
+    if forced:
+        return forced
+    # Auto-discover the local Unsloth llama-server (strong local model on an
+    # ephemeral 127.0.0.1 port). The hardcoded :8080 default is stale by
+    # design -- the engine port changes every session, so a fixed URL is dead
+    # in production and the cascade burned every call on the weak node3090
+    # Ollama qwen3:4b fallback (2026-09-17: insights/digest/error-cluster all
+    # BLOCKED on "DREAMER UNAVAILABLE -- timed out", cycles stuck at 3/6).
+    local = _local_llama_server_url()
+    if local:
+        return local
+    return "http://127.0.0.1:8080"
 
 
 def _node3090_llm_url_default() -> str:
@@ -1668,7 +1708,7 @@ def request_dream_envelope(system_prompt: str, user_content: str, cfg: DreamConf
 # --- proposal shape guard (structural only — NOT the hard-invariant validator) -
 
 REQUIRED_PROPOSAL_KEYS = {"type", "call", "args", "why"}
-KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact", "prompt-rule", "diagnosis"}
+KNOWN_PROPOSAL_TYPES = {"dedup", "reverify", "demote", "skill-candidate", "kb-fact", "prompt-rule", "diagnosis", "graph"}
 
 # Prompt 3.6: the ONLY file a prompt-rule proposal may ever target. Fixed
 # here as a constant (not read from a proposal's own args at generation
@@ -3896,12 +3936,137 @@ def run_pass_insights(cfg: DreamConfig, sessions, episodes_by_session, kb_docs, 
     return all_proposals, "\n".join(narrative_lines), null_record, sub_passes
 
 
+# --- Phase 5 (roadmap 2026-09): seventh pass — graph backfill -------------
+
+def auto_project_graph_proposals(state, stored_rows: list[dict]) -> int:
+    """Option A (2026-09-23, operator "A + D + port filter"): auto-projection
+    for graph proposals, run right after the attempt's publication point
+    (finish_attempt) — proposals are not reviewable before it.
+
+    Graph proposals' source docs are human-approved lse-kb docs and the
+    extractor is deterministic with a fixed vocabulary, so per-card Human
+    Gate review was pure noise (the 2026-09-18 reject-all-graph stance is
+    explicitly overturned). Each graph row still goes through the CANONICAL
+    dream_apply.decide_proposal path — the same one the GUI decision
+    endpoint uses: live validation, atomic claim, finalize, then the
+    idempotent lse-graph projection via
+    goethe_graph.materialize_accepted_graph.
+
+    Fail closed: a row whose decision raises is left exactly where it was
+    (STAGED/PENDING) so it still reaches the gate; nothing is lost.
+    Non-graph types are untouched — they still gate as before.
+
+    Args:
+        state: the traum_state.TraumState for this run.
+        stored_rows: rows as returned by state.record_proposals().
+
+    Returns:
+        Number of graph proposals auto-applied. Applied rows are updated
+        in place (row["state"] = "APPLIED") so callers' inbox filters
+        (state in {"STAGED", "PENDING"}) skip them automatically.
+    """
+    import dream_apply  # noqa: PLC0415 (sibling module in tools/)
+
+    count = 0
+    for row in stored_rows:
+        _p = row["proposal"]
+        if (_p.get("type") == "graph"
+                and row["state"] in {"STAGED", "PENDING"}):
+            try:
+                _res = dream_apply.decide_proposal(
+                    state, row["proposal_id"], "approve",
+                    actor="system:graph-backfill-auto",
+                    reason=("auto-projected at staging: source "
+                            "is a human-approved lse-kb doc; "
+                            "deterministic fixed-vocabulary "
+                            "extraction, no LLM"),
+                )
+                row["state"] = _res.get("state") or row["state"]
+                _proj = _res.get("graph_projection") or {}
+                count += 1
+                print(f"[dream_runner] Option A: auto-projected "
+                      f"{row['proposal_id']} (projection: {_proj})",
+                      file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[dream_runner] graph auto-projection left "
+                      f"{row['proposal_id']} at {row['state']}: {exc}",
+                      file=sys.stderr)
+    if count:
+        print(f"[dream_runner] Option A: {count} graph proposal(s) "
+              f"auto-projected at staging "
+              f"(actor=system:graph-backfill-auto)", file=sys.stderr)
+    return count
+
+
+def run_pass_graph_backfill(cfg: DreamConfig, sessions, episodes_by_session,
+                            kb_docs, error_docs) -> tuple:
+    """Phase 5 — the seventh pass: backfill graph extraction over lse-kb.
+
+    Runs the deterministic, fixed-vocabulary extractor
+    (tools/goethe_graph.py) over EVERY lse-kb doc and returns "graph"
+    proposals. The main flow persists them through the canonical
+    state.record_proposals path — same Human Gate as every other
+    proposal type; the graph never self-writes. No LLM calls: this pass
+    is cheap and budget-neutral.
+    """
+    import goethe_graph  # noqa: PLC0415 (sibling module in tools/)
+
+    if not kb_docs:
+        narrative = (
+            "graph-backfill pass (seventh pass, Phase 5): lse-kb returned "
+            "zero docs (empty index or ES unreachable this run) — nothing "
+            "to extract. Null result (PH3-2)."
+        )
+        return [], narrative, _null_record(
+            "graph-backfill", "empty_kb", looked=True,
+            corpus_size={"kb_docs": 0, "docs_with_entities": 0,
+                         "graph_proposals": 0},
+            thresholds={"entity_types": len(goethe_graph.ENTITY_TYPES),
+                        "relations": len(goethe_graph.RELATIONS)},
+        )
+
+    proposals = []
+    docs_with_entities = 0
+    for doc in kb_docs:
+        doc_id = doc.get("_id") or ""
+        content = doc.get("content") or ""
+        title = doc.get("title") or ""
+        if not doc_id or not content:
+            continue
+        got = goethe_graph.extract_graph_proposals(content, doc_id, title)
+        if got:
+            docs_with_entities += 1
+            proposals.extend(got)
+
+    narrative = (
+        f"graph-backfill pass (seventh pass, Phase 5): scanned "
+        f"{len(kb_docs)} lse-kb docs; {docs_with_entities} had extractable "
+        f"entities; {len(proposals)} graph proposals staged through the "
+        f"Human Gate (fixed vocabulary: "
+        f"{len(goethe_graph.ENTITY_TYPES)} entity types, "
+        f"{len(goethe_graph.RELATIONS)} relations; deterministic, no LLM "
+        f"calls)."
+    )
+    null_record = None
+    if not proposals:
+        null_record = _null_record(
+            "graph-backfill", "no_entities", looked=True,
+            corpus_size={"kb_docs": len(kb_docs),
+                         "docs_with_entities": 0,
+                         "graph_proposals": 0},
+            thresholds={"entity_types": len(goethe_graph.ENTITY_TYPES),
+                        "relations": len(goethe_graph.RELATIONS)},
+        )
+    return proposals, narrative, null_record
+
+
 PASS_FUNCS = {
     "dedup": run_pass_dedup,
     "stale-contradiction": run_pass_stale_contradiction,
     "error-cluster": run_pass_error_cluster,
     "patterns": run_pass_patterns,
     "insights": run_pass_insights,
+    "graph-backfill": run_pass_graph_backfill,  # Phase 5 (seventh pass)
 }
 
 # --- output: report.md + proposals.jsonl ------------------------------------
@@ -4994,7 +5159,7 @@ def main(argv=None) -> int:
             kb_docs: list = []
             error_docs: list = []
             try:
-                if cfg.pass_name in ("dedup", "stale-contradiction"):
+                if cfg.pass_name in ("dedup", "stale-contradiction", "graph-backfill"):
                     kb_docs = search_index(
                         cfg, "lse-kb", {"query": {"match_all": {}}, "size": 500,
                                         "_source": KB_SOURCE_FIELDS},
@@ -5072,6 +5237,9 @@ def main(argv=None) -> int:
                 stored = state.record_proposals(
                     cfg.run_id, cfg.attempt_id, proposals_for_state
                 )
+                # (Option A graph auto-projection happens after the
+                # finish_attempt publication point — the state machine does
+                # not make proposals reviewable until the attempt completes.)
                 # Exact repeats/malformed entries are resolved automatically
                 # and never enter either the human inbox or legacy queue files.
                 proposals = [
@@ -5145,6 +5313,11 @@ def main(argv=None) -> int:
                     exit_code=3 if cfg.budget.truncated else 0,
                     consumed_session_ids=consume_ids,
                 )
+                # Option A (2026-09-23, operator "A + D + port filter"):
+                # auto-project graph proposals now that the attempt is
+                # published and its proposals are reviewable. Rationale and
+                # fail-closed semantics in auto_project_graph_proposals().
+                auto_project_graph_proposals(state, stored)
             print(f"[dream_runner] {mode}done. run={cfg.run_id or '(preview)'} "
                   f"attempt={cfg.attempt_id or '(preview)'} report={report_path} "
                   f"proposals={proposals_path} n_proposals={len(proposals)}{null_suffix}",

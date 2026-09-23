@@ -164,6 +164,7 @@ from datetime import date, datetime
 
 import dream_runner as dr  # sibling module: reuse validate_proposal_shape, not a second validator
 import dream_digest        # Prompt 3.4: morning digest refresh at end of run
+import goethe_graph        # Phase 5 graph class: payload re-validation + idempotent projection
 import traum_state
 
 __version__ = "0.5.0"
@@ -532,6 +533,27 @@ def validate_proposal_for_apply(p: dict, es) -> str:
         if err:
             return err
 
+    if ptype == "graph":
+        # Orphan guard (2026-09-18 queue pollution incident): a graph
+        # proposal is only reviewable while its evidence docs still exist.
+        # Approving one whose evidence was deleted would write entities and
+        # edges pointing at docs that are no longer in lse-kb, so reject it
+        # at apply time instead of wasting a human decision.
+        missing = []
+        for doc_id in {
+            str(args.get("evidence_doc_id") or ""),
+            *[str(e.get("evidence_doc_id") or "")
+              for e in args.get("edges", []) if isinstance(e, dict)],
+        }:
+            if doc_id and fetch_kb_doc(es, doc_id) is None:
+                missing.append(doc_id)
+        if missing:
+            return (
+                "orphan graph evidence: "
+                + ", ".join(sorted(missing))
+                + " not found in lse-kb at apply time"
+            )
+
     if call == "skill_record":
         err = check_procedure_step_count(args)
         if err:
@@ -618,6 +640,21 @@ def render_group(group: list, dream_dir: str) -> str:
                 ("evidence (episode ids):", ", ".join(p.get("evidence", [])) or "(none)"),
             ]
             multiline = {"procedure": args.get("procedure", "")}
+        elif call == "none" and p.get("type") == "graph":
+            # Phase 5 graph proposal — no tool dispatch; the reviewer must
+            # see exactly what will be projected into lse-graph.
+            lines = [
+                ("evidence_doc_id:", args.get("evidence_doc_id", "")),
+                ("entities:", ", ".join(
+                    f"{e.get('type')}:{e.get('name')}"
+                    for e in args.get("entities", []) if isinstance(e, dict)
+                ) or "(none)"),
+                ("edges:", ", ".join(
+                    f"{g.get('src')} --{g.get('rel')}--> {g.get('dst')}"
+                    for g in args.get("edges", []) if isinstance(g, dict)
+                ) or "(none)"),
+                ("note:", "no tool dispatch — projected into lse-graph after approval (idempotent)"),
+            ]
         elif call == "append_learned_rule":
             lines = [
                 ("target_file:", args.get("target_file", "")),
@@ -798,7 +835,13 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
         call = p.get("call")
         args = p.get("args", {})
         if dry_run:
-            results.append({"proposal": p, "result": f"[dry-run] would call {call}({args})"})
+            if call == "none" and p.get("type") == "graph":
+                results.append({"proposal": p, "result":
+                    f"[dry-run] would approve graph payload "
+                    f"({len(args.get('entities', []))} entities, "
+                    f"{len(args.get('edges', []))} edges); no tool call"})
+            else:
+                results.append({"proposal": p, "result": f"[dry-run] would call {call}({args})"})
             continue
 
         if call == "mentor_correct":
@@ -915,6 +958,19 @@ def apply_group(tools, group: list, dry_run: bool, repo_root: str = ".") -> list
             ))
             results.append({"proposal": p, "result": result})
 
+        elif call == "none" and p.get("type") == "graph":
+            # Phase 5 graph class (call='none'): NO tool dispatch — the
+            # Human Gate is the only thing that moves a proposal to
+            # APPLIED, and materialization is a pure idempotent projection
+            # (goethe_graph.materialize_accepted_graph) that
+            # decide_proposal runs after finalize. Re-validate the stored
+            # payload against the current vocabulary here so a stale
+            # payload fails closed before the decision is recorded.
+            ents, edges = goethe_graph.parse_graph_proposal(p)
+            results.append({"proposal": p, "result":
+                f"graph approved: {len(ents)} entities, {len(edges)} edges "
+                "(materialized by projection after finalize)"})
+
         else:
             raise ApplyError(f"unknown call {call!r}, not applied")
 
@@ -950,6 +1006,27 @@ def _load_tools_for_decision(tools, es_url, ollama_url, embed_model, goethe_path
         return tools
     Tools = load_tools_class(goethe_path)
     return make_tools_instance(Tools, es_url, ollama_url, embed_model)
+
+
+def _project_graph(state: traum_state.TraumState, tools, es_url, ollama_url,
+                   embed_model, goethe_path) -> dict:
+    """Run the idempotent lse-graph projection after a graph approval.
+
+    Returns goethe_graph.materialize_accepted_graph's summary, or
+    {"error": ...} when the projection could not run (tool-load or ES
+    failure). Never raises: the operator's decision is already recorded
+    in canonical state and the projection is re-runnable — re-approving
+    an APPLIED graph proposal re-runs it (see decide_proposal).
+    """
+    try:
+        tool_obj = _load_tools_for_decision(
+            tools, es_url or _es_url_default(), ollama_url or _ollama_url_default(),
+            embed_model or _embed_model_default(), goethe_path or _goethe_path_default())
+        return goethe_graph.materialize_accepted_graph(
+            es=tool_obj._es(), state_db=state.db_path)
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: "
+                         f"{traum_state.redact_persisted_text(str(exc)) or 'redacted projection failure'}"}
 
 
 def preview_proposal(state_or_path, proposal_id: str, *, tools=None,
@@ -1198,8 +1275,15 @@ def decide_proposal(state_or_path, proposal_id: str, decision: str, *,
         raise ValueError("decision must be approve, reject, or defer")
 
     if all(row["state"] == "APPLIED" for row in rows):
-        return {"decision": "approve", "state": "APPLIED",
-                "proposals": rows, "idempotent": True}
+        out = {"decision": "approve", "state": "APPLIED",
+               "proposals": rows, "idempotent": True}
+        if any(row["proposal"].get("type") == "graph" for row in rows):
+            # Re-approve of an already-APPLIED graph proposal doubles as a
+            # projection retry: the decision is already recorded, so this
+            # can only re-run the idempotent lse-graph projection.
+            out["graph_projection"] = _project_graph(
+                state, tools, es_url, ollama_url, embed_model, goethe_path)
+        return out
 
     tool_obj = _load_tools_for_decision(
         tools, es_url or _es_url_default(), ollama_url or _ollama_url_default(),
@@ -1261,8 +1345,16 @@ def decide_proposal(state_or_path, proposal_id: str, decision: str, *,
             "applied_at": now, "dry_run": False,
         },
     )
-    return {"decision": "approve", "state": "APPLIED",
-            "proposals": applied, "results": results, "idempotent": False}
+    out = {"decision": "approve", "state": "APPLIED",
+           "proposals": applied, "results": results, "idempotent": False}
+    if any(row["proposal"].get("type") == "graph" for row in applied):
+        # Materialize the just-APPLIED graph payload into lse-graph. The
+        # projection is idempotent (deterministic doc ids), so a failure
+        # does NOT roll back the operator's decision — the proposal stays
+        # APPLIED and the error is surfaced; re-approve retries it.
+        out["graph_projection"] = _project_graph(
+            state, tool_obj, es_url, ollama_url, embed_model, goethe_path)
+    return out
 
 
 # --- queue mode (Prompt 4.4, TRAUM-AUTO) -----------------------------------

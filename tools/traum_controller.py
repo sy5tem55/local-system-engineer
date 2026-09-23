@@ -532,6 +532,7 @@ class TraumController:
                 result.get("total_before_actionability", total_visible) or 0
             )
             hidden = int(result.get("hidden_future_deferred", 0) or 0)
+            rows = self._enrich_proposal_cards(rows)
             return {
                 "proposals": rows,
                 "actionable_only": bool(actionable_only),
@@ -574,6 +575,7 @@ class TraumController:
             rows = visible
         total_visible = len(rows)
         page = rows[offset:offset + limit]
+        page = self._enrich_proposal_cards(page)
         return {
             "proposals": page,
             "actionable_only": bool(actionable_only),
@@ -589,6 +591,119 @@ class TraumController:
             "inventory_truncated": inventory_truncated,
             "counts_exact": not inventory_truncated,
         }
+
+    # ------------------------------------------------------------------
+    # Proposal card enrichment (2026-09-18: deliberable Human Gate)
+    # ------------------------------------------------------------------
+
+    def _evidence_es(self):
+        """Lazy read-only ES client for evidence-doc enrichment.
+
+        Returns None (never raises) when the dependency is unavailable —
+        enrichment is best-effort and must never break the listing.
+        """
+        try:
+            from elasticsearch import Elasticsearch
+            url = self._apply_module._es_url_default()
+            es = Elasticsearch(url, request_timeout=5)
+            if not es.ping():
+                return None
+            return es
+        except Exception:  # noqa: BLE001 — card enrichment must not break the listing
+            return None
+
+    def _fetch_evidence_doc(self, es, doc_id: str) -> dict | None:
+        """Fetch one lse-kb evidence doc for a card. Never raises."""
+        if es is None or not doc_id:
+            return None
+        try:
+            src = self._apply_module.fetch_kb_doc(es, doc_id)
+        except Exception:  # noqa: BLE001 — card enrichment must not break the listing
+            return None
+        if src is None:
+            return {"found": False, "doc_id": doc_id}
+        return {
+            "found": True,
+            "doc_id": doc_id,
+            "title": src.get("title") or "",
+            "source_tier": src.get("source_tier") or "",
+            "quality_score": src.get("quality_score"),
+            "stale": bool(src.get("stale")),
+            "updated_at": src.get("updated_at") or "",
+            "content_excerpt": str(src.get("content") or "")[:1500],
+        }
+
+    def _enrich_proposal_cards(self, rows: list) -> list:
+        """Add first-class, human-readable fields to PENDING graph and
+        diagnosis proposal cards so the operator can decide without
+        opening the raw payload.
+
+        graph:     evidence_docs (found/title/tier/quality/excerpt/stale
+                   per distinct evidence doc) + plain_english_effect
+                   (what approving would materialize into lse-graph).
+        diagnosis: diagnosis_context (error_text/context/interpretation/
+                   resolution/anti_response) + plain_english_effect.
+
+        Fail-open by design: an ES outage or an odd payload leaves the
+        row unchanged — the listing must never break because enrichment
+        could not run.
+        """
+        targets = [
+            row for row in rows
+            if str(row.get("state", "")).upper() == "PENDING"
+            and row.get("proposal_type") in {"graph", "diagnosis"}
+            and isinstance(row.get("proposal"), dict)
+        ]
+        if not targets:
+            return rows
+        es = self._evidence_es()
+        for row in targets:
+            payload = row["proposal"]
+            args = payload.get("args") or {}
+            if row.get("proposal_type") == "graph":
+                ids = []
+                for did in [args.get("evidence_doc_id"),
+                            *[e.get("evidence_doc_id")
+                              for e in args.get("edges", [])
+                              if isinstance(e, dict)]]:
+                    did = str(did or "")
+                    if did and did not in ids:
+                        ids.append(did)
+                docs = [self._fetch_evidence_doc(es, did)
+                        for did in ids[:5]]
+                row["evidence_docs"] = docs
+                row["evidence_doc"] = docs[0] if docs else None
+                entities = [e for e in args.get("entities", [])
+                            if isinstance(e, dict)]
+                edges = [e for e in args.get("edges", [])
+                         if isinstance(e, dict)]
+                sample = next(
+                    (f"{e.get('src')} {e.get('rel')} {e.get('dst')}"
+                     for e in edges
+                     if e.get("rel") != "documented_by"
+                     and all(e.get(k) for k in ("src", "rel", "dst"))),
+                    None)
+                doc_label = ((row.get("evidence_doc") or {}).get("title")
+                             or (row.get("evidence_doc") or {}).get("doc_id")
+                             or "(evidence doc missing)")
+                row["plain_english_effect"] = (
+                    f"Add {len(entities)} entities and {len(edges)} edges to "
+                    f"lse-graph"
+                    + (f" (e.g. {sample})" if sample else "")
+                    + f", evidenced by '{doc_label}'."
+                )
+            else:  # diagnosis
+                row["diagnosis_context"] = {
+                    k: str(args.get(k) or "")
+                    for k in ("error_text", "context", "interpretation",
+                              "resolution", "anti_response")
+                }
+                lines = str(args.get("error_text") or "").splitlines()
+                row["plain_english_effect"] = (
+                    "Record diagnosis: "
+                    + (lines[0][:120] if lines else "(no error text)")
+                )
+        return rows
 
     # ------------------------------------------------------------------
     # Fixed process orchestration
