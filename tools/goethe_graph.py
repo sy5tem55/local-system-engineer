@@ -255,6 +255,25 @@ _KNOWN_SERVICES = (
     "elasticsearch", "searxng", "grafana", "vaultwarden", "openwebui",
     "comfyui", "unsloth", "sshd", "systemd",
 )
+# Port filter (2026-09-23, operator "A + D + port filter"): allowlist of
+# environment-STABLE ports. Only these become "port" entities at extraction;
+# ephemeral per-session ports (e.g. 8083, 33703) are dropped together with
+# their documented_by edges. Add a port here only when it is a verified
+# stable bind for the LSE nodes - each entry cites its live-verified source.
+_STABLE_PORTS = frozenset({
+    22,      # sshd (both nodes)
+    8080,    # llama-server / Studio UI pin (node3090; KB d265b2003ac5aa32)
+    8088,    # SearxNG (node4090)
+    8090,    # lse-emb (node3090; KB d265b2003ac5aa32)
+    8092,    # lse-neural-api (node3090; KB d265b2003ac5aa32)
+    8188,    # ComfyUI (node3090; KB eee202b834b2be34)
+    8888,    # Unsloth Studio UI (node4090; KB 3dfcafb1ddb99f4e)
+    9200,    # Elasticsearch (node4090; GOETHE_ES_URL default)
+    9700,    # goethe_mcp gateway (both nodes)
+    11434,   # ollama (node3090; KB d265b2003ac5aa32)
+    3002,    # Grafana (node4090)
+    3003,    # Vaultwarden (node4090; KB 735a620bdc475f4d)
+})
 
 
 def _extract_entities(text: str) -> list:
@@ -277,9 +296,14 @@ def _extract_entities(text: str) -> list:
     for name in _KNOWN_SERVICES:
         if re.search(r"\b" + re.escape(name) + r"\b", text, re.IGNORECASE):
             found.setdefault(("service", name.lower()), {})
+    # Port filter (2026-09-23, operator "A + D + port filter"): only
+    # environment-stable ports are graph material. The Studio engine port is
+    # kernel-ephemeral per session (KB 3dfcafb1ddb99f4e) and docs quote those
+    # session ports verbatim (8083, 33703) - unfiltered, every engine doc
+    # mints one-session port entities that die on the next Studio restart.
     for m in re.finditer(r"\bport[:\s]+(\d{2,5})\b", text, re.IGNORECASE):
         p = int(m.group(1))
-        if 1 <= p <= 65535:
+        if p in _STABLE_PORTS:
             found.setdefault(("port", str(p)), {})
     for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9._]*?-\d{1,4}B\b", text):
         found.setdefault(("model", m.group(0)), {})

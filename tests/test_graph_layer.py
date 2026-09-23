@@ -231,6 +231,27 @@ class TestExtractionVocabulary:
         names = {e["name"] for e in ents}
         assert {"node3090", "goethe_mcp", "9700", "rutx50"} <= names
 
+    def test_port_filter_drops_ephemeral_keeps_stable(self):
+        # 2026-09-23 operator decision "A + D + port filter": the Studio
+        # engine port is kernel-ephemeral per session (KB 3dfcafb1ddb99f4e);
+        # docs quote session ports verbatim. Only environment-stable ports
+        # are graph material - ephemeral ones must not become entities, and
+        # their documented_by edges must not be minted either.
+        props = goethe_graph.extract_graph_proposals(
+            "llama-server bound 127.0.0.1 on port 8083 this session; "
+            "the gateway is port:9700; a forwarder tried port 33703; "
+            "Studio UI listens on port 8080.",
+            "docPorts",
+        )
+        assert len(props) == 1
+        ents = props[0]["args"]["entities"]
+        port_names = {e["name"] for e in ents if e["type"] == "port"}
+        assert port_names == {"9700", "8080"}  # stable ports kept
+        assert not ({"8083", "33703"} & port_names)  # ephemeral dropped
+        edge_srcs = {e["src"] for e in props[0]["args"]["edges"]}
+        assert "8083" not in edge_srcs
+        assert "33703" not in edge_srcs
+
     def test_model_token_extracted_as_model_type(self):
         props = goethe_graph.extract_graph_proposals(
             "serving Qwen3-27B on the box", "docM")
