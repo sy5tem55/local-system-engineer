@@ -47,6 +47,7 @@ from goethe_node import NodeLifecycleMixin  # noqa: E402
 # D6 topology sweep (2026-07-31), moved to goethe_constants.py in D7 Step 9
 # (2026-07-31) so mixins can share it without importing goethe.py itself.
 from goethe_constants import _LSE_BASE_PATH  # noqa: E402
+from goethe_deep_search import DeepSearchMixin  # noqa: E402
 from goethe_planner import PlannerMixin  # noqa: E402
 
 # P1: dead-default llama-server URL — Unsloth Studio binds an ephemeral
@@ -63,7 +64,7 @@ _PROCESS_START_TS = datetime.now(timezone.utc).isoformat()
 
 
 
-class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin):
+class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin, DeepSearchMixin):
 
     class Valves(BaseModel):
         LOG_FILE: str = Field(
