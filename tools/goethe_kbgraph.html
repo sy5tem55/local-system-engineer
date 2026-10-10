@@ -3,271 +3,1259 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Goethe — Knowledge Graph</title>
 <style>
   :root{
-    --bg:#0b1020; --panel:#111a30; --line:#22304f; --txt:#d7e1ff;
-    --dim:#8296c4; --accent:#4da3ff; --warn:#ffb454; --ok:#39d98a;
+    --ink:#10141D; --graphite:#1A202E; --line:#2A3245;
+    --fog:#A8B0C2; --paper:#E8EAF0; --err:#E5484D;
+    --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+    --mono:ui-monospace,"Cascadia Code","SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);
-       font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-  header{display:flex;align-items:center;gap:12px;padding:10px 16px;
-         background:var(--panel);border-bottom:1px solid var(--line)}
-  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.3px}
-  header .sub{color:var(--dim);font-size:12px}
-  header input{background:#0d1428;border:1px solid var(--line);color:var(--txt);
-               border-radius:6px;padding:5px 9px;width:220px;font-size:12px}
-  header button{background:var(--accent);border:0;color:#04101f;font-weight:600;
-                border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px}
-  header .spacer{flex:1}
-  #status{font-size:12px;color:var(--dim)}
-  #status.err{color:var(--warn)}
-  #wrap{position:relative;width:100vw;height:calc(100vh - 52px)}
-  canvas{display:block;width:100%;height:100%}
-  #empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
-         flex-direction:column;gap:8px;text-align:center;padding:24px}
-  #empty .big{font-size:18px;font-weight:600}
-  #empty .small{color:var(--dim);font-size:13px;max-width:520px}
-  #tip{position:absolute;pointer-events:none;background:#0d1428ee;border:1px solid var(--line);
-       border-radius:6px;padding:6px 9px;font-size:12px;display:none;max-width:340px;z-index:5}
-  #legend{position:absolute;left:12px;bottom:12px;background:#0d1428cc;border:1px solid var(--line);
-          border-radius:8px;padding:8px 12px;font-size:11px;color:var(--dim);display:none}
-  #legend .row{display:flex;align-items:center;gap:6px;margin-top:4px}
-  #legend .dot{width:9px;height:9px;border-radius:50%}
+  html,body{height:100%}
+  body{margin:0;background:var(--ink);color:var(--paper);
+       font:13px/1.45 var(--sans);display:flex;flex-direction:column;overflow:hidden}
+
+  .kg-header{display:flex;align-items:center;gap:14px;height:48px;padding:0 14px;
+       background:var(--graphite);border-bottom:1px solid var(--line);flex:none}
+  .kg-title{font-size:15px;font-weight:600;margin:0;white-space:nowrap}
+  .kg-sub{color:var(--fog);font-size:11px;white-space:nowrap}
+  .kg-header .kg-spacer{flex:1}
+  .kg-status{font-size:12px;color:var(--fog);white-space:nowrap}
+  .kg-status.kg-err{color:var(--err)}
+  .kg-input{background:var(--ink);border:1px solid var(--line);color:var(--paper);
+       border-radius:4px;padding:5px 9px;font-size:12px;width:190px;font-family:var(--sans)}
+  .kg-input:focus-visible, .kg-btn:focus-visible, .kg-row:focus-visible, a:focus-visible{
+       outline:2px solid rgba(232,234,240,.6);outline-offset:1px}
+  .kg-btn{background:var(--graphite);border:1px solid var(--line);color:var(--paper);
+       border-radius:4px;padding:5px 12px;cursor:pointer;font-size:12px;font-family:var(--sans)}
+  .kg-btn:hover{border-color:var(--fog)}
+  .kg-btn-primary{background:var(--paper);border-color:var(--paper);color:var(--ink);font-weight:600}
+  .kg-btn-primary:hover{border-color:var(--paper);opacity:.85}
+
+  .kg-main{display:flex;flex:1;min-height:0}
+
+  .kg-rail{width:216px;flex:none;background:var(--graphite);border-right:1px solid var(--line);
+       display:flex;flex-direction:column;overflow-y:auto}
+  .kg-sec{padding:12px 14px;border-bottom:1px solid var(--line)}
+  .kg-sec-title{font-size:11px;color:var(--fog);margin:0 0 8px}
+  .kg-search{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--paper);
+       border-radius:4px;padding:6px 9px;font-size:12px;font-family:var(--sans)}
+  .kg-search::placeholder{color:var(--fog);opacity:.7}
+  .kg-check-row{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;
+       font-size:12px;color:var(--paper)}
+  .kg-check-row input{accent-color:var(--fog);margin:0;cursor:pointer}
+  .kg-dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .kg-count{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--fog)}
+  .kg-rel-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px}
+  .kg-rel-key{font-family:var(--mono);color:var(--fog)}
+  .kg-reset{margin:12px 14px;width:calc(100% - 28px)}
+  .kg-strip{margin-top:auto;padding:12px 14px;border-top:1px solid var(--line)}
+  .kg-strip-row{display:flex;justify-content:space-between;font-family:var(--mono);
+       font-size:11.5px;padding:2px 0;color:var(--fog)}
+  .kg-strip-row b{color:var(--paper);font-weight:500}
+
+  .kg-canvas-wrap{flex:1;position:relative;min-width:0}
+  .kg-canvas{display:block;width:100%;height:100%;cursor:grab}
+  .kg-canvas:focus-visible{outline:2px solid rgba(232,234,240,.55);outline-offset:-2px}
+
+  .kg-tip{position:absolute;pointer-events:none;background:var(--graphite);
+       border:1px solid var(--line);border-radius:4px;padding:8px 10px;font-size:12px;
+       display:none;max-width:360px;z-index:6;line-height:1.4}
+  .kg-tip b{font-weight:600}
+  .kg-tip-sub{color:var(--fog);font-size:11px;margin-top:2px;font-family:var(--mono)}
+  .kg-tip .kg-flag-stale{color:var(--err);font-size:11px;margin-left:6px}
+
+  .kg-empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+       background:rgba(16,20,29,.72);z-index:4}
+  .kg-empty-card{background:var(--graphite);border:1px solid var(--line);border-radius:6px;
+       padding:22px 26px;max-width:520px;text-align:left}
+  .kg-empty-title{font-size:15px;font-weight:600;margin:0 0 8px}
+  .kg-empty-body{color:var(--fog);font-size:13px;margin:0 0 14px;max-width:480px}
+  .kg-empty-body code{font-family:var(--mono);font-size:12px;color:var(--paper)}
+
+  .kg-inspector{position:absolute;top:0;right:0;bottom:0;width:300px;flex:none;z-index:5;
+       background:var(--graphite);border-left:1px solid var(--line);
+       transform:translateX(100%);transition:transform 160ms ease;
+       display:flex;flex-direction:column}
+  .kg-inspector.kg-open{transform:translateX(0)}
+  .kg-head{padding:12px 14px;border-bottom:1px solid var(--line)}
+  .kg-close{margin-bottom:10px}
+  .kg-head-name{font-size:14px;font-weight:600;line-height:1.35;word-break:break-word}
+  .kg-head-sub{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--fog)}
+  .kg-chip{border-radius:3px;padding:1px 6px;font-size:11px;font-family:var(--mono)}
+  .kg-id{font-family:var(--mono);font-size:10.5px;color:var(--fog);margin-top:6px;
+       opacity:.75;user-select:all}
+  .kg-body{flex:1;overflow-y:auto;padding:6px 0 14px}
+  .kg-sec-title{margin:8px 14px 2px}
+  .kg-row{display:flex;align-items:center;gap:8px;width:calc(100% - 28px);margin:1px 14px;
+       background:none;border:1px solid transparent;border-radius:4px;padding:5px 8px;
+       cursor:pointer;font-size:12px;color:var(--paper);text-align:left;font-family:var(--sans)}
+  .kg-row:hover{border-color:var(--line);background:var(--ink)}
+  .kg-row-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kg-relchip{font-family:var(--mono);font-size:10px;flex:none;max-width:96px;
+       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .kg-row-meta{font-family:var(--mono);font-size:10px;color:var(--fog);flex:none}
+  .kg-qbar{width:34px;height:4px;background:var(--ink);border-radius:2px;flex:none;overflow:hidden}
+  .kg-qbar i{display:block;height:100%;background:var(--fog)}
+  .kg-flag-stale{color:var(--err);font-size:10.5px;font-family:var(--mono);flex:none}
+  .kg-meta-row{display:flex;justify-content:space-between;gap:10px;padding:3px 14px;
+       font-size:11.5px;color:var(--fog)}
+  .kg-meta-row b{color:var(--paper);font-weight:500;font-family:var(--mono);font-size:11px;
+       text-align:right;word-break:break-word}
+  .kg-meta-row a{color:var(--paper);text-decoration:underline;text-underline-offset:2px}
+
+  @media (prefers-reduced-motion: reduce){
+    .kg-inspector{transition:none}
+  }
+  @media (max-width: 760px){
+    .kg-rail{display:none}
+    .kg-sub{display:none}
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>Knowledge Graph</h1>
-  <span class="sub">lse-graph · Phase 5</span>
-  <span class="spacer"></span>
-  <span id="status">loading…</span>
-  <input id="token" type="password" placeholder="gateway token" autocomplete="off">
-  <button id="connect">Connect</button>
+<header class="kg-header">
+  <h1 class="kg-title">Knowledge Graph</h1>
+  <span class="kg-sub">lse-graph index</span>
+  <span class="kg-spacer"></span>
+  <span id="status" class="kg-status">loading graph…</span>
+  <input id="token" class="kg-input" type="password" placeholder="gateway token"
+         autocomplete="off" spellcheck="false">
+  <button id="connect" class="kg-btn kg-btn-primary">Connect</button>
 </header>
-<div id="wrap">
-  <canvas id="cv"></canvas>
-  <div id="empty">
-    <div class="big" id="empty-title"></div>
-    <div class="small" id="empty-body"></div>
+
+<div class="kg-main">
+  <aside class="kg-rail" id="rail"></aside>
+  <div class="kg-canvas-wrap">
+    <canvas id="cv" class="kg-canvas" tabindex="0"
+            aria-label="Knowledge graph. Use arrow keys to move between nodes, Enter to inspect, Escape to close."></canvas>
+    <div class="kg-empty" id="empty">
+      <div class="kg-empty-card">
+        <div class="kg-empty-title" id="empty-title"></div>
+        <p class="kg-empty-body" id="empty-body"></p>
+        <button class="kg-btn" id="empty-action" style="display:none">Retry</button>
+      </div>
+    </div>
+    <div class="kg-tip" id="tip"></div>
+    <aside class="kg-inspector" id="inspector" aria-label="Node details"></aside>
   </div>
-  <div id="tip"></div>
-  <div id="legend"></div>
 </div>
+
 <script>
 "use strict";
+/* Goethe knowledge-graph renderer.
+   Canvas + Barnes-Hut. The animation loop runs only while the layout is
+   settling or the user is interacting — it stops on convergence, so an
+   idle graph costs zero frames. */
+
 const $ = id => document.getElementById(id);
-const token = () => localStorage.getItem("goethe_token") || "";
-$("token").value = token();
-$("connect").onclick = () => { localStorage.setItem("goethe_token", $("token").value.trim()); load(); };
-$("token").addEventListener("keydown", e => { if (e.key === "Enter") $("connect").click(); });
-
-const COLORS = {
-  node:"#4da3ff", service:"#39d98a", model:"#c792ea", port:"#ffb454",
-  person:"#f78c6c", place:"#82d9ff", concept:"#d7e1ff", device:"#7aa2f7",
-  credential:"#ff6b9d", unknown:"#5a6b95"
-};
-const colorFor = t => COLORS[t] || COLORS.unknown;
-
-let nodes = [], edges = [], byId = {}, adj = {}, relColors = {}, relIdx = 0;
-let dragNode = null, hoverNode = null, cam = {x:0, y:0, k:1};
+const TAU = Math.PI * 2;
 const cv = $("cv"), ctx = cv.getContext("2d");
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-function resize(){
-  const dpr = window.devicePixelRatio || 1;
-  cv.width = cv.clientWidth * dpr; cv.height = cv.clientHeight * dpr;
-  ctx.setTransform(dpr,0,0,dpr,0,0);
+/* ---------- token flow (unchanged contract) ---------- */
+const getTok = () => localStorage.getItem("goethe_token") || "";
+const authHeaders = () => {
+  const t = getTok();
+  return t ? { Authorization: "Bearer " + t } : {};
+};
+$("token").value = getTok();
+function connect(){ localStorage.setItem("goethe_token", $("token").value.trim()); load(); }
+$("connect").onclick = connect;
+$("token").addEventListener("keydown", e => { if (e.key === "Enter") connect(); });
+
+/* ---------- deterministic rng ---------- */
+function hashStr(s){
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
 }
-window.addEventListener("resize", resize);
-
-function seedPositions(){
-  const R = Math.max(120, 14 * Math.sqrt(nodes.length));
-  nodes.forEach((n,i) => {
-    const a = (i / Math.max(1,nodes.length)) * Math.PI * 2 + Math.random()*.4;
-    n.x = Math.cos(a) * R * (0.6+Math.random()*.5);
-    n.y = Math.sin(a) * R * (0.6+Math.random()*.5);
-    n.vx = 0; n.vy = 0;
-  });
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
 }
 
-function tick(){
-  // simple force layout: repulsion + spring edges + centering
-  const N = nodes.length;
-  for (let i=0;i<N;i++){
-    const a = nodes[i];
-    a.vx += -a.x * 0.0012; a.vy += -a.y * 0.0012;
-    for (let j=i+1;j<N;j++){
-      const b = nodes[j];
-      let dx = a.x-b.x, dy = a.y-b.y;
-      let d2 = dx*dx+dy*dy || 0.01;
-      if (d2 > 250000) continue;
-      const f = 900 / d2;
-      const d = Math.sqrt(d2);
-      dx/=d; dy/=d;
-      a.vx += dx*f; a.vy += dy*f;
-      b.vx -= dx*f; b.vy -= dy*f;
-    }
+/* ---------- visual vocabulary (fixed map + deterministic fallback) ---------- */
+const TYPE_COLORS = {
+  node:"#E0AF68", service:"#7DCFFF", model:"#BB9AF7", port:"#4DA3FF",
+  credential:"#F7768E", procedure:"#9ECE6A", doc:"#5A6274"
+};
+const DOC_COLOR = "#5A6274";
+const PAPER = "#E8EAF0", INK = "#10141D";
+function typeColor(t){
+  return TYPE_COLORS[t] || `hsl(${hashStr(t) % 360} 55% 66%)`;
+}
+const REL_STYLES = {
+  documented_by: { color:"#5A6274", alpha:0.20, width:1.0, dash:null },
+  runs_on:       { color:"#E8EAF0", alpha:0.42, width:1.4, dash:null },
+  uses_port:     { color:"#4DA3FF", alpha:0.50, width:1.1, dash:[4,3] },
+  depends_on:    { color:"#BB9AF7", alpha:0.50, width:1.1, dash:[7,4] },
+  credential_for:{ color:"#F7768E", alpha:0.55, width:1.1, dash:[2,3] },
+  provides:      { color:"#9ECE6A", alpha:0.50, width:1.1, dash:null },
+  monitors:      { color:"#E0AF68", alpha:0.50, width:1.1, dash:[6,2,2,2] },
+  part_of:       { color:"#A8B0C2", alpha:0.40, width:1.2, dash:null }
+};
+function relStyle(rel){
+  const s = REL_STYLES[rel];
+  if (s) return s;
+  return { color:`hsl(${hashStr(rel) % 360} 50% 62%)`, alpha:0.38, width:1.0, dash:[3,3] };
+}
+const REL_PARAMS = {   /* link force per relation */
+  documented_by: { dist:55,  strength:0.06 },
+  runs_on:       { dist:120, strength:0.04 }
+};
+function relParams(rel){
+  return REL_PARAMS[rel] || { dist:90, strength:0.04 };
+}
+
+/* ---------- state ---------- */
+let nodes = [], links = [], byId = {}, adj = {};
+let cam = { x:0, y:0, k:1 };
+let W = 0, H = 0, dpr = 1;
+let hover = null, selected = null;
+let hotSet = null;              /* Set of ids at full brightness, or null */
+let searchQ = "", matchSet = null;
+let activeTypes = new Set(), showDocs = true;
+let revealStart = 0, revealDone = true;
+let sim = { alpha:0, alphaTarget:0, running:false, frames:0 };
+const SIM = { alphaDecay:0.024, alphaMin:0.003, velDecay:0.6,
+              chargeE:-140, chargeD:-40, theta2:0.81, cutoff2:1800*1800 };
+let camAnim = null;
+let needDraw = false, rafId = 0;
+let dataCache = null;
+
+window.__kbgraph = { simRunning:false, frames:0, nodes:0, edges:0 };
+
+/* ---------- graph build ---------- */
+function esc(s){
+  return String(s).replace(/[&<>"']/g,
+    c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function buildGraph(data){
+  nodes = []; byId = {}; adj = {};
+  for (const e of data.entities){
+    const n = { id:e.id, name:e.name, type:e.type, isDoc:false,
+                x:0, y:0, vx:0, vy:0, fx:null, fy:null, deg:0 };
+    nodes.push(n); byId[n.id] = n;
   }
-  for (const e of edges){
-    const a = byId[e.src], b = byId[e.dst];
-    if (!a || !b) continue;
-    let dx = b.x-a.x, dy = b.y-a.y;
-    const d = Math.sqrt(dx*dx+dy*dy) || 0.01;
-    const f = (d - 90) * 0.004;
-    dx/=d; dy/=d;
-    a.vx += dx*f; a.vy += dy*f;
-    b.vx -= dx*f; b.vy -= dy*f;
+  const docMap = {};
+  for (const d of data.docs){
+    const n = { id:d.id, name:d.title, type:"doc", isDoc:true,
+                topic:d.topic || "", quality:d.quality_score, tier:d.source_tier || "",
+                stale:!!d.stale, origin:d.origin || "", volatility:d.volatility || "",
+                source_url:d.source_url || "",
+                x:0, y:0, vx:0, vy:0, fx:null, fy:null, deg:0 };
+    nodes.push(n); byId[n.id] = n; docMap[n.id] = n;
+  }
+  links = [];
+  for (const e of data.edges){
+    const s = byId[e.src], t = byId[e.dst];
+    if (!s || !t) continue;
+    const p = relParams(e.rel);
+    links.push({ s, t, rel:e.rel, evidence:e.evidence,
+                 dist:p.dist, strength:p.strength });
+    s.deg++; t.deg++;
+    (adj[e.src] = adj[e.src] || new Set()).add(e.dst);
+    (adj[e.dst] = adj[e.dst] || new Set()).add(e.src);
   }
   for (const n of nodes){
-    if (n === dragNode) { n.vx = 0; n.vy = 0; continue; }
-    n.vx *= 0.85; n.vy *= 0.85;
+    if (!n.isDoc) n.r = 5 + Math.min(6, Math.sqrt(n.deg) * 1.2);
+    else n.r = 3.2;
+    n.charge = n.isDoc ? SIM.chargeD : SIM.chargeE;
+  }
+  /* link bias by degree (d3 style) */
+  for (const l of links) l.bias = l.s.deg / (l.s.deg + l.t.deg || 1);
+  /* deterministic seed: entities on a golden-angle ring, docs beside an anchor */
+  const rnd0 = mulberry32(1337);
+  nodes.forEach((n, i) => {
+    const rnd = mulberry32(hashStr(n.id));
+    if (!n.isDoc){
+      const a = i * 2.399963 + (rnd() - 0.5) * 0.5;
+      const R = 130 + 24 * Math.sqrt(i) + rnd() * 30;
+      n.x = Math.cos(a) * R; n.y = Math.sin(a) * R;
+    }
+  });
+  for (const n of nodes){
+    if (!n.isDoc) continue;
+    const anchor = [...(adj[n.id] || [])].map(id => byId[id])
+      .find(m => m && !m.isDoc);
+    const rnd = mulberry32(hashStr(n.id));
+    if (anchor){
+      const a = rnd() * TAU, d = 22 + rnd() * 30;
+      n.x = anchor.x + Math.cos(a) * d;
+      n.y = anchor.y + Math.sin(a) * d;
+    } else {
+      const a = rnd() * TAU, R = 320 + rnd() * 120;
+      n.x = Math.cos(a) * R; n.y = Math.sin(a) * R;
+    }
+  }
+  activeTypes = new Set(data.entities.map(e => e.type));
+  matchSet = null; searchQ = "";
+  revealStart = performance.now();
+  revealDone = reduced;
+  cam = { x:0, y:0, k:1 };
+  sim = { alpha:1, alphaTarget:0, running:true, frames:sim.frames };
+  window.__kbgraph.nodes = nodes.length;
+  window.__kbgraph.edges = links.length;
+  Object.defineProperty(window.__kbgraph, "cam", { get: () => cam });
+  window.__kbgraph.screenPos = id => {
+    const n = byId[id];
+    return n ? toScreen(n) : null;
+  };
+  window.__kbgraph.pickEntity = () => {
+    for (const n of nodes) if (!n.isDoc && nodeVisible(n)){
+      const p = toScreen(n);
+      if (p.x > 10 && p.x < W - 10 && p.y > 10 && p.y < H - 10)
+        return { id: n.id, x: p.x, y: p.y };
+    }
+    return null;
+  };
+  buildRail(data);
+}
+
+/* ---------- physics: Barnes-Hut + links + centering ---------- */
+function childBounds(q, i){
+  const mx = (q.x0 + q.x1) / 2, my = (q.y0 + q.y1) / 2;
+  return { x0: i & 1 ? mx : q.x0, x1: i & 1 ? q.x1 : mx,
+           y0: i & 2 ? my : q.y0, y1: i & 2 ? q.y1 : my };
+}
+function slotOf(q, p){
+  return (p.x >= (q.x0 + q.x1) / 2 ? 1 : 0) + (p.y >= (q.y0 + q.y1) / 2 ? 2 : 0);
+}
+function quadAdd(q, n){
+  if (q.node){
+    if (q.depth >= 28){          /* coincident points: merge into a cluster */
+      const nn = q.n + 1;
+      q.cx = (q.cx * q.n + n.x) / nn;
+      q.cy = (q.cy * q.n + n.y) / nn;
+      q.str += n.charge; q.n = nn;
+      return;
+    }
+    const prev = q.node;
+    q.node = null;
+    q.children = [null, null, null, null];
+    for (let i = 0; i < 4; i++){
+      const b = childBounds(q, i);
+      q.children[i] = { x0:b.x0, y0:b.y0, x1:b.x1, y1:b.y1,
+                        children:null, node:null, cx:0, cy:0, str:0, n:0,
+                        depth:q.depth + 1 };
+    }
+    quadAdd(q.children[slotOf(q, prev)], prev);
+  }
+  if (!q.children){
+    q.node = n; q.cx = n.x; q.cy = n.y; q.str = n.charge; q.n = 1;
+    return;
+  }
+  quadAdd(q.children[slotOf(q, n)], n);
+  let cx = 0, cy = 0, str = 0, nm = 0;
+  for (const c of q.children) if (c){ cx += c.cx * c.n; cy += c.cy * c.n; str += c.str; nm += c.n; }
+  q.n = nm; q.str = str;
+  if (nm){ q.cx = cx / nm; q.cy = cy / nm; }
+}
+function bhApply(q, t, alpha){
+  if (!q || q.n === 0) return;
+  if (!q.children && q.node === t) return;
+  const dx = q.cx - t.x, dy = q.cy - t.y;
+  let d2 = dx * dx + dy * dy;
+  if (d2 < 1e-9) d2 = 1e-9;
+  const w = Math.max(q.x1 - q.x0, q.y1 - q.y0);
+  if (!q.children || (w * w) / d2 < SIM.theta2){
+    if (d2 < SIM.cutoff2){
+      const f = q.str * alpha / d2;   /* str < 0 → pushes away */
+      t.vx += dx * f; t.vy += dy * f;
+    }
+    return;
+  }
+  for (const c of q.children) if (c) bhApply(c, t, alpha);
+}
+function tick(){
+  const alpha = sim.alpha;
+  const alive = nodes.filter(n => !n.fx);   /* fixed nodes skip forces */
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const n of alive){
+    if (n.x < x0) x0 = n.x; if (n.y < y0) y0 = n.y;
+    if (n.x > x1) x1 = n.x; if (n.y > y1) y1 = n.y;
+  }
+  if (alive.length){
+    const s = Math.max(x1 - x0, y1 - y0, 1e-6);
+    const root = { x0, y0, x1: x0 + s, y1: y0 + s,
+                   children:null, node:null, cx:0, cy:0, str:0, n:0, depth:0 };
+    for (const n of alive) quadAdd(root, n);
+    for (const n of alive) bhApply(root, n, alpha);
+  }
+  for (const l of links){
+    const a = l.s, b = l.t;
+    let dx = (b.x + b.vx) - (a.x + a.vx);
+    let dy = (b.y + b.vy) - (a.y + a.vy);
+    let d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 1e-6){ dx = 1e-6; dy = 0; d = 1e-6; }
+    const f = (d - l.dist) / d * l.strength * alpha;
+    dx *= f; dy *= f;
+    b.vx -= dx * l.bias;       b.vy -= dy * l.bias;
+    a.vx += dx * (1 - l.bias); a.vy += dy * (1 - l.bias);
+  }
+  for (const n of alive){
+    const cs = n.isDoc ? 0.02 : 0.010;
+    n.vx += -n.x * cs * alpha;
+    n.vy += -n.y * cs * alpha;
+  }
+  for (const n of nodes){
+    if (n.fx != null){ n.x = n.fx; n.y = n.fy; n.vx = 0; n.vy = 0; continue; }
+    n.vx *= SIM.velDecay; n.vy *= SIM.velDecay;
     n.x += n.vx; n.y += n.vy;
   }
+  sim.alpha += (sim.alphaTarget - sim.alpha) * SIM.alphaDecay;
+  if (sim.alpha < SIM.alphaMin && sim.alphaTarget === 0){
+    sim.running = false; sim.alpha = 0;
+    if ($("status").dataset.phase === "settle") setStatus("graph loaded", "");
+  }
+  window.__kbgraph.simRunning = sim.running;
 }
 
-function toScreen(n){ return { x: cv.clientWidth/2 + (n.x - cam.x)*cam.k,
-                               y: cv.clientHeight/2 + (n.y - cam.y)*cam.k }; }
+/* ---------- camera ---------- */
+function toScreen(n){ return { x: W/2 + (n.x - cam.x) * cam.k,
+                               y: H/2 + (n.y - cam.y) * cam.k }; }
+function toWorld(sx, sy){ return { x: (sx - W/2) / cam.k + cam.x,
+                                   y: (sy - H/2) / cam.k + cam.y }; }
+function zoomAt(mx, my, factor){
+  const w = toWorld(mx, my);
+  cam.k = Math.min(8, Math.max(0.12, cam.k * factor));
+  cam.x = w.x - (mx - W/2) / cam.k;
+  cam.y = w.y - (my - H/2) / cam.k;
+  requestRender();
+}
+function centerOn(n, kMin){
+  const to = { x:n.x, y:n.y, k: Math.max(cam.k, kMin || 1.0) };
+  if (reduced){ cam = to; requestRender(); return; }
+  camAnim = { from:{ ...cam }, to, t0:performance.now(), dur:320 };
+  ensureLoop();
+}
+function stepCam(){
+  const t = Math.min(1, (performance.now() - camAnim.t0) / camAnim.dur);
+  const e = 1 - Math.pow(1 - t, 3);
+  cam.x = camAnim.from.x + (camAnim.to.x - camAnim.from.x) * e;
+  cam.y = camAnim.from.y + (camAnim.to.y - camAnim.from.y) * e;
+  cam.k = camAnim.from.k + (camAnim.to.k - camAnim.from.k) * e;
+  needDraw = true;
+  if (t >= 1) camAnim = null;
+}
 
-function draw(){
-  const W = cv.clientWidth, H = cv.clientHeight;
-  ctx.clearRect(0,0,W,H);
-  // edges
-  for (const e of edges){
-    const a = byId[e.src], b = byId[e.dst];
-    if (!a || !b) continue;
-    const pa = toScreen(a), pb = toScreen(b);
-    ctx.strokeStyle = relColors[e.rel] || "#33415e";
-    ctx.globalAlpha = (hoverNode && (e.src===hoverNode.id || e.dst===hoverNode.id)) ? 0.95 : 0.35;
-    ctx.lineWidth = (hoverNode && (e.src===hoverNode.id || e.dst===hoverNode.id)) ? 1.6 : 1;
-    ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke();
-    // arrowhead
-    const ang = Math.atan2(pb.y-pa.y, pb.x-pa.x);
-    const r = 5*cam.k;
-    ctx.beginPath();
-    ctx.moveTo(pb.x - Math.cos(ang)*r*2, pb.y - Math.sin(ang)*r*2);
-    ctx.lineTo(pb.x - Math.cos(ang+2.6)*r*2.4, pb.y - Math.sin(ang+2.6)*r*2.4);
-    ctx.lineTo(pb.x - Math.cos(ang-2.6)*r*2.4, pb.y - Math.sin(ang-2.6)*r*2.4);
-    ctx.closePath(); ctx.fillStyle = ctx.strokeStyle; ctx.fill();
+/* ---------- frame loop (runs only while active) ---------- */
+function ensureLoop(){ if (!rafId) rafId = requestAnimationFrame(step); }
+function requestRender(){ needDraw = true; ensureLoop(); }
+function step(){
+  rafId = 0;
+  let active = false;
+  if (sim.running){ tick(); active = sim.running; }
+  if (camAnim){ stepCam(); active = !!camAnim; }
+  const revealing = !revealDone;
+  if (active || needDraw || revealing){
+    draw();
+    if (revealDone === false && performance.now() - revealStart > 1600) revealDone = true;
+    needDraw = false;
   }
-  ctx.globalAlpha = 1;
-  // nodes
-  for (const n of nodes){
+  window.__kbgraph.simRunning = sim.running;
+  if (active || revealing) rafId = requestAnimationFrame(step);
+}
+
+/* ---------- drawing ---------- */
+function nodeVisible(n){
+  return n.isDoc ? showDocs : activeTypes.has(n.type);
+}
+function nodeReveal(n, now){
+  if (revealDone) return 1;
+  const st = (hashStr(n.id) % 16) * 24;
+  return Math.max(0, Math.min(1, (now - revealStart - st) / 420));
+}
+function hitTest(mx, my){
+  let best = null, bd = Infinity;
+  for (let i = nodes.length - 1; i >= 0; i--){
+    const n = nodes[i];
+    if (!nodeVisible(n)) continue;
     const p = toScreen(n);
-    const r = Math.max(4, (n.type==="node" ? 9 : 7) * cam.k);
-    const hot = hoverNode && (n.id===hoverNode.id || (adj[hoverNode.id]||{}).has(n.id));
+    const r = Math.max(n.r * cam.k, 1.5) + 4;
+    const dx = mx - p.x, dy = my - p.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < r * r && d2 < bd){ bd = d2; best = n; }
+  }
+  return best;
+}
+function draw(){
+  const now = performance.now();
+  sim.frames++;
+  window.__kbgraph.frames = sim.frames;
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(W/2, H/2);
+  ctx.scale(cam.k, cam.k);
+  ctx.translate(-cam.x, -cam.y);
+  const k = cam.k;
+  const m = 60 / k;
+  const vx0 = cam.x - W/(2*k) - m, vx1 = cam.x + W/(2*k) + m;
+  const vy0 = cam.y - H/(2*k) - m, vy1 = cam.y + H/(2*k) + m;
+  const inView = n => n.x >= vx0 && n.x <= vx1 && n.y >= vy0 && n.y <= vy1;
+  const groupAlpha = revealDone ? 1 : Math.max(0, Math.min(1, (now - revealStart - 80) / 700));
+  const hoverMode = !!hotSet;
+
+  /* edges: batched by style; hover splits into dim + incident */
+  const groups = new Map();
+  const hotEdges = [];
+  for (const l of links){
+    if (!nodeVisible(l.s) || !nodeVisible(l.t)) continue;
+    if (!inView(l.s) && !inView(l.t)) continue;
+    if (hoverMode){
+      if (l.s === hover || l.t === hover) hotEdges.push(l);
+      continue;
+    }
+    if (l.s.x < vx0 - m || l.s.x > vx1 + m || l.t.x < vx0 - m || l.t.x > vx1 + m) continue;
+    const key = l.rel;
+    let g = groups.get(key);
+    if (!g){ g = { style: relStyle(l.rel), pts: [] }; groups.set(key, g); }
+    g.pts.push(l.s.x, l.s.y, l.t.x, l.t.y);
+  }
+  const strokeGroup = (g, alphaMul, widthMul) => {
+    const s = g.style;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, hot ? r+2 : r, 0, Math.PI*2);
-    ctx.fillStyle = colorFor(n.type);
-    ctx.globalAlpha = (hoverNode && !hot) ? 0.45 : 1;
+    for (let i = 0; i < g.pts.length; i += 4){
+      ctx.moveTo(g.pts[i], g.pts[i+1]);
+      ctx.lineTo(g.pts[i+2], g.pts[i+3]);
+    }
+    ctx.setLineDash(s.dash ? s.dash.map(v => v / k) : []);
+    ctx.strokeStyle = s.color;
+    ctx.globalAlpha = s.alpha * alphaMul * groupAlpha;
+    ctx.lineWidth = s.width * (widthMul || 1) / k;
+    ctx.stroke();
+  };
+  if (hoverMode){
+    const dim = new Map();
+    for (const l of links){
+      if (!nodeVisible(l.s) || !nodeVisible(l.t)) continue;
+      if (l.s === hover || l.t === hover) continue;
+      if (l.s.x < vx0 - m || l.s.x > vx1 + m || l.t.x < vx0 - m || l.t.x > vx1 + m) continue;
+      let g = dim.get(l.rel);
+      if (!g){ g = { style: relStyle(l.rel), pts: [] }; dim.set(l.rel, g); }
+      g.pts.push(l.s.x, l.s.y, l.t.x, l.t.y);
+    }
+    for (const g of dim.values()) strokeGroup(g, 0.12, 1);
+  } else {
+    for (const g of groups.values()) strokeGroup(g, 1, 1);
+  }
+  ctx.setLineDash([]);
+
+  /* arrowheads: only where direction means something (non-documentation
+     relations), or on hovered edges */
+  const drawArrow = (l, color, alpha) => {
+    const dx = l.t.x - l.s.x, dy = l.t.y - l.s.y;
+    const d = Math.sqrt(dx*dx + dy*dy) || 1;
+    const ux = dx/d, uy = dy/d;
+    const r = (4.5 + l.t.r) ;
+    const px = l.t.x - ux * r, py = l.t.y - uy * r;
+    const a = 4.5 / k;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px - ux*a - (-uy)*a*0.6, py - uy*a - (ux)*a*0.6);
+    ctx.lineTo(px - ux*a + (-uy)*a*0.6, py - uy*a + (ux)*a*0.6);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha;
     ctx.fill();
-    if (hot || cam.k > 0.8){
-      ctx.globalAlpha = 1;
-      ctx.font = `${Math.max(10, 11*cam.k)}px system-ui`;
-      ctx.fillStyle = "#d7e1ff";
-      ctx.fillText(n.name, p.x + r + 4, p.y + 4);
+  };
+  ctx.globalAlpha = groupAlpha;
+  for (const l of links){
+    if (hoverMode) continue;
+    if (l.rel === "documented_by") continue;
+    if (!nodeVisible(l.s) || !nodeVisible(l.t)) continue;
+    if (!inView(l.t)) continue;
+    drawArrow(l, relStyle(l.rel).color, relStyle(l.rel).alpha * 0.9);
+  }
+  for (const l of hotEdges){
+    const s = relStyle(l.rel);
+    ctx.beginPath();
+    ctx.moveTo(l.s.x, l.s.y); ctx.lineTo(l.t.x, l.t.y);
+    ctx.setLineDash(s.dash ? s.dash.map(v => v/k) : []);
+    ctx.strokeStyle = s.color; ctx.globalAlpha = 0.95;
+    ctx.lineWidth = s.width * 1.6 / k;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    drawArrow(l, s.color, 0.95);
+  }
+
+  /* nodes */
+  const drawNode = (n, alpha, grow) => {
+    const p = toScreen2(n);
+    const r = Math.max(n.r, 1.5/k) * (grow ? 1.12 : 1);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, TAU);
+    ctx.fill();
+  };
+  const toScreen2 = n => ({ x:n.x, y:n.y });   /* already in world space */
+  const nodeAlpha = n => {
+    let a = hoverMode ? (hotSet.has(n.id) ? 1 : 0.08)
+                      : (matchSet ? (matchSet.has(n.id) ? 1 : 0.12) : 1);
+    return a * nodeReveal(n, now);
+  };
+  /* docs as one batch */
+  if (showDocs){
+    ctx.fillStyle = DOC_COLOR;
+    if (revealDone){
+      const dimA = (hoverMode ? 0.08 : (matchSet ? 0.12 : 1)) * groupAlpha;
+      ctx.globalAlpha = dimA;
+      ctx.beginPath();
+      for (const n of nodes) if (n.isDoc && inView(n)){
+        const r = Math.max(n.r, 1.5/k);
+        ctx.moveTo(n.x + r, n.y);
+        ctx.arc(n.x, n.y, r, 0, TAU);
+      }
+      ctx.fill();
+      if (hoverMode || matchSet){
+        for (const n of nodes) if (n.isDoc && inView(n)){
+          const a = nodeAlpha(n);
+          if (a <= 0.15) continue;
+          ctx.globalAlpha = a;
+          ctx.beginPath();
+          const r = Math.max(n.r, 1.5/k);
+          ctx.moveTo(n.x + r, n.y); ctx.arc(n.x, n.y, r, 0, TAU);
+          ctx.fill();
+        }
+      }
+    } else {
+      for (const n of nodes) if (n.isDoc && inView(n)){
+        const a = nodeAlpha(n);
+        if (a <= 0.01) continue;
+        ctx.globalAlpha = a;
+        drawNode(n, a, false);
+      }
+    }
+  }
+  /* entities batched by type */
+  const byType = new Map();
+  for (const n of nodes) if (!n.isDoc && inView(n)){
+    if (!byType.has(n.type)) byType.set(n.type, []);
+    byType.get(n.type).push(n);
+  }
+  for (const [type, list] of byType){
+    ctx.fillStyle = typeColor(type);
+    if (revealDone){
+      ctx.globalAlpha = (hoverMode ? 0.08 : (matchSet ? 0.12 : 1)) * groupAlpha;
+      ctx.beginPath();
+      for (const n of list){
+        const r = Math.max(n.r, 1.5/k);
+        ctx.moveTo(n.x + r, n.y); ctx.arc(n.x, n.y, r, 0, TAU);
+      }
+      ctx.fill();
+      if (hoverMode || matchSet){
+        for (const n of list){
+          const a = nodeAlpha(n);
+          if (a <= 0.15) continue;
+          ctx.globalAlpha = a;
+          ctx.beginPath();
+          const r = Math.max(n.r, 1.5/k) * (n === hover ? 1.15 : 1);
+          ctx.moveTo(n.x + r, n.y); ctx.arc(n.x, n.y, r, 0, TAU);
+          ctx.fill();
+        }
+      }
+    } else {
+      for (const n of list){
+        const a = nodeAlpha(n);
+        if (a <= 0.01) continue;
+        ctx.globalAlpha = a;
+        drawNode(n, a, n === hover);
+      }
+    }
+  }
+
+  /* selection ring */
+  if (selected && byId[selected] && nodeVisible(byId[selected])){
+    const n = byId[selected];
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, Math.max(n.r, 1.5/k) + 3.5/k, 0, TAU);
+    ctx.strokeStyle = PAPER;
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 1.8 / k;
+    ctx.stroke();
+  }
+  /* search match rings */
+  if (matchSet && !hoverMode){
+    for (const n of nodes){
+      if (!matchSet.has(n.id) || !inView(n) || n === selected) continue;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, Math.max(n.r, 1.5/k) + 3.5/k, 0, TAU);
+      ctx.strokeStyle = typeColor(n.type);
+      ctx.globalAlpha = 0.8;
+      ctx.lineWidth = 1.4 / k;
+      ctx.stroke();
+    }
+  }
+
+  /* labels: LOD by zoom */
+  const topLabeled = new Set();
+  if (!revealDone || k > 1.1){
+    if (k > 1.1){
+      for (const n of nodes) if (!n.isDoc && inView(n)) topLabeled.add(n);
+    }
+  } else if (k >= 0.55){
+    const sorted = nodes.filter(n => !n.isDoc)
+      .slice().sort((a, b) => b.deg - a.deg).slice(0, 25);
+    for (const n of sorted) topLabeled.add(n);
+  }
+  const label = (n, text, size, color, alpha) => {
+    const r = Math.max(n.r, 1.5/k);
+    ctx.font = `${size/k}px ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace`;
+    ctx.textBaseline = "middle";
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = INK; ctx.lineWidth = 3/k;
+    ctx.strokeText(text, n.x + r + 4/k, n.y);
+    ctx.fillStyle = color;
+    ctx.fillText(text, n.x + r + 4/k, n.y);
+  };
+  if (hover && inView(hover)) label(hover, hover.name, 11, PAPER, 1);
+  if (selected && byId[selected] && inView(byId[selected]) && byId[selected] !== hover)
+    label(byId[selected], byId[selected].name, 11, PAPER, 0.95);
+  const la = (revealDone ? 1 : groupAlpha);
+  for (const n of topLabeled){
+    if (n === hover || n === (selected && byId[selected])) continue;
+    if (!nodeVisible(n)) continue;
+    const a = nodeAlpha(n);
+    if (a <= 0.15) continue;
+    label(n, n.name, 11, PAPER, a * la * 0.92);
+  }
+  if (k > 2.2){
+    for (const n of nodes){
+      if (!n.isDoc || !inView(n) || n === hover) continue;
+      if (hoverMode && !hotSet.has(n.id)) continue;
+      let text = n.name;
+      if (text.length > 26) text = text.slice(0, 25) + "…";
+      const a = nodeAlpha(n);
+      if (a <= 0.15) continue;
+      label(n, text, 10, "#8296C4", a * la * 0.85);
     }
   }
   ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
-function loop(){ tick(); draw(); requestAnimationFrame(loop); }
-
-function hitTest(mx,my){
-  for (let i=nodes.length-1;i>=0;i--){
-    const n = nodes[i], p = toScreen(n);
-    const r = Math.max(6, (n.type==="node"?9:7)*cam.k) + 3;
-    if ((mx-p.x)**2 + (my-p.y)**2 < r*r) return n;
+/* ---------- interaction ---------- */
+let dragNode = null, panning = null, downPt = null, moved = false;
+cv.addEventListener("mousedown", ev => {
+  const rect = cv.getBoundingClientRect();
+  const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+  downPt = { mx, my }; moved = false;
+  const n = hitTest(mx, my);
+  if (n){
+    dragNode = n;
+    const w = toWorld(mx, my);
+    n.fx = n.x; n.fy = n.y;
+    n._dx = n.x - w.x; n._dy = n.y - w.y;
+    sim.alphaTarget = 0.3;
+    if (!sim.running){ sim.running = true; sim.alpha = Math.max(sim.alpha, 0.3); }
+    ensureLoop();
+    setStatus("dragging — layout re-settling", "");
+  } else {
+    panning = { cam: { ...cam }, mx, my };
+    cv.style.cursor = "grabbing";
   }
-  return null;
-}
-
-cv.addEventListener("mousemove", ev => {
+});
+window.addEventListener("mousemove", ev => {
   const rect = cv.getBoundingClientRect();
   const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
   if (dragNode){
-    dragNode.x = (mx - cv.clientWidth/2)/cam.k + cam.x;
-    dragNode.y = (my - cv.clientHeight/2)/cam.k + cam.y;
+    if (downPt && (Math.abs(mx-downPt.mx) + Math.abs(my-downPt.my) > 3)) moved = true;
+    const w = toWorld(mx, my);
+    dragNode.fx = w.x + dragNode._dx;
+    dragNode.fy = w.y + dragNode._dy;
+    requestRender();
     return;
   }
-  const n = hitTest(mx,my);
-  hoverNode = n;
-  const tip = $("tip");
-  if (n){
-    const deg = (adj[n.id]||{}).size;
-    tip.style.display = "block";
-    tip.style.left = (mx+14)+"px"; tip.style.top = (my+10)+"px";
-    tip.innerHTML = `<b>${n.name}</b> <span style="color:${colorFor(n.type)}">●</span> ${n.type} — ${deg} connection${deg===1?"":"s"}<br><span style="color:var(--dim)">doc ${n.id}</span>`;
-  } else tip.style.display = "none";
+  if (panning){
+    if (downPt && (Math.abs(mx-downPt.mx) + Math.abs(my-downPt.my) > 3)) moved = true;
+    cam.x = panning.cam.x - (mx - panning.mx) / cam.k;
+    cam.y = panning.cam.y - (my - panning.my) / cam.k;
+    requestRender();
+    return;
+  }
+  if (ev.target !== cv) return;
+  const n = hitTest(mx, my);
+  if (n !== hover){
+    hover = n;
+    hotSet = n ? new Set([n.id, ...(adj[n.id] || [])]) : null;
+    cv.style.cursor = n ? "pointer" : "grab";
+    updateTip(n, mx, my);
+    requestRender();
+  } else if (n){
+    moveTip(mx, my);
+  }
 });
-cv.addEventListener("mouseleave", () => { hoverNode = null; $("tip").style.display = "none"; });
-cv.addEventListener("mousedown", ev => {
-  const rect = cv.getBoundingClientRect();
-  dragNode = hitTest(ev.clientX-rect.left, ev.clientY-rect.top);
+window.addEventListener("mouseup", ev => {
+  if (dragNode){
+    dragNode.fx = null; dragNode.fy = null;
+    dragNode = null;
+    sim.alphaTarget = 0;
+    setStatus(sim.running ? "layout settling…" : "graph loaded", "");
+    if ($("status").dataset.phase === "settle" && sim.running)
+      $("status").dataset.phase = "settle";
+  }
+  if (panning){
+    panning = null;
+    cv.style.cursor = hover ? "pointer" : "grab";
+  }
+  if (!moved && downPt){
+    const rect = cv.getBoundingClientRect();
+    const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    if (mx >= 0 && my >= 0 && mx <= W && my <= H && ev.target === cv){
+      const n = hitTest(mx, my);
+      if (n) selectNode(n, true);
+      else { selected = null; closeInspector(); requestRender(); }
+    }
+  }
+  downPt = null; moved = false;
 });
-window.addEventListener("mouseup", () => dragNode = null);
 cv.addEventListener("wheel", ev => {
   ev.preventDefault();
-  const f = ev.deltaY < 0 ? 1.12 : 1/1.12;
-  cam.k = Math.min(6, Math.max(0.15, cam.k * f));
-}, {passive:false});
+  const rect = cv.getBoundingClientRect();
+  zoomAt(ev.clientX - rect.left, ev.clientY - rect.top,
+         ev.deltaY < 0 ? 1.13 : 1/1.13);
+}, { passive:false });
 
-function render(data){
-  nodes = data.entities.map(e => ({id:e.id, name:e.name, type:e.type}));
-  byId = {}; nodes.forEach(n => byId[n.id] = n);
-  adj = {};
-  edges = [];
-  for (const e of data.edges){
-    if (!byId[e.src] || !byId[e.dst]) continue; // dst may be a KB doc id, not an entity
-    if (!relColors[e.rel]) relColors[e.rel] = `hsl(${(relIdx++*47)%360} 60% 55%)`;
-    edges.push(e);
-    (adj[e.src] ||= new Set()).add(e.dst);
-    (adj[e.dst] ||= new Set()).add(e.src);
+/* tooltip */
+const tip = $("tip");
+function updateTip(n, mx, my){
+  if (!n){ tip.style.display = "none"; return; }
+  let html;
+  if (n.isDoc){
+    let t = n.name; if (t.length > 70) t = t.slice(0, 69) + "…";
+    html = `<b>${esc(t)}</b>${n.stale ? '<span class="kg-flag-stale">stale</span>' : ""}` +
+           `<div class="kg-tip-sub">${esc(n.topic || "no topic")} · q ${n.quality != null ? n.quality : "—"} · ${esc(n.tier || "inferred")}</div>`;
+  } else {
+    html = `<b>${esc(n.name)}</b>` +
+           `<div class="kg-tip-sub"><span style="color:${typeColor(n.type)}">●</span> ${esc(n.type)} · ${n.deg} edge${n.deg === 1 ? "" : "s"}</div>`;
   }
-  cam = {x:0,y:0,k:1};
-  seedPositions();
-  const empty = $("empty");
-  if (data.dormant || nodes.length === 0){
-    empty.style.display = "flex";
-    $("empty-title").textContent = data.index_present
-      ? "Graph is empty (dormant)" : "Graph index not found";
-    $("empty-body").textContent = "lse-graph holds no entities or edges. The Phase 5 layer is " +
-      "dormant behind GRAPH_RECALL=0 and only fills from operator-APPLIED proposals via " +
-      "materialize_accepted_graph(). This page will render live data automatically once the " +
-      "graph is materialized — no reload of the code needed.";
-    $("legend").style.display = "none";
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  moveTip(mx, my);
+}
+function moveTip(mx, my){
+  const r = cv.parentElement.getBoundingClientRect();
+  let x = mx + 14, y = my + 10;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  if (x + tw > r.width - 8) x = mx - tw - 12;
+  if (y + th > r.height - 8) y = my - th - 10;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+cv.addEventListener("mouseleave", () => {
+  if (hover){ hover = null; hotSet = null; requestRender(); }
+  tip.style.display = "none";
+});
+
+/* selection + inspector */
+function selectNode(n, open){
+  selected = n.id;
+  requestRender();
+  if (open) openInspector(n.id);
+}
+async function openInspector(id){
+  const ins = $("inspector");
+  ins.classList.add("kg-open");
+  ins.innerHTML = `<div class="kg-head">
+      <button class="kg-btn kg-close" id="ins-close">Close</button>
+      <div class="kg-head-name">…</div>
+    </div><div class="kg-body" style="color:var(--fog);padding:14px">loading…</div>`;
+  $("ins-close").onclick = () => { selected = null; closeInspector(); requestRender(); };
+  let d;
+  try {
+    const r = await fetch(`/api/ui/kbgraph/neighbors?id=${encodeURIComponent(id)}`,
+                          { headers: authHeaders() });
+    if (r.status === 401){ setStatus("gateway token required", "err"); return; }
+    d = await r.json();
+  } catch (e){
+    ins.querySelector(".kg-body").textContent = "Inspector fetch failed: " + e.message;
     return;
   }
-  empty.style.display = "none";
-  const types = [...new Set(nodes.map(n=>n.type))].sort();
-  $("legend").innerHTML = "<b>node types</b>" + types.map(t =>
-    `<div class="row"><span class="dot" style="background:${colorFor(t)}"></span>${t}</div>`).join("");
-  $("legend").style.display = "block";
+  renderInspector(d);
+}
+function closeInspector(){
+  $("inspector").classList.remove("kg-open");
+}
+function rowBtn(id, inner){
+  const b = document.createElement("button");
+  b.className = "kg-row";
+  b.innerHTML = inner;
+  b.onclick = () => {
+    selectNode(byId[id] || { id }, true);
+    if (byId[id]) centerOn(byId[id], 1.0);
+  };
+  return b;
+}
+function relChip(rel, color){
+  return `<span class="kg-relchip" style="color:${color}">${esc(rel)}</span>`;
+}
+function renderInspector(d){
+  const ins = $("inspector");
+  const isEntity = d.known && d.entities.length > 0 &&
+    d.entities.some(e => e.id === d.id);
+  let head, body = document.createElement("div");
+  body.className = "kg-body";
+
+  if (!d.known){
+    ins.innerHTML = `<div class="kg-head">
+        <button class="kg-btn kg-close" id="ins-close">Close</button>
+        <div class="kg-head-name">Unknown id</div>
+        <div class="kg-id">${esc(d.id || "")}</div>
+      </div><div class="kg-body" style="color:var(--fog);padding:14px">
+      Nothing in lse-graph or lse-kb answers this id${d.error ? ": " + esc(d.error) : ""}.</div>`;
+    $("ins-close").onclick = () => { selected = null; closeInspector(); requestRender(); };
+    return;
+  }
+
+  const docSelf = isEntity ? null : (d.docs.find(x => x.id === d.id) || null);
+  const entSelf = isEntity ? d.entities.find(e => e.id === d.id) : null;
+  const docTitle = {}; for (const x of d.docs) docTitle[x.id] = x;
+
+  if (entSelf){
+    head = `<div class="kg-head">
+      <button class="kg-btn kg-close" id="ins-close">Close</button>
+      <div class="kg-head-name">${esc(entSelf.name)}</div>
+      <div class="kg-head-sub">
+        <span class="kg-chip" style="background:${typeColor(entSelf.type)}22;color:${typeColor(entSelf.type)}">${esc(entSelf.type)}</span>
+        <span>${d.counts.edges} connection${d.counts.edges === 1 ? "" : "s"}</span>
+      </div>
+      <div class="kg-id">${esc(d.id)}</div>
+    </div>`;
+    if (d.edges.length){
+      body.appendChild(secTitle("Connections"));
+      for (const e of d.edges){
+        const other = e.src === d.id ? e.dst : e.src;
+        const oe = (d.entities.find(x => x.id === other)) || null;
+        const od = docTitle[other] || null;
+        const name = oe ? oe.name : (od ? od.title : other.slice(0, 10));
+        const s = relStyle(e.rel);
+        body.appendChild(rowBtn(other,
+          relChip(e.rel, s.color) +
+          `<span class="kg-row-name" ${oe ? "" : `title="${esc(name)}"`}>${esc(trunc(name, 34))}</span>` +
+          (oe ? "" : `<span class="kg-row-meta">doc</span>`)));
+      }
+    } else {
+      body.appendChild(secTitle("Connections"));
+      body.appendChild(metaLine("—", "no edges in the index"));
+    }
+    if (d.docs.length){
+      body.appendChild(secTitle("Docs"));
+      for (const doc of d.docs) body.appendChild(docRow(doc));
+    }
+  } else {
+    head = `<div class="kg-head">
+      <button class="kg-btn kg-close" id="ins-close">Close</button>
+      <div class="kg-head-name">${esc(docSelf ? docSelf.title : d.id)}</div>
+      <div class="kg-head-sub">
+        <span class="kg-chip" style="background:${DOC_COLOR}33;color:#A8B0C2">doc</span>
+        ${docSelf && docSelf.quality != null ? `<span>q ${docSelf.quality}</span>` : ""}
+        ${docSelf && docSelf.source_tier ? `<span>${esc(docSelf.source_tier)}</span>` : ""}
+      </div>
+      <div class="kg-id">${esc(d.id)}</div>
+    </div>`;
+    if (docSelf){
+      const meta = [
+        ["topic", docSelf.topic || "—"],
+        ["quality", docSelf.quality != null ? String(docSelf.quality) : "—"],
+        ["tier", docSelf.source_tier || "—"],
+        ["volatility", docSelf.volatility || "—"],
+        ["origin", docSelf.origin || "—"]
+      ];
+      for (const [k, v] of meta) body.appendChild(metaLine(k, v));
+      if (docSelf.stale) body.appendChild(metaLine("state", "<span class='kg-flag-stale'>stale</span>"));
+      if (docSelf.source_url)
+        body.appendChild(metaLine("source", `<a href="${esc(docSelf.source_url)}" target="_blank" rel="noopener">open link</a>`));
+    }
+    const direct = new Set();
+    for (const e of d.edges)
+      if (e.rel === "documented_by" && e.dst === d.id) direct.add(e.src);
+    const directEnts = d.entities.filter(e => direct.has(e.id));
+    const nearEnts = d.entities.filter(e => !direct.has(e.id) && e.id !== d.id);
+    if (directEnts.length){
+      body.appendChild(secTitle("Documents"));
+      for (const e of directEnts)
+        body.appendChild(rowBtn(e.id,
+          relChip("documented_by", relStyle("documented_by").color) +
+          `<span class="kg-row-name">${esc(trunc(e.name, 34))}</span>`));
+    }
+    if (nearEnts.length){
+      body.appendChild(secTitle("Nearby entities"));
+      for (const e of nearEnts)
+        body.appendChild(rowBtn(e.id,
+          `<span class="kg-relchip" style="color:var(--fog)">…</span>` +
+          `<span class="kg-row-name">${esc(trunc(e.name, 34))}</span>`));
+    }
+    const relDocs = d.docs.filter(x => x.id !== d.id);
+    if (relDocs.length){
+      body.appendChild(secTitle("Related docs"));
+      for (const doc of relDocs.slice(0, 40)) body.appendChild(docRow(doc));
+    }
+  }
+  ins.innerHTML = head;
+  ins.appendChild(body);
+  $("ins-close").onclick = () => { selected = null; closeInspector(); requestRender(); };
+}
+function docRow(doc){
+  const q = doc.quality != null ? doc.quality : 0;
+  return rowBtn(doc.id,
+    `<span class="kg-qbar"><i style="width:${Math.round(q * 100)}%"></i></span>` +
+    `<span class="kg-row-name" title="${esc(doc.title)}">${esc(trunc(doc.title, 40))}</span>` +
+    (doc.stale ? `<span class="kg-flag-stale">stale</span>` : "") +
+    `<span class="kg-row-meta">${q} · ${esc(doc.source_tier || "?")}</span>`);
+}
+function secTitle(t){
+  const d = document.createElement("div");
+  d.className = "kg-sec-title";
+  d.textContent = t;
+  return d;
+}
+function metaLine(k, v){
+  const d = document.createElement("div");
+  d.className = "kg-meta-row";
+  d.innerHTML = `<span>${esc(k)}</span><b>${v}</b>`;
+  return d;
+}
+function trunc(s, n){ return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+/* ---------- rail ---------- */
+function buildRail(data){
+  const rail = $("rail");
+  const typeCounts = {};
+  for (const e of data.entities) typeCounts[e.type] = (typeCounts[e.type] || 0) + 1;
+  const types = Object.keys(typeCounts).sort((a, b) => typeCounts[b] - typeCounts[a]);
+  const relCounts = {};
+  for (const e of data.edges) relCounts[e.rel] = (relCounts[e.rel] || 0) + 1;
+  const rels = Object.keys(relCounts).sort((a, b) => relCounts[b] - relCounts[a]);
+
+  let html = `
+  <div class="kg-sec">
+    <input id="search" class="kg-search" type="text" placeholder="Search nodes and docs"
+           autocomplete="off" spellcheck="false">
+  </div>
+  <div class="kg-sec">
+    <div class="kg-sec-title">Entities</div>` +
+    types.map(t => `
+    <label class="kg-check-row">
+      <input type="checkbox" data-type="${esc(t)}" checked>
+      <span class="kg-dot" style="background:${typeColor(t)}"></span>
+      <span>${esc(t)}</span>
+      <span class="kg-count">${typeCounts[t]}</span>
+    </label>`).join("") + `
+  </div>
+  <div class="kg-sec">
+    <div class="kg-sec-title">Docs</div>
+    <label class="kg-check-row">
+      <input type="checkbox" id="docs-toggle" checked>
+      <span class="kg-dot" style="background:${DOC_COLOR}"></span>
+      <span>knowledge docs</span>
+      <span class="kg-count">${data.docs.length}</span>
+    </label>
+  </div>
+  <div class="kg-sec">
+    <div class="kg-sec-title">Links</div>` +
+    rels.map(r => {
+      const s = relStyle(r);
+      const dash = s.dash ? `stroke-dasharray="${s.dash.map(v => v * 2).join(" ")}"` : "";
+      return `
+    <div class="kg-rel-row">
+      <svg width="26" height="8" aria-hidden="true">
+        <line x1="1" y1="4" x2="25" y2="4" stroke="${s.color}"
+              stroke-width="${s.width * 2}" ${dash} opacity="${Math.max(s.alpha, 0.35)}"/>
+      </svg>
+      <span class="kg-rel-key">${esc(r)}</span>
+      <span class="kg-count">${relCounts[r]}</span>
+    </div>`;
+    }).join("") + `
+  </div>
+  <button class="kg-btn kg-reset" id="reset-view">Reset view</button>
+  <div class="kg-strip">
+    <div class="kg-strip-row"><span>entities</span><b>${data.counts.entities}</b></div>
+    <div class="kg-strip-row"><span>edges</span><b>${data.counts.edges}</b></div>
+    <div class="kg-strip-row"><span>docs</span><b>${data.counts.docs}</b></div>
+  </div>`;
+  rail.innerHTML = html;
+
+  rail.querySelectorAll("input[data-type]").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const t = cb.dataset.type;
+      if (cb.checked) activeTypes.add(t); else activeTypes.delete(t);
+      requestRender();
+    });
+  });
+  $("docs-toggle").addEventListener("change", e => {
+    showDocs = e.target.checked;
+    requestRender();
+  });
+  $("reset-view").onclick = () => {
+    camAnim = null;
+    if (reduced){ cam = { x:0, y:0, k:1 }; requestRender(); return; }
+    camAnim = { from:{ ...cam }, to:{ x:0, y:0, k:1 }, t0:performance.now(), dur:320 };
+    ensureLoop();
+  };
+  let debounce = 0;
+  $("search").addEventListener("input", e => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => runSearch(e.target.value), 180);
+  });
+  $("search").addEventListener("keydown", e => {
+    if (e.key === "Enter"){
+      runSearch(e.target.value);
+      if (matchSet && matchSet.size){
+        const first = [...matchSet][0];
+        if (byId[first]){ selectNode(byId[first], true); centerOn(byId[first], 1.2); }
+      }
+      e.target.blur();
+    }
+    if (e.key === "Escape"){ e.target.value = ""; runSearch(""); e.target.blur(); }
+  });
+}
+function runSearch(q){
+  searchQ = (q || "").trim().toLowerCase();
+  if (!searchQ){ matchSet = null; }
+  else {
+    matchSet = new Set();
+    for (const n of nodes){
+      const hay = (n.name + " " + (n.topic || "") + " " + n.id).toLowerCase();
+      if (hay.includes(searchQ)) matchSet.add(n.id);
+    }
+  }
+  hotSet = null;
+  requestRender();
 }
 
-async function load(){
+/* ---------- keyboard on canvas ---------- */
+cv.addEventListener("keydown", ev => {
+  if (ev.key === "Escape"){
+    selected = null; closeInspector(); requestRender();
+    return;
+  }
+  if (ev.key === "Enter"){
+    if (selected) openInspector(selected);
+    return;
+  }
+  const dir = { ArrowUp:[0,-1], ArrowDown:[0,1], ArrowLeft:[-1,0], ArrowRight:[1,0] }[ev.key];
+  if (!dir) return;
+  ev.preventDefault();
+  const cur = selected ? byId[selected] : null;
+  if (!cur){
+    const best = nodes.filter(nodeVisible)
+      .sort((a, b) => b.deg - a.deg)[0];
+    if (best){ selected = best.id; openInspector(best.id); requestRender(); }
+    return;
+  }
+  const cp = toScreen(cur);
+  let best = null, bs = -Infinity;
+  for (const n of nodes){
+    if (n === cur || !nodeVisible(n)) continue;
+    const p = toScreen(n);
+    const dx = p.x - cp.x, dy = p.y - cp.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 8 || d > 1000) continue;
+    const dot = (dx * dir[0] + dy * dir[1]) / d;
+    if (dot < 0.5) continue;
+    const score = dot * 2 - d / 800;
+    if (score > bs){ bs = score; best = n; }
+  }
+  if (best){
+    selected = best.id;
+    requestRender();
+    if ($("inspector").classList.contains("kg-open")) openInspector(best.id);
+  }
+});
+window.addEventListener("keydown", ev => {
+  if (ev.key === "/" && document.activeElement !== cv &&
+      !/INPUT|TEXTAREA/.test(document.activeElement.tagName || "")){
+    ev.preventDefault();
+    const s = $("search");
+    if (s) s.focus();
+  }
+});
+
+/* ---------- status / empty states ---------- */
+function setStatus(text, cls){
   const st = $("status");
-  st.className = ""; st.textContent = "loading…";
+  st.textContent = text;
+  st.className = "kg-status" + (cls ? " kg-err" : "");
+  st.dataset.phase = cls === "err" ? "err" : (text.includes("settling") || text.includes("loading") ? "settle" : "ok");
+}
+function showEmpty(title, body, retry){
+  $("empty-title").textContent = title;
+  $("empty-body").innerHTML = body;
+  $("empty").style.display = "flex";
+  const a = $("empty-action");
+  a.style.display = retry ? "" : "none";
+  a.onclick = load;
+}
+function hideEmpty(){ $("empty").style.display = "none"; }
+
+/* ---------- load ---------- */
+async function load(){
+  setStatus("loading graph…", "");
+  hideEmpty();
   try {
-    const headers = {};
-    if (token()) headers["Authorization"] = "Bearer " + token();
-    const r = await fetch("/api/ui/kbgraph", {headers});
+    const r = await fetch("/api/ui/kbgraph", { headers: authHeaders() });
     if (r.status === 401){
-      st.className = "err";
-      st.textContent = "unauthorized — set the gateway token (GOETHE_MCP_TOKEN)";
+      setStatus("gateway token required", "err");
+      showEmpty("Gateway token required",
+        "The gateway answered 401. Enter the gateway token (GOETHE_MCP_TOKEN) in the top bar and connect.",
+        false);
+      $("token").focus();
       return;
     }
     const data = await r.json();
-    if (data.error){ st.className = "err"; st.textContent = "error: " + data.error; return; }
-    render(data);
-    const c = data.counts;
-    st.textContent = `${c.entities} entities · ${c.edges} edges` + (data.truncated ? " (truncated)" : "");
-    if (!looping){ looping = true; loop(); }
+    if (data.error){
+      setStatus("load failed", "err");
+      showEmpty("Load failed", "The graph endpoint returned an error: " + esc(data.error) +
+        ". Check the gateway log, then retry.", true);
+      return;
+    }
+    dataCache = data;
+    buildGraph(data);
+    if (data.dormant || data.counts.entities === 0){
+      setStatus("graph dormant", "");
+      showEmpty(
+        data.index_present ? "Graph is dormant" : "Graph index not found",
+        data.index_present
+          ? "lse-graph holds no entities or edges. The Phase 5 layer is dormant behind <code>GRAPH_RECALL=0</code> and only fills from operator-applied proposals via <code>materialize_accepted_graph()</code>. Reload once the graph is materialized."
+          : "The lse-graph index does not exist yet. It is created on the first materialization of accepted graph proposals. Reload when it appears.",
+        false);
+      return;
+    }
+    hideEmpty();
+    setStatus("layout settling…", "");
+    const suffix = data.truncated ? " (truncated)" : "";
+    sim._settleSuffix = suffix;
+    setTimeout(() => {
+      if (sim.running) return;
+      setStatus("graph loaded" + suffix, "");
+    }, 4000);
+    ensureLoop();
   } catch (e){
-    st.className = "err"; st.textContent = "fetch failed: " + e.message;
+    setStatus("cannot reach the gateway", "err");
+    showEmpty("Cannot reach the gateway",
+      "The graph request failed: " + esc(e.message) + ". Check that the gateway is running, then retry.",
+      true);
   }
 }
-let looping = false;
+
+/* ---------- canvas sizing ---------- */
+function resize(){
+  dpr = window.devicePixelRatio || 1;
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  requestRender();
+}
+window.addEventListener("resize", resize);
+cv.addEventListener("dblclick", ev => {
+  const rect = cv.getBoundingClientRect();
+  zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, 1.6);
+});
 resize();
 load();
 </script>

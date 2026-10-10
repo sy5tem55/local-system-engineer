@@ -119,6 +119,25 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin, De
             default="http://localhost:8088/search",
             description="SearxNG JSON search endpoint (for search_web).",
         )
+
+        TAVILY_URL: str = Field(
+            default="https://api.tavily.com",
+            description="Tavily REST base URL - search_web PRIMARY backend "
+            "(task df9712f2 step 8; Brave excluded 2026-10-07, credit card).",
+        )
+        TAVILY_API_KEY: str = Field(
+            default="",
+            description="Tavily API key (1 credit/search, 1000/mo free, no card). "
+            "Env GOETHE_TAVILY_API_KEY takes precedence; key lives in "
+            "Vaultwarden item TAVILY_API_KEY and is injected via gateway start "
+            "env - never committed. Empty = SearxNG-only (old behaviour).",
+        )
+        WEBSEARCH_STATE_DIR: str = Field(
+            default="/opt/local-se/state",
+            description="Websearch quota state dir (websearch_log.jsonl per-query "
+            "immediate truth, tavily_quota.json /usage reconciliation) - feeds "
+            "the /webSearch dashboard (task df9712f2 steps 9-10).",
+        )
         CAMOUFOX_URL: str = Field(
             default="http://192.168.5.41:9377",
             description="Camoufox browser server URL on node3090 (for Reddit scraping).",
@@ -204,6 +223,10 @@ class Tools(KBMixin, NetSecMixin, NodeLifecycleMixin, PlannerMixin, WebMixin, De
             default="",
             description="Optional model name sent with PLANNER_FORCE_URL requests "
             "(needed for Ollama-style endpoints; llama-server ignores it).",
+        )
+        PLANNER_FORCE_API_KEY: str = Field(
+            default="",
+            description="Optional Bearer key for PLANNER_FORCE_URL endpoints (Strata api_key). Env GOETHE_PLANNER_FORCE_API_KEY.",
         )
         MODEL_PRETRAIN_CUTOFF: str = Field(
             default="",

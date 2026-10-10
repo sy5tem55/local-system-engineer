@@ -519,6 +519,100 @@ class OrchestratorTools:
         return _json.dumps({"active": active, "just_expired": flipped})
 
 
+class A2ACodingTools:
+    """MCP tool surface for A2A 1.0 coding delegation to node3090.
+
+    Valve-gated (GOETHE_A2A_ENABLED) like the orchestrator surface. The
+    a2a_client import happens lazily INSIDE delegate_coding, so a broken
+    /opt/local-se/a2a install (missing venv deps, missing JWT keys) can
+    never break the MCP surface — the tool returns {error: a2a-import}.
+    Same fail-safe pattern as _orch_bootstrap (ADR-ORCH-001 Phase 3).
+
+    Deterministic completion (task 818a29de): SendMessage carries
+    taskPushNotificationConfig -> node3090 pushes the terminal event to
+    this node's /a2a/push webhook (goethe_a2a.py, deduped via the shared
+    EventLog); delegate_coding then blocks on wait_for_completion_sse()
+    (SubscribeToTask SSE with a bounded GetTask floor) — NOT a sleep loop.
+    Push failure never fails the task: the SSE path is the completion
+    authority, the push is the journal/determinism backstop.
+    """
+
+    def delegate_coding(self, brief: str, workdir: str = "",
+                        model: str = "") -> str:
+        """Delegate one coding brief to node3090's opencode agent (A2A 1.0).
+
+        node3090 runs the brief headlessly (`opencode run --format json
+        --dir <workdir>`, server deadline 2400s). Message text = the brief
+        verbatim, plus optional header lines consumed by the server's
+        parse_input: "workdir:<abs path>" and "model:provider/model".
+
+        Args:
+            brief:   The coding instruction, verbatim — this is opencode's
+                     prompt. Required, non-empty.
+            workdir: Absolute path ON NODE3090 where opencode runs. Must
+                     start with /home/lse-admin/ (server
+                     A2A_WORKDIR_PREFIX; anything else is rejected
+                     workdir-forbidden). Empty = node3090 default
+                     (/home/lse-admin/deep-search).
+            model:   opencode model id "provider/model". Empty = node3090
+                     default (its opencode.jsonc).
+
+        Returns JSON (string). Completion shape:
+            {task_id, state, push_url, latency_ms, result} — state is the
+            terminal TASK_STATE_* (COMPLETED/FAILED/CANCELED/REJECTED);
+            result is the parsed opencode JSON payload (None if the task
+            produced no text). Check state before trusting result.
+        Failure shape:
+            {error, detail} with error = classification: node3090-down
+            (TCP gate failed — wake the node first), workdir-forbidden,
+            deadline (not terminal after the SSE timeout), a2a-import,
+            or the A2AClientError classification (unauthorized, rpc,
+            sse-incomplete, ...).
+        """
+        import sys as _sys
+        _a2a_dir = "/opt/local-se/a2a"
+        if _a2a_dir not in _sys.path:
+            _sys.path.insert(0, _a2a_dir)
+        try:
+            import a2a_client
+        except Exception as e:  # noqa: BLE001 — fail-safe by design
+            return json.dumps({"error": "a2a-import",
+                               "detail": f"cannot import a2a_client: {e!r}"})
+        try:
+            if not a2a_client.node3090_reachable():
+                return json.dumps(
+                    {"error": "node3090-down",
+                     "detail": (f"TCP connect to {a2a_client.PEER_HOST}:"
+                                f"{a2a_client.PEER_PORT} refused — wake "
+                                "node3090 before delegating")})
+            lines = []
+            if workdir:
+                lines.append("workdir:" + workdir)
+            if model:
+                lines.append("model:" + model)
+            lines.append(brief)
+            push_url = (os.environ.get("A2A_PUSH_URL")
+                        or a2a_client.DEFAULT_PUSH_URL)
+            t0 = time.monotonic()
+            task = a2a_client.send_message_with_push("\n".join(lines),
+                                                     push_url,
+                                                     peer_url="https://node3090.home.arpa:9702")
+            task_id = task.get("id") or task.get("taskId") or "unknown"
+            terminal = a2a_client.wait_for_completion_sse(task_id,
+                                                          peer_url="https://node3090.home.arpa:9702")
+            state = ((terminal.get("status") or {}).get("state") or "")
+            return json.dumps({
+                "task_id": task_id, "state": state, "push_url": push_url,
+                "latency_ms": int((time.monotonic() - t0) * 1000),
+                "result": a2a_client.extract_result(terminal),
+            }, default=str)
+        except a2a_client.A2AClientError as e:
+            return json.dumps({"error": e.classification, "detail": str(e)})
+        except Exception as e:  # noqa: BLE001 — surface, never crash the loop
+            return json.dumps({"error": "unexpected",
+                               "detail": f"{type(e).__name__}: {e}"})
+
+
 def _annotation(p: inspect.Parameter):
     ann = p.annotation if p.annotation is not inspect.Parameter.empty else str
     # Do NOT wrap in Optional[X] even when default=None.
@@ -1107,6 +1201,242 @@ def register(mcp, inst, seen=None) -> list:
     return exposed_names
 
 
+# ── WebSearch quota dashboard (task df9712f2 step 10) ─────────────────────
+# GET /webSearch             → static dashboard (static/webSearch.html next
+#                              to this file). Mounted OUTSIDE _TokenGuard,
+#                              same posture as /ui: the page is data-free.
+# GET /api/webSearch/quota   → Tavily monthly quota (token-gated with the
+#                              same normalisation as _TokenGuard).
+#                              Immediate truth = websearch_log.jsonl (one
+#                              line per search, written by
+#                              goethe_web.WebMixin._websearch_log);
+#                              reconciliation = tavily_quota.json (Tavily
+#                              GET /usage — async, ≥84 s lag → refreshed on
+#                              demand here, at most once per 10 min,
+#                              mirroring WebMixin._tavily_refresh_quota).
+# State dir: valve WEBSEARCH_STATE_DIR (default /opt/local-se/state; env
+# GOETHE_WEBSEARCH_STATE_DIR override). Fail-safe: a load error or a bad
+# state file degrades the panel to n/a, never the MCP surface.
+
+class WebSearchRouter:
+    """ASGI middleware: serves /webSearch and /api/webSearch/quota; passes
+    everything else through untouched. Sits OUTSIDE _TokenGuard (so the
+    static page loads in a plain browser) and does its own token check on
+    /api/webSearch/quota using the same header normalisation as
+    _TokenGuard."""
+
+    _USAGE_MIN_INTERVAL_S = 600  # same cadence as the mixin: /usage lags
+
+    def __init__(self, app, token: str = "", state_dir: str = "",
+                 html_path: str = ""):
+        self.app = app
+        self.token = token or ""
+        self.state_dir = state_dir or os.environ.get(
+            "GOETHE_WEBSEARCH_STATE_DIR", "/opt/local-se/state")
+        self.html_path = html_path or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "static", "webSearch.html")
+
+    def _authorized(self, scope) -> bool:
+        if not self.token:
+            return True  # same posture as the MCP endpoint: localhost-only
+        headers = dict(scope.get("headers", []))
+        auth = headers.get(b"authorization", b"").decode().strip()
+        received = auth[7:] if auth.lower().startswith("bearer ") else auth
+        return received == self.token
+
+    async def _respond(self, send, status: int, body: bytes,
+                       content_type: str) -> None:
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [(b"content-type", content_type.encode()),
+                                (b"cache-control", b"no-store")]})
+        await send({"type": "http.response.body", "body": body})
+
+    def _tavily_key(self) -> str:
+        # Gateway start env injects the key (Vaultwarden item TAVILY_API_KEY).
+        # GUI-launched gateway has no such env → KEY= file fallback at
+        # <state_dir>/tavily.env (task df9712f2 follow-up, 2026-10-07).
+        # Empty = SearxNG-only era: the endpoint degrades to local-log data.
+        key = os.environ.get("GOETHE_TAVILY_API_KEY", "")
+        if key:
+            return key
+        try:
+            with open(self.state_dir + "/tavily.env", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("KEY="):
+                        return line[4:].strip()
+        except OSError:
+            pass
+        return ""
+
+    def _maybe_refresh_usage(self) -> None:
+        """On-demand GET /usage → tavily_quota.json (atomic write, rate-
+        limited to once per 10 min). Self-sufficient copy of
+        WebMixin._tavily_refresh_quota — the router holds no reference to
+        the Tools instance, so it re-reads the key/env itself. Never raises:
+        a refresh failure leaves the previous state file in place."""
+        key = self._tavily_key()
+        if not key:
+            return
+        path = self.state_dir + "/tavily_quota.json"
+        try:
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    last = float(json.load(f).get("checked_at_ts", 0))
+                if time.time() - last < self._USAGE_MIN_INTERVAL_S:
+                    return
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass  # unreadable/stale state → refresh anyway
+        import urllib.request  # noqa: PLC0415
+
+        try:
+            req = urllib.request.Request(
+                os.environ.get("GOETHE_TAVILY_URL",
+                               "https://api.tavily.com").rstrip("/") + "/usage",
+                headers={"Authorization": f"Bearer {key}"})
+            data = json.load(urllib.request.urlopen(req, timeout=10))
+        except Exception:  # noqa: BLE001 — best effort by design
+            return
+        try:
+            os.makedirs(self.state_dir, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"checked_at": datetime.datetime.now().isoformat(),
+                           "checked_at_ts": time.time(), "raw": data}, f)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+    def _quota_payload(self) -> dict:
+        now = datetime.datetime.now()
+        month_key = now.strftime("%Y-%m")
+
+        local_count = 0
+        recent = []
+        log_last_entry = None
+        log_path = self.state_dir + "/websearch_log.jsonl"
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        log_last_entry = rec.get("ts") or log_last_entry
+                        if (str(rec.get("ts", ""))[:7] == month_key
+                                and rec.get("backend") == "tavily"
+                                and rec.get("ok")):
+                            local_count += 1
+                        recent.append({"ts": rec.get("ts"),
+                                       "backend": rec.get("backend"),
+                                       "ok": rec.get("ok"),
+                                       "query": rec.get("query")})
+            except OSError:
+                pass
+        recent = recent[-12:][::-1]  # newest first, last 12
+
+        self._maybe_refresh_usage()
+
+        plan = limit = api_usage = None
+        checked_at = None
+        q_path = self.state_dir + "/tavily_quota.json"
+        if os.path.exists(q_path):
+            try:
+                with open(q_path, encoding="utf-8") as f:
+                    q = json.load(f)
+                checked_at = q.get("checked_at")
+                acct = q.get("raw", {}).get("account", {})
+                plan = acct.get("current_plan")
+                limit = acct.get("plan_limit")
+                api_usage = acct.get("plan_usage")
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+
+        # Best available truth: /usage lags ≥84 s while the local log is
+        # immediate but only covers this gateway's searches since the mixin
+        # deployed. Take the larger of the two; source names the winner.
+        if api_usage is not None:
+            usage, source = api_usage, "tavily-usage"
+            if local_count > api_usage:
+                usage, source = local_count, "local-log"
+        elif local_count:
+            usage, source = local_count, "local-log"
+        else:
+            usage, source = None, "none"
+        remaining = ((limit - usage)
+                     if limit is not None and usage is not None else None)
+
+        reset_next = None
+        try:
+            reset_next = (datetime.datetime(now.year + 1, 1, 1)
+                          if now.month == 12
+                          else datetime.datetime(now.year, now.month + 1, 1))
+        except ValueError:
+            pass
+
+        return {
+            "plan": plan,
+            "limit": limit,
+            "usage": usage,
+            "usage_source": source,
+            "api_usage": api_usage,
+            "local_count": local_count,
+            "remaining": remaining,
+            "usage_checked_at": checked_at,
+            "log_last_entry": log_last_entry,
+            "reset_next": reset_next.isoformat() if reset_next else None,
+            "recent": recent,
+        }
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        method = scope.get("method", "GET")
+
+        if path in ("/webSearch", "/webSearch/") and method == "GET":
+            try:
+                with open(self.html_path, "rb") as f:
+                    html = f.read()
+                await self._respond(send, 200, html,
+                                    "text/html; charset=utf-8")
+            except OSError as e:
+                await self._respond(
+                    send, 500,
+                    f"webSearch.html not found: {e}".encode(), "text/plain")
+            return
+
+        if path == "/api/webSearch/quota" and method == "GET":
+            if not self._authorized(scope):
+                await self._respond(
+                    send, 401,
+                    '{"error":"unauthorized"}'.encode(),
+                    "application/json")
+                return
+            import asyncio  # noqa: PLC0415
+
+            # Off the event loop: the refresh can do blocking network I/O
+            # (≤10 s) — stalling the loop would freeze every MCP session.
+            try:
+                payload = await asyncio.to_thread(self._quota_payload)
+            except Exception as e:  # noqa: BLE001
+                await self._respond(
+                    send, 500,
+                    json.dumps({"error": str(e)}).encode(),
+                    "application/json")
+                return
+            await self._respond(send, 200, json.dumps(payload).encode(),
+                                "application/json")
+            return
+
+        await self.app(scope, receive, send)
+
+
 def build_http_app(mcp, token: str, cors_origin: str):
     """Wrap FastMCP's streamable-HTTP ASGI app with CORS + optional bearer-token auth.
 
@@ -1170,6 +1500,21 @@ def build_http_app(mcp, token: str, cors_origin: str):
         except Exception as e:
             print(f"[goethe_mcp] WARNING: Goethe Console disabled ({e}) — "
                   "MCP surface unaffected", file=sys.stderr)
+
+    # WebSearch quota dashboard (task df9712f2 step 10) — /webSearch +
+    # /api/webSearch/quota. Same posture as the Console: static page
+    # browser-loadable OUTSIDE _TokenGuard; the data endpoint token-gates
+    # itself. Fail-safe: any error leaves the MCP surface untouched.
+    try:
+        app = WebSearchRouter(app, token=token,
+                              html_path=os.path.join(
+                                  os.path.dirname(os.path.abspath(__file__)),
+                                  "websearch-lb", "frontend", "index.html"))
+        print("[goethe_mcp] WebSearch dashboard mounted at /webSearch "
+              "(quota API at /api/webSearch/quota)", file=sys.stderr)
+    except Exception as e:
+        print(f"[goethe_mcp] WARNING: WebSearch dashboard disabled ({e}) — "
+              "MCP surface unaffected", file=sys.stderr)
 
     # CORSMiddleware — intercepts OPTIONS before token check or routing.
     # DELETE is required: llama-ui sends DELETE /mcp?session_id=... to terminate
@@ -1289,6 +1634,24 @@ def main():
             raise
         except Exception as e:
             print(f"[goethe_mcp] WARNING: orchestrator disabled ({e}) — "
+                  "MCP surface unaffected", file=sys.stderr)
+
+    # ADR-ORCH-001 Phase 6+ — A2A 1.0 coding delegation surface (valve-gated;
+    # off by default). delegate_coding talks to the node3090 opencode agent;
+    # the a2a_client import is lazy inside the method, so a broken A2A install
+    # cannot affect the MCP surface (same pattern as the orchestrator block).
+    if _a2a_enabled():
+        try:
+            a2a_inst = make_instance(A2ACodingTools)
+            instances.append(a2a_inst)
+            ex = register(mcp, a2a_inst, seen)
+            names += ex
+            print(f"[goethe_mcp] A2A coding ENABLED: +{len(ex)} tools "
+                  f"({', '.join(ex)})", file=sys.stderr)
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[goethe_mcp] WARNING: A2A coding disabled ({e}) — "
                   "MCP surface unaffected", file=sys.stderr)
 
     # Phase 2 bridges (roadmap item 2): bound after every module so they see

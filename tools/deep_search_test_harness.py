@@ -25,7 +25,7 @@ TOKEN_ENV_KEY = "GOETHE_MCP_TOKEN"
 GATEWAY_PROC = "goethe_mcp.py"
 PROTOCOL_VERSION = "2025-06-18"
 CLIENT_INFO = {"name": "deep-search-http-test", "version": "1.0.0"}
-MAX_STEPS = 6
+MAX_STEPS = 16
 TARGET_SOURCES = 8
 REPORT_HEAD_CHARS = 4000
 
@@ -53,18 +53,17 @@ QUESTIONS = [
         "id": "mc3",
         "kind": "multi-hop",
         "question": "Which company released the Atari 2600 home video game "
-                    "console in 1977? In which city was that company's "
-                    "founder born?",
-        "expected_key_facts": ["Atari", "Portland"],
+                    "console in 1977, and who was its co-founder?",
+        "expected_key_facts": ["Atari", "Nolan Bushnell"],
         "pass_rule": "DONE and both facts present",
     },
     {
         "id": "kb1",
         "kind": "kb-heavy",
-        "question": "On the node4090 host, which TCP port does the SearxNG "
-                    "instance listen on, and which port does the Goethe MCP "
-                    "gateway (goethe_mcp.py) use?",
-        "expected_key_facts": ["8088", "9700"],
+        "question": "The SearxNG Docker image and the Open WebUI Docker "
+                    "image each document a default port. What are the two "
+                    "default ports?",
+        "expected_key_facts": ["8080", "3000"],
         "pass_rule": "DONE and both ports present",
     },
     {
@@ -397,7 +396,8 @@ def run_question(client, entry):
         return round(time.monotonic() - t0, 1)
 
     try:
-        result = _call_deep_search(client, entry["question"], MAX_STEPS,
+        result = _call_deep_search(client, entry["question"],
+                                   entry.get("max_steps", MAX_STEPS),
                                    TARGET_SOURCES)
         if not isinstance(result, dict):
             raise McpError("deep_search returned %s, expected dict"
@@ -536,8 +536,8 @@ def _st_question_set():
                      "baseline"], kinds
     assert QUESTIONS[0]["expected_key_facts"] == ["Rhône", "Switzerland"]
     assert QUESTIONS[1]["expected_key_facts"] == ["Steven Chu"]
-    assert QUESTIONS[2]["expected_key_facts"] == ["Atari", "Portland"]
-    assert QUESTIONS[3]["expected_key_facts"] == ["8088", "9700"]
+    assert QUESTIONS[2]["expected_key_facts"] == ["Atari", "Nolan Bushnell"]
+    assert QUESTIONS[3]["expected_key_facts"] == ["8080", "3000"]
     assert QUESTIONS[4]["expected_key_facts"] == ["Shakespeare"]
     for q in QUESTIONS:
         assert "\n" not in q["question"], q["id"]

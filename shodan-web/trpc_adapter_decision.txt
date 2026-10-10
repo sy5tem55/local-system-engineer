@@ -1,0 +1,41 @@
+DECISION: manual tRPC v11 integration (no third-party adapter)
+Date: 2026-09-28
+Project: /home/sy5/projects/local-system-engineer/shodan-web
+
+Chosen approach: manual fetchRequestHandler server endpoint + createTRPCClient browser client
+- Server: manual fetchRequestHandler wrapper in SvelteKit +server.ts using
+  fetchRequestHandler from @trpc/server/adapters/fetch (installed: @trpc/server 11.19.0).
+  Endpoint: src/routes/api/trpc/[trpc]/+server.ts
+- Browser: createTRPCClient from @trpc/client (installed: 11.19.0) with
+  httpBatchLink({ url: '/api/trpc' }), wrapped in @tanstack/svelte-query
+  (installed: 6.3.0) QueryClientProvider in src/routes/+layout.svelte.
+
+Evidence
+1. Official tRPC v11 docs list server adapters: standalone, express, fastify,
+   aws-lambda, nextjs, fetch. No SvelteKit adapter exists officially. Docs state
+   the Fetch adapter is the path for other full-stack frameworks
+   ("Next.js, Astro, Remix, or SolidStart").
+   URL: https://trpc.io/docs/server/adapters
+2. npm registry checks (2026-09-28):
+   - @trpc/tails: 404 Not Found (does not exist)
+   - @trpc/svelte-query: 404 Not Found (does not exist)
+   - @trpc/svelte: 404 Not Found (does not exist)
+   - sveltekit-trpc: 404 Not Found (does not exist)
+   - trpc-sveltekit 3.6.3: peerDependencies @trpc/server ^10.0.0; last modified
+     2025-03-06 -> incompatible with tRPC v11 and not maintained.
+   - trpc-svelte-query-adapter 2.3.16: peerDependencies @trpc/server ^10.43.3;
+     last published 2025-03-24 -> incompatible with v11.
+   - trpc-svelte-query 3.0.3: peerDependencies @trpc/server ^11.0.0 (compatible)
+     but requires @tanstack/svelte-query ^5.69.0 (scaffold has 6.3.0 -> would
+     force a downgrade); single-maintainer community package, last published
+     2025-05-20. Rejected in favor of zero added third-party deps.
+3. All required runtime deps already installed (package.json, no changes needed):
+   @trpc/client ^11.19.0, @trpc/server ^11.19.0, @tanstack/svelte-query ^6.3.0,
+   @sveltejs/kit ^2.63.0, svelte ^5.56.1.
+
+Key imports for steps 12-15
+  import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
+  import { initTRPC } from '@trpc/server';
+  import { TRPCError } from '@trpc/server';
+  import { createTRPCClient, httpBatchLink } from '@trpc/client';
+  import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';

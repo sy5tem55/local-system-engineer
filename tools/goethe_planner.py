@@ -198,7 +198,10 @@ class PlannerMixin:
             if fm:
                 payload_obj["model"] = fm
             payload = _json.dumps(payload_obj).encode()
-            result = self._post_chat_completion(force_url, payload, 180)
+            result = self._post_chat_completion(
+                force_url, payload, 180,
+                api_key=self.valves.PLANNER_FORCE_API_KEY.strip(),
+            )
             if not result.startswith("ERROR:"):
                 return result
             self._log(
@@ -310,17 +313,21 @@ class PlannerMixin:
         )
 
     def _post_chat_completion(
-        self, base_url: str, payload: bytes, timeout: int
+        self, base_url: str, payload: bytes, timeout: int,
+        api_key: str = "",
     ) -> str:
         """POST payload to /v1/chat/completions. Returns content or 'ERROR: ...'"""
         import json as _json
         import urllib.request as _ureq
         import urllib.error as _uerr
 
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         req = _ureq.Request(
             f"{base_url.rstrip('/')}/v1/chat/completions",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:

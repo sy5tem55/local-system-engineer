@@ -129,7 +129,11 @@ class PfSenseClient:
             return {"error": f"pfSense HTTP error: {e}", "status": "http_error"}
 
     def get_firewall_logs(self, hours: int = 24, limit: int = 5000) -> list[dict]:
-        data = self.get("/api/v2/status/logs/firewall")
+        data = self.get("/api/v2/status/logs/firewall", {"limit": limit})
+        probe = limit
+        while (isinstance(data, dict) and "406" in str(data.get("error", "")) and probe > 1):
+            probe //= 2
+            data = self.get("/api/v2/status/logs/firewall", {"limit": probe})
         if isinstance(data, dict) and "error" in data and "data" not in data:
             return [{"error": data["error"], "_source": "gateway"}]
         if isinstance(data, dict) and "data" in data:

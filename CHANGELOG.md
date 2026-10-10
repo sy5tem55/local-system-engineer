@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-09-25 — pfSense log gateway 406/limit fetch fix + log compression switch
+
+- Root cause of 0-entry firewall summaries (task 99d4e084):
+  `get_firewall_logs` fetched `/api/v2/status/logs/firewall` WITHOUT a `limit`
+  param; pfSense 26.07's default limit exceeds the active (unrotated) log file,
+  so the REST API opened rotated files. Rotations were `.zst` and the API 406s
+  (`LOG_FILE_TRAITS_UNSUPPORTED_LOG_FILE_EXTENSION`); `get()` swallowed the 406
+  into an error dict → 0 entries.
+- Patched `tools/pfsense_log_gateway.py` `get_firewall_logs`: explicit `limit`
+  fetch + 406 halving back-off (probe = limit; on 406 halve until fit).
+  py_compile clean. New sha256:
+  `fa7fff55c210d505beab25e7508a83226a84ee9c48bc660bd5f8b4cb4b822269`
+  (repo + deployed identical; pre-patch
+  `1437bdb0f7ef395d1b3b2b37f0389fb49bfe4cc7315fdcefc1b8a8ad278e27f1`).
+- Deployed to /opt/local-se, restarted with PFSENSE_API_KEY env (launch script
+  does not inject the key). Verified: `/summary?hours=24` → total_entries 1250.
+- pfSense log compression switched zstd → gzip via
+  `PATCH /api/v2/status/logs/settings {"logcompressiontype":"gzip"}`
+  (verified persisted; rotatecount=5). Old `.zst` rotations remain until they
+  age out; new rotations are `.gz`.
+- REST API read-only mode re-enabled: `PATCH /api/v2/system/restapi/settings`
+  with exactly `{"read_only": true}`; two-check verified (GET true + 405
+  `ENDPOINT_METHOD_NOT_ALLOWED_IN_READ_ONLY_MODE` probe).
+
 ## 2026-08-24 — node4090 (LUCIFER) system prompt v0.6.3 (drift fix)
 
 - Authored `prompts/v0.6.3.md` from `prompts/v0.6.2.md` (verified on-disk == live

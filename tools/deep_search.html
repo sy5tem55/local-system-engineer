@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Deep Search</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --text:#d7dbe4; --dim:#8b93a3; --accent:#4da3ff; --ok:#3fb96f; --warn:#e0b341; --err:#e05d5d; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 ui-monospace,Consolas,monospace; background:var(--bg); color:var(--text); }
+  header { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; gap:12px; align-items:center; }
+  header h1 { font-size:15px; margin:0; }
+  .status { color:var(--dim); font-size:12px; }
+  main { display:grid; grid-template-columns: 280px 1fr; }
+  #topics { border-right:1px solid var(--border); padding:10px; }
+  .topic { position:relative; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px; cursor:pointer; }
+  .topic.active { border-color:var(--accent); }
+  .topic .title { font-weight:bold; }
+  .topic .meta { color:var(--dim); font-size:11px; }
+  .topic .del { position:absolute; top:0; right:0; font-size:1em; line-height:1; color:var(--err); background:none; border:none; border-radius:0; padding:0; width:auto; cursor:pointer; }
+  .topic .del:hover { color:#fff; background:var(--err); }
+  #detail { padding:12px; overflow:auto; }
+  input { font:inherit; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; }
+  button { font:inherit; cursor:pointer; background:#20304a; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 10px; }
+  button:disabled { opacity:.45; cursor:default; }
+  .row { display:flex; gap:8px; margin:8px 0; }
+  .kv { display:grid; grid-template-columns: 130px 1fr; gap:3px 10px; font-size:12px; }
+  .kv .k { color:var(--dim); }
+  pre { white-space:pre-wrap; word-break:break-word; background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:10px; max-height:420px; overflow:auto; }
+  .trace { max-height:260px; overflow:auto; font-size:12px; }
+  .trace div { padding:2px 6px; border-bottom:1px dashed var(--border); }
+  .tag { display:inline-block; padding:1px 6px; border-radius:8px; font-size:11px; margin-right:6px; }
+  .t-RUNNING { background:#17324d; color:var(--accent); }
+  .t-DONE { background:#14351f; color:var(--ok); }
+  .t-FAILED { background:#3a1d1d; color:var(--err); }
+  .t-ORPHANED { background:#3a2f14; color:var(--warn); }
+  .t-QUEUED { background:#262b36; color:var(--dim); }
+  #tokenbar { display:none; padding:8px 16px; background:#2a1d1d; gap:8px; align-items:center; }
+  h3 { margin:14px 0 6px; font-size:13px; color:var(--dim); }
+</style>
+</head>
+<body>
+<div id="tokenbar">
+  <span>Gateway token (env <code>GOETHE_MCP_TOKEN</code>) — paste to set or replace:
+    <span id="token-hint" class="status" style="font-size:11px"></span></span>
+  <input id="token-input" type="password" placeholder="paste token" style="flex:1; max-width:420px">
+  <button id="btn-token" type="button">save</button>
+  <button id="btn-token-clear" type="button">clear</button>
+</div>
+<header>
+  <h1>deep search</h1>
+  <span class="status" id="hdr-status">loading…</span>
+  <span style="flex:1"></span>
+  <button id="btn-token-toggle" type="button" title="show the token field">token</button>
+  <span class="status">ui rev5 · 2026-10-09</span>
+  <span class="status">model: node3090:8080 (valve default) · budgets 8 steps / 10 sources / 1800s</span>
+</header>
+<main>
+  <div id="topics">
+    <div class="row"><input id="new-topic" placeholder="new topic title" style="flex:1"><button id="btn-new-topic">add</button></div>
+    <div id="topic-list"><span class="status">no topics yet</span></div>
+  </div>
+  <div id="detail">
+    <div class="row">
+      <input id="run-question" placeholder="question for this pass" style="flex:1">
+      <button id="btn-run" disabled>run pass</button>
+    </div>
+    <div class="row">
+      <input id="run-instructions" placeholder="instructions (optional)" style="flex:1">
+      <input id="run-max-steps" placeholder="max_steps" style="width:90px">
+      <input id="run-max-sources" placeholder="max_sources" style="width:90px">
+    </div>
+    <h3>run state</h3>
+    <div class="kv" id="run-kv"><span class="k">state</span><span id="rs-status" class="status">no run</span></div>
+    <h3>live trace</h3>
+    <div class="trace" id="trace"></div>
+    <h3>report</h3>
+    <pre id="report">—</pre>
+    <h3>sources</h3>
+    <pre id="sources">—</pre>
+  </div>
+</main>
+<script>
+const TOKEN_KEY = "goethe_token";
+const $ = (id) => document.getElementById(id);
+const token = () => localStorage.getItem(TOKEN_KEY) || "";
+function showTokenbar(v) { $("tokenbar").style.display = v ? "flex" : "none"; }
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers, { "Authorization": "Bearer " + token() });
+  if (opts.body !== undefined) opts.headers["Content-Type"] = "application/json";
+  const r = await fetch(path, opts);
+  if (r.status === 401) { showTokenbar(true); throw new Error("401 unauthorized"); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+const state = { topicId: null, runId: null, runActive: false, resultLoadedFor: null };
+// rev5: incremental trace render. trace_tail is a sliding window (last 12
+// entries, deep_search_worker.py) — match the rendered rows' suffix against
+// the new window's prefix, drop rows that fell out, append new ones. Zero
+// DOM writes when nothing changed: no flicker, no scroll reset.
+function traceKey(e) { return e.t_offset_s + "|" + e.state + "|" + (e.note || ""); }
+function traceRow(e) {
+  const d = document.createElement("div");
+  d.dataset.k = traceKey(e);
+  d.textContent = "[+" + e.t_offset_s + "s] " + e.state + (e.note ? " — " + e.note : "");
+  return d;
+}
+function renderTrace(tr, events) {
+  const wasAtBottom = tr.scrollHeight - tr.scrollTop - tr.clientHeight < 4;
+  const kids = Array.prototype.slice.call(tr.children);
+  let s = 0; // overlap length: kids suffix == events prefix
+  for (let cand = Math.min(kids.length, events.length); cand >= 1; cand--) {
+    let ok = true;
+    for (let j = 0; j < cand; j++) {
+      if (kids[kids.length - cand + j].dataset.k !== traceKey(events[j])) { ok = false; break; }
+    }
+    if (ok) { s = cand; break; }
+  }
+  const drop = kids.length - s, add = events.length - s;
+  if (drop === 0 && add === 0) return; // nothing new: leave the pane alone
+  for (let i = 0; i < drop; i++) tr.removeChild(tr.firstChild);
+  const frag = document.createDocumentFragment();
+  for (let i = s; i < events.length; i++) frag.appendChild(traceRow(events[i]));
+  tr.appendChild(frag);
+  if (wasAtBottom) tr.scrollTop = tr.scrollHeight; // stay pinned to the live tail
+}
+
+async function loadTopics() {
+  const topics = await api("/deepSearch/topics");
+  const list = $("topic-list"); list.innerHTML = "";
+  (Array.isArray(topics) ? topics : topics.topics || []).forEach((t) => {
+    const d = document.createElement("div");
+    d.className = "topic" + (t.id === state.topicId ? " active" : "");
+    d.innerHTML = '<button class="del" type="button" title="delete topic + all its runs">x</button><div class="title"></div><div class="meta"></div>';
+    d.querySelector(".title").textContent = t.title || t.id;
+    d.querySelector(".meta").textContent = (t.status || "?") + " · passes " + ((t.passes && t.passes.length) || 0) + " · " + (t.updated_at || "?");
+    d.onclick = () => {
+      state.topicId = t.id; state.runId = null; state.runActive = false;
+      loadTopics();
+      // render-on-click: don't wait for the next 30 s tick
+      loadTopic().then(() => renderRun().catch(() => {}));
+    };
+    d.querySelector(".del").onclick = async (ev) => {
+      ev.stopPropagation();
+      d.style.opacity = ".4";
+      try {
+        await api("/deepSearch/topics/" + encodeURIComponent(t.id), { method: "DELETE" });
+        if (state.topicId === t.id) {
+          state.topicId = null; state.runId = null; state.runActive = false;
+          state.resultLoadedFor = null;
+          $("rs-status").textContent = "no run";
+          $("trace").innerHTML = "";
+          $("report").textContent = "—";
+          $("sources").textContent = "—";
+        }
+        await loadTopics();
+      } catch (e) {
+        d.style.opacity = "";
+        alert("delete failed: " + e.message);
+      }
+    };
+    list.appendChild(d);
+  });
+}
+async function loadTopic() {
+  if (!state.topicId) return;
+  const t = await api("/deepSearch/topics/" + encodeURIComponent(state.topicId));
+  const passes = t.passes || [];
+  if (passes.length) {
+    // pass entries may be bare run_id strings (spec v1) or rich
+    // objects written by deep_search_worker.py — normalize both
+    const last = passes[passes.length - 1];
+    state.runId = (typeof last === "string") ? last : last.run_id;
+    state.runActive = false;
+  }
+  $("btn-run").disabled = false;
+  $("hdr-status").textContent = t.id + " · " + t.status + " · passes: " + passes.length;
+}
+async function renderRun() {
+  if (!state.runId) {
+    // rev4: no pass for this topic -> empty run pane. The old early
+    // return left the previous topic's run state on screen.
+    $("rs-status").textContent = "no run";
+    $("trace").innerHTML = "";
+    $("report").textContent = "\u2014";
+    $("sources").textContent = "\u2014";
+    state.runActive = false;
+    state.resultLoadedFor = null;
+    return;
+  }
+  let rs;
+  try { rs = await api("/deepSearch/runs/" + state.runId); }
+  catch (e) { $("rs-status").textContent = "run load failed: " + e.message; return; }
+  let html = '<span class="tag t-' + rs.status + '">' + rs.status + "</span>";
+  if (rs.state) html += " state: " + rs.state;
+  // rev4: step.i counts SEARCHING/READING transitions (batched action
+  // rounds can cover several plan steps each) and step.n is the
+  // max_steps budget — this is budget consumption, not plan progress.
+  // Label it so a finished run does not read as "stopped at 5/8".
+  const terminal = rs.status === "DONE" || rs.status === "FAILED";
+  if (rs.step) html += terminal
+    ? " · " + rs.step.i + "/" + rs.step.n + " budget steps used"
+    : " · step " + rs.step.i + "/" + rs.step.n;
+  if (rs.budgets) html += terminal
+    ? " · " + rs.budgets.elapsed_s + "s elapsed"
+    : " · " + rs.budgets.steps_used + " steps · " + rs.budgets.elapsed_s + "s elapsed";
+  if ($("rs-status").innerHTML !== html) $("rs-status").innerHTML = html;
+  renderTrace($("trace"), rs.trace_tail || []);
+  // Orphan rule (contract §5, reader-side display only): RUNNING with a
+  // heartbeat stale > 60 s means the worker died without a terminal write.
+  let shown = rs.status;
+  if (rs.status === "RUNNING" && rs.heartbeat_ts) {
+    const age = (Date.now() - Date.parse(rs.heartbeat_ts)) / 1000;
+    if (isFinite(age) && age > 60) shown = "ORPHANED";
+  }
+  if (shown !== rs.status) {
+    const orphaned = "<span class=\"tag t-ORPHANED\">ORPHANED</span> worker heartbeat stale > 60 s — result incomplete";
+    if ($("rs-status").innerHTML !== orphaned) $("rs-status").innerHTML = orphaned;
+  }
+  if (rs.status === "DONE" || rs.status === "FAILED" || shown === "ORPHANED") {
+    state.runActive = false;
+    if (state.resultLoadedFor !== state.runId) {
+      // rev5: fetch once per terminal run — the worker writes result.json
+      // before the terminal state.json, so a successful fetch never needs
+      // re-fetching. A failed fetch clears the flag so the next tick retries.
+      state.resultLoadedFor = state.runId;
+      $("report").textContent = "\u2026loading result\u2026";
+      $("sources").textContent = "\u2026";
+      api("/deepSearch/runs/" + state.runId + "/result")
+        .then((res) => {
+          $("report").textContent = res.report || (res.error ? ("FAILED: " + res.error.message) : "(no report)");
+          $("sources").textContent = (res.sources || []).map((s, i) =>
+            (i + 1) + ". " + (s.title || s.url) + "\n   " + s.url + (s.fetched ? "" : "  (snippet only)")).join("\n") || "(none)";
+        })
+        .catch((e) => { state.resultLoadedFor = null; $("report").textContent = "(result fetch failed: " + e.message + ")"; });
+    }
+  } else {
+    state.runActive = true;
+  }
+}
+async function tick() {
+  try {
+    if (state.topicId) { await loadTopic(); await renderRun(); }
+  } catch (e) { $("hdr-status").textContent = "error: " + e.message; }
+  setTimeout(tick, state.runActive ? 3000 : 30000);
+}
+$("btn-new-topic").onclick = async () => {
+  const title = $("new-topic").value.trim(); if (!title) return;
+  try {
+    const t = await api("/deepSearch/topics", { method: "POST", body: JSON.stringify({ title }) });
+    state.topicId = t.id; state.runId = null; $("new-topic").value = "";
+    await loadTopics(); await loadTopic();
+    await renderRun(); // rev4: new topic -> empty pane, not the previous run
+  } catch (e) { alert("create topic failed: " + e.message); }
+};
+$("btn-run").onclick = async () => {
+  if (!state.topicId) return;
+  const q = $("run-question").value.trim(); if (!q) return;
+  const body = { question: q };
+  if ($("run-instructions").value.trim()) body.instructions = $("run-instructions").value.trim();
+  if ($("run-max-steps").value) body.max_steps = parseInt($("run-max-steps").value, 10);
+  if ($("run-max-sources").value) body.max_sources = parseInt($("run-max-sources").value, 10);
+  try {
+    const r = await api("/deepSearch/topics/" + encodeURIComponent(state.topicId) + "/passes",
+      { method: "POST", body: JSON.stringify(body) });
+    state.runId = r.run_id; state.runActive = true;
+    $("run-question").value = "";
+    setTimeout(renderRun, 500);
+  } catch (e) { alert("start pass failed: " + e.message); }
+};
+$("btn-token").onclick = () => {
+  const v = $("token-input").value.trim(); if (!v) return;
+  localStorage.setItem(TOKEN_KEY, v);
+  location.reload();
+};
+$("token-input").onkeydown = (e) => { if (e.key === "Enter") $("btn-token").onclick(); };
+$("btn-token-clear").onclick = () => { localStorage.removeItem(TOKEN_KEY); location.reload(); };
+$("btn-token-toggle").onclick = () => {
+  if ($("tokenbar").style.display === "flex") { showTokenbar(false); return; }
+  showTokenbar(true);
+  $("token-hint").textContent = token()
+    ? "a token is already stored — paste the new one to replace it" : "";
+  $("token-input").value = "";
+  $("token-input").focus();
+};
+if (!token()) {
+  showTokenbar(true);
+  $("hdr-status").textContent = "no token — enter it in the bar above";
+} else {
+  loadTopics().catch((e) => { $("hdr-status").textContent = "error: " + e.message; });
+  tick();
+}
+</script>
+</body>
+</html>

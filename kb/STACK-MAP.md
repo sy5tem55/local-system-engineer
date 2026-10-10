@@ -39,6 +39,7 @@
 - Prometheus :9090 · Grafana LUCIFER:3002 (v13) · Firecrawl node3090:3002 (browser rendering, reddit fallback) — same port, different hosts; use FIRECRAWL_URL / FIRECRAWL_REMOTE_URL valves · Elasticsearch :9200 · SearxNG :8088
 - pfSense Plus REST API v2 @ pfsense.home.arpa (x-api-key header, not Bearer)
 - KB: /opt/local-se/kb/ · learnings: /opt/local-se/kb/session-learnings.md · state: /opt/local-se/state/ · backups: /opt/local-se/bkp/
+- A2A console (node4090): goethe_a2a.py :9299 loopback + LAN 1880 -> /console (static), /events SSE (JWT via ?token=); relay /opt/local-se/a2a/console_relay.py; KB 1264ae4df352b96f (companion to 9e9078f3dfcc4092)
 
 ## RULES FOR PLANNERS
 - If this file conflicts with LSE-ARCHITECTURE.md, this file wins (arch doc partially predates the OWUI decommission).

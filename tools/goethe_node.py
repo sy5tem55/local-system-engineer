@@ -56,6 +56,7 @@ class NodeLifecycleMixin:
             "hostname": "node3090.home.arpa",
             "interface": "opt1",
             "agent_port": 8080,
+            "api_key_env": "GOETHE_PLANNER_FORCE_API_KEY",
             # 2026-09-08: node3090 migrated to Unsloth Studio. Studio
             # launches and manages its own llama-server engine (binary
             # /home/lse-admin/.unsloth/llama.cpp/llama-server) on an
@@ -376,7 +377,11 @@ class NodeLifecycleMixin:
 
         self._log(f"QUERY-NODE-AGENT: POST {url} ({len(prompt)} chars)")
         try:
-            resp = _req.post(url, json=payload, timeout=120)
+            headers = {}
+            api_key = os.environ.get(reg.get("api_key_env", ""), "").strip()
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            resp = _req.post(url, json=payload, headers=headers, timeout=120)
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
             self._log(f"QUERY-NODE-AGENT: got {len(content)} chars from {node}")

@@ -220,7 +220,7 @@ class WebMixin:
 
     def search_web(self, query: str, max_results: int = 5) -> str:
         """
-        Search the web via the local SearxNG instance at localhost:8088.
+        Search the web via Tavily (PRIMARY, 1 credit/query) with a local SearxNG fallback.
 
         KB-FIRST RULE — mandatory, no exceptions:
           ALWAYS call search_kb() before calling this function.
@@ -264,6 +264,18 @@ class WebMixin:
         _gate = self._budget_gate()
         if _gate.startswith("BUDGET EXHAUSTED"):
             return _tb + _gate
+        # ── Tavily PRIMARY (task df9712f2 step 8; Brave excluded 2026-10-07) ──
+        # 1 credit/search (1000/mo free). Any failure falls through to SearxNG.
+        if self._tavily_key():
+            _results, _err = self._tavily_search(query, max_results)
+            if _results:
+                self._websearch_log("tavily", query, True)
+                self._tavily_refresh_quota()
+                return _tb + "\n---\n".join(
+                    f"**{r['title']}**\n{r['url']}\n{r['snippet']}" for r in _results
+                ) + _gate
+            self._websearch_log("tavily", query, False, _err)
+            self._log(f"TAVILY-FAIL (→ SearxNG fallback): {_err}")
         try:
             resp = requests.get(
                 self.valves.SEARXNG_URL,
@@ -275,7 +287,9 @@ class WebMixin:
             data = resp.json()
             results = data.get("results", [])[:max_results]
             if not results:
+                self._websearch_log("searxng", query, False, "no results")
                 return _tb + "No results found." + _gate
+            self._websearch_log("searxng", query, True)
             lines = []
             for r in results:
                 title = r.get("title", "Untitled")
@@ -284,8 +298,149 @@ class WebMixin:
                 lines.append(f"**{title}**\n{url}\n{snippet}")
             return _tb + "\n---\n".join(lines) + _gate
         except (requests.RequestException, json.JSONDecodeError) as e:
+            self._websearch_log("searxng", query, False, str(e))
             return f"ERROR searching SearxNG: {str(e)}"
 
+
+    # ── TAVILY PRIMARY SEARCH (task df9712f2 step 8) ───────────────────────
+    # Brave EXCLUDED by user 2026-10-07 (credit card required, even free
+    # tier) → Tavily primary: REST API, no card, 1,000 credits/month
+    # (Researcher plan, resets 1st). SearxNG stays the fallback (KB
+    # aed973c06dfb11b1: node3090 egress is engine-blocked, node4090 SearxNG
+    # degraded — Tavily also fixes search quality for both nodes).
+    # Quota truth: websearch_log.jsonl (per-query, immediate) +
+    # tavily_quota.json (GET /usage; async ≥84s lag → refreshed at most once
+    # per 10 min here, on-demand by the /api/webSearch/quota endpoint in
+    # step 10).
+
+    _TAVILY_USAGE_MIN_INTERVAL_S = 600
+
+    def _tavily_key(self) -> str:
+        """Env GOETHE_TAVILY_API_KEY (precedence) → valve TAVILY_API_KEY →
+        KEY= file fallback at <WEBSEARCH_STATE_DIR>/tavily.env.
+
+        Key lives in Vaultwarden item TAVILY_API_KEY; the gateway start env
+        injects it — never committed to the repo. The KEY= file covers the
+        GUI-launched gateway, which has no such env (task df9712f2
+        follow-up, 2026-10-07). Empty = SearxNG-only mode.
+        """
+        import os  # noqa: PLC0415
+        key = (os.environ.get("GOETHE_TAVILY_API_KEY")
+               or self.valves.TAVILY_API_KEY or "")
+        if key:
+            return key
+        try:
+            with open(self.valves.WEBSEARCH_STATE_DIR + "/tavily.env",
+                      encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("KEY="):
+                        return line[4:].strip()
+        except OSError:
+            pass
+        return ""
+
+    def _tavily_search(self, query: str, max_results: int) -> tuple:
+        """POST /search. Returns (results, error); results = [{title, url, snippet}].
+        A successful search costs 1 credit."""
+        import requests  # noqa: PLC0415
+
+        key = self._tavily_key()
+        if not key:
+            return [], "TAVILY_API_KEY not set"
+        try:
+            resp = requests.post(
+                self.valves.TAVILY_URL.rstrip("/") + "/search",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "query": query,
+                    "max_results": max_results,
+                    "search_depth": "basic",
+                    "include_answer": False,
+                },
+                timeout=(5, 15),
+            )
+            if resp.status_code in (401, 402, 403, 429) or resp.status_code >= 500:
+                return [], f"HTTP {resp.status_code}"
+            resp.raise_for_status()
+            data = resp.json()
+            results = [
+                {
+                    "title": r.get("title", "Untitled"),
+                    "url": r.get("url", ""),
+                    "snippet": (r.get("content") or "")[:300],
+                }
+                for r in data.get("results", [])[:max_results]
+            ]
+            return results, ""
+        except (requests.RequestException, json.JSONDecodeError) as e:
+            return [], str(e)
+
+    def _websearch_log(self, backend: str, query: str, ok: bool, detail: str = "") -> None:
+        """Append per-query record — the dashboard's immediate quota truth.
+
+        Never raises: a logging failure must not break the search itself.
+        """
+        import os  # noqa: PLC0415
+
+        path = self.valves.WEBSEARCH_STATE_DIR + "/websearch_log.jsonl"
+        try:
+            os.makedirs(self.valves.WEBSEARCH_STATE_DIR, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "ts": datetime.now().isoformat(),
+                    "backend": backend,
+                    "ok": ok,
+                    "query": query[:200],
+                    "detail": detail[:200],
+                }) + "\n")
+        except OSError as e:
+            self._log(f"WEBSEARCH-LOG-ERROR: {e}")
+
+    def _tavily_refresh_quota(self) -> None:
+        """Best-effort GET /usage → tavily_quota.json (raw payload preserved —
+        shape can drift; consumers read the fields they know). Rate-limited:
+        /usage lags ≥84s, so more than once per 10 min is pure churn."""
+        import os  # noqa: PLC0415
+        import time  # noqa: PLC0415
+
+        key = self._tavily_key()
+        if not key:
+            return
+        state_dir = self.valves.WEBSEARCH_STATE_DIR
+        path = state_dir + "/tavily_quota.json"
+        try:
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    _last = float(json.load(f).get("checked_at_ts", 0))
+                if time.time() - _last < self._TAVILY_USAGE_MIN_INTERVAL_S:
+                    return
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass  # unreadable/stale state → refresh anyway
+        import requests  # noqa: PLC0415
+
+        try:
+            resp = requests.get(
+                self.valves.TAVILY_URL.rstrip("/") + "/usage",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=(5, 10),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except (requests.RequestException, json.JSONDecodeError) as e:
+            self._log(f"TAVILY-QUOTA-REFRESH-ERROR: {e}")
+            return
+        try:
+            os.makedirs(state_dir, exist_ok=True)
+            _tmp = path + ".tmp"
+            with open(_tmp, "w", encoding="utf-8") as f:
+                json.dump({
+                    "checked_at": datetime.now().isoformat(),
+                    "checked_at_ts": time.time(),
+                    "raw": data,
+                }, f)
+            os.replace(_tmp, path)
+        except OSError as e:
+            self._log(f"TAVILY-QUOTA-WRITE-ERROR: {e}")
 
     # ── CAMOUFOX REDDIT SCRAPING (v0.3.10) ──────────────────────────────────
 

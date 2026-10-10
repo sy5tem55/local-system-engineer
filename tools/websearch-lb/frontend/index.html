@@ -1,0 +1,917 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>websearch-lb Console</title>
+<style>
+  :root { --ink:#14110d; --paper:#f4efe6; --line:#c9bfae; --verd:#3f6b5f; --red:#9a3b2e; --amber:#8a6d1f; --mut:#6c6357; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  header { padding:14px 20px; border-bottom:2px solid var(--ink); display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; letter-spacing:.06em; text-transform:uppercase; }
+  .sess { color:var(--mut); font-size:12px; }
+  main { display:grid; grid-template-columns:minmax(440px,1.3fr) minmax(360px,1fr); gap:0; }
+  section { padding:16px 20px; min-height:70vh; }
+  section + section { border-left:1px solid var(--line); }
+  h2 { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); margin:0 0 10px; }
+  input[type=text], input[type=number] { font:inherit; padding:6px 8px; background:#fffdf8; border:1px solid var(--line); color:var(--ink); }
+  #q { width:100%; }
+  button { font:inherit; padding:5px 11px; background:var(--ink); color:var(--paper); border:1px solid var(--ink); cursor:pointer; }
+  button.secondary { background:transparent; color:var(--ink); }
+  button:disabled { opacity:.45; cursor:default; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--mut); border-bottom:1px solid var(--ink); padding:4px 6px; }
+  td { border-bottom:1px dotted var(--line); padding:5px 6px; vertical-align:top; }
+  a { color:var(--verd); }
+  .badge { font-size:11px; padding:1px 6px; border:1px solid var(--line); }
+  .ok { color:var(--verd); } .bad { color:var(--red); }
+  .err { border:1px solid var(--red); padding:8px 10px; margin:0 0 12px; }
+  .err h3 { margin:0 0 6px; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--red); }
+  .err p { margin:4px 0; font-size:12.5px; word-break:break-word; }
+  .hide { display:none; }
+  .row-btns { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center; }
+  .muted { color:var(--mut); font-size:12px; }
+
+  .chk { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line); padding:1px 7px; font-size:12px; background:#fffdf8; margin:2px 4px 2px 0; }
+  .chk input { margin:0; }
+  .chk .ord { color:var(--mut); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+
+  .diag { margin-top:12px; display:flex; gap:6px; flex-wrap:wrap; }
+  .chip { font-size:11px; border:1px solid var(--line); padding:2px 7px; cursor:help; }
+  .chip.ok { border-color:var(--verd); color:var(--verd); }
+  .chip.nr { border-color:var(--mut); color:var(--mut); }
+  .chip.bad { border-color:var(--red); color:var(--red); }
+  .chip.cd { border-color:var(--amber); color:var(--amber); }
+
+  .crow { display:flex; gap:8px; align-items:stretch; }
+  .arrow { flex:0 0 auto; align-self:center; }
+  .cvp { overflow:hidden; flex:1 1 auto; min-width:0; }
+  .ctrack { display:flex; gap:12px; transition:transform .38s cubic-bezier(.22,.75,.3,1); }
+  .card { flex:0 0 85%; min-width:0; border:1px solid var(--line); background:#fffdf8; padding:10px 12px 12px; display:flex; flex-direction:column; gap:6px; min-height:190px; }
+  .chead { display:flex; gap:8px; align-items:baseline; }
+  .rank { font-size:17px; font-weight:700; min-width:1.5ch; }
+  .ct { font-weight:700; word-break:break-word; }
+  .sn { font-size:12.5px; white-space:pre-wrap; word-break:break-word; }
+  .readbtn { align-self:flex-start; margin-top:auto; }
+  .crow2 { display:flex; justify-content:space-between; gap:10px; margin-top:6px; }
+
+  .spin { display:inline-block; width:10px; height:10px; border:2px solid var(--ink); border-top-color:transparent; border-radius:50%; animation:sp .8s linear infinite; vertical-align:-1px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+
+  details { margin-top:14px; font-size:12px; }
+  details summary { cursor:pointer; }
+  details pre { background:#fffdf8; border:1px solid var(--line); padding:8px 10px; font-size:11.5px; overflow:auto; max-height:340px; white-space:pre-wrap; word-break:break-word; margin:6px 0 0; }
+
+  #readpanel { margin-top:14px; border:1px solid var(--line); background:#fffdf8; }
+  .rphead { display:flex; justify-content:space-between; gap:10px; align-items:baseline; padding:6px 10px; border-bottom:1px solid var(--line); font-size:12px; }
+  #rpbody { padding:10px 12px 12px; max-height:60vh; overflow:auto; }
+  .md { font-size:13px; }
+  .md p { margin:.55em 0; }
+  .md h3, .md h4, .md h5 { margin:.9em 0 .3em; line-height:1.3; }
+  .md h3 { font-size:13px; } .md h4 { font-size:12.5px; } .md h5 { font-size:12px; }
+  .md ul, .md ol { margin:.4em 0 .4em 1.3em; padding:0; }
+  .md li { margin:2px 0; }
+  .md code { background:#eae2d3; padding:0 3px; }
+  .md hr { border:0; border-top:1px solid var(--line); margin:.8em 0; }
+  .md a { color:var(--verd); }
+
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; }
+  .dot.up { background:var(--verd); }
+  .dot.down { background:var(--red); }
+  .usage { font-size:13px; border-top:1px solid var(--line); margin:14px 0 4px; padding-top:8px; }
+  .mutedfoot { margin:14px 0 0; }
+  footer { border-top:2px solid var(--ink); margin-top:4px; padding:8px 20px; display:flex; gap:16px; flex-wrap:wrap; }
+
+  @media (max-width:880px) {
+    main { grid-template-columns:1fr; }
+    section + section { border-left:0; border-top:1px solid var(--line); }
+    .card { flex-basis:92%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>websearch-lb Console</h1>
+  <span class="sess" id="mc">mcp: boot…</span>
+  <span class="sess" id="statline">stats: boot…</span>
+</header>
+
+<main>
+  <section>
+    <h2>Search</h2>
+    <div id="errbox" class="err hide"></div>
+    <div id="failbox" class="err hide"></div>
+
+    <h2 style="margin-top:4px">Priority · pick backends
+      <button class="secondary" id="allbtn" type="button" style="padding:0 6px">all</button>
+      <button class="secondary" id="nonebtn" type="button" style="padding:0 6px">none</button>
+    </h2>
+    <div id="backends"><span class="muted">loading backend list from /stats…</span></div>
+    <p class="muted" style="margin-top:6px">gateway primary: <b>tavily</b> (search_web) — not in LB pool; status + quota in the right panel</p>
+
+    <div class="row-btns">
+      <input type="text" id="q" placeholder="query — required" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="row-btns">
+      <label class="muted">max results <input type="number" id="maxr" min="1" max="10" value="5" style="width:54px"></label>
+      <button id="gobtn" type="button">Search</button>
+      <span id="spin" class="muted hide"><span class="spin"></span> searching… (aborts at 15 s)</span>
+    </div>
+    <div id="diag" class="diag hide"></div>
+
+    <h2 style="margin-top:18px">Results</h2>
+    <div class="crow">
+      <button id="cprev" class="secondary arrow" type="button" title="previous (←)">◀</button>
+      <div class="cvp" id="cvp"><div class="ctrack" id="ctrack"></div></div>
+      <button id="cnext" class="secondary arrow" type="button" title="next (→)">▶</button>
+    </div>
+    <div class="crow2">
+      <span class="muted" id="cpos">0 / 0</span>
+      <span class="muted" id="cempty">no search yet</span>
+    </div>
+
+    <details id="rawbox" class="hide">
+      <summary>raw MCP response — verbatim transport inspector (SSE/JSON parse failures)</summary>
+      <pre id="rawtext"></pre>
+    </details>
+
+    <div id="readpanel" class="hide">
+      <div class="rphead">
+        <span>full page — <span id="rpurl" class="muted"></span></span>
+        <button id="rpclose" class="secondary" type="button" style="padding:0 8px">close</button>
+      </div>
+      <div id="rpbody"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Gateway primary — outside LB pool</h2>
+    <table>
+      <thead><tr><th>Engine</th><th>Up</th><th>Plan</th><th>Used</th><th>Last query</th></tr></thead>
+      <tbody id="quivbody"><tr><td colspan=5 class="muted">loading quota from /webSearch/quota…</td></tr></tbody>
+    </table>
+    <p class="muted mutedfoot">Tavily serves <code>search_web</code> (SearxNG fallback if no key).
+    Green dot = last quota check OK’d within 20 min (red = unverified, not down).
+    Checks refresh only after a successful search — passive monitor, no background probe.</p>
+
+    <h2 style="margin-top:18px">Backends — GET /stats · polls 5 s</h2>
+    <table>
+      <thead><tr><th>Backend</th><th>Up</th><th>Fails</th><th>Cooldown</th><th>Last lat</th></tr></thead>
+      <tbody id="statbody"></tbody>
+    </table>
+    <p class="usage" id="usage">queries — total 0 · ok 0 · failed 0 · last query —</p>
+    <p class="muted mutedfoot">Cooldown counts down live (wall-clock <code>cooldown_remaining_s</code> from /stats).
+    Backend filter order mirrors the LB priority list; checked boxes are sent as <code>backends</code>,
+    none checked sends null (server default priority). The raw inspector under the carousel shows
+    verbatim SSE bodies on transport drift.</p>
+    <h2 style="margin-top:18px">node3090 remote services — active probe</h2>
+    <table>
+      <thead><tr><th>Service</th><th>Status</th><th>Last OK</th><th>Latency</th></tr></thead>
+      <tbody id="node3090body"><tr><td colspan=4 class="muted">loading from /webSearch/nodes…</td></tr></tbody>
+    </table>
+    <p class="muted mutedfoot">Active probe every 30 s (gateway daemon thread). Red = unreachable or error — node3090 may be asleep (WoL); the probe never auto-wakes it.</p>
+  </section>
+</main>
+
+<footer>
+  <span class="muted">served: gateway :9700 /webSearch (stats proxied same-origin) · direct: node4090 :9703 (set CONFIG.STATS_URL = CONFIG.LB_BASE + "/stats")</span>
+  <span class="muted" id="gend"></span>
+</footer>
+
+<script>
+"use strict";
+
+/* ============================== CONFIG ============================== */
+const CONFIG = {
+  LB_BASE:    "http://127.0.0.1:9703",   // MCP endpoint host:port (direct mode)
+  STATS_URL:  "/webSearch/stats",        // same-origin via gateway (served mode);
+                                         // set to LB_BASE + "/stats" for direct mode
+  TOKEN:      ""                         // Bearer token; empty = gate off
+};
+/* ==================================================================== */
+
+var SEARCH_TIMEOUT_MS = 15000;  // brief: search request timeout >= 15 s; spinner shows well before
+var READ_TIMEOUT_MS   = 30000;  // read_url round-trip budget
+var POLL_MS           = 5000;   // /stats poll cadence per brief
+
+var S = {
+  sid: null, initing: null, nid: 1,     // MCP session (exactly one per page lifetime)
+  busy: false, readSeq: 0,
+  results: [], idx: 0,
+  stats: null, statsAt: 0, usage: null, prioKey: "",
+  quota: null,
+  searched: false
+};
+
+var BACKEND_COLORS = {
+  jina: "#3f6b5f", firecrawl: "#9a3b2e", exa: "#8a6d1f",
+  searxng: "#555a8a", ddg: "#7c4a6d"
+};
+var PALETTE = ["#555a8a", "#7c4a6d", "#3f6b5f", "#9a3b2e", "#8a6d1f"];
+
+/*PARSER:BEGIN  (pure functions — unit-tested in node, no DOM) */
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function jstr(v) {
+  if (typeof v === "string") return v;
+  try { return JSON.stringify(v); } catch (e) { return String(v); }
+}
+function RawError(message, raw) {
+  var e = new Error(message);
+  this.name = "RawError";
+  this.message = e.message;
+  this.stack = e.stack;
+  this.raw = raw;
+}
+RawError.prototype = Object.create(Error.prototype);
+RawError.prototype.constructor = RawError;
+
+// SSE frame parser — responses are text/event-stream, NEVER response.json().
+// Per contract: split body on "\n\n"; for each frame take the line starting
+// "data:", strip the prefix, JSON.parse. A data-line that is not JSON is
+// transport drift: throw so the caller can surface the verbatim raw body.
+function parseSSEFrames(text) {
+  var body = String(text == null ? "" : text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  var frames = body.split("\n\n");
+  var out = [];
+  for (var i = 0; i < frames.length; i++) {
+    var fr = frames[i];
+    if (!fr || !fr.replace(/\s/g, "")) continue;
+    var lines = fr.split("\n");
+    for (var j = 0; j < lines.length; j++) {
+      var ln = lines[j];
+      if (ln.indexOf("data:") === 0) {
+        var payload = ln.slice(5);
+        if (payload.charAt(0) === " ") payload = payload.slice(1);
+        payload = payload.trim();
+        if (!payload) continue;
+        try { out.push(JSON.parse(payload)); }
+        catch (err) { throw new Error("SSE data-line is not JSON: " + payload.slice(0, 160)); }
+      }
+    }
+  }
+  return out;
+}
+
+function findFrameById(frames, id) {
+  for (var i = 0; i < frames.length; i++) {
+    var f = frames[i];
+    if (f && f.id === id && (f.result !== undefined || f.error !== undefined)) return f;
+  }
+  return null;
+}
+
+// Tool result envelope: result.content[0].text holds the JSON-serialized tool
+// dict. Missing envelope keys throw RawError (raw inspector); a JSON-RPC
+// error object throws with its message.
+function parseToolEnvelope(rpc) {
+  if (!rpc || typeof rpc !== "object") throw new Error("empty JSON-RPC response frame");
+  if (rpc.error) {
+    var m = (rpc.error && rpc.error.message) ? rpc.error.message : jstr(rpc.error);
+    var e = new Error("JSON-RPC error: " + m);
+    e.rpcCode = rpc.error ? rpc.error.code : undefined;
+    throw e;
+  }
+  var res = rpc.result;
+  if (!res || typeof res !== "object") throw new Error("JSON-RPC response has no result object");
+  var c = res.content;
+  if (!c || !c.length || !c[0] || typeof c[0].text !== "string") {
+    throw new Error("unexpected envelope — result.content[0].text missing");
+  }
+  var dict;
+  try { dict = JSON.parse(c[0].text); }
+  catch (err) { throw new RawError("tool text block is not JSON: " + err.message, c[0].text); }
+  if (res.isError && (dict == null || typeof dict !== "object")) {
+    throw new Error("tool error: " + c[0].text.slice(0, 200));
+  }
+  return dict;
+}
+
+function mdInline(s) {
+  var t = String(s == null ? "" : s);
+  t = t.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  return t;
+}
+
+// Minimal markdown renderer (no external lib): headers, bold/italic, inline
+// code, http(s) links, bullet + numbered lists, hr, paragraphs. Input is
+// HTML-escaped first; only whitelisted tags survive.
+function renderMarkdown(md) {
+  var src = esc(String(md == null ? "" : md)).split(/\r?\n/);
+  var out = [], para = [], list = null, items = [];
+  function flushList() {
+    if (list) {
+      out.push("<" + list + ">" + items.map(function (x) { return "<li>" + mdInline(x) + "</li>"; }).join("") + "</" + list + ">");
+      list = null; items = [];
+    }
+  }
+  function flushPara() {
+    if (para.length) { out.push("<p>" + para.map(mdInline).join("<br>") + "</p>"); para = []; }
+  }
+  for (var i = 0; i < src.length; i++) {
+    var t = String(src[i]).trim();
+    if (!t) { flushPara(); flushList(); continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { flushPara(); flushList(); out.push("<hr>"); continue; }
+    var mh = t.match(/^(#{1,6})\s+(.*)$/);
+    if (mh) {
+      flushPara(); flushList();
+      var lvl = Math.min(mh[1].length + 2, 5); // h1->h3, h2->h4, h3+->h5 (panel scale)
+      out.push("<h" + lvl + ">" + mdInline(mh[2]) + "</h" + lvl + ">");
+      continue;
+    }
+    var mu = t.match(/^[-*+]\s+(.*)$/);
+    var mo = t.match(/^\d+[.)]\s+(.*)$/);
+    if (mu || mo) {
+      flushPara();
+      var want = mu ? "ul" : "ol";
+      if (list && list !== want) flushList();
+      if (!list) list = want;
+      items.push(mu ? mu[1] : mo[1]);
+      continue;
+    }
+    flushList();
+    para.push(t);
+  }
+  flushPara(); flushList();
+  return out.join("\n");
+}
+/*PARSER:END*/
+
+/* ----------------------------- helpers ------------------------------ */
+function $(id) { return document.getElementById(id); }
+function reveal(el) { el.classList.remove("hide"); }
+function hide(el) { el.classList.add("hide"); }
+function show(el, txt) {
+  if (txt !== undefined && txt !== null) { el.textContent = txt; }
+  reveal(el);
+}
+function dash(v, suffix) { return (v == null || v === "") ? "—" : String(v) + (suffix || ""); }
+function z(n) { return (typeof n === "number" && isFinite(n)) ? n : 0; }
+function errText(x) { return x == null ? "" : (x.message ? String(x.message) : String(x)); }
+function try_(label, fn) {
+  try { fn(); } catch (e) { show($("errbox"), label + " failed: " + errText(e)); }
+}
+function bcolor(name) {
+  if (name && BACKEND_COLORS[name]) return BACKEND_COLORS[name];
+  var s = String(name || "?"), h = 0;
+  for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) >>> 0; }
+  return PALETTE[h % PALETTE.length];
+}
+function setMC(t) { $("mc").textContent = "mcp: " + t; }
+function abortErr() { var e = new Error("request aborted (timeout)"); e.name = "AbortError"; return e; }
+function showRaw(text) {
+  $("rawtext").textContent = (text == null || text === "") ? "(empty body)" : String(text);
+  var d = $("rawbox");
+  reveal(d);
+  d.open = true;
+}
+
+/* ---------------- transport: MCP streamable HTTP -------------------- */
+// POST {LB_BASE}/mcp. Responses are SSE frames — read .text(), parse by hand.
+// Authorization: Bearer is sent on /mcp* requests only (this is its only home).
+function postMcp(obj, timeoutMs) {
+  var ctrl = window.AbortController ? new AbortController() : null;
+  var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs) : null;
+  var headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream"
+  };
+  if (S.sid) headers["mcp-session-id"] = S.sid;         // echo after handshake
+  if (CONFIG.TOKEN) headers["Authorization"] = "Bearer " + CONFIG.TOKEN;
+  return fetch(CONFIG.LB_BASE + "/mcp", {
+    method: "POST",
+    headers: headers,
+    body: JSON.stringify(obj),
+    signal: ctrl ? ctrl.signal : undefined
+  }).then(function (r) {
+    var sid = null;
+    try { sid = r.headers.get("mcp-session-id"); } catch (e) {}
+    return r.text().then(
+      function (t) { return { status: r.status, sid: sid, text: t }; },
+      function () { return { status: r.status, sid: sid, text: "" }; }
+    );
+  }, function (e) {
+    if (timer) clearTimeout(timer);
+    throw (e && e.name === "AbortError") ? abortErr() : (e || new Error("fetch failed"));
+  }).then(function (res) {
+    if (timer) clearTimeout(timer);
+    return res;
+  });
+}
+
+// Handshake, once, then reused for the page lifetime:
+//  (a) initialize -> store the mcp-session-id response header
+//  (b) notifications/initialized (NO id), echoing the session id
+//  (c) every later request echoes mcp-session-id (postMcp does it).
+function ensureSession() {
+  if (S.sid) return Promise.resolve();
+  if (S.initing) return S.initing;
+  setMC("handshake…");
+  var p = postMcp({
+    jsonrpc: "2.0", id: 1, method: "initialize",
+    params: {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "websearch-console", version: "1.0" }
+    }
+  }, SEARCH_TIMEOUT_MS).then(function (r) {
+    if (r.status !== 200) throw new Error("initialize -> HTTP " + r.status + " " + String(r.text || "").slice(0, 160));
+    if (!r.sid) throw new Error("initialize HTTP 200 but no mcp-session-id response header");
+    S.sid = r.sid;
+    setMC("session " + String(r.sid).slice(0, 8) + "…");
+    return postMcp({ jsonrpc: "2.0", method: "notifications/initialized" }, 10000);
+  }).then(function () {
+    setMC("session " + String(S.sid).slice(0, 8) + "…");
+  }, function (e) {
+    S.sid = null;
+    setMC("offline — " + errText(e));
+    throw e;
+  });
+  S.initing = p;
+  p.then(function () { S.initing = null; }, function () { S.initing = null; });
+  return p;
+}
+
+// tools/call + envelope parsing on top of SSE. Transport drift surfaces as
+// RawError carrying the verbatim body for the collapsible inspector.
+function mcpCall(method, params, timeoutMs) {
+  return ensureSession().then(function () {
+    var id = ++S.nid;
+    return postMcp({ jsonrpc: "2.0", id: id, method: method, params: params }, timeoutMs).then(function (r) {
+      if (r.status !== 200) {
+        throw new RawError("POST /mcp (" + method + ") -> HTTP " + r.status,
+          "HTTP " + r.status + "\n" + String(r.text || ""));
+      }
+      var frames;
+      try { frames = parseSSEFrames(r.text); }
+      catch (e) { throw new RawError("SSE parse failure: " + errText(e), r.text); }
+      var rpc = findFrameById(frames, id);
+      if (!rpc) throw new RawError("no JSON-RPC response frame for id " + id, r.text);
+      return parseToolEnvelope(rpc);
+    });
+  });
+}
+/* ------------------------------- stats ------------------------------- */
+function statsOrderOf(st) {
+  var s = st || {}, names = [], i, k;
+  if (s && Array.isArray(s.priority)) {
+    for (i = 0; i < s.priority.length; i++) {
+      if (typeof s.priority[i] === "string" && names.indexOf(s.priority[i]) < 0) names.push(s.priority[i]);
+    }
+  }
+  var bk = (s && s.backends && typeof s.backends === "object") ? s.backends : {};
+  var keys = Object.keys(bk);
+  for (i = 0; i < keys.length; i++) {
+    if (names.indexOf(keys[i]) < 0) names.push(keys[i]);
+  }
+  return names;
+}
+function statsOrder() { return statsOrderOf(S.stats); }
+
+function loadStats() {
+  fetch(CONFIG.STATS_URL, { headers: { "Accept": "application/json" } }).then(
+    function (r) {
+      return r.text().then(
+        function (t) { return { status: r.status, text: t }; },
+        function () { return { status: r.status, text: "" }; }
+      );
+    },
+    function (e) { return { status: 0, text: "fetch failed: " + e }; }
+  ).then(function (res) {
+    if (res.status !== 200) {
+      $("statline").textContent = "stats: HTTP " + res.status;
+      if (!S.stats) {
+        $("statbody").innerHTML = "<tr><td colspan=5 class='muted'>stats unreachable (HTTP " + res.status +
+          ") — served mode needs the gateway; direct mode: CONFIG.STATS_URL = CONFIG.LB_BASE + \"/stats\"</td></tr>";
+      }
+      return;
+    }
+    var st;
+    try { st = JSON.parse(res.text); }
+    catch (e) { $("statline").textContent = "stats: response is not JSON"; return; }
+    if (!st || typeof st !== "object") { $("statline").textContent = "stats: unexpected shape"; return; }
+    S.stats = st;
+    S.statsAt = Date.now();
+    $("statline").textContent = "stats: live · polled " + new Date().toLocaleTimeString();
+    var u = st.usage;
+    if (u && typeof u === "object") {
+      S.usage = {
+        total: z(u.total_queries), ok: z(u.ok_queries), failed: z(u.failed_queries),
+        ts: (u.last_query_ts == null) ? null : Number(u.last_query_ts)
+      };
+    }
+    $("gend").textContent = (st.generated_at == null || !isFinite(Number(st.generated_at)))
+      ? "" : "generated_at " + new Date(Number(st.generated_at) * 1000).toLocaleString();
+    ensureFilters(st);
+    renderBackends();
+    renderUsage();
+  });
+}
+
+// Backend checkboxes: order + preselection come from /stats "priority".
+// Rebuilt only when the priority set changes, so user ticks survive polls.
+function ensureFilters(st) {
+  var prio = statsOrderOf(st);
+  if (!prio.length) return;
+  var key = prio.join("|");
+  if (key === S.prioKey) return;
+  S.prioKey = key;
+  $("backends").innerHTML = prio.map(function (n, i) {
+    return "<label class='chk' title='backend " + esc(n) + " · LB priority #" + (i + 1) + "'>" +
+      "<input type='checkbox' value='" + esc(n) + "' checked><span>" + esc(n) +
+      "</span><span class='ord'>" + (i + 1) + "</span></label>";
+  }).join("");
+}
+
+function setAllBackends(on) {
+  var boxes = $("backends").querySelectorAll("input[type=checkbox]");
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = !!on;
+}
+
+// cooldown_remaining_s is wall-clock-safe: live-decrement against fetch time.
+function cdText(d) {
+  if (d.cooldown_remaining_s == null) return "—";
+  var r = Number(d.cooldown_remaining_s);
+  if (!isFinite(r)) return "—";
+  var rem = r - (Date.now() - S.statsAt) / 1000;
+  if (rem <= 0) return "—";
+  return Math.ceil(rem) + "s";
+}
+
+function renderBackends() {
+  if (!S.stats) return;
+  var bk = (S.stats.backends && typeof S.stats.backends === "object") ? S.stats.backends : {};
+  var h = "";
+  statsOrder().forEach(function (n) {
+    var d = bk[n] || {};
+    var up = d.up === true;
+    var col = bcolor(n);
+    var cf = d.consecutive_failures;
+    var cfTxt = (cf == null || !isFinite(Number(cf)))
+      ? "—"
+      : (Number(cf) > 0 ? "<span class='bad'>" + esc(cf) + "</span>" : "<span class='muted'>0</span>");
+    h += "<tr><td><span class='badge' style='color:" + col + ";border-color:" + col + "'>" + esc(n) + "</span></td>" +
+      "<td><span class='dot " + (up ? "up" : "down") + "'></span>" + (up ? "yes" : "no") + "</td>" +
+      "<td>" + cfTxt + "</td>" +
+      "<td>" + cdText(d) + "</td>" +
+      "<td>" + dash(d.last_latency_ms, " ms") + "</td></tr>";
+  });
+  $("statbody").innerHTML = h || "<tr><td colspan=5 class='muted'>no backends reported yet</td></tr>";
+}
+
+function renderUsage() {
+  var u = S.usage || { total: 0, ok: 0, failed: 0, ts: null };
+  var ts = (u.ts == null || !isFinite(Number(u.ts))) ? "—" : new Date(Number(u.ts) * 1000).toLocaleString();
+  $("usage").innerHTML = "queries — total <b>" + z(u.total) + "</b> · ok <b class='ok'>" + z(u.ok) +
+    "</b> · failed <b class='bad'>" + z(u.failed) + "</b> · last query <b>" + esc(ts) + "</b>";
+}
+
+// Bump the displayed usage the moment a search completes; the 5 s poll
+// returned by /stats reconciles the authoritative counters shortly after.
+function bumpUsage(ok) {
+  if (!S.usage) S.usage = { total: 0, ok: 0, failed: 0, ts: null };
+  S.usage.total++;
+  if (ok) S.usage.ok++; else S.usage.failed++;
+  S.usage.ts = Date.now() / 1000;
+  renderUsage();
+}
+
+/* ----------------------------- diagnostics ---------------------------- */
+// One chip per backend from per_backend; error chips carry the message in
+// their title attribute; cooldown chips carry the detail object.
+function renderDiag(pb) {
+  var box = $("diag");
+  box.innerHTML = "";
+  if (!pb || typeof pb !== "object" || !Object.keys(pb).length) { hide(box); return; }
+  var h = "";
+  Object.keys(pb).forEach(function (n) {
+    var d = (pb[n] && typeof pb[n] === "object") ? pb[n] : {};
+    var st = d.status == null ? "?" : String(d.status);
+    var cls = st === "ok" ? "ok" : st === "ok_no_results" ? "nr" : st === "error" ? "bad" : st === "cooldown" ? "cd" : "nr";
+    var tip = st === "error" ? String(d.error == null ? "" : d.error)
+          : st === "cooldown" ? jstr(d.detail == null ? d : d.detail)
+          : "";
+    var extra = [];
+    if (d.latency_ms != null) extra.push(d.latency_ms + " ms");
+    if (d.n_results != null) extra.push(d.n_results + " res");
+    h += "<span class='chip " + cls + "'" + (tip ? " title=\"" + esc(tip) + "\"" : "") + ">" +
+      esc(n) + " <b>" + esc(st) + "</b>" + (extra.length ? " · " + esc(extra.join(" · ")) : "") + "</span>";
+  });
+  box.innerHTML = h;
+  reveal(box);
+}
+
+// Total failure: red panel listing every per_backend error detail.
+function renderFailPanel(pb) {
+  var fb = $("failbox");
+  var h = "<h3>all backends failed — per_backend detail</h3>";
+  var names = (pb && typeof pb === "object") ? Object.keys(pb) : [];
+  if (!names.length) h += "<p class='bad'>no per_backend data in the failure envelope</p>";
+  names.forEach(function (n) {
+    var d = pb[n] || {};
+    var detail = d.error != null ? String(d.error)
+      : d.detail != null ? jstr(d.detail)
+      : "no detail";
+    h += "<p><b>" + esc(n) + "</b> — " + esc(d.status == null ? "?" : d.status) + " — " + esc(detail) + "</p>";
+  });
+  fb.innerHTML = h;
+  reveal(fb);
+}
+
+/* ------------------------------- carousel ------------------------------ */
+function renderCarousel() {
+  var tr = $("ctrack");
+  var n = S.results.length;
+  var h = "";
+  S.results.forEach(function (r, i) {
+    r = (r && typeof r === "object") ? r : {};
+    var lat = (r.latency_ms == null) ? "—" : esc(r.latency_ms) + " ms";
+    var col = bcolor(r.backend);
+    var url = (r.url == null) ? "" : String(r.url);
+    var badge = r.backend == null ? "—" : esc(String(r.backend));
+    h += "<div class='card'>" +
+      "<div class='chead'><span class='rank'>" + (r.rank == null ? "—" : esc(r.rank)) + "</span>" +
+      "<span class='badge' style='color:" + col + ";border-color:" + col + "'>" + badge + "</span>" +
+      "<span class='muted'>" + lat + "</span></div>" +
+      "<a class='ct' href=\"" + esc(url) + "\" target=\"_blank\" rel=\"noopener\">" + esc(r.title == null ? "—" : r.title) + "</a>" +
+      "<div class='sn'>" + esc(r.snippet == null ? "—" : r.snippet) + "</div>" +
+      "<button class='secondary readbtn' type='button' data-url=\"" + esc(url) + "\"" + (url ? "" : " disabled") + ">Read full page</button>" +
+      "</div>";
+  });
+  tr.innerHTML = h;
+  $("cempty").textContent = !S.searched ? "no search yet" : (n ? "" : "0 results — see backend diagnostics strip");
+  S.idx = 0;
+  var btns = tr.querySelectorAll("button.readbtn");
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].onclick = function () { try_("read_url dispatch", function () { readPage(this); }); };
+  }
+  window.requestAnimationFrame(function () { try_("carousel layout", updateCarousel); });
+}
+
+function cstep() {
+  var tr = $("ctrack");
+  if (!tr.children.length) return 0;
+  return tr.children[0].getBoundingClientRect().width + 12; // card width + track gap
+}
+function carouselMax() {
+  var n = S.results.length;
+  if (!n) return 0;
+  var st = cstep();
+  if (st <= 0) return 0;
+  var vp = $("cvp"), tr = $("ctrack");
+  var maxOff = Math.max(0, tr.scrollWidth - vp.clientWidth);
+  var mx = Math.ceil(maxOff / st);   // edge cards clamp — never wrap past the end
+  return Math.min(mx, n - 1);
+}
+function carouselTo(i) {
+  var mx = carouselMax();
+  S.idx = Math.max(0, Math.min(i, mx));
+  updateCarousel();
+}
+function updateCarousel() {
+  var tr = $("ctrack"), vp = $("cvp"), n = S.results.length;
+  var st = cstep();
+  var maxOff = Math.max(0, tr.scrollWidth - vp.clientWidth);
+  var off = Math.min(S.idx * st, maxOff); // CSS transition handles the slide
+  tr.style.transform = "translateX(" + (-off) + "px)";
+  var mx = carouselMax();
+  $("cprev").disabled = S.idx <= 0;
+  $("cnext").disabled = S.idx >= mx;
+  $("cpos").textContent = n ? (Math.min(S.idx + 1, n) + " / " + n) : "0 / 0";
+}
+
+/* ------------------------------ read page ------------------------------- */
+function rpSet(bodyHtml) { $("rpbody").innerHTML = bodyHtml; }
+function rpErr(html) { rpSet("<p class='bad'>" + html + "</p>"); }
+function setReadButtons(disabled) {
+  var btns = $("ctrack").querySelectorAll("button.readbtn");
+  for (var i = 0; i < btns.length; i++) btns[i].disabled = !!disabled;
+}
+
+// Inline markdown panel below the carousel. Errors are terminal — in
+// particular jina_rate_limited shows "20 RPM cap — retry later" and the
+// request is NEVER auto-retried.
+function readPage(btn) {
+  var url = btn.getAttribute("data-url");
+  if (!url) { rpErr("this result has no url"); reveal($("readpanel")); return; }
+  var seq = ++S.readSeq;
+  reveal($("readpanel"));
+  $("rpurl").textContent = url;
+  rpSet("<p class='muted'><span class='spin'></span> fetching full page via read_url…</p>");
+  setReadButtons(true);
+  mcpCall("read_url", { url: url }, READ_TIMEOUT_MS).then(function (d) {
+    setReadButtons(false);
+    if (seq !== S.readSeq) return;
+    if (!d || typeof d !== "object") { rpErr("malformed read_url result"); return; }
+    if (d.ok === true) {
+      rpSet("<div class='md'>" + renderMarkdown(d.markdown) + "</div>");
+      return;
+    }
+    var code = d.error == null ? "unknown_error" : String(d.error);
+    if (code === "jina_rate_limited") {
+      rpSet("<p class='bad'>20 RPM cap — retry later</p>" +
+        (d.detail != null ? "<p class='muted'>" + esc(String(d.detail)) + "</p>" : ""));
+    } else {
+      rpSet("<p class='bad'>" + esc(code) + "</p>" +
+        (d.detail != null ? "<p class='muted'>" + esc(jstr(d.detail)).slice(0, 600) + "</p>" : ""));
+    }
+  }, function (e) {
+    setReadButtons(false);
+    if (seq !== S.readSeq) return;
+    if (e && e.name === "AbortError") rpErr("read_url timed out after 30 s.");
+    else if (e && e.name === "RawError") { rpErr("read_url transport failure: " + esc(errText(e))); showRaw(e.raw); }
+    else rpErr("read_url failed: " + esc(errText(e)));
+  });
+}
+
+/* -------------------------------- search -------------------------------- */
+function setBusy(on) {
+  S.busy = on;
+  $("gobtn").disabled = on;
+  if (on) reveal($("spin")); else hide($("spin"));
+}
+
+function doSearch() {
+  if (S.busy) return;
+  var q = $("q").value.trim();
+  hide($("errbox")); hide($("failbox"));
+  $("rawbox").classList.add("hide");
+  if (!q) { show($("errbox"), "query is required — nothing was sent."); $("q").focus(); return; }
+  var mr = parseInt($("maxr").value, 10);
+  if (!(mr >= 1 && mr <= 10)) mr = 5;
+  // checked set in display (priority) order; none checked -> null -> server default priority
+  var boxes = $("backends").querySelectorAll("input[type=checkbox]");
+  var picked = [];
+  for (var i = 0; i < boxes.length; i++) {
+    if (boxes[i].checked) picked.push(boxes[i].value);
+  }
+  hide($("diag"));
+  hide($("readpanel"));
+  S.readSeq++; // discard any in-flight read render
+  S.searched = true;
+  setBusy(true);
+  var args = { query: q, max_results: mr, backends: picked.length ? picked : null };
+  mcpCall("tools/call", { name: "web_search_balanced", arguments: args }, SEARCH_TIMEOUT_MS).then(
+    function (res) { setBusy(false); try_("render results", function () { onSearchResult(res); }); },
+    function (e) { setBusy(false); try_("show search error", function () { onSearchError(e); }); }
+  );
+}
+
+function onSearchResult(res) {
+  if (!res || typeof res !== "object") {
+    $("cempty").textContent = "unparseable tool result";
+    show($("errbox"), "tool result envelope did not decode to an object.");
+    return;
+  }
+  renderDiag(res.per_backend);
+  bumpUsage(res.ok === true);
+  S.results = Array.isArray(res.results) ? res.results : [];
+  S.idx = 0;
+  renderCarousel();
+  if (res.ok === true) return;
+  if (res.error === "all_backends_failed") {
+    renderFailPanel(res.per_backend);
+  } else {
+    var msg = (res.error == null ? jstr(res) : String(res.error)).slice(0, 400);
+    show($("errbox"), "search failed: " + msg);
+  }
+}
+
+function onSearchError(e) {
+  if (e && e.name === "AbortError") {
+    show($("errbox"), "search request timed out (>= 15 s) — single backends usually answer in 2-3 s; check the LB in the stats panel and retry.");
+    return;
+  }
+  if (e && e.name === "RawError") {
+    show($("errbox"), "transport failure: " + errText(e));
+    showRaw(e.raw); // verbatim body for debugging transport drift
+    return;
+  }
+  show($("errbox"), "search failed: " + errText(e));
+}
+
+/* -------------------------------- wiring -------------------------------- */
+$("gobtn").onclick = function () { try_("search", doSearch); };
+$("q").addEventListener("keydown", function (e) { if (e.key === "Enter") try_("search", doSearch); });
+$("maxr").addEventListener("keydown", function (e) { if (e.key === "Enter") try_("search", doSearch); });
+$("allbtn").onclick = function () { setAllBackends(true); };
+$("nonebtn").onclick = function () { setAllBackends(false); };
+$("cprev").onclick = function () { try_("carousel prev", function () { carouselTo(S.idx - 1); }); };
+$("cnext").onclick = function () { try_("carousel next", function () { carouselTo(S.idx + 1); }); };
+$("rpclose").onclick = function () { hide($("readpanel")); S.readSeq++; };
+window.addEventListener("resize", function () { try_("carousel resize", updateCarousel); });
+document.addEventListener("keydown", function (e) {
+  if (!S.results.length) return;
+  var t = e.target, tag = (t && t.tagName) || "";
+  if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(tag)) return;
+  if (e.key === "ArrowLeft") { carouselTo(S.idx - 1); e.preventDefault(); }
+  else if (e.key === "ArrowRight") { carouselTo(S.idx + 1); e.preventDefault(); }
+});
+window.addEventListener("error", function (e) {
+  try { show($("errbox"), "page JS error: " + (e && e.message ? e.message : e)); } catch (ignore) {}
+});
+
+/* ------------------- gateway primary quota (Tavily) ---------------------- */
+function loadQuota() {
+  var served = (CONFIG.STATS_URL === "/webSearch/stats");
+  if (!served) { renderQuota(); return; }   // direct :9703 mode — no gateway endpoint
+  fetch("/webSearch/quota", { headers: { "Accept": "application/json" } }).then(
+    function (r) {
+      return r.text().then(
+        function (t) { return { status: r.status, text: t }; },
+        function () { return { status: 0, text: "" }; }
+      );
+    },
+    function (e) { return { status: 0, text: "fetch failed: " + e }; }
+  ).then(function (res) {
+    if (res.status !== 200) { S.quota = { error: "HTTP " + res.status }; renderQuota(); return; }
+    try { S.quota = JSON.parse(res.text); }
+    catch (e) { S.quota = { error: "not JSON" }; renderQuota(); return; }
+    S.quotaAt = Date.now();
+    renderQuota();
+  });
+}
+
+function renderQuota() {
+  var el = $("quivbody"); if (!el) return;
+  var q = S.quota;
+  if (!q) { el.innerHTML = "<tr><td colspan=5 class='muted'>loading quota from /webSearch/quota…</td></tr>"; return; }
+  if (q.error) { el.innerHTML = "<tr><td colspan=5 class='muted'>n/a — " + esc(q.error) + " (served mode only)</td></tr>"; return; }
+  if (!q.configured) {
+    el.innerHTML = "<tr><td><span class='badge'>tavily</span></td><td><span class='dot down'></span><span class='bad'>no</span></td>" +
+      "<td colspan=3 class='muted'>not configured — search_web falls back to SearxNG</td></tr>";
+    return;
+  }
+  var fresh = !!q.usage_checked_at &&
+    (Date.now() - new Date(q.usage_checked_at).getTime() < 20 * 60 * 1000);
+  var col = fresh ? "var(--verd)" : "var(--red)";
+  var used = (q.usage == null) ? "—" : (q.usage + " / " + (q.limit == null ? "?" : q.limit));
+  var lq = q.last_query_ts ? new Date(q.last_query_ts).toLocaleString() : "—";
+  el.innerHTML = "<tr><td><span class='badge' style='color:" + col + ";border-color:" + col + "'>tavily</span></td>" +
+    "<td><span class='dot " + (fresh ? "up" : "down") + "'></span></td>" +
+    "<td>" + esc(q.plan || "—") + "</td>" +
+    "<td>" + used + ((q.remaining != null) ? " (left " + q.remaining + ")" : "") + "</td>" +
+    "<td>" + esc(lq) + "</td></tr>";
+}
+
+function loadNode3090() {
+  var served = (CONFIG.STATS_URL === "/webSearch/stats");
+  if (!served) { renderNode3090(); return; }   // direct :9703 mode — no gateway endpoint
+  fetch("/webSearch/nodes", { headers: { "Accept": "application/json" } }).then(
+    function (r) {
+      return r.text().then(
+        function (t) { return { status: r.status, text: t }; },
+        function () { return { status: 0, text: "" }; }
+      );
+    },
+    function (e) { return { status: 0, text: "fetch failed: " + e }; }
+  ).then(function (res) {
+    if (res.status !== 200) { S.nodes3090 = { error: "HTTP " + res.status }; renderNode3090(); return; }
+    try { S.nodes3090 = JSON.parse(res.text); }
+    catch (e) { S.nodes3090 = { error: "not JSON" }; renderNode3090(); return; }
+    S.nodes3090At = Date.now();
+    renderNode3090();
+  });
+}
+
+function renderNode3090() {
+  var el = $("node3090body"); if (!el) return;
+  var d = S.nodes3090;
+  if (!d) { el.innerHTML = "<tr><td colspan=4 class='muted'>loading from /webSearch/nodes…</td></tr>"; return; }
+  if (d.error) { el.innerHTML = "<tr><td colspan=4 class='muted'>n/a — " + esc(d.error) + " (served mode only)</td></tr>"; return; }
+  var svcs = d.services || [];
+  if (!svcs.length) { el.innerHTML = "<tr><td colspan=4 class='muted'>no services reported yet</td></tr>"; return; }
+  var h = "";
+  for (var i = 0; i < svcs.length; i++) {
+    var sv = svcs[i];
+    var ok = sv.last_ok_ts ? new Date(sv.last_ok_ts).toLocaleString() : "—";
+    var lat = (sv.latency_ms == null) ? "—" : (sv.latency_ms + " ms");
+    var err = sv.up ? "" : (sv.last_error ? " — <span class='muted'>" + esc(sv.last_error) + "</span>" : "");
+    h += "<tr><td><span class='badge'>" + esc(sv.name) + "</span>" + err + "</td>" +
+      "<td><span class='dot " + (sv.up ? "up" : "down") + "'></span> " + (sv.up ? "up" : "down") + "</td>" +
+      "<td>" + esc(ok) + "</td>" +
+      "<td>" + lat + "</td></tr>";
+  }
+  el.innerHTML = h;
+}
+
+/* --------------------------------- boot ---------------------------------- */
+renderUsage();
+loadStats();                          // GET /stats — LB backends poll
+setInterval(function () { try_("stats poll", loadStats); }, POLL_MS);
+loadQuota();                          // GET /webSearch/quota — gateway primary (served mode)
+setInterval(function () { try_("quota poll", loadQuota); }, POLL_MS);
+loadNode3090();                          // GET /webSearch/nodes — node3090 remote services (served mode)
+setInterval(function () { try_("node3090 poll", loadNode3090); }, POLL_MS);
+setInterval(function () { try_("cooldown tick", renderBackends); }, 1000); // live countdown
+ensureSession();                      // one MCP session for the whole page lifetime
+</script>
+</body>
+</html>

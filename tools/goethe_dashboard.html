@@ -177,6 +177,26 @@
 
 <div class="grid">
 
+  <div class="panel span4" id="p-backends">
+    <h2>Planner Backend <span class="ms" id="backend-ms"></span></h2>
+    <div id="backend-rows"></div>
+    <div id="backend-note" style="font-size:10.5px;margin-top:8px;min-height:13px;color:var(--accent)"></div>
+    <div style="font-size:10.5px;color:var(--faint);margin-top:4px">
+      'configured' means credentials were found — hosted backends aren't
+      live-pinged on refresh to avoid surprise API calls. A selection
+      persists across restarts and applies to the next planner() call.
+    </div>
+  </div>
+  <div class="panel span8" id="p-ledger">
+    <h2>Task Ledger — Plan &rarr; Execute &rarr; Verify <span class="ms" id="ledger-ms"></span></h2>
+    <div class="bignums" id="ledger-nums"></div>
+    <div class="ledger-scroll" id="ledger-scroll" tabindex="0"
+         aria-label="Scrollable task ledger"
+         title="Scroll while the pointer is inside this task list">
+      <table id="ledger-table"></table>
+    </div>
+  </div>
+
   <div class="panel span8" id="p-perms-pending">
     <h2>Permissions — Pending Approvals <span class="ms" id="perms-ms"></span></h2>
     <div class="bignums" id="perms-nums"></div>
@@ -337,27 +357,6 @@
     <div class="actions" id="traum-result-actions" style="display:none;margin-top:6px">
       <button class="abtn" onclick="copyTraumResult()">Copy result</button>
       <button class="abtn" onclick="dismissTraumResult()">Dismiss</button>
-    </div>
-  </div>
-
-  <div class="panel span4" id="p-backends">
-    <h2>Planner Backend <span class="ms" id="backend-ms"></span></h2>
-    <div id="backend-rows"></div>
-    <div id="backend-note" style="font-size:10.5px;margin-top:8px;min-height:13px;color:var(--accent)"></div>
-    <div style="font-size:10.5px;color:var(--faint);margin-top:4px">
-      'configured' means credentials were found — hosted backends aren't
-      live-pinged on refresh to avoid surprise API calls. A selection
-      persists across restarts and applies to the next planner() call.
-    </div>
-  </div>
-
-  <div class="panel span6" id="p-ledger">
-    <h2>Task Ledger — Plan &rarr; Execute &rarr; Verify <span class="ms" id="ledger-ms"></span></h2>
-    <div class="bignums" id="ledger-nums"></div>
-    <div class="ledger-scroll" id="ledger-scroll" tabindex="0"
-         aria-label="Scrollable task ledger"
-         title="Scroll while the pointer is inside this task list">
-      <table id="ledger-table"></table>
     </div>
   </div>
 
@@ -1218,7 +1217,7 @@ async function loadLedger(){
                '<span style="font-size:10.5px;color:var(--dim);font-family:var(--mono)">'+t.steps_done+"/"+t.steps_total+"</span>";
       } else prog = '<span style="color:var(--faint)">—</span>';
       return "<tr><td style='font-family:var(--mono);color:var(--dim)' title='"+esc(t.task_id||"")+"'>"+esc((t.task_id||"").slice(0,8))+"</td>"+
-        "<td class='ledger-goal'>"+esc((t.goal||"").slice(0,70))+"</td>"+
+        "<td class='ledger-goal'>"+esc((t.goal||"").slice(0,100))+"</td>"+
         "<td><span class='badge "+(t.status==="done"?"gt":t.status==="open"?"primary":"")+"'>"+esc(t.status)+"</span></td>"+
         "<td style='display:flex;gap:8px;align-items:center'>"+prog+"</td>"+
         "<td>"+backendBadge(t.backend)+"</td>"+

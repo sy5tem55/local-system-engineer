@@ -1196,6 +1196,8 @@ def _set_log_dir(log_dir=None):
 
 CHUNK_SEP = "\x1f"          # stream-chunk marker for timeout classification
 SYNTHESIS_MAX_TOKENS = 16000  # derived, conservative (brief_core section 5)
+GAP_LOOP_WALL_CAP_S = 180.0  # hard wall-clock cap on search/gap loop (gateway-wedge guard)
+MAX_GAP_STREAK = 3           # hard cap on consecutive "gap" decisions
 LEDGER_SCOPE = "deep-search-core"
 LEDGER_PARENT = "0d0ba451"
 LEDGER_NODE = "node3090"
@@ -1243,10 +1245,10 @@ def _validate_budget_fields(obj):
 @dataclass
 class Budgets:
     totalBudgetSeconds: int = 1800
-    modelTimeoutSeconds: int = 240
+    modelTimeoutSeconds: int = 420
     toolTimeoutSeconds: int = 300
     briefTimeoutSeconds: int = 900
-    firstOutputSeconds: int = 60
+    firstOutputSeconds: int = 420
     idleSeconds: int = 120
     maxSteps: int = 8
     maxSources: int = 10
@@ -1330,21 +1332,27 @@ def _extract_json(text, opener, closer):
 
 
 def _validate_plan(plan, max_steps):
+    return _plan_validation_error(plan, max_steps) is None
+
+
+def _plan_validation_error(plan, max_steps):
+    """Return the first violated rule as a string, or None if valid."""
     if not isinstance(plan, list) or not plan:
-        return False
+        return "plan is not a non-empty JSON array"
     if len(plan) > max_steps:
-        return False
-    for step in plan:
+        return "plan has %d steps, max is %d" % (len(plan), max_steps)
+    for i, step in enumerate(plan, 1):
         if not isinstance(step, dict):
-            return False
+            return "step %d is not a JSON object" % i
         if step.get("action") not in ("search", "read"):
-            return False
+            return ("step %d action %r is not one of 'search', 'read'"
+                    % (i, step.get("action")))
         target = step.get("target")
         if not isinstance(target, str) or not target.strip():
-            return False
+            return "step %d target is missing or empty" % i
         if not isinstance(step.get("why", ""), str):
-            return False
-    return True
+            return "step %d why is not a string" % i
+    return None
 
 
 def _normalize_plan(plan):
@@ -1498,8 +1506,11 @@ class DeepSearch:
         self._t0 = None
         self._wall = 0.0
         self._actions_done = 0
+        self._budget_stopped = False
         self._pending = []
         self._gap_notes = []
+        self._gap_streak = 0
+        self._seen_queries = set()
         self._url_by_source = {}
         self._wait_seq = 0
         self._child_id = None
@@ -1575,12 +1586,26 @@ class DeepSearch:
         call_start = self._clock()
         deadline_at = call_start + deadline
         attempt = 0
+        # Context guard: reject prompts that cannot fit in the
+        # engine max_context (strata on node3090 serves 131072).
+        # Oversized prompts are rejected/stalled mid-stream and can
+        # wedge the gateway event loop.
+        est_prompt_tokens = len(json.dumps(body)) // 4
+        if est_prompt_tokens > 131072:
+            raise ValueError(
+                "prompt exceeds max_context: est %d tokens > 131072"
+                % est_prompt_tokens)
         while True:
             with _auth_lock:
                 _ensure_valid_token(self.client)
             headers = {"Content-Type": "application/json"}
             headers.update(auth_header())  # fresh bearer every attempt
-            resp = self.client.post(url, json=body, headers=headers)
+            try:
+                resp = self.client.post(url, json=body, headers=headers)
+            except httpx.TransportError as exc:
+                raise ModelWallClockTimeout(
+                    "model transport error on completions call: %s: %s"
+                    % (type(exc).__name__, exc)) from exc
             status = getattr(resp, "status_code", 0)
             if 200 <= status < 300:
                 obj = _parse_body(resp.content)
@@ -1719,6 +1744,10 @@ class DeepSearch:
                 "[label](url): %s. Output markdown only."
                 % (self.question, self.instructions or "none", snips,
                    context[:12000], urls))
+        if self._budget_stopped:
+            task += ("\nNOTE: the search budget was exhausted before all "
+                     "planned searches ran; synthesize from the evidence "
+                     "gathered and state remaining gaps explicitly.")
         if partial:
             task += ("\nFinish this partial report; reply with the "
                      "remaining markdown only:\n" + partial[:6000])
@@ -1730,16 +1759,16 @@ class DeepSearch:
     # -- phases ------------------------------------------------------------
 
     def _phase_planning(self):
-        text, _finish = self._model_wait(self._plan_prompt(), 1024,
+        text, _finish = self._model_wait(self._plan_prompt(), 4096,
                                          State.PLANNING)
         raw = _extract_json(text, "[", "]")
+        reason = _plan_validation_error(raw, self.budgets.maxSteps) or "unknown"
         plan = (_normalize_plan(raw)
                 if _validate_plan(raw, self.budgets.maxSteps) else [])
         if not plan:
-            audit("plan invalid; one repair attempt")
-            text, _finish = self._model_wait(self._plan_prompt(
-                "empty, malformed, over maxSteps, or bad action/target"),
-                1024, State.PLANNING)
+            audit("plan invalid (%s); one repair attempt" % reason)
+            text, _finish = self._model_wait(self._plan_prompt(reason),
+                4096, State.PLANNING)
             raw = _extract_json(text, "[", "]")
             if _validate_plan(raw, self.budgets.maxSteps):
                 plan = _normalize_plan(raw)
@@ -1751,9 +1780,23 @@ class DeepSearch:
 
     def _phase_searching(self):
         while self._pending:
-            self._begin_action()
+            if self._actions_done + 1 > self.budgets.maxSteps:
+                self._budget_stopped = True
+                audit("budget exhausted; %d pending search(es) skipped; "
+                      "proceeding to synthesis with %d source(s)"
+                      % (len(self._pending), len(self.sources)))
+                break
             action = self._pending.pop(0)
             target = action["target"]
+            norm = " ".join(str(target).lower().split())
+            if norm in self._seen_queries:
+                audit("duplicate search skipped (already executed): %r"
+                      % target)
+                self._gap_notes.append("duplicate search skipped: %r"
+                                       % target)
+                continue
+            self._seen_queries.add(norm)
+            self._begin_action()
             k = max(1, self.budgets.maxSources - len(self.sources))
             ok, data = self._tool_post("search", self.search_endpoint,
                                        {"query": target, "max_results": k})
@@ -1791,10 +1834,23 @@ class DeepSearch:
         if self._reason_valid(obj) and obj.get("decision") == "gap":
             query = str(obj["query"]).strip()
             why = str(obj.get("why") or "gap")
+            norm = " ".join(query.lower().split())
+            if norm and norm in self._seen_queries:
+                audit("gap loop terminated (duplicate gap query): %r"
+                      % query)
+                self._gap_notes.append("dup gap: %s" % why[:200])
+                return "sufficient"
+            self._gap_streak += 1
+            if self._gap_streak > MAX_GAP_STREAK:
+                audit("gap loop terminated (max %d consecutive gaps): %r"
+                      % (MAX_GAP_STREAK, query))
+                self._gap_notes.append("gap streak cap: %s" % why[:200])
+                return "sufficient"
             self._gap_notes.append("gap: %s" % why[:200])
             self._pending.append({"action": "search", "target": query,
                                   "why": why})
             return "gap"
+        self._gap_streak = 0
         return "sufficient"
 
     @staticmethod
@@ -1852,7 +1908,8 @@ class DeepSearch:
 
     def _postprocess_report(self, text):
         masked, spans = _mask_code_spans(text)  # mask code spans first
-        allowed = set(self._url_by_source)
+        allowed = {s["url"] for s in self.sources
+                  if s.get("fetched")}
         stripped = []
 
         def _strip_link(match):
@@ -1873,8 +1930,12 @@ class DeepSearch:
                         _strip_link, masked)
         masked = re.sub(r"https?://[^\s)\]\"'<>]+", _strip_bare, masked)
         for url in stripped:
-            audit("citation stripped (url not in gathered sources): %s"
-                  % url)
+            if url in self._url_by_source:
+                audit("citation stripped (source fetch failed or empty): %s"
+                      % url)
+            else:
+                audit("citation stripped (url not in gathered sources): %s"
+                      % url)
         masked = _redact_ips(masked)
         return _restore_code_spans(masked, spans)
 
@@ -1921,14 +1982,19 @@ class DeepSearch:
             self._phase_planning()
             self._transition(State.PLANNING, State.SEARCHING,
                              "plan ready: %d step(s)" % len(self.plan))
+            gap_loop_start = self._clock()
             while True:
+                if self._clock() - gap_loop_start > GAP_LOOP_WALL_CAP_S:
+                    raise TimeoutError(
+                        "gap loop exceeded wall-clock cap of %.0fs"
+                        % GAP_LOOP_WALL_CAP_S)
                 self._phase_searching()
                 self._transition(State.SEARCHING, State.REASONING,
                                  "actions executed: %d/%d"
                                  % (self._actions_done,
                                     self.budgets.maxSteps))
                 decision = self._phase_reasoning()
-                if decision == "sufficient":
+                if decision == "sufficient" or self._budget_stopped:
                     break
                 self._transition(State.REASONING, State.SEARCHING,
                                  "gap loop (next action %d/%d)"
@@ -2583,6 +2649,8 @@ _SM_GAP = json.dumps({"decision": "gap", "query": "more alpha",
                       "why": "need more evidence"})
 _SM_SUFFICIENT = json.dumps({"decision": "sufficient",
                              "why": "coverage sufficient"})
+_SM_GAP_DUP = json.dumps({"decision": "gap", "query": "  ALPHA ",
+                          "why": "retry of same query"})
 _SM_ONE_SEARCH_PLAN = json.dumps(
     [{"n": 1, "action": "search", "target": "alpha", "why": "start"}])
 
@@ -2708,14 +2776,25 @@ def _check_sm_maxsteps(client=None):
                      _sm_search_result("https://cap.example/1", "C1"),
                      _sm_completion(_SM_GAP),
                      _sm_search_result("https://cap.example/2", "C2"),
-                     _sm_completion(_SM_GAP)]
+                     _sm_completion(_SM_GAP),
+                     _sm_completion(_SM_SUFFICIENT),
+                     _StubResponse(200,
+                                   payload={"text":
+                                            "C1 full text evidence."}),
+                     _StubResponse(200,
+                                   payload={"text":
+                                            "C2 full text evidence."}),
+                     _sm_completion(
+                         "## Partial report\nAnswer based on "
+                         "[C1](https://cap.example/1).")]
     result = _sm_run(stub, question="state machine maxsteps probe",
                      budgets=Budgets(maxSteps=2))
-    if result.status != "FAILED":
-        raise SelfTestError("maxSteps=2 gap loop must FAIL")
-    if (result.error or {}).get("class") != "budget_exhausted":
-        raise SelfTestError("expected budget_exhausted, got %r"
-                            % (result.error,))
+    if result.status != "DONE":
+        raise SelfTestError(
+            "budget stop must synthesize a partial report, got %s %r"
+            % (result.status, (result.error or {}).get("class")))
+    if not result.report.strip():
+        raise SelfTestError("partial report must be non-empty")
     if _sm_endpoint_calls(stub, SM_SEARCH_ENDPOINT) != 2:
         raise SelfTestError("search POST past the cap: %d"
                             % _sm_endpoint_calls(stub, SM_SEARCH_ENDPOINT))
@@ -2739,28 +2818,50 @@ def _check_sm_maxsteps(client=None):
 
 
 def _check_sm_loop_termination(client=None):
+    log_path = os.path.join(LOG_DIR or ".", AUDIT_LOG)
+    try:
+        with open(log_path, errors="replace") as fh:
+            before = fh.read()
+    except OSError:
+        before = ""
     stub = StubClient()
     replies = [_sm_completion(_SM_ONE_SEARCH_PLAN)]
-    for i in range(4):
+    for i in range(2):
         replies.append(_sm_search_result("https://spin.example/%d" % i,
                                          "Spin %d" % i))
         replies.append(_sm_completion(_SM_GAP))
+    replies.append(_StubResponse(
+        200, payload={"text": "Spin 0 full text."}))
+    replies.append(_StubResponse(
+        200, payload={"text": "Spin 1 full text."}))
+    replies.append(_sm_completion(
+        "## Report\nSpins follow [S0](https://spin.example/0)."))
     stub.scripted = replies
     result = _sm_run(stub, question="state machine loop termination probe",
                      budgets=Budgets(maxSteps=4))
-    if result.status != "FAILED":
-        raise SelfTestError("always-gap loop must terminate FAILED")
-    if (result.error or {}).get("class") != "budget_exhausted":
-        raise SelfTestError("expected budget_exhausted, got %r"
-                            % (result.error,))
-    if _sm_endpoint_calls(stub, SM_SEARCH_ENDPOINT) != 4:
-        raise SelfTestError("actions past maxSteps: %d"
-                            % _sm_endpoint_calls(stub, SM_SEARCH_ENDPOINT))
-    if _sm_completion_calls(stub) != 5:
-        raise SelfTestError("plan + 4 reasoning waits expected, got %d"
-                            % _sm_completion_calls(stub))
-    if _sm_states(result)[-1] != "FAILED":
-        raise SelfTestError("loop must terminate in FAILED")
+    if result.status != "DONE":
+        raise SelfTestError(
+            "always-gap loop must terminate via duplicate-gap stop + "
+            "synthesis, got %s %r"
+            % (result.status, (result.error or {}).get("class")))
+    if _sm_endpoint_calls(stub, SM_SEARCH_ENDPOINT) != 2:
+        raise SelfTestError(
+            "duplicate gap re-searched: %d call(s)"
+            % _sm_endpoint_calls(stub, SM_SEARCH_ENDPOINT))
+    if _sm_completion_calls(stub) != 4:
+        raise SelfTestError(
+            "plan + 2 gap + synthesis expected, got %d"
+            % _sm_completion_calls(stub))
+    try:
+        with open(log_path, errors="replace") as fh:
+            after = fh.read()
+    except OSError:
+        after = ""
+    new = after[len(before):] if after.startswith(before) else after
+    if "gap loop terminated (duplicate gap query)" not in new:
+        raise SelfTestError("duplicate gap stop was not audit-logged")
+    if _sm_states(result)[-1] != "DONE":
+        raise SelfTestError("duplicate-gap-stop run must terminate in DONE")
 
 
 def _sm_wait_once(budgets, reply, phase=State.PLANNING, text=None):
@@ -2842,9 +2943,9 @@ def _check_sm_budget_clamp(client=None):
 
 def _check_sm_bool_budgets(client=None):
     defaults = {
-        "totalBudgetSeconds": 1800, "modelTimeoutSeconds": 240,
+        "totalBudgetSeconds": 1800, "modelTimeoutSeconds": 420,
         "toolTimeoutSeconds": 300, "briefTimeoutSeconds": 900,
-        "firstOutputSeconds": 60, "idleSeconds": 120, "maxSteps": 8,
+        "firstOutputSeconds": 420, "idleSeconds": 120, "maxSteps": 8,
         "maxSources": 10, "maxBriefs": 2, "snippetMaxChars": 4000}
     names = sorted(Budgets.__dataclass_fields__)
     if names != sorted(defaults) or len(names) != 10:
@@ -2914,6 +3015,90 @@ def _check_sm_citations(client=None):
     new = after[len(before):] if after.startswith(before) else after
     if "citation stripped" not in new:
         raise SelfTestError("stripped citation was not logged to audit")
+
+
+def _check_sm_citation_validity(client=None):
+    """F1: URLs whose read failed (403) must not survive in citations."""
+    log_path = os.path.join(LOG_DIR or ".", AUDIT_LOG)
+    try:
+        with open(log_path, errors="replace") as fh:
+            before = fh.read()
+    except OSError:
+        before = ""
+    report = ("# R\n\nkept [a](https://good.example/a); "
+              "dropped [c](https://blocked.example/c)\n")
+    stub = StubClient()
+    stub.scripted = [
+        _sm_completion(_SM_ONE_SEARCH_PLAN),
+        _StubResponse(200, payload={"results": [
+            {"url": "https://good.example/a", "title": "Alpha",
+             "snippet": "snippet for Alpha"},
+            {"url": "https://blocked.example/c", "title": "Blocked",
+             "snippet": "snippet for Blocked"},
+        ]}),
+        _sm_completion(_SM_SUFFICIENT),
+        _StubResponse(200, payload={"text": "Alpha full text evidence."}),
+        _StubResponse(403, payload=None),
+        _sm_completion(report),
+    ]
+    result = _sm_run(stub, question="state machine citation validity probe")
+    if result.status != "DONE":
+        raise SelfTestError("citation validity probe must reach DONE")
+    if "https://good.example/a" not in result.report:
+        raise SelfTestError("fetched-source citation was dropped")
+    if "https://blocked.example/c" in result.report:
+        raise SelfTestError("fetch-failed citation survived validation")
+    try:
+        with open(log_path, errors="replace") as fh:
+            after = fh.read()
+    except OSError:
+        after = ""
+    new = after[len(before):] if after.startswith(before) else after
+    if "citation stripped (source fetch failed or empty)" not in new:
+        raise SelfTestError("fetch-failed citation was not audit-logged")
+
+
+def _check_sm_gap_dedup(client=None):
+    """F2: duplicate plan search targets are skipped, not re-executed."""
+    log_path = os.path.join(LOG_DIR or ".", AUDIT_LOG)
+    try:
+        with open(log_path, errors="replace") as fh:
+            before = fh.read()
+    except OSError:
+        before = ""
+    plan = json.dumps([
+        {"n": 1, "action": "search", "target": "alpha",
+         "why": "find alpha"},
+        {"n": 2, "action": "search", "target": "  ALPHA ",
+         "why": "dup"},
+    ])
+    report = "# R\n\n[a](https://good.example/a)\n"
+    stub = StubClient()
+    stub.scripted = [
+        _sm_completion(plan),
+        _sm_search_result("https://good.example/a", "Alpha"),
+        _sm_completion(_SM_SUFFICIENT),
+        _StubResponse(200, payload={"text": "Alpha full text evidence."}),
+        _sm_completion(report),
+    ]
+    result = _sm_run(stub, question="state machine gap dedup probe")
+    if result.status != "DONE":
+        raise SelfTestError("gap dedup probe must reach DONE")
+    search_calls = _sm_endpoint_calls(stub, SM_SEARCH_ENDPOINT)
+    if search_calls != 1:
+        raise SelfTestError(
+            "duplicate gap query re-executed: %d search call(s)"
+            % search_calls)
+    if result.budgets_used.get("steps") != 1:
+        raise SelfTestError("duplicate search consumed step budget")
+    try:
+        with open(log_path, errors="replace") as fh:
+            after = fh.read()
+    except OSError:
+        after = ""
+    new = after[len(before):] if after.startswith(before) else after
+    if "duplicate search skipped (already executed)" not in new:
+        raise SelfTestError("duplicate search skip was not audit-logged")
 
 
 def _check_sm_synth_recovery(client=None):
@@ -3055,6 +3240,9 @@ _SELFTEST_STEPS = [
     ("sm-budget-clamp", lambda c, t: _check_sm_budget_clamp(c)),
     ("sm-bool-budgets", lambda c, t: _check_sm_bool_budgets(c)),
     ("sm-citations", lambda c, t: _check_sm_citations(c)),
+    ("sm-citation-validity",
+     lambda c, t: _check_sm_citation_validity(c)),
+    ("sm-gap-dedup", lambda c, t: _check_sm_gap_dedup(c)),
     ("sm-synth-recovery", lambda c, t: _check_sm_synth_recovery(c)),
     ("sm-tasks-db", lambda c, t: _check_sm_tasks_db(c)),
     ("sm-ok-print", lambda c, t: _check_sm_ok_print(c)),

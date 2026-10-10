@@ -1,3 +1,4 @@
+> **SUPERSEDED** — replaced by prompts/v0.7.1 (2026-10-10). Retained for lineage.
 PROMPT-VERSION v0.7.0 | 2026-09-19
 IDENTITY
 ────────

@@ -95,6 +95,23 @@ class EventLog:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def events_for_task(self, task_id: str) -> List[Dict[str, Any]]:
+        """All journal rows for one A2A task_id, oldest first.
+
+        Push rows are keyed push:<task_id>:<state>:<final> or
+        push:<task_id>:artifact:<artifactId>:<lastChunk>; the detail LIKE
+        covers rows where the task_id only appears in free-text detail.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, ts, envelope_id, worker_id, from_status, to_status,"
+                " backend, detail FROM events"
+                " WHERE envelope_id LIKE ? OR detail LIKE ?"
+                " ORDER BY id",
+                (f"push:{task_id}:%", f"%{task_id}%"),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def tail(self, n: int = 20) -> List[Dict[str, Any]]:
         """The most recent n transitions, oldest first."""
         with self._lock:

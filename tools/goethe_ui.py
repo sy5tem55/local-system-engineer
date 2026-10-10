@@ -17,6 +17,12 @@ ROUTES (mounted by goethe_mcp.build_http_app, v1.12.0+)
                             No token: static page, contains no data.
   GET  /kbgraph           → Phase 5 graph renderer (goethe_kbgraph.html, same dir).
                             No token: static page; fetches /api/ui/kbgraph with the token.
+  GET  /webSearch         → WebSearch LB console (websearch-lb/frontend/
+                            index.html, same dir). No token: static page.
+  GET  /webSearch/stats   → proxy to websearch-lb /stats (loopback :9703;
+                            override with GOETHE_WEBSEARCH_LB_URL). No token —
+                            the frontend contract sends Bearer on /mcp* only;
+                            the upstream WEBSEARCH_LB_TOKEN is the auth boundary.
   GET  /api/ui/overview   → gateway/stack health summary          (token-gated)
   GET  /api/ui/kb         → KB trust: aggs + worst/newest docs    (token-gated)
   GET  /api/ui/dream      → TRAUM digest + legacy day-dir map     (token-gated)
@@ -112,8 +118,16 @@ import sys
 import time
 import urllib.request
 import urllib.parse
+import subprocess
+import uuid
 
-__version__ = "0.5.0"
+try:
+    from goethe_node3090_prober import Node3090Prober
+except Exception:  # fail-safe contract: an optional UI add-on
+    # must never take down the MCP surface at import time
+    Node3090Prober = None
+
+__version__ = "0.6.0"
 # 0.1.1 — kb_stats 400 fix: terms aggs on source_tier/volatility/origin must
 #          target the .keyword subfield — live lse-kb-1024 maps them as text
 #          (the trust-migration keyword mapping didn't survive the 1024-dim
@@ -132,6 +146,12 @@ __version__ = "0.5.0"
 #          (quarantine-only write; explicit session_ids; refuses mixed
 #          files; calls episode_index.build_manifest(prune=True)). See
 #          docs/SPEC-console-corpus-hygiene-2026-08.md.
+# 0.6.0 — WebSearch LB console: GET /webSearch (static,
+#          websearch-lb/frontend/index.html) and GET /webSearch/stats
+#          (same-origin proxy to the loopback websearch-lb /stats).
+#          The stats proxy is deliberately untokened: the frontend
+#          contract (websearch-frontend/brief.md) sends Bearer tokens
+#          on /mcp* requests only.
 
 # goethe_perms.py lives next to this file but this module is loaded via
 # importlib.util.spec_from_file_location (not a normal package import — see
@@ -1170,14 +1190,17 @@ def skills_panel() -> dict:
 
 KBGRAPH_MAX_ENTITIES = 500
 KBGRAPH_MAX_EDGES = 2000
+KBGRAPH_MAX_DOCS = 300
 
 def kbgraph_panel() -> dict:
     """Phase 5 knowledge-graph data for the /kbgraph renderer (read-only).
 
     Returns entities + edges from the lse-graph ES index, bounded to
     KBGRAPH_MAX_ENTITIES / KBGRAPH_MAX_EDGES so a large materialized graph
-    cannot blow the response. Empty/dormant state (index missing or empty)
-    is a clean 200 with dormant=true, never an error.
+    cannot blow the response, plus the KB docs referenced by documented_by
+    edges (bounded to KBGRAPH_MAX_DOCS) so the renderer can draw evidence.
+    Empty/dormant state (index missing or empty) is a clean 200 with
+    dormant=true, never an error.
     """
     index = "lse-graph"
     try:
@@ -1186,7 +1209,8 @@ def kbgraph_panel() -> dict:
     except Exception:
         present = False
     if not present:
-        return {"entities": [], "edges": [], "counts": {"entities": 0, "edges": 0},
+        return {"entities": [], "edges": [], "docs": [],
+                "counts": {"entities": 0, "edges": 0, "docs": 0},
                 "dormant": True, "index_present": False, "truncated": False}
     ent_body = {"size": KBGRAPH_MAX_ENTITIES,
                 "query": {"term": {"kind": "entity"}},
@@ -1199,7 +1223,8 @@ def kbgraph_panel() -> dict:
         r_edge = _es_search(index, edge_body)
     except Exception as e:
         return {"error": f"lse-graph: {type(e).__name__}: {e}",
-                "entities": [], "edges": [], "counts": {"entities": 0, "edges": 0},
+                "entities": [], "edges": [], "docs": [],
+                "counts": {"entities": 0, "edges": 0, "docs": 0},
                 "dormant": True, "index_present": True, "truncated": False}
     total_ent = r_ent.get("hits", {}).get("total", {}).get("value", 0)
     total_edge = r_edge.get("hits", {}).get("total", {}).get("value", 0)
@@ -1209,11 +1234,176 @@ def kbgraph_panel() -> dict:
     edges = [{"src": s.get("src"), "rel": s.get("rel"), "dst": s.get("dst"),
               "evidence": s.get("evidence_doc_id")}
              for h in r_edge.get("hits", {}).get("hits", []) for s in [h.get("_source", {})]]
-    return {"entities": entities, "edges": edges,
-            "counts": {"entities": total_ent, "edges": total_edge},
+    # Evidence docs: every documented_by edge whose dst is a KB doc id (never
+    # an entity id). The KB lookup degrades to docs=[] on failure - the graph
+    # view must stay usable even if lse-kb is down.
+    entity_ids = {e["id"] for e in entities}
+    doc_ids = sorted({e["dst"] for e in edges
+                      if e["rel"] == "documented_by" and e["dst"] not in entity_ids})
+    docs = []
+    if doc_ids:
+        doc_body = {"size": KBGRAPH_MAX_DOCS,
+                    "query": {"ids": {"values": doc_ids[:KBGRAPH_MAX_DOCS]}},
+                    "_source": ["title", "topic", "quality_score", "source_tier",
+                                "stale", "origin", "volatility", "source_url"]}
+        try:
+            r_docs = _es_search("lse-kb", doc_body)
+            docs = [{"id": h["_id"],
+                     "title": (s.get("title") or h["_id"][:8]),
+                     "topic": s.get("topic") or "",
+                     "quality_score": s.get("quality_score"),
+                     "source_tier": s.get("source_tier") or "",
+                     "stale": bool(s.get("stale")),
+                     "origin": s.get("origin") or "",
+                     "volatility": s.get("volatility") or "",
+                     "source_url": s.get("source_url") or ""}
+                    for h in r_docs.get("hits", {}).get("hits", [])
+                    for s in [h.get("_source", {})]]
+        except Exception:
+            docs = []
+    return {"entities": entities, "edges": edges, "docs": docs,
+            "counts": {"entities": total_ent, "edges": total_edge,
+                       "docs": len(doc_ids)},
             "dormant": total_ent == 0,
             "index_present": True,
-            "truncated": total_ent > len(entities) or total_edge > len(edges)}
+            "truncated": (total_ent > len(entities) or total_edge > len(edges)
+                          or len(doc_ids) > len(docs))}
+
+def _kb_docs_by_ids(doc_ids) -> list:
+    """Fetch KB docs by id from lse-kb (read-only, degrading).
+
+    Returns [] on any failure so callers stay usable when lse-kb is down.
+    """
+    ids = sorted(set(doc_ids))[:KBGRAPH_MAX_DOCS]
+    if not ids:
+        return []
+    body = {"size": len(ids),
+            "query": {"ids": {"values": ids}},
+            "_source": ["title", "topic", "quality_score", "source_tier",
+                        "stale", "origin", "volatility", "source_url"]}
+    try:
+        r = _es_search("lse-kb", body)
+    except Exception:
+        return []
+    out = []
+    for h in r.get("hits", {}).get("hits", []):
+        s = h.get("_source", {})
+        out.append({"id": h["_id"],
+                    "title": s.get("title") or h["_id"][:8],
+                    "topic": s.get("topic") or "",
+                    "quality_score": s.get("quality_score"),
+                    "source_tier": s.get("source_tier") or "",
+                    "stale": bool(s.get("stale")),
+                    "origin": s.get("origin") or "",
+                    "volatility": s.get("volatility") or "",
+                    "source_url": s.get("source_url") or ""})
+    return out
+
+
+def kbgraph_neighbors(target: str) -> dict:
+    """One-hop neighbourhood for the /kbgraph inspector (read-only).
+
+    target = entity id: the entity, its edges, peer entities, and the KB
+        docs evidencing those edges.
+    target = KB doc id: the doc, one hop of edges around the entities it
+        documents, and the docs referenced by those edges.
+    Unknown id: clean response with known=false — never a 500.
+    """
+    def _empty():
+        return {"entities": [], "edges": [], "docs": [],
+                "counts": {"entities": 0, "edges": 0, "docs": 0}}
+
+    if not target:
+        return dict(_empty(), id="", known=False, error="missing id")
+    t0 = time.monotonic()
+    try:
+        probe = _es_search("lse-graph", {"size": 1,
+                                         "query": {"ids": {"values": [target]}},
+                                         "_source": ["kind", "name", "type"]})
+        ph = probe.get("hits", {}).get("hits", [{}])
+        ps = ph[0].get("_source", {}) if ph else {}
+        is_entity = ps.get("kind") == "entity"
+        r_edges = _es_search("lse-graph", {
+            "size": KBGRAPH_MAX_EDGES,
+            "query": {"bool": {"should": [{"term": {"src": target}},
+                                          {"term": {"dst": target}}],
+                                "minimum_should_match": 1}},
+            "_source": ["src", "rel", "dst", "evidence_doc_id"]})
+    except Exception as e:
+        return dict(_empty(), id=target, known=False,
+                    error=f"lse-graph: {type(e).__name__}: {e}")
+    edges = [{"src": s.get("src"), "rel": s.get("rel"), "dst": s.get("dst"),
+              "evidence": s.get("evidence_doc_id")}
+             for h in r_edges.get("hits", {}).get("hits", [])
+             for s in [h.get("_source", {})]]
+    entities = []
+    if is_entity:
+        entities = [{"id": target,
+                     "name": ps.get("name") or target[:8],
+                     "type": ps.get("type") or "unknown"}]
+    else:
+        # Doc target: add one hop of edges around the entities that are
+        # documented_by this doc, so the inspector shows context.
+        doc_peers = [e["src"] for e in edges
+                     if e["rel"] == "documented_by" and e["src"] != target]
+        if doc_peers:
+            try:
+                seen = {(e["src"], e["rel"], e["dst"], e["evidence"])
+                        for e in edges}
+                r_hop = _es_search("lse-graph", {
+                    "size": KBGRAPH_MAX_EDGES,
+                    "query": {"bool": {"should": [
+                        {"terms": {"src": doc_peers}},
+                        {"terms": {"dst": doc_peers}}],
+                        "minimum_should_match": 1}},
+                    "_source": ["src", "rel", "dst", "evidence_doc_id"]})
+                for h in r_hop.get("hits", {}).get("hits", []):
+                    s = h.get("_source", {})
+                    e2 = {"src": s.get("src"), "rel": s.get("rel"),
+                          "dst": s.get("dst"),
+                          "evidence": s.get("evidence_doc_id")}
+                    k = (e2["src"], e2["rel"], e2["dst"], e2["evidence"])
+                    if k not in seen:
+                        seen.add(k)
+                        edges.append(e2)
+            except Exception:
+                pass
+    peer_ids = sorted(({e["src"] for e in edges} | {e["dst"] for e in edges})
+                      - {target})
+    if peer_ids:
+        try:
+            r_peers = _es_search("lse-graph", {
+                "size": len(peer_ids),
+                "query": {"ids": {"values": peer_ids}},
+                "_source": ["kind", "name", "type"]})
+            have_ids = {n["id"] for n in entities}
+            for h in r_peers.get("hits", {}).get("hits", []):
+                s = h.get("_source", {})
+                if s.get("kind") == "entity" and h["_id"] not in have_ids:
+                    have_ids.add(h["_id"])
+                    entities.append({"id": h["_id"],
+                                     "name": s.get("name") or h["_id"][:8],
+                                     "type": s.get("type") or "unknown"})
+        except Exception:
+            pass
+    entity_ids = {n["id"] for n in entities}
+    doc_ids = {e["dst"] for e in edges
+               if e["rel"] == "documented_by" and e["dst"] not in entity_ids}
+    if not is_entity:
+        doc_ids.add(target)  # the doc itself is its own inspector node
+    docs = _kb_docs_by_ids(doc_ids)
+    known = is_entity or any(d["id"] == target for d in docs)
+    out = dict(_empty())
+    out.update({"id": target, "known": known,
+                "entities": entities, "edges": edges, "docs": docs,
+                "counts": {"entities": len(entities),
+                           "edges": len(edges),
+                           "docs": len(docs)},
+                "elapsed_ms": int((time.monotonic() - t0) * 1000)})
+    if not known:
+        out["error"] = "unknown id"
+    return out
+
 
 _PANELS = {
     "/api/ui/overview": overview,
@@ -1368,6 +1558,13 @@ _PERM_ACTION_PATHS = {
 # ASGI router
 # --------------------------------------------------------------------------
 
+# WebSearch LB upstream (tools/websearch-lb) — loopback by deployment
+# default; override for non-default ports. The /webSearch/stats proxy
+# fetches {base}/stats; the static page comes from websearch-lb/frontend/.
+_WEBSEARCH_LB_URL = os.environ.get(
+    "GOETHE_WEBSEARCH_LB_URL", "http://127.0.0.1:9703").rstrip("/")
+_WEBSEARCH_LB_TIMEOUT = 8
+
 class UIRouter:
     """ASGI middleware: serves /ui and /api/ui/*; passes everything else
     through untouched. Sits OUTSIDE goethe_mcp._TokenGuard (so the static
@@ -1384,6 +1581,17 @@ class UIRouter:
         self._traum = traum_controller
         self._traum_init_attempted = traum_controller is not None
         self._traum_init_error = None
+        # node3090 remote-services prober (daemon thread; 30s interval;
+        # writes /opt/local-se/state/node3090_services.json for the
+        # read-only /webSearch/nodes route). Optional: a failure here
+        # degrades the dashboard panel, never the gateway.
+        self.node3090_prober = None
+        if Node3090Prober is not None:
+            try:
+                self.node3090_prober = Node3090Prober()
+                self.node3090_prober.start()
+            except Exception:
+                self.node3090_prober = None
 
     def _authorized(self, scope) -> bool:
         if not self.token:
@@ -1455,6 +1663,95 @@ class UIRouter:
         if len(values) != 1:
             raise ValueError(f"query parameter {name!r} may appear once")
         return values[0]
+
+    def _websearch_nodes(self) -> dict:
+        """node3090 remote-service status for the /webSearch dashboard.
+        Sync (run via asyncio.to_thread). File reads only - the prober
+        daemon in this gateway refreshes node3090_services.json every
+        30s. Fail-safe: missing/corrupt state degrades to
+        {'services': [], 'error': 'state missing'}; never raw-500s."""
+        state_dir = os.environ.get("GOETHE_WEBSEARCH_STATE_DIR",
+                                   "/opt/local-se/state")
+        n_path = state_dir + "/node3090_services.json"
+        try:
+            with open(n_path, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("services"), list):
+                return data
+            return {"services": [], "error": "state missing"}
+        except (OSError, ValueError):
+            return {"services": [], "error": "state missing"}
+
+    def _websearch_stats(self) -> dict:
+        """GET {_WEBSEARCH_LB_URL}/stats and return the parsed JSON object.
+        Sync (run via asyncio.to_thread). Fail-safe contract: any
+        network/parse failure degrades to {"error": ...} — the gateway
+        never raw-500s a UI proxy route."""
+        req = urllib.request.Request(
+            f"{_WEBSEARCH_LB_URL}/stats",
+            headers={"Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=_WEBSEARCH_LB_TIMEOUT) as r:
+                body = r.read()
+        except Exception as e:
+            return {"error": f"websearch-lb /stats unreachable: "
+                             f"{type(e).__name__}: {e}"}
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as e:
+            return {"error": f"websearch-lb /stats returned non-JSON: {e}"}
+        if not isinstance(data, dict):
+            return {"error": "websearch-lb /stats did not return a JSON object"}
+        return data
+
+    def _websearch_quota(self) -> dict:
+        """Tavily (gateway-primary) quota/status for the /webSearch dashboard.
+        Sync (run via asyncio.to_thread). File reads only —
+        tavily_quota.json is refreshed on demand only (after a successful
+        search via WebMixin._tavily_refresh_quota, rate-limited to 10 min;
+        NO background probe); this route never touches the network and never
+        reads the key file.
+        Fail-safe: missing state degrades to {"configured": False}."""
+        state_dir = os.environ.get("GOETHE_WEBSEARCH_STATE_DIR",
+                                   "/opt/local-se/state")
+        out = {"configured": False, "plan": None, "limit": None,
+               "usage": None, "remaining": None, "usage_checked_at": None,
+               "last_query_ts": None}
+        q_path = state_dir + "/tavily_quota.json"
+        try:
+            with open(q_path, encoding="utf-8") as f:
+                q = json.load(f)
+            acct = (q.get("raw") or {}).get("account") or {}
+            limit = acct.get("plan_limit")
+            usage = acct.get("plan_usage")
+            if q.get("checked_at") or acct.get("current_plan"):
+                out.update({
+                    "configured": True,
+                    "plan": acct.get("current_plan"),
+                    "limit": limit,
+                    "usage": usage,
+                    "remaining": (None if (limit is None or usage is None)
+                                  else limit - usage),
+                    "usage_checked_at": q.get("checked_at"),
+                })
+        except (OSError, ValueError):
+            pass
+        log_path = state_dir + "/websearch_log.jsonl"
+        try:
+            with open(log_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("backend") == "tavily":
+                        out["last_query_ts"] = rec.get("ts")
+        except OSError:
+            pass
+        return out
 
     # Fixed, argument-free command. Deliberately a module-level constant and
     # not built from request data — see _open_sync_terminal.
@@ -1724,6 +2021,399 @@ class UIRouter:
                     "text/plain")
             return
 
+        # WebSearch LB console — static page, same posture as /ui (no token,
+        # no data of its own; the page fetches /webSearch/stats same-origin).
+        if path in ("/webSearch", "/webSearch/") and method == "GET":
+            wb_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "websearch-lb", "frontend", "index.html")
+            try:
+                with open(wb_path, "rb") as f:
+                    html = f.read()
+                await self._respond(send, 200, html, "text/html; charset=utf-8")
+            except OSError as e:
+                await self._respond(
+                    send, 500,
+                    f"websearch-lb/frontend/index.html not found: {e}".encode(),
+                    "text/plain")
+            return
+
+        # /webSearch/stats — same-origin proxy to the loopback websearch-lb
+        # /stats. Deliberately NOT token-gated: the frontend contract
+        # (websearch-frontend/brief.md) sends Bearer tokens on /mcp* requests
+        # only, so a gated proxy would 401 every poll in served mode. The
+        # upstream WEBSEARCH_LB_TOKEN remains the auth boundary for this data.
+        if path == "/webSearch/stats" and method == "GET":
+            t0 = time.monotonic()
+            data = await asyncio.to_thread(self._websearch_stats)
+            data["_elapsed_ms"] = int((time.monotonic() - t0) * 1000)
+            await self._respond(
+                send, 200 if "error" not in data else 502,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # /webSearch/quota — same ungated posture as /webSearch/stats: the
+        # console (unauthenticated static page) needs the gateway-primary
+        # Tavily status on the same poll cycle. File reads only; serves
+        # plan/counts/timestamps, never the key, never query text.
+        if path == "/webSearch/quota" and method == "GET":
+            data = await asyncio.to_thread(self._websearch_quota)
+            await self._respond(
+                send, 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # /webSearch/nodes - same ungated posture as /webSearch/quota:
+        # the static console page needs node3090 remote-service status on
+        # the same poll cycle. File reads only (the prober daemon writes
+        # it); serves up/down, latency and timestamps - nothing else.
+        if path == "/webSearch/nodes" and method == "GET":
+            data = await asyncio.to_thread(self._websearch_nodes)
+            await self._respond(
+                send, 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # Deep Search console — same posture as /ui: static page, no token;
+        # data comes from the token-gated /deepSearch/* JSON endpoints the
+        # page fetches with the shared localStorage key "goethe_token".
+        # Served per request (file read on each hit) so HTML edits apply
+        # without a gateway restart (spec section 11).
+        if path in ("/deepSearch", "/deepSearch/") and method == "GET":
+            ds_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "deep_search.html")
+            try:
+                with open(ds_path, "rb") as f:
+                    html = f.read()
+                await self._respond(send, 200, html, "text/html; charset=utf-8")
+            except OSError as e:
+                await self._respond(
+                    send, 500,
+                    f"deep_search.html not found: {e}".encode(),
+                    "text/plain")
+            return
+
+        # Deep Search topic index — token-gated, read-only file read (spec §6;
+        # same posture as the /api/ui/* endpoints).
+        if path == "/deepSearch/topics" and method == "GET":
+            if not self._authorized(scope):
+                await self._respond(
+                    send, 401, b'{"error":"unauthorized"}',
+                    "application/json")
+                return
+            try:
+                data = await asyncio.to_thread(
+                    _deep_search_read_json,
+                    os.path.join(DEEP_SEARCH_STATE_DIR, "topics.json"))
+            except (OSError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 500,
+                    json.dumps({"error": f"read topics.json: {e}"}).encode(),
+                    "application/json")
+                return
+            await self._respond(
+                send, 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # Deep Search read one topic dossier — token-gated (spec §6).
+        if (path.startswith("/deepSearch/topics/") and method == "GET"
+                and path != "/deepSearch/topics/"):
+            if not self._authorized(scope):
+                await self._respond(
+                    send, 401, b'{"error":"unauthorized"}',
+                    "application/json")
+                return
+            tid = path[len("/deepSearch/topics/"):]
+            if ("/" in tid or not tid or "." in tid
+                    or not all(c.isalnum() or c in "-_" for c in tid)):
+                await self._respond(
+                    send, 400, b'{"error":"invalid topic id"}',
+                    "application/json")
+                return
+            tpath = os.path.join(DEEP_SEARCH_STATE_DIR, "topics",
+                                 os.path.basename(tid) + ".json")
+            if not os.path.isfile(tpath):
+                await self._respond(
+                    send, 404,
+                    json.dumps({"error": f"topic not found: {tid}"}).encode(),
+                    "application/json")
+                return
+            try:
+                dossier = _deep_search_read_json(tpath)
+            except json.JSONDecodeError as e:
+                await self._respond(
+                    send, 500,
+                    json.dumps({"error": f"corrupt dossier: {e}"}).encode(),
+                    "application/json")
+                return
+            await self._respond(
+                send, 200,
+                json.dumps(dossier, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # Deep Search delete topic — token-gated write (spec §6). Removes
+        # the dossier file, the topics.json index entry, and every
+        # runs/<run_id>/ directory listed in the dossier's passes.
+        # Fail-closed: a run dir is removed only if its state.json is
+        # absent OR confirms topic_id == tid. 409 while the topic has an
+        # active QUEUED|RUNNING pass; 404 when the dossier is missing.
+        if (path.startswith("/deepSearch/topics/") and method == "DELETE"
+                and len(path.split("/")) == 4):
+            if not self._authorized(scope):
+                await self._respond(
+                    send, 401, b'{"error":"unauthorized"}',
+                    "application/json")
+                return
+            tid = path[len("/deepSearch/topics/"):]
+            if (not tid or "/" in tid or "." in tid
+                    or not all(c.isalnum() or c in "-_" for c in tid)):
+                await self._respond(
+                    send, 400, b'{"error":"invalid topic id"}',
+                    "application/json")
+                return
+            try:
+                data = await asyncio.to_thread(_deep_search_delete_topic, tid)
+            except FileNotFoundError as e:
+                await self._respond(
+                    send, 404,
+                    json.dumps({"error": str(e)}).encode(),
+                    "application/json")
+                return
+            except PermissionError as e:
+                await self._respond(
+                    send, 409,
+                    json.dumps({"error": str(e)}).encode(),
+                    "application/json")
+                return
+            except (OSError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 500,
+                    json.dumps({"error": f"delete topic: {e}"}).encode(),
+                    "application/json")
+                return
+            await self._respond(
+                send, 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # Deep Search read one run state — token-gated, READ-ONLY (contract
+        # v0.3 §5: runs/<run_id>/state.json is the UI poll target).
+        if (path.startswith("/deepSearch/runs/") and method == "GET"
+                and path != "/deepSearch/runs/"
+                and not path.endswith("/result")):
+            if not self._authorized(scope):
+                await self._respond(
+                    send, 401, b'{"error":"unauthorized"}',
+                    "application/json")
+                return
+            rid = path[len("/deepSearch/runs/"):]
+            if ("/" in rid or not rid or "." in rid
+                    or not all(c.isalnum() or c in "-_" for c in rid)):
+                await self._respond(
+                    send, 400, b'{"error":"invalid run id"}',
+                    "application/json")
+                return
+            spath = os.path.join(DEEP_SEARCH_STATE_DIR, "runs",
+                                 os.path.basename(rid), "state.json")
+            if not os.path.isfile(spath):
+                await self._respond(
+                    send, 404,
+                    json.dumps({"error": f"run not found: {rid}"}).encode(),
+                    "application/json")
+                return
+            try:
+                rstate = _deep_search_read_json(spath)
+            except json.JSONDecodeError as e:
+                await self._respond(
+                    send, 500,
+                    json.dumps({"error": f"corrupt run state: {e}"}).encode(),
+                    "application/json")
+                return
+            await self._respond(
+                send, 200,
+                json.dumps(rstate, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # Deep Search read one run RESULT — token-gated, READ-ONLY
+        # (runs/<run_id>/result.json, terminal artifact).
+        if (path.startswith("/deepSearch/runs/") and method == "GET"
+                and path.endswith("/result")):
+            if not self._authorized(scope):
+                await self._respond(
+                    send, 401, b'{"error":"unauthorized"}',
+                    "application/json")
+                return
+            rid = path[len("/deepSearch/runs/"):-len("/result")]
+            if ("/" in rid or not rid or "." in rid
+                    or not all(c.isalnum() or c in "-_" for c in rid)):
+                await self._respond(
+                    send, 400, b'{"error":"invalid run id"}',
+                    "application/json")
+                return
+            respath = os.path.join(DEEP_SEARCH_STATE_DIR, "runs",
+                                   os.path.basename(rid), "result.json")
+            if not os.path.isfile(respath):
+                await self._respond(
+                    send, 404,
+                    json.dumps({"error": f"result not found: {rid}"}).encode(),
+                    "application/json")
+                return
+            try:
+                result = _deep_search_read_json(respath)
+            except json.JSONDecodeError as e:
+                await self._respond(
+                    send, 500,
+                    json.dumps({"error": f"corrupt result: {e}"}).encode(),
+                    "application/json")
+                return
+            await self._respond(
+                send, 200,
+                json.dumps(result, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # Deep Search start a pass — token-gated, spawns detached worker.
+        if (method == "POST" and path.startswith("/deepSearch/topics/")
+                and path.endswith("/passes")
+                and len(path.split("/")) == 5):
+            if not self._authorized(scope):
+                await self._respond(
+                    send, 401, b'{"error":"unauthorized"}',
+                    "application/json")
+                return
+            tid = path[len("/deepSearch/topics/"):-len("/passes")]
+            if (not tid or "/" in tid or "." in tid
+                    or not all(c.isalnum() or c in "-_" for c in tid)):
+                await self._respond(
+                    send, 400, b'{"error":"invalid topic id"}',
+                    "application/json")
+                return
+            tpath = os.path.join(DEEP_SEARCH_STATE_DIR, "topics",
+                                 tid + ".json")
+            if not os.path.isfile(tpath):
+                await self._respond(
+                    send, 404,
+                    json.dumps({"error": f"topic not found: {tid}"}).encode(),
+                    "application/json")
+                return
+            try:
+                payload = await self._read_json_body(receive)
+                question = str(payload.get("question", "")).strip()
+                instructions = str(payload.get("instructions", "")).strip()
+                max_steps = int(payload.get("max_steps", 8))
+                max_sources = int(payload.get("max_sources", 10))
+            except (ValueError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 400,
+                    json.dumps({"error": f"bad body: {e}"}).encode(),
+                    "application/json")
+                return
+            if not question:
+                await self._respond(
+                    send, 400, b'{"error":"question is required"}',
+                    "application/json")
+                return
+            max_steps = max(1, min(50, max_steps))
+            max_sources = max(1, min(30, max_sources))
+            try:
+                data = await asyncio.to_thread(
+                    _deep_search_spawn_pass, tid, question, instructions,
+                    max_steps, max_sources)
+            except PermissionError as e:
+                await self._respond(
+                    send, 409,
+                    json.dumps({"error": str(e)}).encode(),
+                    "application/json")
+                return
+            except (OSError, ValueError) as e:
+                await self._respond(
+                    send, 500,
+                    json.dumps({"error": f"spawn pass: {e}"}).encode(),
+                    "application/json")
+                return
+            await self._respond(
+                send, 202,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        # Deep Search create topic — token-gated write (spec §6).
+        if path == "/deepSearch/topics" and method == "POST":
+            if not self._authorized(scope):
+                await self._respond(
+                    send, 401, b'{"error":"unauthorized"}',
+                    "application/json")
+                return
+            try:
+                payload = await self._read_json_body(receive)
+                title = str(payload.get("title", "")).strip()
+            except (ValueError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 400,
+                    json.dumps({"error": f"bad body: {e}"}).encode(),
+                    "application/json")
+                return
+            if not title:
+                await self._respond(
+                    send, 400, b'{"error":"title is required"}',
+                    "application/json")
+                return
+            try:
+                data = await asyncio.to_thread(_deep_search_create_topic, title)
+            except ValueError as e:
+                await self._respond(
+                    send, 409,
+                    json.dumps({"error": str(e)}).encode(),
+                    "application/json")
+                return
+            except (OSError, json.JSONDecodeError) as e:
+                await self._respond(
+                    send, 500,
+                    json.dumps({"error": f"create topic: {e}"}).encode(),
+                    "application/json")
+                return
+            await self._respond(
+                send, 201,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
+
+        if path == "/api/ui/kbgraph/neighbors" and method == "GET":
+            if not self._authorized(scope):
+                await self._respond(
+                    send, 401, b'{"error":"unauthorized"}',
+                    "application/json")
+                return
+            q = urllib.parse.parse_qs(
+                scope.get("query_string", b"").decode(),
+                keep_blank_values=True)
+            target = self._one_query(q, "id", None)
+            if not target:
+                await self._respond(
+                    send, 400,
+                    b'{"error":"missing id query parameter"}',
+                    "application/json")
+                return
+            t0 = time.monotonic()
+            try:
+                data = await asyncio.to_thread(kbgraph_neighbors, target)
+            except Exception as e:  # fail-safe: degrade, never 500 raw
+                data = {"error": f"{type(e).__name__}: {e}"}
+            data["_elapsed_ms"] = int((time.monotonic() - t0) * 1000)
+            await self._respond(
+                send, 200,
+                json.dumps(data, ensure_ascii=False, default=str).encode(),
+                "application/json")
+            return
         if path in _PANELS and method == "GET":
             if not self._authorized(scope):
                 await self._respond(send, 401, b'{"error":"unauthorized"}',
@@ -1936,3 +2626,207 @@ class UIRouter:
             return
 
         await self.app(scope, receive, send)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Deep Search Dashboard (spec: tools/DEEP_SEARCH_DASHBOARD_SPEC.md v0.3)
+# State layout: /opt/local-se/state/deep_search/{topics.json, topics/,
+#               runs/<run_id>/, promotions.json}
+# Single-writer rules + atomic writes per spec §2.
+# ──────────────────────────────────────────────────────────────────────────
+
+DEEP_SEARCH_STATE_DIR = os.environ.get(
+    "DEEP_SEARCH_STATE_DIR", "/opt/local-se/state/deep_search")
+
+
+def _deep_search_read_json(path: str):
+    """Read + parse a Deep Search state file. Read-only by contract (spec §2)."""
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _deep_search_write_json_atomic(path: str, data) -> None:
+    """Atomic write: <path>.tmp → fsync → os.replace (spec §2)."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _deep_search_generate_run_id() -> str:
+    """run_id = ds-<UTC:%Y%m%dT%H%M%S>-<4hex> (spec §2)."""
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y%m%dT%H%M%S")
+    return f"ds-{stamp}-{os.urandom(2).hex()}"
+
+
+def _deep_search_generate_topic_id(title: str) -> str:
+    """topic_id = topic-<slug> (spec §2)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    if not slug:
+        slug = "untitled"
+    return f"topic-{slug[:48].rstrip('-')}"
+
+
+def _deep_search_now() -> str:
+    return datetime.datetime.now(
+        datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _deep_search_create_topic(title: str) -> dict:
+    """POST /deepSearch/topics handler body (spec §3/§6). Atomic: dossier
+    file first, then the topics.json index rewrite. Duplicate topic_id is
+    raised as ValueError (route maps it to 409)."""
+    tid = _deep_search_generate_topic_id(title)
+    tpath = os.path.join(DEEP_SEARCH_STATE_DIR, "topics", tid + ".json")
+    if os.path.exists(tpath):
+        raise ValueError(f"topic already exists: {tid}")
+    now = _deep_search_now()
+    dossier = {
+        "id": tid, "title": title, "status": "researching",
+        "created_at": now, "updated_at": now,
+        "passes": [], "findings": [], "sources": [],
+        "convergence": {"open_questions": 0, "contradictions": 0,
+                        "stable_passes": 0, "kb_covered": False,
+                        "sufficient": False},
+        "handoff": None,
+        "budget": {"steps": 0, "sources_fetched": 0, "passes": 0},
+    }
+    _deep_search_write_json_atomic(tpath, dossier)
+    ipath = os.path.join(DEEP_SEARCH_STATE_DIR, "topics.json")
+    index = _deep_search_read_json(ipath)
+    if not isinstance(index, list):
+        index = []
+    index.append({"id": tid, "title": title, "status": "researching",
+                  "updated_at": now})
+    _deep_search_write_json_atomic(ipath, index)
+    return {"id": tid, "title": title, "status": "researching"}
+
+
+def _deep_search_delete_topic(tid: str) -> dict:
+    """DELETE /deepSearch/topics/{tid} handler body (spec §6). Deletes the
+    dossier file, the topics.json index entry, and every runs/<run_id>/
+    directory listed in the dossier's passes. Fail-closed: a run directory
+    is removed only when its state.json is absent (run died before the
+    terminal write) OR confirms topic_id == tid. Active QUEUED|RUNNING
+    passes for this topic raise PermissionError (route maps to 409)."""
+    tpath = os.path.join(DEEP_SEARCH_STATE_DIR, "topics", tid + ".json")
+    if not os.path.isfile(tpath):
+        raise FileNotFoundError(f"topic not found: {tid}")
+    try:
+        dossier = _deep_search_read_json(tpath)
+    except json.JSONDecodeError:
+        dossier = {}
+    listed = []
+    passes = dossier.get("passes", []) if isinstance(dossier, dict) else []
+    for p in passes:
+        rid = p if isinstance(p, str) else str((p or {}).get("run_id", ""))
+        if rid:
+            listed.append(rid)
+    active = [a for a in _deep_search_active_runs(DEEP_SEARCH_STATE_DIR)
+              if a["topic_id"] == tid]
+    if active:
+        raise PermissionError(
+            "topic has active run(s) "
+            + ", ".join(a["run_id"] for a in active)
+            + " — wait for the pass to finish before deleting")
+    deleted_runs = []
+    for rid in listed:
+        if ("/" in rid or not rid or "." in rid
+                or not all(c.isalnum() or c in "-_" for c in rid)):
+            continue
+        rdir = os.path.join(DEEP_SEARCH_STATE_DIR, "runs", rid)
+        if not os.path.isdir(rdir):
+            continue
+        spath = os.path.join(rdir, "state.json")
+        if os.path.isfile(spath):
+            try:
+                st = _deep_search_read_json(spath)
+                if str((st or {}).get("topic_id", "")) != tid:
+                    continue  # fail-closed: state.json says another topic
+            except (OSError, json.JSONDecodeError):
+                continue  # fail-closed: corrupt state, leave for forensics
+        shutil.rmtree(rdir)
+        deleted_runs.append(rid)
+    os.remove(tpath)
+    ipath = os.path.join(DEEP_SEARCH_STATE_DIR, "topics.json")
+    index = _deep_search_read_json(ipath)
+    if not isinstance(index, list):
+        index = []
+    index = [e for e in index
+             if not (isinstance(e, dict) and e.get("id") == tid)]
+    _deep_search_write_json_atomic(ipath, index)
+    return {"deleted_topic": tid, "deleted_runs": deleted_runs}
+
+
+def _deep_search_active_runs(state_dir: str):
+    """Active runs from runs/<run_id>/state.json (status QUEUED|RUNNING).
+    Corrupt files are skipped — a broken state file must not wedge the cap."""
+    out = []
+    rdir = os.path.join(state_dir, "runs")
+    if not os.path.isdir(rdir):
+        return out
+    for name in os.listdir(rdir):
+        spath = os.path.join(rdir, name, "state.json")
+        if not os.path.isfile(spath):
+            continue
+        try:
+            st = _deep_search_read_json(spath)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(st, dict):
+            continue
+        if str(st.get("status", "")).upper() in ("QUEUED", "RUNNING"):
+            out.append({"run_id": name,
+                        "topic_id": str(st.get("topic_id", "")),
+                        "status": str(st.get("status", ""))})
+    return out
+
+
+def _deep_search_spawn_pass(tid, question, instructions,
+                            max_steps, max_sources):
+    """POST .../passes handler body (spec §5/§6). Detached worker via
+    Popen(start_new_session=True) == setsid: survives gateway restart.
+    Concurrency caps: 2 global, 1 per topic. Secrets inherited from the
+    gateway env (GOETHE_PLANNER_FORCE_API_KEY etc)."""
+    active = _deep_search_active_runs(DEEP_SEARCH_STATE_DIR)
+    if len(active) >= 2:
+        raise PermissionError(
+            "global concurrency cap reached (max 2 active runs)")
+    if any(a["topic_id"] == tid for a in active):
+        raise PermissionError(f"topic {tid} already has an active pass")
+    now = _deep_search_now()
+    run_id = "ds-" + now.replace("-", "").replace(":", "").replace(
+        "Z", "") + "-" + uuid.uuid4().hex[:4]
+    rdir = os.path.join(DEEP_SEARCH_STATE_DIR, "runs", run_id)
+    os.makedirs(os.path.join(rdir, "worker.audit"), exist_ok=True)
+    logf = open(os.path.join(rdir, "worker.out"), "ab")
+    env = dict(os.environ)
+    env["DEEP_SEARCH_LOG_DIR"] = os.path.join(rdir, "worker.audit")
+    here = os.path.dirname(os.path.abspath(__file__))
+    worker = os.path.join(here, "deep_search_worker.py")
+    proc = subprocess.Popen(
+        [sys.executable, worker, run_id, tid, question, instructions,
+         str(max_steps), str(max_sources), DEEP_SEARCH_STATE_DIR],
+        stdout=logf, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        env=env,
+        cwd=here,
+    )
+    logf.close()
+    # Contract v0.3: runner-owned state.json is the UI poll target.
+    state = {
+        "run_id": run_id, "topic_id": tid, "status": "RUNNING",
+        "state": "PLANNING",
+        "step": {"i": 0, "n": max_steps},
+        "trace_tail": [],
+        "budgets": {"steps_used": 0, "sources_used": 0,
+                    "elapsed_s": 0, "limit_s": 1800},
+        "heartbeat_ts": now, "started_at": now, "pid": proc.pid,
+    }
+    _deep_search_write_json_atomic(os.path.join(rdir, "state.json"), state)
+    return {"run_id": run_id, "topic_id": tid, "status": "RUNNING"}

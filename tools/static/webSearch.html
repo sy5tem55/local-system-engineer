@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebSearch Quota — Goethe</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --fg: #e6edf3; --dim: #8b949e; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+    --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--dim); margin: 0 0 20px; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; }
+  .card .label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  .card .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+  .value.ok { color: var(--ok); } .value.warn { color: var(--warn); } .value.err { color: var(--err); }
+  .bar { height: 8px; background: var(--border); border-radius: 4px; margin-top: 10px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); width: 0%; transition: width .4s; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+          border: 1px solid var(--border); border-radius: 6px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  th { color: var(--dim); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .ok { color: var(--ok); } .bad { color: var(--err); }
+  .status { margin: 16px 0 8px; color: var(--dim); font-size: 12px; }
+  .status.err { color: var(--err); }
+  h2 { font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; margin: 24px 0 8px; }
+</style>
+</head>
+<body>
+  <h1>WebSearch Quota — Tavily</h1>
+  <p class="sub">Goethe gateway &middot; 1 credit/query &middot; resets 1st of each month &middot; auto-refresh 60s</p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Remaining this month</div>
+      <div class="value" id="remaining">…</div>
+      <div class="bar"><div id="bar"></div></div>
+    </div>
+    <div class="card">
+      <div class="label">Used / Limit</div>
+      <div class="value" id="used" style="font-size:18px">…</div>
+      <div class="label" id="source" style="margin-top:6px"></div>
+    </div>
+    <div class="card">
+      <div class="label">Plan</div>
+      <div class="value" id="plan" style="font-size:18px">…</div>
+    </div>
+    <div class="card">
+      <div class="label">Resets</div>
+      <div class="value" id="reset" style="font-size:18px">…</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">API /usage (lagged ~10 min)</div>
+      <div class="value" id="api-usage" style="font-size:18px">…</div>
+      <div class="label" id="api-at" style="margin-top:6px"></div>
+    </div>
+    <div class="card">
+      <div class="label">Local per-query log (immediate)</div>
+      <div class="value" id="local-count" style="font-size:18px">…</div>
+      <div class="label" id="local-at" style="margin-top:6px"></div>
+    </div>
+  </div>
+
+  <h2>Recent queries</h2>
+  <table>
+    <thead><tr><th>Time</th><th>Backend</th><th>Status</th><th>Query</th></tr></thead>
+    <tbody id="recent"><tr><td colspan="4" class="dim">loading…</td></tr></tbody>
+  </table>
+
+  <p class="status" id="status">loading…</p>
+
+<script>
+const API = "/api/webSearch/quota";
+const $ = (id) => document.getElementById(id);
+
+function fmtTs(s) {
+  if (!s) return "n/a";
+  const d = new Date(s);
+  return isNaN(d) ? String(s) : d.toLocaleString();
+}
+
+function render(q) {
+  const limit = q.limit ?? null;
+  const used = q.usage ?? null;
+  const remaining = q.remaining ?? (limit != null && used != null ? limit - used : null);
+
+  const rem = $("remaining");
+  rem.textContent = remaining != null ? remaining : "n/a";
+  rem.className = "value " + (remaining == null ? "" : remaining > 0.3 * (limit ?? 1) ? "ok" : remaining > 0 ? "warn" : "err");
+
+  const pct = limit != null && used != null ? Math.min(100, (used / limit) * 100) : 0;
+  $("bar").style.width = pct + "%";
+
+  $("used").textContent = (used ?? "n/a") + " / " + (limit ?? "n/a");
+  $("source").textContent = "truth: " + (q.usage_source ?? "n/a");
+  $("plan").textContent = q.plan ?? "n/a";
+  $("reset").textContent = fmtTs(q.reset_next).split(" ")[0] || "n/a";
+
+  $("api-usage").textContent = q.api_usage ?? "n/a";
+  $("api-at").textContent = "checked " + fmtTs(q.usage_checked_at);
+  $("local-count").textContent = q.local_count ?? "n/a";
+  $("local-at").textContent = "last entry " + fmtTs(q.log_last_entry);
+
+  const rows = (q.recent ?? []).slice(0, 12);
+  $("recent").innerHTML = rows.length ? rows.map(r =>
+    `<tr><td>${fmtTs(r.ts)}</td><td>${r.backend ?? "?"}</td>` +
+    `<td class="${r.ok ? "ok" : "bad"}">${r.ok ? "ok" : "fail"}</td>` +
+    `<td>${(r.query ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}</td></tr>`
+  ).join("") : '<tr><td colspan="4" class="dim">no queries logged yet</td></tr>';
+
+  $("status").textContent = "last refresh " + new Date().toLocaleTimeString() + " — " + API;
+  $("status").className = "status";
+}
+
+async function load() {
+  try {
+    const resp = await fetch(API, { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    render(await resp.json());
+  } catch (e) {
+    $("status").textContent = "ERROR: " + e.message + " (endpoint " + API + " not up yet?)";
+    $("status").className = "status err";
+  }
+}
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

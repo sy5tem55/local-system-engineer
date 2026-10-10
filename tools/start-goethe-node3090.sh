@@ -8,6 +8,10 @@
 #   - Binds 0.0.0.0:9700 — accessed via http://node3090.home.arpa:9700/mcp
 #     (127.0.0.1 only works when browser and server are on the same machine)
 #   - No vaultwarden tools — node3090 agent manages local environment only
+# v3.1 (2026-10-05): remote launcher discovers the ephemeral Studio llama-server
+#   port at boot and exports GOETHE_PLANNER_FORCE_URL (valve default :8080 is the
+#   Studio web app -> /health 404 -> every planner() call exhausted all paths).
+#   The port changes per Studio session — never hardcode it.
 
 set -euo pipefail
 
@@ -73,23 +77,34 @@ cat > "${LAUNCHER}" <<EOF
 pkill -9 -f 'goethe_mcp[.]py' 2>/dev/null || true
 sleep 0.3
 mkdir -p /home/lse-admin/lse /home/lse-admin/lse/bkp
-GOETHE_MCP_TOKEN=${NODE3090_TOKEN} \\
-GOETHE_ES_URL=${NODE3090_ES} \\
-GOETHE_OLLAMA_URL=${NODE3090_OLLAMA} \\
-GOETHE_MODEL_PRETRAIN_CUTOFF=2026-01 \\
-GOETHE_TASKS_DB=/home/lse-admin/lse/tasks.db \\
-GOETHE_PLANNER_MODEL_DIR=${NODE3090_PLANNER_MODEL_DIR} \\
-GOETHE_PLANNER_LLAMA_BIN=${NODE3090_PLANNER_LLAMA_BIN} \\
-GOETHE_PLANNER_PORT=${NODE3090_PLANNER_PORT} \\
-nohup python3 ${REMOTE_DIR}/goethe_mcp.py \\
-  --goethe ${REMOTE_DIR}/goethe.py \\
-  --transport http \\
-  --port 9700 \\
-  --host 0.0.0.0 \\
-  --cors-origin '*' \\
+# v3.1 (2026-10-05): planner valve must never point at :8080 (Studio web app -> 404).
+# Discover the ephemeral Studio llama-server port in THIS shell (node3090); empty
+# if not running -> valve stays at default (no regression). Port changes per
+# Studio session — never hardcode. (Escaped for the unquoted heredoc.)
+LLM_PORT=\$(pgrep -a llama-server 2>/dev/null | grep -oP -- '--port \K[0-9]+' | head -1)
+GOETHE_MCP_TOKEN=${NODE3090_TOKEN} \
+GOETHE_ES_URL=${NODE3090_ES} \
+GOETHE_OLLAMA_URL=${NODE3090_OLLAMA} \
+GOETHE_MODEL_PRETRAIN_CUTOFF=2026-01 \
+GOETHE_TASKS_DB=/home/lse-admin/lse/tasks.db \
+GOETHE_PLANNER_MODEL_DIR=${NODE3090_PLANNER_MODEL_DIR} \
+GOETHE_PLANNER_LLAMA_BIN=${NODE3090_PLANNER_LLAMA_BIN} \
+GOETHE_PLANNER_PORT=${NODE3090_PLANNER_PORT} \
+GOETHE_PLANNER_FORCE_URL="\${LLM_PORT:+http://127.0.0.1:\${LLM_PORT}}" \
+nohup python3 ${REMOTE_DIR}/goethe_mcp.py \
+  --goethe ${REMOTE_DIR}/goethe.py \
+  --transport http \
+  --port 9700 \
+  --host 0.0.0.0 \
+  --cors-origin '*' \
   > /tmp/goethe-node3090.log 2>&1 &
 disown
 echo "[goethe-node3090] PID \$! started"
+if [ -n "\$LLM_PORT" ]; then
+  echo "planner force-url: http://127.0.0.1:\${LLM_PORT}" | tee -a /tmp/goethe-node3090.log
+else
+  echo "planner force-url: none (llama-server not running at boot)" | tee -a /tmp/goethe-node3090.log
+fi
 EOF
 
 rsync -az "${LAUNCHER}" "${USER}@${NODE}:/tmp/goethe-node3090-launcher.sh"

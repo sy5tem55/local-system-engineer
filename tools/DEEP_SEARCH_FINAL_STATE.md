@@ -117,3 +117,48 @@ Open quality issues — outside this task's scope, candidates for follow-up:
 - Fix analysis: `/tmp/lse/deep_search_fix_analysis.json`
 - Backups (all timestamped): `/opt/local-se/bkp/` — goethe_deep_search.py,
   deep_search_test_harness.py, tasks.db, deep_search_test_results.json
+
+
+## 8. Track A post-fix (2026-10-08 15:33–15:45) — GREEN = FALSE (2 residual)
+
+Task 1c6b9e5b addressed the three quality failures from section 6.
+
+### 8.1 What was changed
+
+- **Core (node3090 A2A edit → shipped to node4090)**: `firstOutputSeconds` 60 → 180
+  default; `plan_invalid` single repair-attempt path; verified on node3090 (py_compile
+  OK, `--selftest` → `SELFTEST OK`), shipped sha256 `89cb893b…`
+  (backup `bkp/deep_search_core.py_20261008_145917`).
+- **Harness (node4090)**: `MAX_STEPS` 6 → 10 with per-question override
+  (backup `bkp/deep_search_test_harness.py_20261008_145948`); offline `--selftest`
+  OK before restart.
+- **Operator restart**: gateway 1085519 → **1299534** via Goethe GUI (agent never
+  self-restarts). Evidence `/tmp/lse/trackA_restart_verify.json`; `deep_search`
+  reachable via `tool_search` bridge post-restart.
+
+### 8.2 Live run (harness pid 1302286, gateway 1299534 — no crash)
+
+`HARNESS DONE pass=3/5`. Log `/tmp/lse/trackA_live_run.log`; results
+`/tmp/lse/trackA_live_results.json` (pre-fix results preserved as
+`/tmp/lse/deep_search_test_results.json_20261008_153317`; note section 7's
+"final run" results file was superseded by this run):
+
+| id    | kind       | status  | elapsed_s | outcome                                                             |
+|-------|------------|---------|-----------|---------------------------------------------------------------------|
+| mc1   | multi-hop  | DONE    | 186.3     | **pass** — timeout fix holds (no model_timeout_unrecoverable)       |
+| mc2   | multi-hop  | DONE    | 138.4     | **pass**                                                             |
+| mc3   | multi-hop  | DONE    | 214.7     | fitness fact-2 miss (`facts_found=[true,false]`) — report is substantively correct (Atari Inc. / Nolan Bushnell / Abilene, Texas, 8 sources); harness expected-string mismatch, NOT a target error class |
+| kb1   | kb-heavy   | FAILED  | 67.1      | **plan_invalid** — "still invalid after one repair attempt" at PLANNING; residual target-class failure |
+| base1 | baseline   | DONE    | 141.8     | **pass** — cited report                                              |
+
+### 8.3 Status
+
+- **Fixed & verified live**: first-output timeout (60→180 s), maxSteps (6→10).
+- **Residual (not green)**: kb1 `plan_invalid` (single repair attempt insufficient);
+  mc3 harness fitness string mismatch (research itself correct).
+- KB: outcome recorded on `5aea610c81be2580` (record_outcome success=1) and new
+  ground-truth doc `679c9f39e972db48`.
+- Evidence: `/tmp/lse/trackA_fix_brief.md`, `trackA_a2a_result.json`,
+  `trackA_verify_core.json`, `trackA_ship_verify.json`, `trackA_harness_patch.json`,
+  `trackA_selftest.json`, `trackA_restart_verify.json`, `trackA_live_results.json`,
+  `trackA_run_triage.json` (green=false), `trackA_kb_record.json`.

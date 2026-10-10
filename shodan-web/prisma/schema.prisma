@@ -1,0 +1,30 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model SavedSearch {
+  id        String   @id @default(cuid())
+  query     String
+  createdAt DateTime @default(now())
+}
+
+model BookmarkedDevice {
+  id        String   @id @default(cuid())
+  ip        String
+  port      Int
+  product   String?
+  createdAt DateTime @default(now())
+}
+
+model HistoryEntry {
+  id        String   @id @default(cuid())
+  type      String
+  action    String
+  target    String
+  timestamp DateTime @default(now())
+}

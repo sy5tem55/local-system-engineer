@@ -79,8 +79,8 @@ from dataclasses import dataclass
 
 import jwt
 import requests
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from a2a.server.agent_execution import AgentExecutor
@@ -127,6 +127,7 @@ _A2A_DIR = os.environ.get("A2A_MODULE_DIR", "/opt/local-se/a2a")
 if _A2A_DIR not in sys.path:
     sys.path.insert(0, _A2A_DIR)
 import jwt_auth  # noqa: E402
+import console_relay  # noqa: E402
 
 logger = logging.getLogger("goethe_a2a")
 
@@ -172,6 +173,11 @@ JSONRPC_URL = "/rpc"
 # D-H: TLS is served on :9701; the card must advertise https (overridable
 # for local testing via GOETHE_A2A_SCHEME).
 CARD_SCHEME = os.environ.get("GOETHE_A2A_SCHEME", "https").strip() or "https"
+# FIX A (node3090 handoff 2026-09-22): the card must advertise a ROUTABLE
+# destination, not the listener bind address — 0.0.0.0 is a bind wildcard and
+# a2a-sdk clients follow supportedInterfaces[0].url for every RPC. Default is
+# the DNS-stable hostname matching the cert SAN; override via env.
+A2A_ADVERTISE_URL = os.environ.get('A2A_ADVERTISE_URL', f'{CARD_SCHEME}://node4090.home.arpa:9701{JSONRPC_URL}').strip().rstrip('/')
 
 DEFAULT_MCP_URL = "http://127.0.0.1:9700/mcp"
 DEFAULT_SEARXNG_URL = "http://localhost:8088"
@@ -246,10 +252,12 @@ def a2a_enabled() -> bool:
 class JwtAuthMiddleware(BaseHTTPMiddleware):
     """Bearer JWT (Ed25519/EdDSA) verification (ADR D-H).
 
-    Public (no auth): /health, /.well-known/agent-card.json, OPTIONS
-    (preflight). The "browser 401" symptom is resolved by the public
-    agent-card path, not by opening auth — no CORSMiddleware is added;
-    the card is consumed by A2A client libraries, not browser pages.
+    Public (no auth): /health, /console (static console form — no data,
+    the JWT is entered on the page and used only for /events),
+    /.well-known/agent-card.json, OPTIONS (preflight). The "browser 401"
+    symptom is resolved by the public agent-card path, not by opening auth
+    — no CORSMiddleware is added; the card is consumed by A2A client
+    libraries, not browser pages.
 
     Three accepted verifiers, tried in order:
       A) GOETHE_A2A_JWT_PUBKEY (D3, minted by the node4090 gateway) —
@@ -274,7 +282,7 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
     paths return 503 — the service never opens itself by misconfiguration.
     """
 
-    PUBLIC_PATHS = {"/health", "/.well-known/agent-card.json"}
+    PUBLIC_PATHS = {"/health", "/console", "/.well-known/agent-card.json"}
     PEER = "node3090"
     SELF = "node4090"
     PUB_DIR = os.environ.get("A2A_JWT_PUB_DIR", "/opt/local-se/a2a/agent-cards")
@@ -332,9 +340,17 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in self.PUBLIC_PATHS or request.method == "OPTIONS":
             return await call_next(request)
         auth = request.headers.get("authorization", "")
-        if not auth.lower().startswith("bearer "):
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+        elif request.url.path == "/events":
+            # Console SSE (task eea0e755): a browser EventSource cannot
+            # set an Authorization header — /events is the ONLY path that
+            # accepts the JWT as ?token= (same verifiers, same exposure).
+            token = request.query_params.get("token", "").strip()
+        else:
+            token = ""
+        if not token:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        token = auth[7:].strip()
         try:  # TEMP step-21 debug: log the received token's time claims
             import base64 as _b64, json as _json
             _p = token.split(".")[1]
@@ -595,6 +611,7 @@ _HANDLER_TOOLS = {
     "planner": ["planner"],
     "plan_step_done": ["plan_step_done"],
     "task_status": ["task_resume"],
+    "executor": ["search_kb"],
 }
 
 
@@ -727,10 +744,7 @@ class GoetheResearcherExecutor(AgentExecutor):
                     return {"status": "COMPLETED", "result": res.result,
                             "attempts": attempt,
                             "idempotency_key": idem_key}
-                last_error = res.error or "unknown error"
-                classification = self._classify(last_error)
-            except NoEligibleWorkerError as exc:
-                last_error, classification = str(exc), "no-eligible-worker"
+                last_error = f"status={res.status}"
             except PolicyViolationError as exc:
                 last_error, classification = str(exc), "policy"
             except Exception as exc:  # noqa: BLE001 — attempt errors are data
@@ -939,7 +953,7 @@ def generate_agent_card(tool_policy_ref: ToolPolicyRef, jwt_pubkey_pem,
             f"ToolPolicyRef — the card never promises what the policy denies."),
         version=f"{A2A_VERSION}+policy.{policy_hash[:12]}",
         supported_interfaces=[AgentInterface(
-            url=f"{CARD_SCHEME}://{host}:{port}{JSONRPC_URL}",
+            url=A2A_ADVERTISE_URL,
             protocol_binding="JSONRPC",
             protocol_version="1.0",
         )],
@@ -1012,6 +1026,19 @@ def generate_agent_card(tool_policy_ref: ToolPolicyRef, jwt_pubkey_pem,
             tags=["planning", "ledger"],
             input_modes=["text"],
             output_modes=["text"],
+        ), AgentSkill(
+            id="goethe-executor-v1",
+            name="Goethe Executor (subagent)",
+            description=(
+                "Direct executable work to this node's local Goethe agent "
+                "loop (subagent). Input: a text part carrying JSON "
+                '{"handler": "executor", "task": "<task>", "mode": "read", "'
+                ' "max_steps": 3, "budget_s": 60}. Streams per-step progress; "'
+                "the terminal artifact carries verbatim evidence. Sudo-class "
+                "work pauses the task (input-required)."),
+            tags=["execute", "subagent", "delegate"],
+            input_modes=["text"],
+            output_modes=["text"],
         )],
     )
 
@@ -1037,6 +1064,9 @@ def create_app() -> FastAPI:
     orchestrator.register_handler("planner", _with_envelope_iss(_planner))
     orchestrator.register_handler("plan_step_done", _with_envelope_iss(_plan_step_done))
     orchestrator.register_handler("task_status", _with_envelope_iss(_task_status))
+    import goethe_a2a_executor_skill as _executor
+    orchestrator.register_handler("executor",
+        _with_envelope_iss(_executor.handle_executor))
     executor = GoetheResearcherExecutor(
         orchestrator,
         max_attempts=int(os.environ.get("GOETHE_A2A_MAX_ATTEMPTS", "2")),
@@ -1073,12 +1103,127 @@ def create_app() -> FastAPI:
     add_a2a_routes_to_fastapi(
         app,
         agent_card_routes=create_agent_card_routes(card),
-        jsonrpc_routes=create_jsonrpc_routes(handler, rpc_url=JSONRPC_URL),
+        jsonrpc_routes=create_jsonrpc_routes(handler, rpc_url=JSONRPC_URL, enable_v0_3_compat=True),
     )
 
     @app.get("/health")
     async def health():
         return {"status": "ok", "service": "goethe-a2a", "version": A2A_VERSION}
+
+    @app.get("/console")
+    async def console():
+        """Static A2A console form (task eea0e755). Public path: the page
+        is a blank input form carrying no data — the operator's JWT is
+        entered on the page and used only for the /events SSE stream, so
+        D3/D-H auth stays enforced on /events."""
+        return FileResponse("/opt/local-se/a2a/static/console.html")
+
+    @app.post("/a2a/push")
+    async def a2a_push(request: Request):
+        """A2A 1.0 push-notification webhook (node3090 -> node4090).
+
+        Auth: JwtAuthMiddleware already verified a bearer JWT; only the
+        node3090 peer (iss=lse-node3090, aud=lse-node4090, node3090.pub)
+        may push. Body: StreamResponse JSON envelope (protojson
+        camelCase): {"task":..} | {"statusUpdate":..} |
+        {"artifactUpdate":..}. Exactly-once: dedup on the event identity
+        (task_id, state, final, artifact id+lastChunk); every accepted
+        event is journaled to the shared orchestrator EventLog with
+        backend="push". Terminal states (completed/failed/canceled) are
+        the deterministic completion signal for delegated work.
+        """
+        iss = getattr(request.state, "auth_iss", None)
+        if iss != "lse-node3090":
+            return JSONResponse(
+                {"error": "push accepted only from lse-node3090"},
+                status_code=403)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid-json"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "no-event-in-envelope"}, status_code=400)
+        if "statusUpdate" in body and body["statusUpdate"]:
+            event = body["statusUpdate"]
+            task_id = event.get("taskId", "unknown")
+            state = (event.get("status") or {}).get("state", "unknown")
+            dedup_key = f"push:{task_id}:{state}:{bool(event.get('final'))}"
+        elif "artifactUpdate" in body and body["artifactUpdate"]:
+            event = body["artifactUpdate"]
+            task_id = event.get("taskId", "unknown")
+            art = event.get("artifact") or {}
+            state = "artifact"
+            dedup_key = (f"push:{task_id}:artifact:"
+                         f"{art.get('artifactId', '?')}:{event.get('lastChunk', '?')}")
+        elif "task" in body and body["task"]:
+            event = body["task"]
+            task_id = event.get("id", "unknown")
+            state = (event.get("status") or {}).get("state", "unknown")
+            dedup_key = f"push:{task_id}:task:{state}"
+        else:
+            return JSONResponse({"error": "no-event-in-envelope"}, status_code=400)
+        dup = bool(event_log.events_for(dedup_key))
+        event_log.record(
+            envelope_id=dedup_key, to_status=state, worker_id="lse-node3090",
+            backend="push", detail=json.dumps(body, default=str)[:65536])
+        return {"status": "duplicate" if dup else "ok",
+                "task_id": task_id, "state": state}
+
+    @app.get("/events")
+    async def events(task_id: str):
+        """A2A console SSE stream for one node3090 coding task (eea0e755).
+
+        Auth: JwtAuthMiddleware already verified the JWT — from the
+        Authorization header or (browser EventSource only) ?token=; the
+        verified issuer is request.state.auth_iss.
+
+        Frames: `data: {json}` from console_relay.ConsoleRelay — local
+        EventLog history rows for task_id first, then live Task snapshots
+        polled from node3090:9702 every 2s until a terminal state (or the
+        2400s deadline). The stream ends with a 'terminal' or 'error'
+        frame. The sync generator is iterated by starlette in the
+        threadpool, so the blocking polls never stall the event loop.
+        """
+        relay = console_relay.ConsoleRelay(
+            db_path=os.environ.get("GOETHE_A2A_EVENTS_DB", "").strip()
+            or None)
+
+        def _sse_frames():
+            for item in relay.subscribe(task_id):
+                yield f"data: {json.dumps(item, default=str)}\n\n"
+
+        return StreamingResponse(
+            _sse_frames(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache",
+                     "X-Accel-Buffering": "no"})
+
+    # --- Phase 3 (ops, task 32056bbc): metrics / audit / health APIs ------
+    # Auth: JwtAuthMiddleware (NOT in PUBLIC_PATHS) — Bearer JWT required,
+    # same contract as /events. The console page already carries the JWT.
+    def _ops_relay() -> console_relay.ConsoleRelay:
+        return console_relay.ConsoleRelay(
+            db_path=os.environ.get("GOETHE_A2A_EVENTS_DB", "").strip()
+            or None)
+
+    @app.get("/api/metrics")
+    async def api_metrics():
+        """Journal aggregates: total events, distinct A2A tasks, per-state
+        and per-backend counts."""
+        return _ops_relay().get_metrics()
+
+    @app.get("/api/audit")
+    async def api_audit(limit: int = 100):
+        """Audit view: most recent journal transitions, newest first
+        (capped at 500)."""
+        return {"rows": _ops_relay().get_audit_log(limit)}
+
+    @app.get("/api/health")
+    async def api_health():
+        """Ops health strip: journal queryability, configured peer URL,
+        console-JWT file presence."""
+        return _ops_relay().get_health()
+
 
     return app
 
@@ -1092,6 +1237,27 @@ if __name__ == "__main__":
             "GOETHE_A2A_ENABLED is off (default). Set GOETHE_A2A_ENABLED=on "
             "to start the A2A service; otherwise the MCP-only surface on "
             ":9700 is unchanged.")
+    # Fail-fast gateway token resolution (task ccf5c3cd, 2026-09-24):
+    # GUI-launched A2A does not inherit GOETHE_MCP_TOKEN. When missing,
+    # load the authoritative env file ~/.lse/secrets (export-prefixed
+    # KEY=value, mode 600) exactly like start-goethe-safe.sh does
+    # (source "$HOME/.lse/secrets"), then fail fast if still unresolved
+    # instead of 401ing on every gateway call.
+    if not os.environ.get("GOETHE_MCP_TOKEN", "").strip():
+        import shlex, subprocess
+        _secrets = os.path.expanduser("~/.lse/secrets")
+        if os.path.isfile(_secrets):
+            _r = subprocess.run(
+                ["bash", "-c", ". " + shlex.quote(_secrets)
+                 + ' && printf %s "$GOETHE_MCP_TOKEN"'],
+                capture_output=True, text=True)
+            if _r.returncode == 0 and _r.stdout.strip():
+                os.environ["GOETHE_MCP_TOKEN"] = _r.stdout.strip()
+    if not os.environ.get("GOETHE_MCP_TOKEN", "").strip():
+        raise SystemExit(
+            "GOETHE_MCP_TOKEN unresolved: missing from environment and from "
+            "~/.lse/secrets; A2A would 401 on every gateway call. "
+            "Refusing to start.")
     import uvicorn
     host = os.environ.get("GOETHE_A2A_HOST", "0.0.0.0")
     port = int(os.environ.get("GOETHE_A2A_PORT", "9701"))

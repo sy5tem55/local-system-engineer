@@ -109,7 +109,7 @@ class _DSAdapterClient:
             self._base = base_client
         else:
             self._base = httpx.Client(timeout=httpx.Timeout(
-                connect=10.0, read=3600.0, write=60.0, pool=10.0))
+                connect=10.0, read=480.0, write=60.0, pool=10.0))
 
     def close(self):
         try:
