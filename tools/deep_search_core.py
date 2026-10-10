@@ -1703,6 +1703,7 @@ class DeepSearch:
         if repair:
             task += ("\nThe previous plan was invalid (%s). Reply with "
                      "only the corrected JSON array." % repair)
+        task += "\n/no_think"
         return [{"role": "system",
                  "content": "You are the planning module of a deep-research "
                             "agent. Reply with machine-parseable JSON only."},
@@ -1721,6 +1722,7 @@ class DeepSearch:
                 % (self.question,
                    json.dumps(self.plan, default=str)[:2000],
                    evidence, gaps))
+        task += "\n/no_think"
         return [{"role": "system",
                  "content": "You assess research coverage. Reply in JSON "
                             "only."},
